@@ -609,8 +609,14 @@ describe('the selected subscription settings', () => {
     expect(api.getSubscriptionSettings).not.toHaveBeenCalled();
     openSettings(first);
     expect(await screen.findByRole('heading', { name: 'Subscription settings' })).toBeVisible();
-    expect(screen.getByText(first.arn)).toBeVisible();
-    expect(screen.getAllByText(first.endpoint)).toHaveLength(2);
+    expect(
+      screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText((_, element) => element?.textContent === first.endpoint, {
+        selector: '.aws-area-value-address',
+      }),
+    ).toHaveLength(2);
   });
 
   it('keeps the second subscription when the first subscription answers late', async () => {
@@ -635,7 +641,9 @@ describe('the selected subscription settings', () => {
     });
     expect(screen.getByDisplayValue(replacement)).toBeVisible();
     expect(screen.queryByDisplayValue(policy)).not.toBeInTheDocument();
-    expect(screen.queryByText(first.arn)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+    ).not.toBeInTheDocument();
   });
 
   it.each(['detail first', 'list first'] as const)(
@@ -672,7 +680,11 @@ describe('the selected subscription settings', () => {
           expect(isDisabled(action('Subscription settings'))).toBe(false);
         });
         expect(screen.getByRole('heading', { name: 'Subscription settings' })).toBeVisible();
-        expect(screen.getAllByText(first.arn)).toHaveLength(2);
+        expect(
+          screen.getAllByText((_, element) => element?.textContent === first.arn, {
+            selector: '.aws-area-value-address',
+          }),
+        ).toHaveLength(2);
       } else {
         refreshedList.resolve({ subscriptions: [] });
         await waitFor(() => {
@@ -682,7 +694,9 @@ describe('the selected subscription settings', () => {
           refreshedDetails.resolve({ FilterPolicy: replacement });
         });
         expect(screen.getByText('Subscription settings updated')).toBeVisible();
-        expect(screen.getByText(first.arn)).toBeVisible();
+        expect(
+          screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+        ).toBeVisible();
       }
     },
   );

@@ -320,7 +320,9 @@ describe('subscription settings', () => {
     await screen.findByDisplayValue(POLICY);
     click('Clear filter policy');
     const dialog = await screen.findByRole('dialog', { name: 'Clear filter policy?' });
-    expect(within(dialog).getByText(ARN)).toBeVisible();
+    expect(
+      within(dialog).getByText((_, element) => element?.textContent === ARN, { selector: '.aws-area-value-address' }),
+    ).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(api.setSubscriptionSetting).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue(POLICY)).toBeVisible();

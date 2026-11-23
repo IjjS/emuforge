@@ -453,5 +453,9 @@ it('reports a successful settings write after a refresh finds the topic missing'
   expect(vi.mocked(api.setSubscriptionSetting).mock.calls[0]?.[3].aborted).toBe(false);
   write.resolve(undefined);
   expect(await screen.findByText('Subscription settings updated')).toBeVisible();
-  expect(screen.getByText(`${ARN}:subscription`)).toBeVisible();
+  expect(
+    screen.getByText((_, element) => element?.textContent === `${ARN}:subscription`, {
+      selector: '.aws-area-value-address',
+    }),
+  ).toBeVisible();
 });
