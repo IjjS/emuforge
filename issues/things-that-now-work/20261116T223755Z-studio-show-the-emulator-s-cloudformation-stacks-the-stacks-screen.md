@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|cloudformation|stacks-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.cloudformation-external-stacks studio.cloudformation-stack-pages studio.cloudformation-stacks-reconnect
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's CloudFormation stacks: the Stacks screen
