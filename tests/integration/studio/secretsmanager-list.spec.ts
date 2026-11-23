@@ -1,0 +1,113 @@
+import { expect, test } from './support';
+import { ABOUT_CONTROL, crumbLink, expectLine, notStartedOn } from './support/aws-area';
+import { direct, fixture } from './services/secretsmanager/fixture';
+import {
+  button,
+  detail,
+  detailPath,
+  listPath,
+  secretLink,
+  secretValue,
+  ui,
+  valueRequests,
+} from './services/secretsmanager/screen';
+
+test('studio.secretsmanager-external-metadata', async ({ ctx, page }) => {
+  const f = await fixture(ctx);
+  await f.seed({ Description: 'Metadata from outside Studio' });
+  const record = await f.describe();
+  const reads = valueRequests(page);
+  await page.goto('/aws/secretsmanager');
+  const link = secretLink(page, f.name);
+  const row = page
+    .locator(ui.findTable().findRows().toSelector())
+    .filter({ has: page.getByRole('link', { name: f.name }) });
+  await expect(row).toContainText(record.Description!);
+  await link.click();
+  await expect(page.getByText(record.ARN!, { exact: true })).toBeVisible();
+  expect(reads).toEqual([]);
+});
+
+test('studio.secretsmanager-refresh', async ({ ctx, page }) => {
+  const f = await fixture(ctx);
+  await f.seed({ Description: 'Original description' });
+  await page.goto(listPath);
+  await expect(secretLink(page, f.name)).toBeVisible();
+  await f.client.updateSecret({ SecretId: f.name, Description: 'Externally updated' });
+  await button(page, 'Refresh').click();
+  const row = page
+    .locator(ui.findTable().findRows().toSelector())
+    .filter({ has: page.getByRole('link', { name: f.name }) });
+  await expect(row).toContainText((await f.describe()).Description!);
+});
+
+test('studio.secretsmanager-reentry', async ({ ctx, page }) => {
+  const f = await fixture(ctx);
+  await page.goto(listPath);
+  await expect(page.locator(ui.findTable().findLoadingText().toSelector())).toBeHidden();
+  const original = await page.evaluateHandle(() => document);
+  await crumbLink(page, 'AWS').click();
+  await expect(page).toHaveURL(/\/aws$/);
+  await f.seed();
+  await page.goBack();
+  await expect(secretLink(page, (await f.describe()).Name!)).toBeVisible();
+  expect(await page.evaluate((doc) => document === doc, original)).toBe(true);
+  await original.dispose();
+});
+
+test('studio.secretsmanager-notice', async ({ ctx, page }) => {
+  await fixture(ctx);
+  await page.goto(listPath);
+  const notice = page.getByRole('region', { name: 'Local emulator notice' });
+  await button(notice, 'Close the local emulator notice').click();
+  await expect(notice).toBeHidden();
+  await button(page, ABOUT_CONTROL).click();
+  await expect(notice).toContainText('These secrets are in your local emulator');
+});
+
+test('studio.secretsmanager-missing-secret', async ({ ctx, page }) => {
+  const f = await fixture(ctx);
+  await f.seed();
+  await f.client.deleteSecret({ SecretId: f.name, ForceDeleteWithoutRecovery: true });
+  await expect(f.describe()).rejects.toMatchObject({ name: 'ResourceNotFoundException' });
+  await page.goto(detailPath(f.name));
+  await expect(page.getByText('Secret not found', { exact: true })).toBeVisible();
+  await expect(page.getByText('Your local emulator could not find ' + f.name + '.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Back to secrets' })).toHaveAttribute('href', listPath);
+});
+
+test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
+  const f = await fixture(ctx, true);
+  await f.seed();
+  await page.goto(listPath);
+  await expect(secretLink(page, f.name)).toBeVisible();
+  await f.emulator!.stop();
+  await expectLine(page, notStartedOn(f.emulatorPort));
+  await f.emulator!.startAgain();
+  const empty = page.locator(ui.findTable().findEmptySlot().toSelector());
+  await expect(empty).toContainText('No secrets', { timeout: 60000 });
+  await expect(secretLink(page, f.name)).toHaveCount(0);
+  expect((await direct(ctx, f.emulatorPort).listSecrets({})).SecretList).toEqual([]);
+});
+
+test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
+  const f = await fixture(ctx, true);
+  const reads = valueRequests(page);
+  await f.seed({ Description: 'Previous instance metadata' });
+  await detail(page, f.name);
+  await button(page, 'Retrieve secret value').click();
+  await expect(secretValue(page)).toContainText('fixture text');
+  expect(reads).toEqual(['GetSecretValue']);
+  await f.emulator!.stop();
+  await expectLine(page, notStartedOn(f.emulatorPort));
+  await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
+  await f.emulator!.startAgain();
+  await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
+  await expect(page.getByRole('link', { name: 'Back to secrets' })).toBeVisible();
+  await expect(page.getByText('Previous instance metadata')).toBeHidden();
+  await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
+  expect(reads).toEqual(['GetSecretValue']);
+  await expect(direct(ctx, f.emulatorPort).describeSecret({ SecretId: f.name })).rejects.toMatchObject({
+    name: 'ResourceNotFoundException',
+  });
+});
