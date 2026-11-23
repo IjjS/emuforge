@@ -51,16 +51,14 @@ function SecretValue({
   name,
   versionId,
   editAction,
-  selectedVersion,
   unavailable,
   onUnavailable,
 }: {
   connection: AreaConnection;
   endpoint: string;
   name: string;
-  versionId?: string;
+  versionId: string | undefined;
   editAction?: ReactNode;
-  selectedVersion?: string;
   unavailable: boolean;
   onUnavailable: () => void;
 }) {
@@ -137,9 +135,9 @@ function SecretValue({
       }
     >
       <SpaceBetween size="s">
-        {selectedVersion !== undefined && (
+        {versionId !== undefined && (
           <Box>
-            Version <ValueText kind="name" value={selectedVersion} />
+            Version <ValueText kind="name" value={versionId} />
           </Box>
         )}
         {error !== undefined && (
@@ -337,7 +335,6 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
           {endpoint !== undefined && (
             <>
               <VersionHistory
-                key={endpoint}
                 action={action}
                 connection={connection}
                 endpoint={endpoint}
@@ -362,14 +359,12 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                 endpoint={endpoint}
                 name={name}
                 versionId={selectedVersion}
-                selectedVersion={selectedVersion}
                 connection={connection}
                 unavailable={valueUnavailable}
                 onUnavailable={() => setValueUnavailable(true)}
                 editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Edit secret value')}
               />
               <ResourcePolicy
-                key={endpoint}
                 action={action}
                 connection={connection}
                 endpoint={endpoint}
@@ -455,5 +450,5 @@ export function SecretPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('secrets');
   const [query] = useSearchParams();
   const name = secretName(query);
-  return <SecretDetails key={name} name={name} connection={connection} />;
+  return <SecretDetails key={JSON.stringify([name, connection.engineOrigin])} name={name} connection={connection} />;
 }

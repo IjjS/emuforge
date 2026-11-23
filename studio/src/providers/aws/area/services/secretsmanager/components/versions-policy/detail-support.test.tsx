@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import AwsArea from '../../../../index';
@@ -29,20 +29,6 @@ export function deferredReply() {
     resolve = done;
   });
   return { resolve, promise };
-}
-
-function ActiveReads({ connection, operations }: { connection: AreaConnection; operations: readonly string[] }) {
-  useSecretListing(connection, false);
-  const list = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[0]] });
-  const detail = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[1]] });
-  const section = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[2]] });
-  return (
-    <>
-      <output aria-label={operations[0]} aria-busy={list > 0} />
-      <output aria-label={operations[1]} aria-busy={detail > 0} />
-      <output aria-label={operations[2]} aria-busy={section > 0} />
-    </>
-  );
 }
 
 export function openSecret({
@@ -84,6 +70,20 @@ export function openSecret({
     }
   });
 
+  function ActiveReads({ connection, operations }: { connection: AreaConnection; operations: readonly string[] }) {
+    useSecretListing(connection, false);
+    const list = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[0]] });
+    const detail = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[1]] });
+    const section = useIsFetching({ queryKey: ['aws', 'secretsmanager', operations[2]] });
+    return (
+      <>
+        <output aria-label={operations[0]} aria-busy={list > 0} />
+        <output aria-label={operations[1]} aria-busy={detail > 0} />
+        <output aria-label={operations[2]} aria-busy={section > 0} />
+      </>
+    );
+  }
+
   function Frame() {
     return (
       <>
@@ -115,7 +115,7 @@ export function versionRows(stages: Record<string, string[]>) {
 }
 
 export async function click(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name, exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name }));
 }
 
 export const ORDERS = ['list first', 'section first'] as const;
@@ -127,12 +127,12 @@ export function delayedRefresh(
   sectionReply: Reply,
 ) {
   const operations = ['ListSecrets', 'DescribeSecret', section] as const;
-  const replies: Reply[] = [
+  const replies = [
     { body: { SecretList: [{ Name: NAME, SecretVersionsToStages: newStages }] } },
     { body: { Name: NAME, VersionIdsToStages: newStages } },
     sectionReply,
-  ];
-  const deferred = operations.map(() => deferredReply());
+  ] as const;
+  const deferred = [deferredReply(), deferredReply(), deferredReply()] as const;
   let written = false;
   const handler: Handler = (called) => {
     if (called === write) {
@@ -148,7 +148,7 @@ export function delayedRefresh(
     await waitFor(() => {
       for (const operation of operations) expect(screen.getByLabelText(operation)).toHaveAttribute('aria-busy', 'true');
     });
-    const indexes = order === 'list first' ? [0, 1, 2] : [2, 1, 0];
+    const indexes = order === 'list first' ? ([0, 1, 2] as const) : ([2, 1, 0] as const);
     for (const index of indexes) {
       await act(() => deferred[index].resolve(replies[index]));
       await waitFor(() => expect(screen.getByLabelText(operations[index])).toHaveAttribute('aria-busy', 'false'));

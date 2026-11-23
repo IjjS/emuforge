@@ -34,7 +34,7 @@ export function VersionHistory({
   connection: AreaConnection;
   endpoint: string;
   name: string;
-  stagesByVersion?: Record<string, string[]>;
+  stagesByVersion: Record<string, string[]> | undefined;
   scheduled: boolean;
   open: boolean;
   selected: string | undefined;

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { click, CURRENT, delayedRefresh, denied, NAME, openSecret, ORDERS, REFUSAL } from './detail-test-support';
+import { click, CURRENT, delayedRefresh, denied, NAME, openSecret, ORDERS, REFUSAL } from './detail-support.test';
 
 const ORIGINAL =
   '{"Version":"2012-10-17","Statement":[{"Sid":"Original","Effect":"Deny","Principal":"*","Action":"secretsmanager:GetSecretValue","Resource":"*"}]}';

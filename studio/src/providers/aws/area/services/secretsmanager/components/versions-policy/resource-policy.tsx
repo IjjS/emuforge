@@ -8,12 +8,7 @@ import { useState } from 'react';
 import { AreaModal } from '../../../../components/area-modal';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { useResourcePolicy } from '../../queries';
-import {
-  DELETE_RESOURCE_POLICY,
-  deleteResourcePolicy,
-  PUT_RESOURCE_POLICY,
-  VALIDATE_RESOURCE_POLICY,
-} from '../../versions-policy-api';
+import { DELETE_RESOURCE_POLICY, deleteResourcePolicy } from '../../versions-policy-api';
 import { LifecycleFeedback } from '../lifecycle/lifecycle-feedback';
 import type { LifecycleAction } from '../lifecycle/use-lifecycle-action';
 import { PolicyEditor } from './policy-editor';
@@ -70,7 +65,7 @@ export function ResourcePolicy({
         ready && (
           <SpaceBetween direction="horizontal" size="xs">
             <Button
-              disabled={action.disabled(PUT_RESOURCE_POLICY) || action.disabled(VALIDATE_RESOURCE_POLICY)}
+              disabled={connection.result?.kind !== 'connected'}
               onClick={() => {
                 action.clearFailure();
                 setEdit({ kind: 'edit', document: policy.document ?? '' });

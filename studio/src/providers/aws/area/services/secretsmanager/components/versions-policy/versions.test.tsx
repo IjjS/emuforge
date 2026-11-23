@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -13,7 +14,7 @@ import {
   ORDERS,
   REFUSAL,
   versionRows,
-} from './detail-test-support';
+} from './detail-support.test';
 
 const LIST = 'ListSecretVersionIds';
 const UPDATE = 'UpdateSecretVersionStage';
@@ -39,8 +40,9 @@ async function openStageDialog(menuItem: string, title = menuItem) {
 }
 
 async function chooseLabel(dialog: ReturnType<typeof within>, label: string) {
-  fireEvent.click(dialog.getByRole('button', { name: /Choose a staging label/ }));
-  fireEvent.click(await screen.findByRole('option', { name: new RegExp(label) }));
+  const user = userEvent.setup();
+  await user.click(dialog.getByRole('button', { name: /Choose a staging label/ }));
+  await user.click(await screen.findByRole('option', { name: new RegExp(label) }));
 }
 
 describe('Secret version history', () => {
