@@ -5,6 +5,7 @@ import {
   ListKeyRotationsCommand,
   RotateKeyOnDemandCommand,
   type GetKeyRotationStatusCommandOutput,
+  type KeyMetadata,
   type ListKeyRotationsCommandOutput,
 } from '@aws-sdk/client-kms';
 import Flashbar from '@cloudscape-design/components/flashbar';
@@ -27,21 +28,21 @@ const nextDate = new Date('2026-05-16T12:35:00Z');
 const rotationDate = new Date('2026-02-04T14:15:00Z');
 const enabledSettings = { KeyRotationEnabled: true, RotationPeriodInDays: 90, NextRotationDate: nextDate };
 
-function RotationPage() {
+function RotationPage({ keySpec }: { keySpec?: KeyMetadata['KeySpec'] }) {
   const [flash, setFlash] = useState<FlashResult>();
   return (
     <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
       <Flashbar items={flash ? [...flash] : []} />
-      <Rotation connection={connection} keyId={keyId} />
+      <Rotation connection={connection} keyId={keyId} keySpec={keySpec} />
     </PageFlashContext.Provider>
   );
 }
 
-function open() {
+function open(keySpec?: KeyMetadata['KeySpec']) {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <RotationPage />
+        <RotationPage keySpec={keySpec} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -202,6 +203,29 @@ describe('Key rotation', () => {
       expect.objectContaining({ input: { KeyId: keyId } }),
       { abortSignal: expect.any(AbortSignal) },
     ]);
+  });
+
+  it.each([
+    ['Enable automatic rotation', 'EnableKeyRotation'],
+    ['Rotate now', 'RotateKeyOnDemand'],
+  ])('adds the key spec when %s receives an unsupported operation refusal', async (button, operation) => {
+    const refusal = 'UnsupportedOperationException';
+    const message = 'Rotation is unavailable for this key.';
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) return { KeyRotationEnabled: false };
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      throw { name: refusal, message, $fault: 'client', $metadata: { httpStatusCode: 400 } };
+    });
+    open('RSA_2048');
+
+    expect(await screen.findByText('Disabled')).toBeVisible();
+    click(button);
+
+    expect(await screen.findByText(`${operation} failed`)).toBeVisible();
+    expect(screen.getByText(refusal).parentElement).toHaveTextContent(`${refusal}: ${message}`);
+    expect(screen.getByText('RSA_2048').parentElement).toHaveTextContent(
+      'The emulator does not support this rotation operation on this RSA_2048 key.',
+    );
   });
 
   it('leaves an unimplemented action visible and disables it without disabling other operations', async () => {
