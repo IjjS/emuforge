@@ -5,7 +5,7 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useRef, useState } from 'react';
+import { useRef, useState, useSyncExternalStore } from 'react';
 
 import { requestFailure } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
@@ -18,6 +18,26 @@ import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import { ObjectVersionsDialog, REMOVE_MARKER, RESTORE_VERSION, type VersionTarget } from './object-versions-dialog';
 import { versionFailure } from './object-versions-failure';
 import { ObjectsBucketGone } from './objects-states';
+
+const NARROW_HISTORY = '(max-width: 688px)';
+
+function subscribeToLayout(onChange: () => void) {
+  const query = window.matchMedia(NARROW_HISTORY);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+}
+
+function isNarrowHistory() {
+  return window.matchMedia(NARROW_HISTORY).matches;
+}
+
+function versionType(row: ObjectVersion) {
+  return row.kind === 'version' ? 'Version' : 'Delete marker';
+}
+
+function latestValue(row: ObjectVersion) {
+  return row.latest ? 'Yes' : 'No';
+}
 
 const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
   {
@@ -32,8 +52,27 @@ const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
     header: 'Version ID',
     cell: (row) => <ValueText kind="name" value={row.versionId ?? NO_VALUE} />,
   },
-  { id: 'type', header: 'Type', cell: (row) => (row.kind === 'version' ? 'Version' : 'Delete marker') },
-  { id: 'latest', header: 'Latest', cell: (row) => (row.latest ? 'Yes' : 'No') },
+  { id: 'type', header: 'Type', cell: versionType },
+  { id: 'latest', header: 'Latest', cell: latestValue },
+];
+
+const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
+  {
+    id: 'key',
+    header: 'Key',
+    isRowHeader: true,
+    cell: (row) => (
+      <SpaceBetween size="xxs">
+        <ValueText kind="name" value={row.key} />
+        <Box variant="small">
+          Type: {versionType(row)} · Latest: {latestValue(row)}
+        </Box>
+        <Box variant="small">
+          Version ID: <ValueText kind="name" value={row.versionId ?? NO_VALUE} />
+        </Box>
+      </SpaceBetween>
+    ),
+  },
 ];
 
 function rowId(row: ObjectVersion): string {
@@ -59,6 +98,7 @@ interface ObjectVersionsProps {
 }
 
 export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVersionsProps) {
+  const narrow = useSyncExternalStore(subscribeToLayout, isNarrowHistory);
   const listing = useObjectHistory(endpoint, name, prefix);
   const download = useDownloadObject(endpoint, name);
   const change = useChangeObjectVersion(endpoint, name);
@@ -125,19 +165,15 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
 
   const failure =
     listing.failure === undefined ? undefined : versionFailure(listing.failure, 'Reading versions', endpoint);
-  const disabledReason = (operation: string, allowed: boolean) =>
-    unsupported.has(operation)
-      ? 'Not implemented by the emulator'
-      : allowed
-        ? undefined
-        : 'Select a matching version first';
+  const disabledReason = (operation: string, allowed: boolean, hint = 'Select a matching version first') =>
+    unsupported.has(operation) ? 'Not implemented by the emulator' : allowed ? undefined : hint;
 
   return (
     <>
       <Table<ObjectVersion>
         items={items}
         trackBy={rowId}
-        columnDefinitions={columns}
+        columnDefinitions={narrow ? narrowColumns : columns}
         selectionType="single"
         selectedItems={selected === undefined ? [] : [selected]}
         onSelectionChange={({ detail }) => {
@@ -146,7 +182,8 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         }}
         ariaLabels={{
           selectionGroupLabel: 'Version selection',
-          itemSelectionLabel: (_, row) => `Select ${row.key} version ${row.versionId ?? NO_VALUE}`,
+          itemSelectionLabel: (_, row) =>
+            `Select ${row.key} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}`,
         }}
         wrapLines
         loading={listing.loading}
@@ -154,7 +191,19 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         empty={
           <Box textAlign="center" color="inherit">
             {failure === undefined ? (
-              <Box variant="strong">No versions found</Box>
+              <SpaceBetween size="xxs">
+                <Box variant="strong">No versions found</Box>
+                <Box variant="p" color="inherit">
+                  {prefix === '' ? (
+                    'This listing covers all keys'
+                  ) : (
+                    <>
+                      This listing covers keys that start with <ValueText kind="name" value={prefix} />
+                    </>
+                  )}{' '}
+                  in bucket <ValueText kind="name" value={name} />.
+                </Box>
+              </SpaceBetween>
             ) : (
               <SpaceBetween size="xs">
                 <StatusIndicator type={failure.type}>{failure.header}</StatusIndicator>
@@ -201,6 +250,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
                       disabledReason={disabledReason(
                         OPERATIONS.copyObject,
                         target !== undefined && selected?.latest === false,
+                        'Select an earlier object version to restore.',
                       )}
                       onClick={() => setChanging(target)}
                     >
