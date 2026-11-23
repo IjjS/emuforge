@@ -11,10 +11,16 @@ import { creationDateText } from '../../../../components/format-date';
 import type { TokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 
-const rotationTypes: Readonly<Record<string, string>> = {
-  AUTOMATIC: 'Automatic',
-  ON_DEMAND: 'On-demand',
-};
+function typeLabel(rotationType: RotationsListEntry['RotationType']) {
+  switch (rotationType) {
+    case 'AUTOMATIC':
+      return 'Automatic';
+    case 'ON_DEMAND':
+      return 'On-demand';
+    default:
+      return rotationType;
+  }
+}
 
 interface RotationHistoryProps {
   connection: AreaConnection;
@@ -37,13 +43,7 @@ export function RotationHistory({ connection, history, failure, onRetry }: Rotat
         {
           id: 'type',
           header: 'Rotation type',
-          cell: ({ RotationType }) => (
-            <ValueText
-              kind="fixed"
-              value={RotationType === undefined ? undefined : (rotationTypes[RotationType] ?? RotationType)}
-              none="-"
-            />
-          ),
+          cell: ({ RotationType }) => <ValueText kind="fixed" value={typeLabel(RotationType)} none="-" />,
         },
       ]}
       items={failure === undefined ? (history.items ?? []) : []}

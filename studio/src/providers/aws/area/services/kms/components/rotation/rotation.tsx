@@ -105,14 +105,16 @@ function RotationVisit({ connection, keyId }: RotationProps) {
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
-                  disabled={busy || enabled === undefined || statusFailure !== undefined || unavailable[toggleAction]}
+                  disabled={
+                    busy || enabled === undefined || statusFailure !== undefined || unavailable[toggleAction] === true
+                  }
                   loading={pending === toggleAction}
                   onClick={() => void handleAction(toggleAction)}
                 >
                   {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
-                  disabled={busy || unavailable.rotate}
+                  disabled={busy || unavailable.rotate === true}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
                 >
