@@ -54,9 +54,10 @@ function useReadScope(connection: AreaConnection, operation: string) {
 
 export function useSecretListing(connection: AreaConnection, includePlannedDeletion: boolean) {
   const { connectionFailure, generation, retryBeforeHealthPoll } = useReadScope(connection, LIST_SECRETS);
-  const [unsupported, setUnsupported] = useState<RequestFailure>();
+  const [unsupported, setUnsupported] = useState<{ failure: RequestFailure; generation: number }>();
   const listing = useTokenListing<SecretListEntry>({
-    key: [...SERVICE_KEY, LIST_SECRETS, includePlannedDeletion, PAGE_SIZE, generation],
+    // Keep the page that returned 501 while its controls are unavailable.
+    key: [...SERVICE_KEY, LIST_SECRETS, includePlannedDeletion, PAGE_SIZE, unsupported?.generation ?? generation],
     endpoint: connection.engineOrigin,
     enabled: connectionFailure === undefined && unsupported === undefined,
     operation: LIST_SECRETS,
@@ -70,10 +71,12 @@ export function useSecretListing(connection: AreaConnection, includePlannedDelet
       return { items: SecretList ?? [], ...(NextToken ? { next: NextToken } : {}) };
     },
   });
-  if (unsupported === undefined && listing.failure?.kind === 'not-implemented') setUnsupported(listing.failure);
+  if (unsupported === undefined && listing.failure?.kind === 'not-implemented') {
+    setUnsupported({ failure: listing.failure, generation });
+  }
   return {
     ...listing,
-    failure: unsupported ?? connectionFailure ?? listing.failure,
+    failure: unsupported?.failure ?? connectionFailure ?? listing.failure,
     refresh: () => {
       if (unsupported !== undefined) return;
       if (connectionFailure !== undefined) retryBeforeHealthPoll();
