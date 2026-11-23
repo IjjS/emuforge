@@ -22,7 +22,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../../../../../lib/aws/client-factory', () => ({ createAwsClient: () => ({ send }) }));
 
 const keyId = 'local-key';
-const connection = { engineOrigin: 'http://127.0.0.1:8310' };
+const connection = { engineOrigin: 'http://127.0.0.1:8310', result: undefined };
 const nextDate = new Date('2026-05-16T12:35:00Z');
 const rotationDate = new Date('2026-02-04T14:15:00Z');
 const enabledSettings = { KeyRotationEnabled: true, RotationPeriodInDays: 90, NextRotationDate: nextDate };
@@ -53,6 +53,14 @@ function click(name: string) {
 
 function expectField(label: string, value: string) {
   expect(screen.getByText(label).closest('dt')?.nextElementSibling).toHaveTextContent(value);
+}
+
+function pendingAnswer<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -95,8 +103,8 @@ describe('Key rotation', () => {
   });
 
   it('keeps the refreshed history and success notice when settings arrive later', async () => {
-    const settings = Promise.withResolvers<GetKeyRotationStatusCommandOutput>();
-    const history = Promise.withResolvers<ListKeyRotationsCommandOutput>();
+    const settings = pendingAnswer<GetKeyRotationStatusCommandOutput>();
+    const history = pendingAnswer<ListKeyRotationsCommandOutput>();
     let requested = false;
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) return requested ? settings.promise : enabledSettings;
