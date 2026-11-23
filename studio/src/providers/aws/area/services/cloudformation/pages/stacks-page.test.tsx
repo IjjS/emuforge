@@ -216,7 +216,9 @@ it.each(['/aws/cloudformation', '/aws/cloudformation/stacks'])(
     engine.answer.mockReturnValueOnce(page([]));
     open(path);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Stacks' })).toBeInTheDocument();
+    const heading = stackTable().findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent(/^Stacks$/);
+    expect(heading?.closest('h1')).toBeVisible();
     const crumbs = wrapper
       .findBreadcrumbGroup()
       ?.findBreadcrumbLinks()
@@ -424,8 +426,8 @@ it('discards visible rows and the token on disconnect and starts at the first pa
 });
 
 it.each([true, false])(
-  'uses one fresh connected check to restart a failed continuation (restart succeeds: %s)',
-  async (succeeds) => {
+  'restarts a failed continuation at most once per fresh connected check (first restart succeeds: %s)',
+  async (firstRestartSucceeds) => {
     const recoveryHelp = /Check that the local emulator is running on the configured port, then retry/;
     engine.answer
       .mockReturnValueOnce(page([summary('id-1', 'Old first page')], 'old-token'))
@@ -438,33 +440,32 @@ it.each([true, false])(
     expect(outageCalls.length).toBeGreaterThan(1);
     expect(outageCalls.slice(1)).toEqual(Array.from({ length: outageCalls.length - 1 }, () => 'old-token'));
 
-    connection.setConnection({ ...connected });
-    expect(screen.getByText(recoveryHelp)).toBeVisible();
-    expect(tokens()).toEqual(outageCalls);
-    if (succeeds) {
-      engine.answer.mockReturnValueOnce(page([summary('id-2', 'New first page')]));
-    }
-    connection.setConnection({ ...connected, checkedAt: 2 });
-    if (succeeds) {
-      await expectStack('New first page');
-      expect(tokens()).toEqual([...outageCalls, null]);
-      expectNoPagination();
-    } else {
+    const firstRestartCheck = { ...connected, checkedAt: 2 };
+    if (!firstRestartSucceeds) {
+      connection.setConnection(firstRestartCheck);
       await screen.findByText(recoveryHelp);
       const recoveryCalls = tokens().slice(outageCalls.length);
       expect(recoveryCalls.length).toBeGreaterThan(0);
       expect(recoveryCalls.every((token) => token === null)).toBe(true);
-    }
-
-    const afterRecovery = tokens();
-    connection.setConnection({ ...connected, checkedAt: 3 });
-    if (succeeds) {
-      expect(stackNames()).toEqual(['New first page']);
-    } else {
-      expect(screen.getByText(recoveryHelp)).toBeVisible();
       expect(retry()).toBeEnabled();
     }
-    expect(tokens()).toEqual(afterRecovery);
+
+    const latestCheck = firstRestartSucceeds ? connected : firstRestartCheck;
+    const callsBeforeSuccess = tokens();
+    engine.answer.mockReturnValueOnce(page([summary('id-2', 'New first page')]));
+    connection.setConnection({ ...latestCheck });
+    expect(screen.getByText(recoveryHelp)).toBeVisible();
+    expect(tokens()).toEqual(callsBeforeSuccess);
+
+    const recoveryCheck = { ...latestCheck, checkedAt: latestCheck.checkedAt + 1 };
+    connection.setConnection(recoveryCheck);
+    await expectStack('New first page');
+    expect(tokens()).toEqual([...callsBeforeSuccess, null]);
+    expectNoPagination();
+
+    connection.setConnection({ ...recoveryCheck, checkedAt: recoveryCheck.checkedAt + 1 });
+    expect(stackNames()).toEqual(['New first page']);
+    expect(tokens()).toEqual([...callsBeforeSuccess, null]);
   },
 );
 
