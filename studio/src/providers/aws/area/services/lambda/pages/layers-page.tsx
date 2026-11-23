@@ -60,7 +60,9 @@ function failureItem(failure: RequestFailure, header: string, connection: AreaCo
       content: `The emulator answered 501 Not Implemented for ${failure.operation}.${message ? ` ${message}` : ''}`,
     };
   }
-  const code = reportedServiceCode(failure) ?? (failure.kind === 'other' ? failure.code : undefined);
+  const statusOrCode =
+    failure.kind === 'other' ? (failure.code.match(/^HTTP \d{3}\b/)?.[0] ?? failure.code) : undefined;
+  const code = reportedServiceCode(failure) ?? statusOrCode;
   if (code === undefined) {
     const state = readFailureState(failure, connection, resource);
     return {
@@ -99,7 +101,10 @@ function ReadFailure({
       type={item.type}
       header={item.header}
       action={
-        <Button onClick={refresh} disabled={failure.kind === 'not-implemented'}>
+        <Button
+          onClick={refresh}
+          disabled={failure.kind === 'not-implemented' || connection.engineOrigin === undefined}
+        >
           Retry
         </Button>
       }
@@ -140,7 +145,7 @@ export function LayersPage({ connection }: { connection: AreaConnection }) {
 
 function LayerWorkspace({ connection, scope }: { connection: AreaConnection; scope: string }) {
   const connected = connection.result?.kind === 'connected';
-  const endpoint = connected || connection.result === undefined ? connection.engineOrigin : undefined;
+  const endpoint = connection.engineOrigin;
   const options = { endpoint, scope };
   const [selected, setSelected] = useState<string>();
   const [publishOpen, setPublishOpen] = useState(false);
@@ -150,7 +155,7 @@ function LayerWorkspace({ connection, scope }: { connection: AreaConnection; sco
   const flash = usePageFlash();
   const listingFailure =
     layers.failure ??
-    (!connected && connection.result !== undefined
+    (endpoint === undefined && connection.result !== undefined
       ? { kind: 'engine-did-not-answer' as const, operation: LIST_LAYERS }
       : undefined);
   const canPublish = connected && endpoint !== undefined && !publishUnavailable;

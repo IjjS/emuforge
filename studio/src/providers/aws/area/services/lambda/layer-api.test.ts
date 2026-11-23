@@ -55,7 +55,7 @@ it('follows the service markers to later layer names and earlier version ARNs', 
 });
 
 it('publishes the chosen ZIP bytes under an existing layer name and reads the assigned version', async () => {
-  answer = () => Response.json({ LayerArn: arn, LayerVersionArn: `${arn}:2`, Version: 2 }, { status: 201 });
+  answer = () => Response.json({ LayerVersionArn: `${arn}:2`, Version: 2 }, { status: 201 });
   // An empty ZIP archive with an end-of-central-directory record.
   const bytes = Uint8Array.of(80, 75, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   const file = new File([bytes], 'tools.zip', { type: 'application/zip' });
@@ -70,7 +70,9 @@ it('publishes the chosen ZIP bytes under an existing layer name and reads the as
   ).resolves.toEqual({ name: 'tools', version: 2 });
   expect(calls).toHaveLength(1);
   const [request] = calls;
-  expect(request?.method).toBe('POST');
-  expect(new URL(request!.url).pathname).toBe(`${layerPath}/tools/versions`);
-  await expect(request?.json()).resolves.toEqual({ Content: { ZipFile: 'UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==' } });
+  expect(request).toBeDefined();
+  if (request === undefined) return;
+  expect(request.method).toBe('POST');
+  expect(new URL(request.url).pathname).toBe(`${layerPath}/tools/versions`);
+  await expect(request.json()).resolves.toEqual({ Content: { ZipFile: 'UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==' } });
 });

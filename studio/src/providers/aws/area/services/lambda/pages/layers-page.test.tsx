@@ -48,6 +48,14 @@ function versionsFor(name: string, version: number): LayerPage<LayerVersion> {
   return { items: [{ arn: arn(name, version), version }], nextMarker: undefined };
 }
 
+function holdRead<T>() {
+  let resolve!: (page: LayerPage<T>) => void;
+  const promise = new Promise<LayerPage<T>>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function renderPage() {
   const client = new QueryClient();
   function Area() {
@@ -113,7 +121,7 @@ beforeEach(() => {
 });
 
 it('shows loading before revealing the first publication action for an empty result', async () => {
-  const read = Promise.withResolvers<LayerPage<LayerSummary>>();
+  const read = holdRead<LayerSummary>();
   list.mockReturnValueOnce(read.promise);
   renderPage();
 
@@ -126,7 +134,7 @@ it('shows loading before revealing the first publication action for an empty res
 });
 
 it('shows only beta versions when an earlier alpha request answers after the selection changed', async () => {
-  const alpha = Promise.withResolvers<LayerPage<LayerVersion>>();
+  const alpha = holdRead<LayerVersion>();
   versions.mockReturnValueOnce(alpha.promise);
   renderPage();
 
@@ -154,8 +162,8 @@ it('requires both a layer name and a ZIP file', async () => {
 });
 
 it('keeps the reported publication result after versions and then the listing refresh', async () => {
-  const listing = Promise.withResolvers<LayerPage<LayerSummary>>();
-  const refreshedVersions = Promise.withResolvers<LayerPage<LayerVersion>>();
+  const listing = holdRead<LayerSummary>();
+  const refreshedVersions = holdRead<LayerVersion>();
   list.mockResolvedValueOnce(layers).mockReturnValueOnce(listing.promise);
   versions.mockResolvedValueOnce(versionsFor('beta', 1)).mockReturnValueOnce(refreshedVersions.promise);
   renderPage();
