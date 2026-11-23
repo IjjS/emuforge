@@ -16,7 +16,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { LifecycleFeedback } from '../components/lifecycle/lifecycle-feedback';
-import { hasValue, secretValueInput, type SecretDraft } from '../components/lifecycle/secret-draft';
+import { EMPTY_SECRET_DRAFT, hasValue, secretValueInput, type SecretDraft } from '../components/lifecycle/secret-draft';
 import { SecretValueFields } from '../components/lifecycle/secret-value-fields';
 import { useLifecycleAction } from '../components/lifecycle/use-lifecycle-action';
 import { CREATE_SECRET, createSecret, GET_RANDOM_PASSWORD, getRandomPassword } from '../lifecycle-api';
@@ -38,7 +38,7 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
   const [description, setDescription] = useState('');
   const [keyArn, setKeyArn] = useState('');
   const [tags, setTags] = useState<TagDraft[]>([]);
-  const [draft, setDraft] = useState<SecretDraft>({ format: 'string', text: '' });
+  const [draft, setDraft] = useState<SecretDraft>(EMPTY_SECRET_DRAFT);
   const [asking, setAsking] = useState(false);
 
   const busy = action.pending !== undefined;
@@ -49,7 +49,8 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
     keyArn !== '' ||
     tags.length !== 0 ||
     draft.format !== 'string' ||
-    hasValue(draft);
+    draft.text !== '' ||
+    draft.file !== undefined;
 
   const handleCancel = () => {
     if (dirty) setAsking(true);
@@ -86,8 +87,9 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
       GET_RANDOM_PASSWORD,
       (endpoint, signal) => getRandomPassword(endpoint, {}, signal),
       (result) => {
-        if (result.RandomPassword === undefined) throw new Error('No password returned.');
-        setDraft({ format: 'string', text: result.RandomPassword });
+        const password = result.RandomPassword;
+        if (password === undefined) throw new Error('No password returned.');
+        setDraft((current) => ({ ...current, text: password }));
       },
     );
   };
@@ -117,7 +119,7 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
           }
         >
           <SpaceBetween size="l">
-            <Container header={<Header variant="h2">Secret details</Header>}>
+            <Container header={<Header variant="h2">Name and value</Header>}>
               <SpaceBetween size="m">
                 <FormField label="Secret name">
                   <Input
@@ -127,6 +129,25 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
                     onChange={({ detail }) => setName(detail.value)}
                   />
                 </FormField>
+                <SecretValueFields
+                  value={draft}
+                  disabled={busy}
+                  onChange={setDraft}
+                  generate={
+                    <Button
+                      formAction="none"
+                      loading={action.pending === GET_RANDOM_PASSWORD}
+                      disabled={busy || action.disabled(GET_RANDOM_PASSWORD)}
+                      onClick={handleGenerate}
+                    >
+                      Generate password
+                    </Button>
+                  }
+                />
+              </SpaceBetween>
+            </Container>
+            <Container header={<Header variant="h2">Optional metadata</Header>}>
+              <SpaceBetween size="m">
                 <FormField label="Description" constraintText="Optional">
                   <Textarea
                     value={description}
@@ -142,23 +163,6 @@ export function CreateSecretPage({ connection }: { connection: AreaConnection })
                   <Input value={keyArn} disabled={busy} onChange={({ detail }) => setKeyArn(detail.value)} />
                 </FormField>
               </SpaceBetween>
-            </Container>
-            <Container header={<Header variant="h2">Secret value</Header>}>
-              <SecretValueFields
-                value={draft}
-                disabled={busy}
-                onChange={setDraft}
-                generate={
-                  <Button
-                    formAction="none"
-                    loading={action.pending === GET_RANDOM_PASSWORD}
-                    disabled={busy || action.disabled(GET_RANDOM_PASSWORD)}
-                    onClick={handleGenerate}
-                  >
-                    Generate password
-                  </Button>
-                }
-              />
             </Container>
             <Container header={<Header variant="h2">Tags</Header>}>
               <AttributeEditor

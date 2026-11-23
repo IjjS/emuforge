@@ -25,7 +25,7 @@ import {
   updateSecret,
 } from '../../lifecycle-api';
 import { LifecycleFeedback } from './lifecycle-feedback';
-import { hasValue, secretValueInput, type SecretDraft } from './secret-draft';
+import { EMPTY_SECRET_DRAFT, hasValue, secretValueInput, type SecretDraft } from './secret-draft';
 import { SecretValueFields } from './secret-value-fields';
 import type { LifecycleAction } from './use-lifecycle-action';
 
@@ -53,7 +53,7 @@ export function LifecycleDialog({ edit, action, connection, name, details, onClo
     return '';
   });
   const [tagKey, setTagKey] = useState('');
-  const [draft, setDraft] = useState<SecretDraft>({ format: 'string', text: '' });
+  const [draft, setDraft] = useState<SecretDraft>(EMPTY_SECRET_DRAFT);
   const busy = action.pending !== undefined;
   const secret = { SecretId: name };
   const handleClose = () => {
@@ -95,11 +95,16 @@ export function LifecycleDialog({ edit, action, connection, name, details, onClo
       break;
     case 'value':
       operation = PUT_SECRET_VALUE;
-      title = 'Edit secret value';
-      label = 'Save secret value';
+      title = 'Store new version';
+      label = 'Store new version';
       message = 'New secret version stored.';
       ready = hasValue(draft);
-      content = <SecretValueFields value={draft} disabled={busy} onChange={setDraft} />;
+      content = (
+        <SpaceBetween size="m">
+          <Box>The new version becomes current. Existing versions keep their original values.</Box>
+          <SecretValueFields value={draft} disabled={busy} onChange={setDraft} />
+        </SpaceBetween>
+      );
       send = async (endpoint, signal) =>
         putSecretValue(endpoint, { ...secret, ...(await secretValueInput(draft, signal)) }, signal);
       break;

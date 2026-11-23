@@ -73,6 +73,37 @@ describe('Secrets list', () => {
     expect(row).toHaveTextContent(creationDateText(new Date(1795392000000)));
   });
 
+  it('shows both dates alongside the secret name in the compact row', async () => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      matches: media === '(width < 688px)',
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    lists.mockImplementation(({ IncludePlannedDeletion }) =>
+      answer({
+        SecretList: IncludePlannedDeletion
+          ? [
+              {
+                Name: 'scheduled',
+                Description: 'Scheduled secret',
+                LastChangedDate: 1795392000,
+                DeletedDate: 1795478400,
+              },
+            ]
+          : [],
+      }),
+    );
+    open();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include secrets scheduled for deletion' }));
+    const row = await screen.findByRole('row', { name: /scheduled/i });
+    expect(screen.getAllByRole('columnheader')).toHaveLength(1);
+    expect(within(row).getByRole('link', { name: 'scheduled' })).toBeVisible();
+    expect(within(row).getByText('Last changed')).toBeVisible();
+    expect(within(row).getByText('Scheduled deletion')).toBeVisible();
+    expect(row).toHaveTextContent(creationDateText(new Date(1795392000000)));
+    expect(row).toHaveTextContent(creationDateText(new Date(1795478400000)));
+  });
+
   it('traverses the next and previous pages by token', async () => {
     lists.mockImplementation(({ NextToken }) => (NextToken ? page('second') : page('first', 'next-page')));
     open();

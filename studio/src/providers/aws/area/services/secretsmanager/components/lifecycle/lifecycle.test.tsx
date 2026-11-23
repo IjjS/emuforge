@@ -12,6 +12,8 @@ import { SECRETS_PATH, secretPath } from '../../paths';
 import { useSecretDetail, useSecretListing } from '../../queries';
 
 const NAME = 'dev/key';
+const VERSION_ACTION = /^(Edit secret value|Store new version)$/;
+const NEW_VERSION_LABEL = 'Store new version';
 const ORIGINAL_KEY = 'arn:aws:kms:us-east-1:000000000000:key/original';
 const NEW_KEY = 'arn:aws:kms:us-east-1:000000000000:key/replacement';
 const DELETION_DATE = 1_800_000_000;
@@ -163,7 +165,7 @@ function chooseBinary(root: HTMLElement) {
   fireEvent.change(upload, { target: { files: [new File([new Uint8Array(BYTES)], 'secret.bin')] } });
 }
 
-async function click(name: string) {
+async function click(name: string | RegExp) {
   fireEvent.click(await screen.findByRole('button', { name }));
 }
 
@@ -224,7 +226,7 @@ async function expectList(router: ReturnType<typeof openLifecycle>['router']) {
   expect(router.state.location.pathname).toBe(SECRETS_PATH);
 }
 
-async function openDialog(button: string, name = button) {
+async function openDialog(button: string | RegExp, name = button) {
   await click(button);
   return screen.findByRole('dialog', { name });
 }
@@ -236,16 +238,19 @@ function submit(dialog: HTMLElement, name: string) {
 describe('Secret lifecycle', () => {
   it('does not retrieve the existing secret when opening the value editor', async () => {
     const { count } = openLifecycle();
-    const dialog = await openDialog('Edit secret value');
+    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
     expect(within(dialog).getByRole('textbox', { name: 'Secret value' })).toHaveValue('');
+    expect(
+      within(dialog).getByText('The new version becomes current. Existing versions keep their original values.'),
+    ).toBeVisible();
     expect(count('GetSecretValue')).toBe(0);
   });
 
   it('sends only the binary file bytes when replacing a value with a file', async () => {
     const { calls } = openLifecycle();
-    const dialog = await openDialog('Edit secret value');
+    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
     chooseBinary(dialog);
-    submit(dialog, 'Save secret value');
+    submit(dialog, NEW_VERSION_LABEL);
     await waitFor(() =>
       expect(calls).toHaveBeenCalledWith('PutSecretValue', {
         SecretId: NAME,
@@ -257,9 +262,9 @@ describe('Secret lifecycle', () => {
 
   it('sends only the entered string when replacing a value with text', async () => {
     const { calls } = openLifecycle();
-    const dialog = await openDialog('Edit secret value');
+    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
     enter('Secret value', STRING_VALUE, within(dialog));
-    submit(dialog, 'Save secret value');
+    submit(dialog, NEW_VERSION_LABEL);
     await waitFor(() =>
       expect(calls).toHaveBeenCalledWith('PutSecretValue', {
         SecretId: NAME,
@@ -387,8 +392,9 @@ const CHANGES = [
   {
     scenario: 'value editing',
     operation: 'PutSecretValue',
-    button: 'Edit secret value',
-    submit: 'Save secret value',
+    button: VERSION_ACTION,
+    title: NEW_VERSION_LABEL,
+    submit: NEW_VERSION_LABEL,
     inputs: { 'Secret value': STRING_VALUE },
     command: { SecretString: STRING_VALUE },
     changes: { VersionIdsToStages: { [NEXT_VERSION]: ['AWSCURRENT'], [ORIGINAL_VERSION]: ['AWSPREVIOUS'] } },
@@ -434,7 +440,7 @@ const PERMANENT = {
 };
 
 interface EditFlow {
-  button: string;
+  button: string | RegExp;
   title?: string;
   submit: string;
   inputs?: Record<string, string>;
@@ -541,5 +547,5 @@ it('disables both DeleteSecret entry points after a 501 and keeps other operatio
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(screen.getByRole('button', { name: 'Schedule deletion' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Permanently delete' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Edit secret value' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: VERSION_ACTION })).toBeEnabled();
 });

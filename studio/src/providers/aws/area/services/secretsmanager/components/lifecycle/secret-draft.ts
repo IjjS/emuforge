@@ -1,4 +1,10 @@
-export type SecretDraft = { format: 'string'; text: string } | { format: 'binary'; file: File | undefined };
+export interface SecretDraft {
+  format: 'string' | 'binary';
+  text: string;
+  file: File | undefined;
+}
+
+export const EMPTY_SECRET_DRAFT: SecretDraft = { format: 'string', text: '', file: undefined };
 
 export function hasValue(draft: SecretDraft): boolean {
   return draft.format === 'string' ? draft.text !== '' : draft.file !== undefined;
