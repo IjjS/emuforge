@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -67,7 +67,8 @@ function expectLabels(id: string, labels: string) {
 async function selectVersion(id: string) {
   const row = await findVersion(id);
   const control = required(historyTable()?.findRowSelectionArea(row), 'version selection');
-  fireEvent.click(within(control.getElement()).getByRole('radio'));
+  const radio = required(createWrapper(control.getElement()).findRadioButton(), 'version radio');
+  fireEvent.click(radio.findNativeInput().getElement());
 }
 
 async function versionPagination() {
@@ -77,10 +78,16 @@ async function versionPagination() {
 
 const stageTitles = { add: 'Add staging label', move: 'Move staging label', remove: 'Remove staging label' };
 
+async function stageMenu() {
+  const history = await section('Version history');
+  return required(createWrapper(history.findHeader().getElement()).findButtonDropdown(), 'Manage staging labels');
+}
+
 async function openStageDialog(operation: keyof typeof stageTitles) {
-  const dropdown = required(page().findButtonDropdown(), 'Manage staging labels');
-  fireEvent.click(dropdown.findNativeButton().getElement());
-  const item = await waitFor(() => required(dropdown.findItemById(operation), operation));
+  const dropdown = await stageMenu();
+  expect(dropdown.findNativeButton().getElement()).toHaveAccessibleName('Manage staging labels');
+  await act(() => dropdown.openDropdown());
+  const item = required(dropdown.findItemById(operation, { disabled: false }), operation);
   fireEvent.click(item.getElement());
   return findDialog(stageTitles[operation]);
 }
@@ -275,7 +282,7 @@ describe('Secret version history', () => {
     await expectAlert(dialogContent(dialog), `The emulator answered 501 Not Implemented for ${UPDATE}.`);
     expect(dialogButton(dialog, 'Add staging label').isDisabled()).toBe(true);
     press(dialog, 'Cancel');
-    expect(page().findButtonDropdown()?.findNativeButton().getElement()).toBeDisabled();
+    expect((await stageMenu()).findNativeButton().getElement()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Retrieve secret value' })).toBeEnabled();
   });
 });
