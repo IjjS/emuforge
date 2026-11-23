@@ -46,8 +46,8 @@ export const createUrl = (page: Page) => configuration(page).getByRole('button',
 export const deleteUrl = (page: Page) => configuration(page).getByRole('button', { name: 'Delete function URL' });
 
 export async function expectOverviewUrl(page: Page, url: string) {
-  const wrapper = createWrapper();
-  const content = page.locator(wrapper.findContentLayout().findContent().toSelector());
+  const wrapper = createWrapper(':scope');
+  const content = page.locator(createWrapper().findContentLayout().findContent().toSelector());
   const overview = content.locator(wrapper.findContainer().toSelector()).first();
   await expect(overview.locator(wrapper.findHeader().findHeadingText().toSelector()).first()).toHaveText(OVERVIEW);
   const field = wrapper.findKeyValuePairs().findItems().get(4);
