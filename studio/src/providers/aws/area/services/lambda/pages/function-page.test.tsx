@@ -1379,7 +1379,10 @@ describe('Function URL lifecycle', () => {
     await waitFor(() => expect(flashTexts()).toEqual([creating ? 'Function URL created.' : 'Function URL deleted.']));
     expect(screen.getByRole('button', { name: creating ? remove : create })).toBeInTheDocument();
     expect(PAGE.findModal()).toBeNull();
-    expect(headingText()).toBe('orders');
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    expect(norm(pageHeader?.findHeadingText().getElement().textContent)).toBe('orders');
     expect(value('Function URL')).toBe(creating ? changedUrl : '-');
     expect(screen.queryByRole('button', { name: 'Copy Function URL' }) !== null).toBe(creating);
     if (!creating) {
@@ -1481,7 +1484,10 @@ describe('Function URL lifecycle', () => {
     expect(engine.gets).toHaveLength(2);
     expect(engine.urlGets).toHaveLength(2);
     expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
-    expect(headingText()).toBe('orders');
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    expect(norm(pageHeader?.findHeadingText().getElement().textContent)).toBe('orders');
     expect(value('Function URL')).toBe('-');
     await expectFlashRevealed();
   });
