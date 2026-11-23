@@ -32,6 +32,17 @@ export function secretLink(page: Page, name: string) {
   return page.locator(ui.findTable().findRows().toSelector()).getByRole('link', { name, exact: true });
 }
 
+/** Resolve the named row and use the published table cell selector inside that row. */
+export async function namedRowCell(page: Page, identifyingControl: Locator, column: number) {
+  const table = ui.findTable();
+  const row = page.locator(table.findRows().toSelector()).filter({ has: identifyingControl });
+  await expect(row).toBeVisible();
+  const index = await row.evaluate((element) => (element as HTMLTableRowElement).sectionRowIndex + 1);
+  return page
+    .locator(table.findBodyCell(index, column).toSelector())
+    .and(row.getByRole('cell').or(row.getByRole('rowheader')));
+}
+
 export async function detail(page: Page, name: string) {
   await page.goto(detailPath(name));
   await expect(button(page, 'Retrieve secret value')).toBeEnabled();
@@ -48,6 +59,19 @@ export function valueRequests(page: Page) {
 
 export const secretValue = (page: Page) =>
   page.locator(ui.findContainer().toSelector()).filter({ has: button(page, 'Hide secret value') });
+
+/** Locate the value text regardless of whether the other controls in its panel change. */
+export function revealedText(page: Page, value: string) {
+  return page
+    .locator(ui.findContainer().toSelector())
+    .filter({ has: page.getByRole('heading', { name: 'Secret value', exact: true }) })
+    .getByText(value);
+}
+
+export async function expectRevealedText(locator: Locator, value: string) {
+  await expect(locator).toBeVisible();
+  await expect.poll(() => locator.textContent()).toBe(value);
+}
 
 export async function openSection(page: Page, name: string) {
   const toggle = button(page, name);

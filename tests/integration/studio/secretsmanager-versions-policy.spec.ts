@@ -6,7 +6,8 @@ import {
   detail,
   modal,
   openSection,
-  secretValue,
+  revealedText,
+  expectRevealedText,
   submit,
   textbox,
   valueRequests,
@@ -37,7 +38,8 @@ test('studio.secretsmanager-version-value', async ({ ctx, page }) => {
   await versionRadio(page, first.VersionId!).check();
   expect(reads).toEqual([]);
   await button(page, 'Retrieve secret value').click();
-  await expect(secretValue(page)).toContainText((await f.value(first.VersionId)).SecretString!);
+  const expected = (await f.value(first.VersionId)).SecretString!;
+  await expectRevealedText(revealedText(page, expected), expected);
 });
 
 for (const mode of ['add', 'move', 'remove'] as const) {

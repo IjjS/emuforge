@@ -8,7 +8,9 @@ import {
   expectSettledList,
   listPath,
   secretLink,
-  secretValue,
+  revealedText,
+  expectRevealedText,
+  namedRowCell,
   ui,
   valueRequests,
 } from './services/secretsmanager/screen';
@@ -20,10 +22,9 @@ test('studio.secretsmanager-external-metadata', async ({ ctx, page }) => {
   const reads = valueRequests(page);
   await page.goto('/aws/secretsmanager');
   const link = secretLink(page, f.name);
-  const row = page
-    .locator(ui.findTable().findRows().toSelector())
-    .filter({ has: page.getByRole('link', { name: f.name }) });
-  await expect(row).toContainText(record.Description!);
+  const cell = await namedRowCell(page, page.getByRole('link', { name: f.name, exact: true }), 2);
+  await expect(cell).toBeVisible();
+  await expect(cell).toHaveText(record.Description!);
   await link.click();
   await expect(page.getByText(record.ARN!, { exact: true })).toBeVisible();
   expect(reads).toEqual([]);
@@ -36,10 +37,9 @@ test('studio.secretsmanager-refresh', async ({ ctx, page }) => {
   await expect(secretLink(page, f.name)).toBeVisible();
   await f.client.updateSecret({ SecretId: f.name, Description: 'Externally updated' });
   await button(page, 'Refresh').click();
-  const row = page
-    .locator(ui.findTable().findRows().toSelector())
-    .filter({ has: page.getByRole('link', { name: f.name }) });
-  await expect(row).toContainText((await f.describe()).Description!);
+  const cell = await namedRowCell(page, page.getByRole('link', { name: f.name, exact: true }), 2);
+  await expect(cell).toBeVisible();
+  await expect(cell).toHaveText((await f.describe()).Description!);
 });
 
 test('studio.secretsmanager-reentry', async ({ ctx, page }) => {
@@ -89,9 +89,9 @@ test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
   await f.emulator!.startAgain();
   await expectLine(page, connectedAt(f.emulatorPort), 60000);
   const empty = page.locator(ui.findTable().findEmptySlot().toSelector());
-  await expect(empty).toContainText('No secrets', { timeout: 60000 });
+  await expect(empty.getByText('No secrets', { exact: true })).toBeVisible({ timeout: 60000 });
   await expect(secretLink(page, f.name)).toHaveCount(0);
-  await expect(empty).toContainText('Secrets stored in this emulator will appear here.');
+  await expect(empty.getByText('Secrets stored in this emulator will appear here.', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(originalUrl);
   expect(await page.evaluate((doc) => doc === document, documentBeforeStop)).toBe(true);
   await documentBeforeStop.dispose();
@@ -105,21 +105,27 @@ test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
   await detail(page, f.name);
   await expect(page.getByText('Previous instance metadata', { exact: true })).toBeVisible();
   await button(page, 'Retrieve secret value').click();
-  await expect(secretValue(page)).toContainText('fixture text');
+  const shown = revealedText(page, 'fixture text');
+  await expectRevealedText(shown, 'fixture text');
   expect(reads).toEqual(['GetSecretValue']);
   const documentBeforeStop = await page.evaluateHandle(() => document);
   const originalUrl = page.url();
+  const departures: string[] = [];
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && frame.url() !== originalUrl) departures.push(frame.url());
+  });
   await f.emulator!.stop();
   await expectLine(page, notStartedOn(f.emulatorPort));
-  await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
+  await expect(shown).toBeHidden();
   await f.emulator!.startAgain();
   await expectLine(page, connectedAt(f.emulatorPort), 60000);
   await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
   await expect(page.getByRole('link', { name: 'Back to secrets' })).toBeVisible();
   await expect(page.getByText('Previous instance metadata')).toBeHidden();
-  await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
+  await expect(shown).toBeHidden();
   expect(reads).toEqual(['GetSecretValue']);
   await expect(page).toHaveURL(originalUrl);
+  expect(departures).toEqual([]);
   expect(await page.evaluate((doc) => doc === document, documentBeforeStop)).toBe(true);
   await documentBeforeStop.dispose();
   await expect(direct(ctx, f.emulatorPort).describeSecret({ SecretId: f.name })).rejects.toMatchObject({

@@ -5,6 +5,9 @@ import {
   button,
   detail,
   expectSettledList,
+  namedRowCell,
+  revealedText,
+  expectRevealedText,
   listPath,
   modal,
   secretLink,
@@ -148,8 +151,13 @@ for (const mode of ['add', 'edit', 'remove'] as const) {
       ).toHaveCount(0);
     } else {
       expect(tag?.Value).toBe('revised');
-      const rows = page.locator(ui.findTable().findRows().toSelector());
-      await expect(rows.filter({ has: button(page, 'Edit tag purpose') })).toContainText(tag!.Value!);
+      const edit = button(page, 'Edit tag purpose');
+      const keyCell = await namedRowCell(page, edit, 1);
+      const valueCell = await namedRowCell(page, edit, 2);
+      await expect(keyCell).toBeVisible();
+      await expect(keyCell).toHaveText(tag!.Key!);
+      await expect(valueCell).toBeVisible();
+      await expect(valueCell).toHaveText(tag!.Value!);
     }
   });
 }
@@ -166,7 +174,7 @@ test('studio.secretsmanager-put-value', async ({ ctx, page }) => {
   expect(updated.SecretString).toBe('New fixture value');
   await expect(page.getByText(updated.VersionId!, { exact: true })).toBeVisible();
   await button(page, 'Retrieve secret value').click();
-  await expect(secretValue(page)).toContainText(updated.SecretString!);
+  await expectRevealedText(revealedText(page, updated.SecretString!), updated.SecretString!);
 });
 
 test('studio.secretsmanager-schedule-delete', async ({ ctx, page }) => {
