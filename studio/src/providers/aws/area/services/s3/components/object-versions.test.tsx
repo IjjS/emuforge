@@ -666,11 +666,16 @@ it('rejects a download after the selected null body changes and guides the user 
   await toggleVersions();
   await select('null');
   liveETag = '"replacement-null-body"';
-  fireEvent.click(action('Download'));
+  const download = action('Download');
+  download.focus();
+  fireEvent.click(download);
   await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
   expect(flashContent('error')).toHaveTextContent('The specified ETag no longer matches.');
   expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
   expect(flashContent('error')).toHaveTextContent(RESELECT);
+  expect(flashContent('error')?.textContent?.startsWith(CHANGED_BODY + ' ' + RESELECT)).toBe(true);
+  const recovery = required(createWrapper(required(flashContent('error'))).find('[tabindex="-1"]')).getElement();
+  await waitFor(() => expect(recovery).toHaveFocus());
   expect(engine.downloadConditions).toEqual([NULL_ETAG]);
   expect(save).not.toHaveBeenCalled();
 });
@@ -697,6 +702,7 @@ it('rejects a restore after the selected null body changes and keeps the current
   expect(flashContent('error')).toHaveTextContent('The specified copy source ETag no longer matches.');
   expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
   expect(flashContent('error')).toHaveTextContent(RESELECT);
+  expect(flashContent('error')?.textContent?.startsWith(CHANGED_BODY + ' ' + RESELECT)).toBe(true);
   expect(engine.copyConditions).toEqual([NULL_ETAG]);
   expect(flashContent('success')).toBeUndefined();
   await expectVersion('current', 'Version', true);
@@ -741,11 +747,16 @@ it.each([
   expect(newer.control).not.toBeChecked();
   expect(older.control).not.toBeChecked();
 
-  async function submit() {
+  async function submit(etag: string) {
     if (operation === RESTORE) {
       const { content, input, confirm } = await confirmDialog(RESTORE);
       await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+      expect(dialogValue(content, 'Source ETag').textContent).toBe(etag);
+      expectDisabled(confirm);
+      enter(input, 'history.txt');
+      expectDisabled(confirm);
       enter(input, KEY);
+      expect(confirm).toBeEnabled();
       fireEvent.click(confirm);
     } else {
       fireEvent.click(action('Download'));
@@ -756,7 +767,7 @@ it.each([
   expect(older.control).toBeChecked();
   expect(newer.control).not.toBeChecked();
   expect(table().findSelectedRows()).toHaveLength(1);
-  await submit();
+  await submit(NULL_ETAG);
   await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
   expect(flashContent('error')).toHaveTextContent(preconditionMessage);
   expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
@@ -770,7 +781,7 @@ it.each([
   expect(older.control).not.toBeChecked();
   expect(table().findSelectedRows()).toHaveLength(1);
   expect(action(operation)).toBeEnabled();
-  await submit();
+  await submit(replacement);
   if (operation === RESTORE) {
     await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
     expect(engine.copyConditions).toEqual([NULL_ETAG, replacement]);

@@ -86,6 +86,9 @@ export function ObjectVersionsDialog({
               label: restoring ? 'Source version ID' : 'Delete marker version ID',
               value: <ValueText kind="name" value={target.versionId} />,
             },
+            ...(restoring && target.versionId === 'null' && target.etag !== undefined
+              ? [{ label: 'Source ETag', value: <ValueText kind="name" value={target.etag} /> }]
+              : []),
             ...(restoring && status !== undefined ? [{ label: 'Bucket versioning', value: status }] : []),
           ]}
         />

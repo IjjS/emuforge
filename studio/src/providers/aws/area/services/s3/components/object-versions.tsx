@@ -154,6 +154,29 @@ function saveVersion({ bytes, contentType }: ObjectBody, key: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function ChangedBodyRecovery({ focusFrom }: { focusFrom: Element | null }) {
+  const instruction = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (focusFrom === null) return;
+    const frame = requestAnimationFrame(() => {
+      // The disabled Download can leave focus on the body. Respect focus deliberately moved elsewhere.
+      if (document.activeElement !== document.body && document.activeElement !== focusFrom) return;
+      instruction.current?.focus({ preventScroll: true });
+      instruction.current?.scrollIntoView?.({ block: 'center' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusFrom]);
+
+  return (
+    <Box variant="p">
+      <span ref={instruction} tabIndex={focusFrom === null ? undefined : -1}>
+        The null version points to a different body than the one you selected. Refresh the version history and reselect
+        the version.
+      </span>
+    </Box>
+  );
+}
+
 interface ObjectVersionsProps {
   name: string;
   prefix: string;
@@ -212,6 +235,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   ) {
     if (active.current) return;
     const signal = getSignal();
+    const downloadFocus = operation === OPERATIONS.getObject ? document.activeElement : null;
     active.current = true;
     setPending(operation);
     try {
@@ -231,20 +255,16 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
           ids: new Set([...(current?.view === listingView ? current.ids : []), rowId(requested)]),
         }));
       }
-      const refreshNeeded = changedBody || (failure.kind === 'other' && failure.code === 'UnverifiedVersionBody');
+      const unverifiedBody = failure.kind === 'other' && failure.code === 'UnverifiedVersionBody';
       flash.show([
         {
           type: view.type,
           header: view.header,
           content: (
             <>
+              {changedBody && <ChangedBodyRecovery focusFrom={downloadFocus} />}
               {view.detail}
-              {refreshNeeded && (
-                <Box variant="p">
-                  {changedBody && 'The null version points to a different body than the one you selected. '}
-                  Refresh the version history and reselect the version.
-                </Box>
-              )}
+              {unverifiedBody && <Box variant="p">Refresh the version history and reselect the version.</Box>}
             </>
           ),
         },
