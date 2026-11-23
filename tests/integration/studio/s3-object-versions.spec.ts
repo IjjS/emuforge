@@ -105,7 +105,7 @@ test("studio.s3-restore-enabled-version", async ({ ctx, page }) => {
   const modal = await versionDialog(page, "Restore version");
   await modal.input.fill(f.key);
   await modal.submit.click();
-  await expectFlash(page, "success", "Version restored.");
+  await expect(modal.dialog).toBeHidden();
   const after = await f.history();
   expect(
     after
@@ -117,6 +117,12 @@ test("studio.s3-restore-enabled-version", async ({ ctx, page }) => {
   expect(current).toHaveLength(1);
   expect([newer, "null"]).not.toContain(current[0].versionId);
   await expectHistory(page, after);
+  await expectFlash(page, "success", "Version restored.");
+  await expect(
+    page.locator(
+      createWrapper().findFlashbar().findItemsByType("success").toSelector(),
+    ),
+  ).toBeVisible();
   expect(await f.current()).toEqual(Buffer.from("older body"));
 });
 
@@ -140,7 +146,7 @@ test("studio.s3-restore-suspended-version", async ({ ctx, page }) => {
   expect(await f.current()).toEqual(Buffer.from("current null body"));
   await modal.input.fill(f.key);
   await modal.submit.click();
-  await expectFlash(page, "success", "Version restored.");
+  await expect(modal.dialog).toBeHidden();
   const after = await f.history();
   expect(
     after.filter((row) => row.isLatest).map((row) => row.versionId),
@@ -152,6 +158,27 @@ test("studio.s3-restore-suspended-version", async ({ ctx, page }) => {
       .sort(),
   ).toEqual([older, newer].sort());
   await expectHistory(page, after);
+  // The current null ID survives this write. Its displayed ETag witnesses the new body.
+  const head = await s3Direct(ctx, f.port, {
+    method: "HEAD",
+    pathname: "/" + f.bucket + "/" + f.key,
+  });
+  if ("error" in head) throw new Error(head.error);
+  expect(head.status).toBe(200);
+  const etag = head.headers.etag;
+  expect(etag).toBeTruthy();
+  await expect(
+    page
+      .locator(createWrapper().findTable().findRows().toSelector() + ":visible")
+      .filter({ hasText: etag }),
+  ).toHaveCount(1);
+
+  await expectFlash(page, "success", "Version restored.");
+  await expect(
+    page.locator(
+      createWrapper().findFlashbar().findItemsByType("success").toSelector(),
+    ),
+  ).toBeVisible();
   expect(await f.current()).toEqual(Buffer.from("older body"));
 });
 
@@ -168,13 +195,19 @@ test("studio.s3-remove-delete-marker", async ({ ctx, page }) => {
   const modal = await versionDialog(page, "Remove delete marker");
   await modal.input.fill(f.key);
   await modal.submit.click();
-  await expectFlash(page, "success", "Delete marker removed.");
+  await expect(modal.dialog).toBeHidden();
   const after = await f.history();
   expect(after.map((row) => row.versionId).sort()).toEqual(
     [older, newer].sort(),
   );
   expect(after.find((row) => row.isLatest)?.versionId).toBe(newer);
   await expectHistory(page, after);
+  await expectFlash(page, "success", "Delete marker removed.");
+  await expect(
+    page.locator(
+      createWrapper().findFlashbar().findItemsByType("success").toSelector(),
+    ),
+  ).toBeVisible();
   expect(await f.current()).toEqual(Buffer.from("newer body"));
 });
 

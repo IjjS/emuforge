@@ -49,16 +49,23 @@ function visible(page: Page, selector: { toSelector(): string }) {
 }
 
 function readRows(page: Page) {
-  return visible(page, table.findRows()).evaluateAll((elements) =>
-    elements.map((element) => {
-      const cells = (element as HTMLTableRowElement).cells;
-      return {
-        key: cells[1]?.innerText,
-        versionId: cells[2]?.innerText.split(/\s/)[0] ?? "",
-        type: cells[3]?.innerText,
-        latest: cells[4]?.innerText,
-      };
-    }),
+  // Expand only the row index of each Cloudscape selector inside the atomic DOM read.
+  const rowSlot = 987654321;
+  const columns = [2, 3, 4, 5].map((column) =>
+    table.findBodyCell(rowSlot, column).toSelector(),
+  );
+  return visible(page, table.findRows()).evaluateAll(
+    (elements, { columns, rowSlot }) =>
+      elements.map((row, index) => {
+        const [key, id, type, latest] = columns.map(
+          (selector) =>
+            row.querySelector<HTMLElement>(
+              selector.replace(String(rowSlot), String(index + 1)),
+            )?.innerText,
+        );
+        return { key, versionId: id?.split(/\s/)[0] ?? "", type, latest };
+      }),
+    { columns, rowSlot },
   );
 }
 
