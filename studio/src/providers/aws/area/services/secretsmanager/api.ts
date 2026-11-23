@@ -15,14 +15,12 @@ export const DESCRIBE_SECRET = 'DescribeSecret';
 export const GET_SECRET_VALUE = 'GetSecretValue';
 
 const clients = new Map<string, SecretsManagerClient>();
-const singleAttemptClients = new Map<string, SecretsManagerClient>();
 
-export function secretsManagerClient(endpoint: string, singleAttempt = false): SecretsManagerClient {
-  const cache = singleAttempt ? singleAttemptClients : clients;
-  let client = cache.get(endpoint);
+export function secretsManagerClient(endpoint: string): SecretsManagerClient {
+  let client = clients.get(endpoint);
   if (client === undefined) {
-    client = createAwsClient(SecretsManagerClient, { endpoint, singleAttempt });
-    cache.set(endpoint, client);
+    client = createAwsClient(SecretsManagerClient, { endpoint });
+    clients.set(endpoint, client);
   }
   return client;
 }
@@ -47,7 +45,7 @@ export function describeSecret(endpoint: string, name: string, signal: AbortSign
 export function getSecretValue(endpoint: string, input: GetSecretValueCommandInput, signal: AbortSignal) {
   return sendRequest(
     GET_SECRET_VALUE,
-    (abortSignal) => secretsManagerClient(endpoint, true).send(new GetSecretValueCommand(input), { abortSignal }),
+    (abortSignal) => secretsManagerClient(endpoint).send(new GetSecretValueCommand(input), { abortSignal }),
     signal,
   );
 }

@@ -26,7 +26,7 @@ const list = vi.fn<() => Response>();
 const describeSecret = vi.fn<(input: SecretInput) => Response>();
 const retrieve = vi.fn<(input: SecretInput, signal: AbortSignal) => Response | Promise<Response>>();
 
-function connected(): CheckResult {
+function connected(): Extract<CheckResult, { kind: 'connected' }> {
   return { kind: 'connected', checkedAt: Date.now(), emulator: EMULATOR };
 }
 
@@ -42,6 +42,14 @@ function disconnected(): CheckResult {
 
 function answer(body: object, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/x-amz-json-1.1' } });
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function notFound() {
@@ -65,16 +73,17 @@ beforeEach(() => {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }));
-  vi.stubGlobal('fetch', async (request: Request) => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname === '/__emuforge/session') return answer({ token: 'test-session' });
-    const input = (await request.json()) as SecretInput;
+    const body = (await request.json()) as SecretInput;
     switch (request.headers.get('x-amz-target')?.split('.').at(-1)) {
       case 'ListSecrets':
         return list();
       case 'DescribeSecret':
-        return describeSecret(input);
+        return describeSecret(body);
       case 'GetSecretValue':
-        return retrieve(input, request.signal);
+        return retrieve(body, request.signal);
       default:
         throw new Error('Unexpected AWS request');
     }
@@ -184,7 +193,7 @@ describe('Secret details and value', () => {
   });
 
   it('discards an in-flight value reply after hiding', async () => {
-    const late = Promise.withResolvers<Response>();
+    const late = deferredResponse();
     retrieve.mockImplementation(() => late.promise);
     open();
     const signal = await requestValue();
@@ -196,7 +205,7 @@ describe('Secret details and value', () => {
   });
 
   it('discards an in-flight value reply after changing the name in the query', async () => {
-    const late = Promise.withResolvers<Response>();
+    const late = deferredResponse();
     retrieve.mockImplementation(() => late.promise);
     const { router } = open();
     const signal = await requestValue();
@@ -209,7 +218,7 @@ describe('Secret details and value', () => {
   });
 
   it('discards an in-flight value reply after switching target on the same engine', async () => {
-    const late = Promise.withResolvers<Response>();
+    const late = deferredResponse();
     retrieve.mockImplementation(() => late.promise);
     const { connect } = open();
     const signal = await requestValue();
@@ -241,7 +250,7 @@ describe('Secret details and value', () => {
   });
 
   it('cancels a pending value request on disconnect and discards the late value', async () => {
-    const late = Promise.withResolvers<Response>();
+    const late = deferredResponse();
     retrieve.mockImplementation(() => late.promise);
     const { connect } = open();
     const signal = await requestValue();

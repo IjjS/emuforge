@@ -27,7 +27,8 @@ function page(Name: string, NextToken?: string, Description?: string) {
 beforeEach(() => {
   connection = { engineOrigin: `http://127.0.0.1:${String(nextPort++)}`, result: undefined };
   lists.mockReset().mockImplementation(() => answer({ SecretList: [] }));
-  vi.stubGlobal('fetch', async (request: Request) => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname === '/__emuforge/session') return answer({ token: 'test-session' });
     expect(request.headers.get('x-amz-target')).toMatch(/\.ListSecrets$/);
     return lists((await request.json()) as ListInput);
@@ -99,12 +100,15 @@ describe('Secrets list', () => {
   });
 
   it('returns to the first page when planned deletion changes and drops the previous late reply', async () => {
-    const late = Promise.withResolvers<Response>();
+    let resolvePreviousPage!: (response: Response) => void;
+    const previousPage = new Promise<Response>((resolve) => {
+      resolvePreviousPage = resolve;
+    });
     lists.mockImplementation(({ NextToken, IncludePlannedDeletion }) => {
       if (IncludePlannedDeletion) {
         return answer({ SecretList: [{ Name: 'scheduled', DeletedDate: 1795392000 }] });
       }
-      return NextToken ? late.promise : page('first', 'next-page');
+      return NextToken ? previousPage : page('first', 'next-page');
     });
     open();
     await screen.findByRole('link', { name: 'first' });
@@ -115,7 +119,7 @@ describe('Secrets list', () => {
     expect(row).toHaveTextContent(creationDateText(new Date(1795392000000)));
     expect(lists.mock.lastCall?.[0]).toEqual(expect.objectContaining({ IncludePlannedDeletion: true }));
     expect(lists.mock.lastCall?.[0].NextToken).toBeUndefined();
-    await act(async () => late.resolve(page('late', 'wrong-page')));
+    await act(async () => resolvePreviousPage(page('late', 'wrong-page')));
     expect(screen.queryByRole('link', { name: 'late' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
   });
