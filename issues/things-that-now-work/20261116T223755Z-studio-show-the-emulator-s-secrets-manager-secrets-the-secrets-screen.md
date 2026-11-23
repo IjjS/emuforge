@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|secretsmanager|secrets-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.secretsmanager-external-metadata studio.secretsmanager-refresh studio.secretsmanager-reentry studio.secretsmanager-notice studio.secretsmanager-store-generated studio.secretsmanager-duplicate-name studio.secretsmanager-binary-create studio.secretsmanager-binary-retrieve studio.secretsmanager-description studio.secretsmanager-change-key studio.secretsmanager-tag-add studio.secretsmanager-tag-edit studio.secretsmanager-tag-remove studio.secretsmanager-put-value studio.secretsmanager-stage-add studio.secretsmanager-stage-move studio.secretsmanager-stage-remove studio.secretsmanager-policy-save studio.secretsmanager-policy-remove studio.secretsmanager-rotation-schedule studio.secretsmanager-rotation-cancel studio.secretsmanager-replica-add studio.secretsmanager-version-history studio.secretsmanager-version-value studio.secretsmanager-schedule-delete studio.secretsmanager-restore studio.secretsmanager-permanent-delete studio.secretsmanager-missing-secret studio.secretsmanager-rotate-now studio.secretsmanager-rotation-refused studio.secretsmanager-replica-remove studio.secretsmanager-restart-clears-secrets studio.secretsmanager-restart-clears-detail
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's Secrets Manager secrets: the Secrets screen
