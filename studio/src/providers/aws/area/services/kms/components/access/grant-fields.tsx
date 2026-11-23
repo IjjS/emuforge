@@ -29,11 +29,10 @@ const operationDescriptions: Partial<Record<GrantOperation, string>> = {
   ReEncryptTo: 'Use this key as the destination key for re-encryption.',
 };
 const operations = Object.values(GrantOperation);
-const options = operations.map((operation) => ({
-  label: operation,
-  value: operation,
-  description: operationDescriptions[operation],
-}));
+const options = operations.map((operation) => {
+  const description = operationDescriptions[operation];
+  return { label: operation, value: operation, ...(description === undefined ? {} : { description }) };
+});
 const groupedOptions = Array.from(new Set(Object.values(operationGroups)), (label) => ({
   label,
   options: options.filter(({ value }) => operationGroups[value] === label),
