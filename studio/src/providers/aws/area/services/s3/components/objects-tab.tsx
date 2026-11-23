@@ -9,6 +9,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
+import Toggle from '@cloudscape-design/components/toggle';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
@@ -22,6 +23,7 @@ import { lineText } from './bucket-read';
 import { CreateFolderDialog } from './create-folder-dialog';
 import { DeleteObjectsDialog } from './delete-objects-dialog';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
+import { ObjectVersions } from './object-versions';
 import { listingFailure, objectRows, rowType, type Row } from './objects-rows';
 import { ObjectsBucketGone, ObjectsTableBody, type ObjectsBody } from './objects-states';
 
@@ -70,7 +72,37 @@ interface ObjectsTabProps {
 }
 
 /** The tab "Objects" of bucket `name` at `prefix`. */
-export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabProps) {
+export function ObjectsTab(props: ObjectsTabProps) {
+  const [showVersions, setShowVersions] = useState(false);
+  const [objectsRevision, setObjectsRevision] = useState(0);
+
+  return (
+    <SpaceBetween size="s">
+      <Toggle checked={showVersions} onChange={({ detail }) => setShowVersions(detail.checked)}>
+        Show versions
+      </Toggle>
+      <CurrentObjects {...props} visible={!showVersions} revision={objectsRevision} />
+      {showVersions && (
+        <ObjectVersions
+          name={props.name}
+          prefix={props.prefix}
+          endpoint={props.connection.engineOrigin}
+          onChanged={() => setObjectsRevision((current) => current + 1)}
+        />
+      )}
+    </SpaceBetween>
+  );
+}
+
+/** The ordinary listing stays ready at this prefix while version history is open. */
+function CurrentObjects({
+  name,
+  prefix,
+  connection,
+  announce,
+  visible,
+  revision,
+}: ObjectsTabProps & { visible: boolean; revision: number }) {
   const handleFollow = useFollow();
   const modalRoot = useAreaModalRoot();
   const filterRef = useRef<TextFilterProps.Ref>(null);
@@ -84,6 +116,7 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
     prefix,
     filter,
     pageSize: preferences.pageSize,
+    revision,
   });
   const { page, refresh } = listing;
   const rows = page === undefined || page === NO_SUCH_BUCKET ? undefined : objectRows(page, prefix);
@@ -248,6 +281,7 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
     [view],
   );
 
+  if (!visible) return null;
   if (page === NO_SUCH_BUCKET) {
     return <ObjectsBucketGone name={name} />;
   }

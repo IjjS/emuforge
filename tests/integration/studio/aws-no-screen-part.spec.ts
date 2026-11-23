@@ -103,7 +103,7 @@ import {
   OBJECTS,
   openBucketPage,
   sectionButton,
-  VERSIONING,
+  TAGS,
   WEBSITE,
 } from './services/s3/s3-bucket-page';
 
@@ -117,11 +117,11 @@ const GO_TO_BUCKETS = goTo(S3.first);
 const DIRECTORY_PATH = '/aws/s3/directory-buckets';
 
 /**
- * "Edit" of "Bucket Versioning" and of "Static website hosting", for `name` (R2's table; the website section stands
+ * "Edit" of "Tags" and of "Static website hosting", for `name` (R2's table; the website section stands
  * for the tiering section issue 480 removed); the tiering section's old "Create configuration" path, still a path no
  * screen matches, for the 114-character path of the layout lines; and a bucket's `…/metrics`, a tab issue 480 removed.
  */
-const versioningEditPath = (name: string) => `/aws/s3/bucket/${name}/property/versioning/edit`;
+const tagsEditPath = (name: string) => `/aws/s3/bucket/${name}/property/tags/edit`;
 const websiteEditPath = (name: string) => `/aws/s3/bucket/${name}/property/website/edit`;
 const tieringCreatePath = (name: string) => `/aws/s3/bucket/${name}/property/intelligent-tiering/create`;
 const metricsPath = (name: string) => `${bucketPath(name)}/metrics`;
@@ -164,31 +164,31 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'part-says');
   const name = `${p}-b`;
-  const edit = versioningEditPath(name);
+  const edit = tagsEditPath(name);
   const seeded = new Seeded(ctx, port);
   await seeded.bucket(name);
 
-  /** From the bucket's page, "Edit" of "Bucket Versioning", without a document load; the page is not read here. */
-  async function fromVersioningEdit(): Promise<void> {
+  /** From the bucket's page, "Edit" of "Tags", without a document load; the page is not read here. */
+  async function fromTagsEdit(): Promise<void> {
     await openBucketPage(page, name);
     await markPage(page);
-    await chooseSectionButton(page, VERSIONING, 'Edit');
+    await chooseSectionButton(page, TAGS, 'Edit');
     await expect(page).toHaveURL(addressOf(edit));
-    expect(await stillSamePage(page), '"Edit" of "Bucket Versioning": no document was loaded').toBe(true);
+    expect(await stillSamePage(page), '"Edit" of "Tags": no document was loaded').toBe(true);
   }
 
   await lines.line(
-    'With a bucket `<p>-b` made directly, open its page on "Properties" and choose "Edit" of "Bucket Versioning" → the address is `/aws/s3/bucket/<p>-b/property/versioning/edit`, without a document load; the `h1` is "No screen yet", the content holds the statement and nowhere the old sentence (regression)',
+    'With a bucket `<p>-b` made directly, open its page on "Properties" and choose "Edit" of "Tags" → the address is `/aws/s3/bucket/<p>-b/property/tags/edit`, without a document load; the `h1` is "No screen yet", the content holds the statement and nowhere the old sentence (regression)',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
     },
   );
 
   await lines.line(
-    'On that page → "Path" shows `/aws/s3/bucket/<p>-b/property/versioning/edit`, and the sentence is shown',
+    'On that page → "Path" shows `/aws/s3/bucket/<p>-b/property/tags/edit`, and the sentence is shown',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await expectPath(page, edit);
       await expect(nothingChanged(page), 'the sentence').toBeVisible();
@@ -198,7 +198,7 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   await lines.line(
     'On that page → the crumbs are "EmuForge", "AWS", "S3", "Buckets", "`<p>-b`", "No screen yet", the last no link; the side navigation has the header "Amazon S3" and the one link "General purpose buckets", which is current, and no link "Amazon Kinesis"',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await expectCrumbs(page, bucketCrumbs(name));
       await expect
@@ -217,7 +217,7 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   await lines.line(
     'On that page → the document title is "No screen yet | EmuForge Studio" and focus is on the content target named "No screen yet"',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await expect(page).toHaveTitle(titleOf(NO_SCREEN_PART_H1));
       await expectTarget(page, NO_SCREEN_PART_H1, GO_TO_BUCKETS);
@@ -227,7 +227,7 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   await lines.line(
     'Choose the crumb "`<p>-b`" → the bucket\'s page at `/aws/s3/buckets/<p>-b` (`h1` the name) on its tab "Objects", without a document load',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await crumbLink(page, name).click(ACTION);
       await expect(page).toHaveURL(addressOf(bucketPath(name)));
@@ -259,9 +259,9 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   );
 
   await lines.line(
-    'From "Edit" of "Bucket Versioning" again: "Go to Buckets" → the address is `/aws/s3`, the `h1` is "Buckets", without a document load',
+    'From "Edit" of "Tags" again: "Go to Buckets" → the address is `/aws/s3`, the `h1` is "Buckets", without a document load',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await action(page, GO_TO_BUCKETS).click(ACTION);
       await expectBucketList(page, S3.firstPath);
@@ -273,7 +273,7 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
     'Back, then the crumb "S3" → the bucket list; Back, then the crumb "Buckets" → `/aws/s3/buckets` and the bucket list; Back, then "Go to Home" → Studio\'s home at `/`',
     async () => {
       // The Given: the bucket list reached by "Go to Buckets" from the page.
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await action(page, GO_TO_BUCKETS).click(ACTION);
       await expectBucketList(page, S3.firstPath);
@@ -296,9 +296,9 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   );
 
   await lines.line(
-    'Back from Home → the changed page at `/aws/s3/bucket/<p>-b/property/versioning/edit` again',
+    'Back from Home → the changed page at `/aws/s3/bucket/<p>-b/property/tags/edit` again',
     async () => {
-      await fromVersioningEdit();
+      await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
       await action(page, GO_HOME).click(ACTION);
       await expectHome(page);
@@ -358,17 +358,17 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
     }
   }
 
-  const VERSIONING_EDIT = '"Edit" of "Bucket Versioning"';
+  const TAGS_EDIT = '"Edit" of "Tags"';
   const WEBSITE_EDIT = '"Edit" of "Static website hosting"';
   const editVisit = () =>
     visit(
-      VERSIONING_EDIT,
-      versioningEditPath(keep),
+      TAGS_EDIT,
+      tagsEditPath(keep),
       () => openBucketPage(page, keep),
-      () => chooseSectionButton(page, VERSIONING, 'Edit'),
+      () => chooseSectionButton(page, TAGS, 'Edit'),
       async () => {
-        await expectNoScreenPart(page, S3.label, versioningEditPath(keep));
-        await expectPath(page, versioningEditPath(keep));
+        await expectNoScreenPart(page, S3.label, tagsEditPath(keep));
+        await expectPath(page, tagsEditPath(keep));
       },
     );
   const websiteVisit = () =>
@@ -386,18 +386,18 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
   /** The two visits, each made once; a visit a line before already made is not made again. */
   async function fallbackVisits(): Promise<void> {
     for (const [what, make] of [
-      [VERSIONING_EDIT, editVisit],
+      [TAGS_EDIT, editVisit],
       [WEBSITE_EDIT, websiteVisit],
     ] as const) {
       if (!visits.has(what)) await make().catch(() => undefined);
     }
     expect([...visits.keys()].sort(), 'the two controls were followed').toEqual(
-      [VERSIONING_EDIT, WEBSITE_EDIT].sort(),
+      [TAGS_EDIT, WEBSITE_EDIT].sort(),
     );
   }
 
   await lines.line(
-    'With a bucket `<p>-keep` and one object in it made directly, open the bucket\'s page on "Properties" and choose "Edit" of "Bucket Versioning" → the changed page at `/aws/s3/bucket/<p>-keep/property/versioning/edit`, "Path" showing that path',
+    'With a bucket `<p>-keep` and one object in it made directly, open the bucket\'s page on "Properties" and choose "Edit" of "Tags" → the changed page at `/aws/s3/bucket/<p>-keep/property/tags/edit`, "Path" showing that path',
     editVisit,
   );
 

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
@@ -30,9 +30,11 @@ import {
   LIST_BUCKETS,
   listBuckets,
   listObjects,
+  listObjectHistory,
   listObjectVersions,
   NO_SUCH_BUCKET,
   OPERATIONS,
+  readBucketVersioning,
   type Bucket,
   type BucketPage,
   type DeleteBucketResult,
@@ -43,6 +45,9 @@ import {
   type ObjectHead,
   type ObjectLocation,
   type ObjectPage,
+  type ObjectVersion,
+  type ObjectVersionPage,
+  type ObjectVersionPageRequest,
   type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
@@ -212,6 +217,7 @@ function useTokenListing<Answer>({
       // Kept as this page's last read only while the user is still on it in the same listing.
       if (learnt !== undefined) {
         setPosition((current) => {
+          if (signal.aborted) return current;
           const at = current.listing === listing ? current : fresh(listing);
           return at.page === page ? { ...at, reads: withRead(at.reads, page, learnt) } : current;
         });
@@ -306,6 +312,8 @@ export interface ObjectListingOptions {
   /** `MaxKeys` of every page. */
   pageSize: number;
   enabled?: boolean;
+  /** Starts again at page one after a change in version history. */
+  revision?: number;
 }
 
 /** The tab "Objects"' listing, as the tab shows it. */
@@ -340,13 +348,14 @@ export function useObjectListing({
   filter,
   pageSize,
   enabled = true,
+  revision = 0,
 }: ObjectListingOptions): ObjectListing {
   const [generation, setGeneration] = useState(0);
   // The tab is mounted anew for each folder, so a text typed in one folder is never sent in another.
   const text = useSettled(filter, FILTER_DELAY_MS);
   const listing = useTokenListing<ObjectPage | NoSuchBucket>({
     key: [...S3_KEY, 'objects', bucket],
-    parts: [bucket, generation, pageSize, prefix, text],
+    parts: [bucket, generation, revision, pageSize, prefix, text],
     endpoint,
     operation: OPERATIONS.listObjectsV2,
     read: (at, token, signal) =>
@@ -385,6 +394,43 @@ export function useObjectListing({
     goToPage: listing.goToPage,
     refresh,
   };
+}
+
+/** The history of a prefix, using the key and version ID markers together as one cursor. */
+export function useObjectHistory(endpoint: string | undefined, bucket: string, prefix: string) {
+  const [generation, setGeneration] = useState(0);
+  const listing = useTokenListing<ObjectVersionPage<ObjectVersion>>({
+    key: [...S3_KEY, 'object-history', bucket],
+    parts: [generation, prefix],
+    endpoint,
+    operation: OPERATIONS.listObjectVersions,
+    read: (at, token, signal) => {
+      const cursor = token === undefined ? {} : (JSON.parse(token) as Partial<ObjectVersionPageRequest>);
+      return listObjectHistory(at, bucket, { ...cursor, prefix, maxKeys: 100 }, signal);
+    },
+    pageRead: (page) => ({
+      count: page.items.length,
+      next:
+        page.truncated && page.nextKeyMarker !== undefined
+          ? JSON.stringify({ keyMarker: page.nextKeyMarker, versionIdMarker: page.nextVersionIdMarker })
+          : undefined,
+    }),
+  });
+  const refresh = useCallback(() => setGeneration((current) => current + 1), []);
+  return { ...listing, refresh };
+}
+
+/** Read on opening Restore, retaining the response when the bucket has disappeared. */
+export function useRestoreVersioning(endpoint: string | undefined, bucket: string, enabled: boolean) {
+  return useFreshRead(
+    endpoint,
+    bucket,
+    'versioning',
+    OPERATIONS.getBucketVersioning,
+    0,
+    (at, signal) => readBucketVersioning(at, bucket, signal),
+    enabled,
+  );
 }
 
 // Issue 256 (requirement R5.1, R6.8, R7.1, R8.1, R11): the reads of a bucket's page, of its sections and of the
@@ -518,6 +564,13 @@ export function useBucketProperty<P extends BucketProperty>(
     generation,
     (at, signal) => PROPERTY_READS[property](at, name, signal) as Promise<BucketPropertyValue<P>>,
     enabled,
+  );
+}
+
+/** Read versioning for the editor, retaining the details of any refusal. */
+export function useVersioningEditorStatus(endpoint: string | undefined, name: string) {
+  return useFreshRead(endpoint, name, 'versioning', OPERATIONS.getBucketVersioning, 0, (at, signal) =>
+    readBucketVersioning(at, name, signal),
   );
 }
 
@@ -716,17 +769,6 @@ export function useObjectChanges(endpoint: string | undefined) {
   return useMemo(() => {
     if (endpoint === undefined) return undefined;
 
-    function invalidate({ bucket, key }: ObjectLocation) {
-      void client.invalidateQueries({
-        queryKey: [...S3_KEY, 'objects', bucket, endpoint],
-        refetchType: 'none',
-      });
-      void client.invalidateQueries({
-        queryKey: [...S3_KEY, 'bucket', bucket, 'object', key],
-        refetchType: 'none',
-      });
-    }
-
     return {
       destinationExists: async ({ bucket, key }: ObjectLocation, signal: AbortSignal) =>
         (await headObject(endpoint, bucket, key, signal)) !== NOT_FOUND,
@@ -737,12 +779,12 @@ export function useObjectChanges(endpoint: string | undefined) {
         options?: ObjectCopyOptions,
       ) => {
         await copyObject(endpoint, source, destination, signal, options);
-        if (!signal.aborted) invalidate(destination);
+        if (!signal.aborted) invalidateObjectReads(client, endpoint, destination);
       },
       removeSource: async (source: ObjectLocation, signal: AbortSignal) => {
         await deleteObject(endpoint, source, signal);
         if (signal.aborted) return;
-        invalidate(source);
+        invalidateObjectReads(client, endpoint, source);
         void client.invalidateQueries({
           queryKey: [...S3_KEY, 'bucket', source.bucket, 'object', source.key, 'head', endpoint],
         });
@@ -751,17 +793,60 @@ export function useObjectChanges(endpoint: string | undefined) {
   }, [client, endpoint]);
 }
 
+function invalidateObjectReads(client: QueryClient, endpoint: string, { bucket, key }: ObjectLocation) {
+  void client.invalidateQueries({
+    queryKey: [...S3_KEY, 'objects', bucket, endpoint],
+    refetchType: 'none',
+  });
+  void client.invalidateQueries({
+    queryKey: [...S3_KEY, 'bucket', bucket, 'object', key],
+    refetchType: 'none',
+  });
+}
+
+export const NULL_MARKER_REMOVAL_REASON =
+  'This null delete marker cannot be removed safely because its version ID can also refer to an object body.';
+
+/** Write to the current key by copying a version or by removing one specific delete marker. */
+export function useChangeObjectVersion(endpoint: string | undefined, bucket: string) {
+  const client = useQueryClient();
+  return useCallback(
+    async ({ kind, key, versionId, etag }: ObjectVersion & { versionId: string }, signal: AbortSignal) => {
+      if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
+      const object = { bucket, key };
+      if (kind === 'version') {
+        await copyObject(endpoint, object, object, signal, {
+          sourceVersionId: versionId,
+          ...(etag !== undefined && { sourceETag: etag }),
+        });
+      } else {
+        if (versionId === 'null') {
+          throw new RequestError({
+            kind: 'other',
+            operation: OPERATIONS.deleteObject,
+            code: 'ReusableDeleteMarkerId',
+            message: NULL_MARKER_REMOVAL_REASON,
+          });
+        }
+        await deleteObject(endpoint, object, signal, versionId);
+      }
+      if (!signal.aborted) invalidateObjectReads(client, endpoint, object);
+    },
+    [bucket, client, endpoint],
+  );
+}
+
 /** "Download" of the object page: `GetObject` of the whole body. */
 export function useDownloadObject(
   endpoint: string | undefined,
   bucket: string,
-): (key: string, signal: AbortSignal) => Promise<ObjectBody> {
+): (key: string, signal: AbortSignal, versionId?: string, etag?: string) => Promise<ObjectBody> {
   return useCallback(
-    (key, signal) => {
+    (key, signal, versionId, etag) => {
       if (endpoint === undefined) {
         return Promise.reject(new Error('The engine endpoint is not known yet.'));
       }
-      return getObject(endpoint, bucket, key, signal);
+      return getObject(endpoint, bucket, key, signal, undefined, versionId, etag);
     },
     [endpoint, bucket],
   );

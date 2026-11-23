@@ -12,6 +12,7 @@ import {
   useBucketLookup,
   useBucketProperty,
   useBucketToDelete,
+  useChangeObjectVersion,
   useCreateBucket,
   useDeleteBucket,
   useEmptyingOperations,
@@ -114,6 +115,19 @@ function renderListing(options: Partial<BucketListingOptions> = {}) {
     wrapper,
   });
 }
+
+it('rejects reusable null marker removal before transport', async () => {
+  const transport = vi.fn(engine.fetch);
+  vi.stubGlobal('fetch', transport);
+  const { result } = renderHook(() => useChangeObjectVersion(endpoint, 'bucket'), { wrapper });
+  await expect(
+    result.current(
+      { kind: 'delete-marker', key: 'key', versionId: 'null', latest: true },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ failure: { operation: 'DeleteObject', code: 'ReusableDeleteMarkerId' } });
+  expect(transport).not.toHaveBeenCalled();
+});
 
 describe('a listing', () => {
   it('asks for page 1 and gives nothing of an earlier listing while it is in flight', async () => {

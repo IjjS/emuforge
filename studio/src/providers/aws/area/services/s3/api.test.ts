@@ -7,6 +7,7 @@ import {
   copyObject,
   createBucket,
   deleteBucket,
+  deleteObject,
   deleteObjects,
   enableBucketVersioning,
   findBucket,
@@ -15,10 +16,12 @@ import {
   getBucketTagging,
   getBucketVersioning,
   getBucketWebsite,
+  getObject,
   headObject,
   isBucketEmpty,
   listBuckets,
   listObjects,
+  listObjectHistory,
   listObjectVersions,
   NO_SUCH_BUCKET,
   NOT_FOUND,
@@ -876,6 +879,152 @@ describe('the listing and deleting of a bucket’s items', () => {
     expect(body).toContain('<Quiet>true</Quiet>');
     expect(body).toContain('<Object><Key>a b</Key><VersionId>null</VersionId></Object>');
     expect(body).toContain('<Object><Key>held</Key><VersionId>v2</VersionId></Object>');
+  });
+});
+
+describe('object version history', () => {
+  it.each([
+    ['logs/line\rbreak.csv', 'logs/line%0Dbreak.csv'],
+    ['logs/line\nbreak.csv', 'logs/line%0Abreak.csv'],
+    ['logs/line%0Dbreak.csv', 'logs/line%250Dbreak.csv'],
+    ['logs/line%0Abreak.csv', 'logs/line%250Abreak.csv'],
+    ['logs/plus+ percentage%.csv', 'logs/plus%2B+percentage%25.csv'],
+  ])('decodes the history key and key cursor once for %j', async (key, wireKey) => {
+    const markerId = 'marker%0D+%25';
+    const versionId = 'body%0A+%25';
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>${wireKey}</NextKeyMarker><NextVersionIdMarker>${markerId}</NextVersionIdMarker>` +
+          `<DeleteMarker><Key>${wireKey}</Key><VersionId>${markerId}</VersionId><IsLatest>true</IsLatest></DeleteMarker></ListVersionsResult>`,
+      );
+    const first = await listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal());
+    expect(first).toEqual({
+      items: [{ key, versionId: markerId, latest: true, kind: 'delete-marker' }],
+      truncated: true,
+      nextKeyMarker: key,
+      nextVersionIdMarker: markerId,
+    });
+
+    // The history request determines decoding even when the response omits the encoding echo.
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${wireKey}</Key><VersionId>${versionId}</VersionId>` +
+          '<IsLatest>false</IsLatest><ETag>"observed-etag"</ETag></Version></ListVersionsResult>',
+      );
+    const { nextKeyMarker: keyMarker, nextVersionIdMarker: versionIdMarker } = first;
+    if (keyMarker === undefined || versionIdMarker === undefined) throw new Error('Expected both cursors');
+    const second = await listObjectHistory(
+      endpoint,
+      'bucket',
+      { prefix: 'logs/', maxKeys: 1, keyMarker, versionIdMarker },
+      signal(),
+    );
+    expect(second).toEqual({
+      items: [{ key, versionId, latest: false, kind: 'version', etag: '"observed-etag"' }],
+      truncated: false,
+    });
+    const [firstQuery, secondQuery] = engine.awsRequests.map((request) => new URL(request).searchParams);
+    expect(firstQuery?.get('encoding-type')).toBe('url');
+    expect(firstQuery?.get('prefix')).toBe('logs/');
+    expect(secondQuery?.get('encoding-type')).toBe('url');
+    expect(secondQuery?.get('prefix')).toBe('logs/');
+    expect(secondQuery?.get('key-marker')).toBe(key);
+    expect(secondQuery?.get('version-id-marker')).toBe(markerId);
+  });
+
+  it('leaves unencoded keys and markers intact for the bucket emptying caller', async () => {
+    const key = 'logs/line%0Dbreak+.csv';
+    const versionId = 'version%0D+%25';
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>${key}</NextKeyMarker><NextVersionIdMarker>${versionId}</NextVersionIdMarker>` +
+          `<Version><Key>${key}</Key><VersionId>${versionId}</VersionId></Version></ListVersionsResult>`,
+      );
+    expect(await listObjectVersions(endpoint, 'bucket', { maxKeys: 1 }, signal())).toEqual({
+      items: [{ key, versionId }],
+      truncated: true,
+      nextKeyMarker: key,
+      nextVersionIdMarker: versionId,
+    });
+    expect(new URL(engine.awsRequests[0] ?? '').searchParams.has('encoding-type')).toBe(false);
+  });
+
+  it('encodes the source key and version ID independently when restoring to the same key', async () => {
+    engine.aws = () => xml('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
+    const key = 'logs/한글 space%?.txt';
+    const object = { bucket: 'bucket', key };
+    await copyObject(endpoint, object, object, signal(), { sourceVersionId: 'v%? +' });
+    const request = engine.sent[0];
+    if (request === undefined) throw new Error('Expected a copy request');
+    expect(request.method).toBe('PUT');
+    expect(decodeURIComponent(new URL(request.url).pathname)).toBe('/bucket/' + key);
+    expect(request?.headers.get('x-amz-copy-source')).toBe(
+      'bucket/logs/%ED%95%9C%EA%B8%80%20space%25%3F.txt?versionId=v%25%3F%20%2B',
+    );
+  });
+
+  it.each(['reports/./ledger.csv', 'reports/archive/../ledger.csv'])(
+    'rejects all version actions before the transport can normalize %s',
+    async (key) => {
+      const transport = vi.fn(engine.fetch);
+      vi.stubGlobal('fetch', transport);
+      const object = { bucket: 'bucket', key };
+      const actions = [
+        ['CopyObject', () => copyObject(endpoint, object, object, signal(), { sourceVersionId: 'null' })],
+        ['DeleteObject', () => deleteObject(endpoint, object, signal(), 'marker')],
+        ['GetObject', () => getObject(endpoint, object.bucket, object.key, signal(), undefined, 'null')],
+      ] as const;
+      for (const [operation, action] of actions) {
+        await expect(action()).rejects.toMatchObject({
+          failure: { kind: 'other', operation, code: 'UnaddressableObjectKey' },
+        });
+      }
+      expect(transport).not.toHaveBeenCalled();
+      expect(engine.sent).toEqual([]);
+    },
+  );
+
+  it('downloads the bytes addressed by the literal null version ID', async () => {
+    engine.aws = () => ({ status: 200, body: 'from null', headers: { 'content-type': 'text/plain' } });
+    const etag = '"observed-etag"';
+    const result = await getObject(endpoint, 'bucket', 'logs/history.txt', signal(), undefined, 'null', etag);
+    expect(new TextDecoder().decode(result.bytes)).toBe('from null');
+    expect(new URL(engine.awsRequests[0] ?? '').searchParams.get('versionId')).toBe('null');
+    expect(engine.sent[0]?.headers.get('if-match')).toBe(etag);
+  });
+
+  it.each([undefined, '*', 'W/"weak"', '"one", "two"'])(
+    'rejects null body operations before transport when the ETag is %j',
+    async (etag) => {
+      const transport = vi.fn(engine.fetch);
+      vi.stubGlobal('fetch', transport);
+      const object = { bucket: 'bucket', key: 'logs/history.txt' };
+      await expect(
+        getObject(endpoint, object.bucket, object.key, signal(), undefined, 'null', etag),
+      ).rejects.toMatchObject({
+        failure: { code: 'UnverifiedVersionBody' },
+      });
+      await expect(
+        copyObject(endpoint, object, object, signal(), {
+          sourceVersionId: 'null',
+          ...(etag !== undefined && { sourceETag: etag }),
+        }),
+      ).rejects.toMatchObject({ failure: { code: 'UnverifiedVersionBody' } });
+      expect(transport).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves the history refusal while retaining the legacy missing-bucket result', async () => {
+    engine.aws = () => ({
+      status: 404,
+      body: '<Error><Code>NoSuchBucket</Code><Message>Bucket no longer exists.</Message></Error>',
+    });
+    await expect(
+      listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal()),
+    ).rejects.toMatchObject({
+      failure: { kind: 'other', code: 'NoSuchBucket', message: 'Bucket no longer exists.' },
+    });
+    expect(await listObjectVersions(endpoint, 'bucket', { maxKeys: 1 }, signal())).toBe(NO_SUCH_BUCKET);
   });
 });
 

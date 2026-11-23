@@ -28,6 +28,7 @@ import {
   type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
+  type ListObjectVersionsCommandOutput,
   type ListObjectsV2CommandOutput,
   type S3Client,
 } from '@aws-sdk/client-s3';
@@ -238,18 +239,31 @@ export interface StatusSetting {
 }
 
 /** "Bucket Versioning" (R5.3): "Disabled" when the answer has no `Status`. */
-export function getBucketVersioning(
+export async function getBucketVersioning(
   endpoint: string,
   bucket: string,
   signal: AbortSignal,
 ): Promise<StatusSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
+  try {
+    return await readBucketVersioning(endpoint, bucket, signal);
+  } catch (error) {
+    if (answeredCode(error) === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    throw error;
+  }
+}
+
+/** The editor keeps the original refusal, including when the bucket has disappeared. */
+export async function readBucketVersioning(
+  endpoint: string,
+  bucket: string,
+  signal: AbortSignal,
+): Promise<StatusSetting> {
+  const output = await sendRequest(
     OPERATIONS.getBucketVersioning,
-    (client, abortSignal) => client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({ status: text(output.Status) ?? 'Disabled' }),
+    (abortSignal) => s3Client(endpoint).send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
     signal,
   );
+  return { status: text(output.Status) ?? 'Disabled' };
 }
 
 /** One tag of a bucket. */
@@ -478,8 +492,8 @@ export interface ObjectVersionId {
 }
 
 /** One page of `ListObjectVersions`: its versions, then its delete markers. */
-export interface ObjectVersionPage {
-  items: ObjectVersionId[];
+export interface ObjectVersionPage<Item = ObjectVersionId> {
+  items: Item[];
   truncated: boolean;
   nextKeyMarker?: string;
   nextVersionIdMarker?: string;
@@ -492,43 +506,109 @@ export interface ObjectVersionPageRequest {
   versionIdMarker?: string;
 }
 
+export interface ObjectVersion extends ObjectVersionId {
+  kind: 'version' | 'delete-marker';
+  latest: boolean;
+  etag?: string;
+}
+
 function toItem({ Key, VersionId }: { Key?: string | undefined; VersionId?: string | undefined }): ObjectVersionId {
   return VersionId === undefined ? { key: Key ?? '' } : { key: Key ?? '', versionId: VersionId };
 }
 
 /** One page of the bucket's object versions and delete markers. */
-export function listObjectVersions(
+export async function listObjectVersions(
   endpoint: string,
   bucket: string,
-  { maxKeys, keyMarker, versionIdMarker }: ObjectVersionPageRequest,
+  request: ObjectVersionPageRequest,
   signal: AbortSignal,
 ): Promise<ObjectVersionPage | NoSuchBucket> {
-  return onBucket(
-    endpoint,
+  try {
+    return await readVersionPage(endpoint, bucket, request, signal, (output) => [
+      ...(output.Versions ?? []).map(toItem),
+      ...(output.DeleteMarkers ?? []).map(toItem),
+    ]);
+  } catch (error) {
+    if (answeredCode(error) === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    throw error;
+  }
+}
+
+/** The version history of all keys under the prefix, including keys hidden by delete markers. */
+export function listObjectHistory(
+  endpoint: string,
+  bucket: string,
+  request: ObjectVersionPageRequest & { prefix: string },
+  signal: AbortSignal,
+): Promise<ObjectVersionPage<ObjectVersion>> {
+  return readVersionPage<ObjectVersion>(endpoint, bucket, { ...request, encoding: 'url' }, signal, (output) => [
+    ...(output.Versions ?? []).map((item): ObjectVersion => {
+      const etag = text(item.ETag);
+      return {
+        ...toItem(item),
+        latest: item.IsLatest === true,
+        kind: 'version',
+        ...(etag !== undefined && { etag }),
+      };
+    }),
+    ...(output.DeleteMarkers ?? []).map((item): ObjectVersion => ({
+      ...toItem(item),
+      latest: item.IsLatest === true,
+      kind: 'delete-marker',
+    })),
+  ]);
+}
+
+function decodeVersionKey(key: string): string {
+  // The emulator uses + for spaces and %2B for literal plus in its URL-encoded key fields.
+  return decodeURIComponent(key.replaceAll('+', ' '));
+}
+
+async function readVersionPage<Item extends ObjectVersionId>(
+  endpoint: string,
+  bucket: string,
+  {
+    maxKeys,
+    keyMarker,
+    versionIdMarker,
+    prefix = '',
+    encoding,
+  }: ObjectVersionPageRequest & {
+    prefix?: string;
+    encoding?: 'url';
+  },
+  signal: AbortSignal,
+  items: (output: ListObjectVersionsCommandOutput) => Item[],
+): Promise<ObjectVersionPage<Item>> {
+  const output = await sendRequest(
     OPERATIONS.listObjectVersions,
-    (client, abortSignal) =>
-      client.send(
+    (abortSignal) =>
+      s3Client(endpoint).send(
         new ListObjectVersionsCommand({
           Bucket: bucket,
           MaxKeys: maxKeys,
+          ...(encoding === undefined ? {} : { EncodingType: encoding }),
+          ...(prefix === '' ? {} : { Prefix: prefix }),
           ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
           ...(versionIdMarker === undefined ? {} : { VersionIdMarker: versionIdMarker }),
         }),
         { abortSignal },
       ),
-    (output): ObjectVersionPage => {
-      const page: ObjectVersionPage = {
-        items: [...(output.Versions ?? []).map(toItem), ...(output.DeleteMarkers ?? []).map(toItem)],
-        truncated: output.IsTruncated === true,
-      };
-      const nextKeyMarker = text(output.NextKeyMarker);
-      const nextVersionIdMarker = text(output.NextVersionIdMarker);
-      if (nextKeyMarker !== undefined) page.nextKeyMarker = nextKeyMarker;
-      if (nextVersionIdMarker !== undefined) page.nextVersionIdMarker = nextVersionIdMarker;
-      return page;
-    },
     signal,
   );
+  // The SDK leaves encoded keys untouched. Decode once, including the key cursor, and keep version IDs opaque.
+  const rows = items(output);
+  const page: ObjectVersionPage<Item> = {
+    items: encoding === 'url' ? rows.map((row) => ({ ...row, key: decodeVersionKey(row.key) })) : rows,
+    truncated: output.IsTruncated === true,
+  };
+  const nextKeyMarker = text(output.NextKeyMarker);
+  const nextVersionIdMarker = text(output.NextVersionIdMarker);
+  if (nextKeyMarker !== undefined) {
+    page.nextKeyMarker = encoding === 'url' ? decodeVersionKey(nextKeyMarker) : nextKeyMarker;
+  }
+  if (nextVersionIdMarker !== undefined) page.nextVersionIdMarker = nextVersionIdMarker;
+  return page;
 }
 
 /** Whether the bucket holds no object version and no delete marker (R7.1): one item at most is asked for. */
@@ -666,14 +746,25 @@ export async function putPublicAccessBlock(
   );
 }
 
-/** `PutBucketVersioning` with the status `Enabled`. */
-export async function enableBucketVersioning(endpoint: string, bucket: string, signal: AbortSignal): Promise<void> {
-  const command = new PutBucketVersioningCommand({ Bucket: bucket, VersioningConfiguration: { Status: 'Enabled' } });
+export type BucketVersioningChange = 'Enabled' | 'Suspended';
+
+export async function putBucketVersioning(
+  endpoint: string,
+  bucket: string,
+  status: BucketVersioningChange,
+  signal: AbortSignal,
+): Promise<void> {
+  const command = new PutBucketVersioningCommand({ Bucket: bucket, VersioningConfiguration: { Status: status } });
   await sendRequest(
     OPERATIONS.putBucketVersioning,
     (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
     signal,
   );
+}
+
+/** Enable versioning as part of bucket creation. */
+export function enableBucketVersioning(endpoint: string, bucket: string, signal: AbortSignal): Promise<void> {
+  return putBucketVersioning(endpoint, bucket, 'Enabled', signal);
 }
 
 /** A default encryption with a KMS key (R6.4 step 3); `bucketKey` is sent only for SSE-KMS. */
@@ -761,6 +852,8 @@ export interface ObjectPropertyEdit {
 export interface ObjectCopyOptions {
   edit?: ObjectPropertyEdit;
   onlyIfMissing?: boolean;
+  sourceVersionId?: string;
+  sourceETag?: string;
 }
 
 /** The code with which a call on a key says the emulator holds no object of that key. */
@@ -810,24 +903,56 @@ function toHead(key: string, output: HeadObjectCommandOutput, user: MetadataEntr
   return head;
 }
 
+function requireAddressableVersionKey(key: string, operation: string): void {
+  // Fetch normalizes standalone dot segments, even when the dots are percent-encoded.
+  if (key.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new RequestError({
+      kind: 'other',
+      operation,
+      code: 'UnaddressableObjectKey',
+      message: 'Studio cannot send this request for an object key containing a standalone . or .. segment.',
+    });
+  }
+}
+
+/** A suspended bucket can replace the body of the null version while the history row is open. */
+function nullVersionCondition(versionId: string | undefined, etag: string | undefined, operation: string) {
+  if (versionId !== 'null') return undefined;
+  // Accept one strong entity tag. A wildcard, weak tag or list of tags cannot identify the selected body.
+  if (etag === undefined || !/^"[^"\r\n]+"$/.test(etag)) {
+    throw new RequestError({
+      kind: 'other',
+      operation,
+      code: 'UnverifiedVersionBody',
+      message: 'The selected null version has no usable ETag.',
+    });
+  }
+  return etag;
+}
+
 /** Copies an object using S3's defaults, or replaces its content type and metadata in place. */
 export async function copyObject(
   endpoint: string,
   source: ObjectLocation,
   destination: ObjectLocation,
   signal: AbortSignal,
-  { edit, onlyIfMissing = false }: ObjectCopyOptions = {},
+  { edit, onlyIfMissing = false, sourceVersionId, sourceETag }: ObjectCopyOptions = {},
 ): Promise<void> {
+  if (sourceVersionId !== undefined) requireAddressableVersionKey(destination.key, OPERATIONS.copyObject);
+  const condition = nullVersionCondition(sourceVersionId, sourceETag, OPERATIONS.copyObject);
   // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
-  const copySource = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  const sourcePath = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  const copySource =
+    sourceVersionId === undefined ? sourcePath : `${sourcePath}?versionId=${encodeURIComponent(sourceVersionId)}`;
   await sendRequest(
     OPERATIONS.copyObject,
     (abortSignal) =>
-      s3Client(endpoint).send(
+      s3Client(endpoint, sourceVersionId !== undefined).send(
         new CopyObjectCommand({
           Bucket: destination.bucket,
           Key: destination.key,
           CopySource: copySource,
+          ...(condition !== undefined && { CopySourceIfMatch: condition }),
           ...(onlyIfMissing && { IfNoneMatch: '*' }),
           ...(edit === undefined
             ? {}
@@ -849,11 +974,15 @@ export async function deleteObject(
   endpoint: string,
   { bucket, key }: ObjectLocation,
   signal: AbortSignal,
+  versionId?: string,
 ): Promise<void> {
+  if (versionId !== undefined) requireAddressableVersionKey(key, OPERATIONS.deleteObject);
   await sendRequest(
     OPERATIONS.deleteObject,
     (abortSignal) =>
-      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }), {
+        abortSignal,
+      }),
     signal,
   );
 }
@@ -937,12 +1066,16 @@ export async function getObject(
   key: string,
   signal: AbortSignal,
   range?: string,
+  versionId?: string,
+  versionETag?: string,
 ): Promise<ObjectBody> {
+  if (versionId !== undefined) requireAddressableVersionKey(key, OPERATIONS.getObject);
+  const condition = nullVersionCondition(versionId, versionETag, OPERATIONS.getObject);
   return sendRequest(
     OPERATIONS.getObject,
     async (abortSignal) => {
       const output = await s3Client(endpoint).send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, ...(range === undefined ? {} : { Range: range }) }),
+        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range, VersionId: versionId, IfMatch: condition }),
         { abortSignal },
       );
       const bytes = output.Body === undefined ? new Uint8Array() : await output.Body.transformToByteArray();
