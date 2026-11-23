@@ -29,7 +29,7 @@ const NAME_COLUMN: TableProps.ColumnDefinition<StackRow> = {
   header: 'Stack name',
   isRowHeader: true,
   // A 24-character name can use wide letters such as W. Include the cell's horizontal padding.
-  minWidth: 'calc(22.5em + 36px)',
+  minWidth: 'calc(22.5em + var(--space-l-e5i7qp) + var(--space-m-txio36))',
   cell: ({ name }) => <ValueText kind="name" value={name} />,
 };
 
@@ -192,18 +192,25 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   }, []);
 
   const disconnected = connectionFailure(connection);
-  const connectionKind = connection.result?.kind;
-  const [previousKind, setPreviousKind] = useState(connectionKind);
-  if (connectionKind !== previousKind) {
-    setPreviousKind(connectionKind);
-    const readLostConnection =
-      listing.failure?.kind === 'engine-did-not-answer' || listing.failure?.kind === 'emulator-did-not-answer';
-    if (connectionKind === 'connected' && (previousKind !== undefined || readLostConnection)) {
+  const check = connection.result;
+  const [previousCheck, setPreviousCheck] = useState(check);
+  const [triedRecovery, setTriedRecovery] = useState(false);
+  const readLostConnection =
+    listing.failure?.kind === 'engine-did-not-answer' || listing.failure?.kind === 'emulator-did-not-answer';
+  if (check?.checkedAt !== previousCheck?.checkedAt || check?.kind !== previousCheck?.kind) {
+    setPreviousCheck(check);
+    const wasDisconnected = previousCheck !== undefined && previousCheck.kind !== 'connected';
+    if (check?.kind === 'connected' && (wasDisconnected || (readLostConnection && !triedRecovery))) {
+      setTriedRecovery(true);
       setGeneration((current) => current + 1);
     }
   }
+  // A failed automatic restart waits for a user action or an observed disconnect and recovery.
+  if (triedRecovery && (listing.items !== undefined || (listing.failure !== undefined && !readLostConnection))) {
+    setTriedRecovery(false);
+  }
 
-  const failure = listing.failure ?? disconnected;
+  const failure = disconnected ?? listing.failure;
   const state = failure === undefined ? undefined : stackReadFailure(failure, connection);
   const failureText = state?.firstText;
   const [previousFailureText, setPreviousFailureText] = useState(failureText);
@@ -221,7 +228,12 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   const hasPagination = listing.openEnd || listing.pagesCount > 1;
 
   const handleRefresh = () => {
+    setTriedRecovery(false);
     setGeneration((current) => current + 1);
+  };
+  const handleRetry = () => {
+    setTriedRecovery(false);
+    listing.refresh();
   };
   const handleClearFilter = () => {
     setFilter('');
@@ -241,7 +253,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
         empty={
           <StackListEmpty
             failure={state}
-            onRetry={listing.refresh}
+            onRetry={handleRetry}
             hasStacks={(stacks?.length ?? 0) > 0}
             firstPage={listing.currentPage === 1}
             onClearFilter={handleClearFilter}
