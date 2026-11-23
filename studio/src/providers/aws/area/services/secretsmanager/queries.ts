@@ -1,5 +1,5 @@
 import type { SecretListEntry } from '@aws-sdk/client-secrets-manager';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
@@ -70,5 +70,30 @@ export function useSecretDetail(connection: AreaConnection, name: string) {
     connectionFailure,
     loading: query.isFetching || (endpoint === undefined && connectionFailure === undefined),
     refresh: () => void query.refetch(),
+  };
+}
+
+/** Refresh any mounted reads for this target and mark the other affected reads stale. */
+export function useRefreshSecretReads() {
+  const client = useQueryClient();
+  const refresh = (filters: QueryFilters) => {
+    // A first read may have no cached result. Cancel it before invalidating so it cannot supply pre-write data.
+    void client.cancelQueries({ ...filters, fetchStatus: 'fetching' });
+    void client.invalidateQueries(filters);
+  };
+  return (endpoint: string, name: string, versions = false) => {
+    refresh({
+      queryKey: [...SERVICE_KEY, LIST_SECRETS],
+      // The listing appends endpoint before its mount and pagination fields.
+      predicate: (query) =>
+        query.queryKey.at(-5) === endpoint && failureOf(query.state.error, LIST_SECRETS).kind !== 'not-implemented',
+    });
+    refresh({
+      queryKey: [...SERVICE_KEY, DESCRIBE_SECRET, endpoint, name],
+      predicate: (query) => failureOf(query.state.error, DESCRIBE_SECRET).kind !== 'not-implemented',
+    });
+    if (versions) {
+      refresh({ queryKey: [...SERVICE_KEY, 'ListSecretVersionIds', endpoint, name] });
+    }
   };
 }

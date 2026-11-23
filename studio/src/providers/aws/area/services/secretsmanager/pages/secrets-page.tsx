@@ -16,7 +16,7 @@ import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { secretPath } from '../paths';
+import { SECRET_CREATE_PATH, secretPath } from '../paths';
 import { useSecretListing } from '../queries';
 
 function EmptySecrets({
@@ -136,7 +136,14 @@ export function SecretsPage({ connection }: { connection: AreaConnection }) {
       header={
         <Header
           variant="awsui-h1-sticky"
-          actions={<Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable} onClick={listing.refresh} />}
+          actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable} onClick={listing.refresh} />
+              <Button variant="primary" href={SECRET_CREATE_PATH} onFollow={handleFollow}>
+                Store a secret
+              </Button>
+            </SpaceBetween>
+          }
         >
           Secrets
         </Header>
