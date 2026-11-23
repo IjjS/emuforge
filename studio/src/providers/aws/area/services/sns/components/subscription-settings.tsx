@@ -60,6 +60,7 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
   const wasClearOpen = useRef(false);
   const editorSignal = usePageSignal();
   const [policyError, setPolicyError] = useState<ReactNode>();
+  const [clearFailed, setClearFailed] = useState(false);
   const [read, setRead] = useState(settings);
   const [drafts, setDrafts] = useState<Drafts>({
     FilterPolicy: undefined,
@@ -127,6 +128,7 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
     let recovery: FilterPolicyRecovery | undefined;
     if (setting.name === 'FilterPolicy') {
       setPolicyError(undefined);
+      setClearFailed(false);
       if (setting.value !== '') {
         recovery = {
           signal: editorSignal(),
@@ -146,8 +148,12 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
     if (clearDisabled) {
       return;
     }
+    const signal = editorSignal();
     const cleared = await handleSave({ name: 'FilterPolicy', value: '' });
-    setClearDialog(cleared ? 'cleared' : 'closed');
+    if (!signal.aborted) {
+      setClearFailed(!cleared);
+      setClearDialog(cleared ? 'cleared' : 'closed');
+    }
   };
 
   const handleDismissClear = () => {
@@ -184,28 +190,37 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
             }}
           />
         </FormField>
-        <SpaceBetween direction="horizontal" size="xs">
-          <Button
-            data-testid="subscription-settings-save-policy"
-            disabled={!savingPolicy && (disabled || policy === '' || policy === settings.FilterPolicy)}
-            loading={savingPolicy}
-            onClick={() => {
-              void handleSave({ name: 'FilterPolicy', value: policy });
-            }}
-          >
-            Save filter policy
-          </Button>
-          <Button
-            ref={clearOpener}
-            data-testid="subscription-settings-clear-policy"
-            disabled={clearDisabled}
-            onClick={() => {
-              setClearDialog('open');
-            }}
-          >
-            Clear filter policy
-          </Button>
-        </SpaceBetween>
+        <div>
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button
+              data-testid="subscription-settings-save-policy"
+              disabled={!savingPolicy && (disabled || policy === '' || policy === settings.FilterPolicy)}
+              loading={savingPolicy}
+              onClick={() => {
+                void handleSave({ name: 'FilterPolicy', value: policy });
+              }}
+            >
+              Save filter policy
+            </Button>
+            <Button
+              ref={clearOpener}
+              data-testid="subscription-settings-clear-policy"
+              disabled={clearDisabled}
+              onClick={() => {
+                setClearDialog('open');
+              }}
+            >
+              Clear filter policy
+            </Button>
+          </SpaceBetween>
+          <div role="status" aria-atomic="true" data-testid="subscription-settings-clear-status">
+            {clearFailed && (
+              <Box margin={{ top: 'xs' }}>
+                <StatusIndicator type="error">The filter policy could not be cleared.</StatusIndicator>
+              </Box>
+            )}
+          </div>
+        </div>
       </SpaceBetween>
       <SpaceBetween size="xs">
         <FormField
@@ -261,10 +276,25 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
           Save raw message delivery
         </Button>
       </SpaceBetween>
+      {/* Keep the modal's autofocus target stable while the header button is disabled. */}
       <AreaModal
         visible={clearOpen}
-        header="Clear filter policy?"
-        closeAriaLabel="Close dialog"
+        hideDismissButton
+        header={
+          <>
+            <Box variant="span" float="right" margin={{ left: 's' }}>
+              <Button
+                ariaLabel="Close dialog"
+                data-testid="subscription-settings-clear-dismiss"
+                disabled={clearing}
+                iconName="close"
+                variant="icon"
+                onClick={handleDismissClear}
+              />
+            </Box>
+            Clear filter policy?
+          </>
+        }
         onDismiss={handleDismissClear}
         footer={
           <Box float="right">
@@ -292,6 +322,13 @@ function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave
           </Box>
           <ValueText kind="address" value={arn} />
         </SpaceBetween>
+        <div role="status" aria-atomic="true" data-testid="subscription-settings-clear-progress">
+          {clearing && (
+            <Box margin={{ top: 'xs' }}>
+              <StatusIndicator type="in-progress">Clearing filter policy</StatusIndicator>
+            </Box>
+          )}
+        </div>
       </AreaModal>
     </SpaceBetween>
   );
