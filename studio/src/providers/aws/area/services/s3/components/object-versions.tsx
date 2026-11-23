@@ -39,9 +39,29 @@ function latestValue(row: ObjectVersion) {
   return row.latest ? 'Yes' : 'No';
 }
 
-// Escape literal backslashes first so a key containing the text "\\r" or "\\n" has its own spelling.
-function displayHistoryKey(key: string) {
-  return key.replaceAll('\\', '\\\\').replaceAll('\r', '\\r').replaceAll('\n', '\\n');
+function HistoryKey({ value }: { value: string }) {
+  const controls = Array.from(value).flatMap((character, index) => {
+    if (character !== '\r' && character !== '\n') return [];
+    return [`${character === '\r' ? 'CR' : 'LF'} at character ${String(index + 1)}`];
+  });
+
+  return (
+    <>
+      <span style={{ whiteSpace: 'break-spaces' }}>
+        <ValueText kind="name" value={value} />
+      </span>
+      {controls.length > 0 && (
+        <Box
+          variant="small"
+          display="block"
+          color="text-body-secondary"
+          nativeAttributes={{ 'aria-hidden': true, style: { userSelect: 'none' } }}
+        >
+          {controls.join(' · ')}
+        </Box>
+      )}
+    </>
+  );
 }
 
 function describeHistoryKey(key: string) {
@@ -57,7 +77,7 @@ const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
     header: 'Key',
     isRowHeader: true,
     minWidth: NAME_COLUMN_MIN_WIDTH,
-    cell: (row) => <ValueText kind="name" value={displayHistoryKey(row.key)} />,
+    cell: (row) => <HistoryKey value={row.key} />,
   },
   {
     id: 'version-id',
@@ -75,7 +95,7 @@ const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
     isRowHeader: true,
     cell: (row) => (
       <SpaceBetween size="xxs">
-        <ValueText kind="name" value={displayHistoryKey(row.key)} />
+        <HistoryKey value={row.key} />
         <Box variant="small">
           Type: {versionType(row)} · Latest: {latestValue(row)}
         </Box>
