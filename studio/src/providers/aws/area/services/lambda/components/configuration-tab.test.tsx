@@ -224,6 +224,7 @@ describe('the actions of "Configuration"', () => {
       'General configuration',
       'Environment variables',
       'Function URL',
+      'Layers',
     ]);
     const create = screen.getByRole('button', { name: 'Create function URL' });
     ensureAfterEdits(create);

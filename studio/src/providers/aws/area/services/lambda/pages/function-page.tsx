@@ -27,6 +27,7 @@ import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { EventSourcesTab } from '../components/event-sources-tab';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
+import { LayerFailureDetail, type FunctionLayerChanges } from '../components/function-layers';
 import { FunctionOverview, FunctionStatusLine } from '../components/function-sections';
 import type { FunctionUrlChanges } from '../components/function-url-actions';
 import { functionStatus } from '../components/function-status';
@@ -41,6 +42,8 @@ import {
   isChanging,
   useCreateFunctionUrl,
   useDeleteFunctionUrl,
+  useFunctionLayersReading,
+  useFunctionLayersUpdate,
   useFunctionReading,
   useInvoke,
   useReadAgain,
@@ -68,6 +71,7 @@ interface FunctionTabsProps {
   connection: AreaConnection;
   ready: boolean;
   urlChanges: FunctionUrlChanges;
+  layerChanges: FunctionLayerChanges;
   testScope: string;
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation' | 'onAliasConfirmationChange'>;
@@ -90,6 +94,7 @@ function FunctionTabs({
   connection,
   ready,
   urlChanges,
+  layerChanges,
   testScope,
   test,
   releases,
@@ -155,7 +160,16 @@ function FunctionTabs({
       id: 'configuration',
       label: 'Configuration',
       href: functionTabHref(name, 'configuration'),
-      content: <ConfigurationTab fn={fn} name={name} connection={connection} ready={ready} urlChanges={urlChanges} />,
+      content: (
+        <ConfigurationTab
+          fn={fn}
+          name={name}
+          connection={connection}
+          ready={ready}
+          urlChanges={urlChanges}
+          layerChanges={layerChanges}
+        />
+      ),
     },
     {
       id: 'versions',
@@ -393,6 +407,37 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (verification.scope !== verificationScope || verification.found !== verified) {
     setVerification({ scope: verificationScope, found: verified });
   }
+  const attachedLayers = useFunctionLayersReading(
+    connection.engineOrigin,
+    name,
+    verificationScope,
+    active === 'configuration' && fn !== undefined && verified,
+  );
+  const layerUpdate = useFunctionLayersUpdate(connection.engineOrigin, name, verificationScope);
+  const rereadAfterLayerChange = useReadAgain(connection.engineOrigin, name, true);
+
+  const submitLayers: FunctionLayerChanges['submit'] = (kind, layers) =>
+    layerUpdate.submit(layers, (failure) => {
+      if (failure === undefined) {
+        flash.show([{ type: 'success', content: kind === 'add' ? 'Layer version added.' : 'Layer version removed.' }]);
+      } else {
+        const unsupported = failure.kind === 'not-implemented';
+        flash.show([
+          {
+            type: unsupported ? 'info' : 'error',
+            header: unsupported
+              ? 'Not implemented by the emulator'
+              : kind === 'add'
+                ? 'Could not add layer version.'
+                : 'Could not remove layer version.',
+            content: <LayerFailureDetail failure={failure} connection={connection} />,
+          },
+        ]);
+        if (unsupported) return;
+      }
+      attachedLayers.refresh();
+      void rereadAfterLayerChange();
+    });
   const eventSources = useEventSources({
     endpoint: connection.engineOrigin,
     name,
@@ -652,6 +697,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const handleRefresh = () => {
     setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
+    if (active === 'configuration') attachedLayers.refresh();
     if (active === 'versions' || active === 'test') {
       releases.versions.refresh();
       releases.aliases.refresh();
@@ -688,6 +734,13 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             create: createUrl,
             remove: removeUrl,
             onDeleteSettled: () => setSettledUrlDeletes((count) => count + 1),
+          }}
+          layerChanges={{
+            scope: verificationScope,
+            reading: attachedLayers,
+            pending: layerUpdate.pending,
+            unsupported: layerUpdate.unsupported,
+            submit: submitLayers,
           }}
           testScope={verificationScope}
           test={{
