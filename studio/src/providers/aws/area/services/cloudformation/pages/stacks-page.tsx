@@ -101,15 +101,20 @@ function stackReadFailure(failure: RequestFailure, connection: AreaConnection): 
     const recovery = engine
       ? 'Check that the EmuForge engine is running, then retry.'
       : 'Check that the local emulator is running on the configured port, then retry.';
+    const diagnostic = useConnection && failure.kind === 'emulator-did-not-answer' ? failure.message : '';
     return {
       ...state,
       detail: (
         <>
-          {state.detail}
-          {useConnection && failure.kind === 'emulator-did-not-answer' && failure.message !== '' && (
-            <> {failure.message}</>
-          )}{' '}
-          {recovery}
+          {state.detail !== undefined && <span>{state.detail}</span>}
+          {diagnostic !== '' && (
+            <>
+              {' '}
+              <span>{diagnostic}</span>
+            </>
+          )}
+          {(state.detail !== undefined || diagnostic !== '') && <br />}
+          <span>{recovery}</span>
         </>
       ),
     };
