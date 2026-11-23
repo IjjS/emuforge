@@ -198,10 +198,10 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     const { calls } = openSecret({ handler: refresh.handler, observe: refresh.operations });
     await openVersions();
     await screen.findByRole('radio', { name: `Select version ${CURRENT}` });
-    await click('Edit secret value');
-    const dialog = within(await screen.findByRole('dialog', { name: 'Edit secret value' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Edit secret value|Store new version)$/ }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Store new version' }));
     fireEvent.change(dialog.getByRole('textbox', { name: 'Secret value' }), { target: { value: 'new test value' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Save secret value' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Store new version' }));
     await refresh.complete(order, 'New secret version stored.');
     expect(calls).toHaveBeenCalledWith(
       'PutSecretValue',

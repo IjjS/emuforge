@@ -198,12 +198,37 @@ describe('Store a secret', () => {
     );
   });
 
+  it('keeps both drafts when switching value types and submits only the selected draft', async () => {
+    const { calls } = openCreate();
+    fill();
+    const stringOption = screen.getByRole('radio', { name: 'String' });
+    const fileOption = screen.getByRole('radio', { name: 'Binary file' });
+    fireEvent.click(fileOption);
+    const input = screen.getByLabelText('Secret file', { selector: 'input' });
+    const file = new File(['synthetic bytes'], 'draft.bin');
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(stringOption);
+    expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(STRING_VALUE);
+    fireEvent.click(fileOption);
+    expect(screen.getByText('draft.bin')).toBeVisible();
+    fireEvent.click(stringOption);
+    await click('Store a secret');
+    await waitFor(() =>
+      expect(calls).toHaveBeenCalledWith('CreateSecret', {
+        Name: NAME,
+        SecretString: STRING_VALUE,
+        ClientRequestToken: expect.any(String),
+      }),
+    );
+  });
+
   it('generates a password only on request and fills the string field', async () => {
     const generated = 'synthetic-generated-value';
     const { count } = openCreate({
       handler: (operation) => (operation === 'GetRandomPassword' ? { body: { RandomPassword: generated } } : undefined),
     });
     fill();
+    expect(screen.getByText('Generating a password replaces the value entered here.')).toBeVisible();
     expect(count('GetRandomPassword')).toBe(0);
     await click('Generate password');
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(generated));

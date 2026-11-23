@@ -28,19 +28,25 @@ export function SecretValueFields({
             { value: 'string', label: 'String' },
             { value: 'binary', label: 'Binary file' },
           ]}
-          onChange={({ detail }) =>
-            onChange(detail.value === 'binary' ? { format: 'binary', file: undefined } : { format: 'string', text: '' })
-          }
+          onChange={({ detail }) => onChange({ ...value, format: detail.value === 'binary' ? 'binary' : 'string' })}
         />
       </FormField>
       {value.format === 'string' ? (
-        <FormField label="Secret value" secondaryControl={generate}>
+        <FormField
+          label="Secret value"
+          description={
+            generate !== undefined && value.text !== ''
+              ? 'Generating a password replaces the value entered here.'
+              : undefined
+          }
+          secondaryControl={generate}
+        >
           <Textarea
             value={value.text}
             disabled={disabled}
             autoComplete={false}
             spellcheck={false}
-            onChange={({ detail }) => onChange({ format: 'string', text: detail.value })}
+            onChange={({ detail }) => onChange({ ...value, text: detail.value })}
           />
         </FormField>
       ) : (
@@ -48,7 +54,7 @@ export function SecretValueFields({
           <FileUpload
             value={value.file ? [value.file] : []}
             onChange={({ detail }) => {
-              if (!disabled) onChange({ format: 'binary', file: detail.value[0] });
+              if (!disabled) onChange({ ...value, file: detail.value[0] });
             }}
             i18nStrings={{
               uploadButtonText: () => 'Choose file',
