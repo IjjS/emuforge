@@ -1,6 +1,7 @@
+import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -65,12 +66,7 @@ function renderPage() {
       <AreaRootContext.Provider value={root}>
         <PageFlashContext.Provider value={{ show, handOver: () => undefined }}>
           <div ref={root}>
-            {flash?.map(({ header, content }, index) => (
-              <div role="status" key={index}>
-                <div>{header}</div>
-                <div>{content}</div>
-              </div>
-            ))}
+            {flash !== undefined && <Flashbar items={[...flash]} />}
             <LayersPage
               connection={{
                 engineOrigin,
@@ -93,25 +89,105 @@ function renderPage() {
   );
 }
 
+const page = createWrapper(document.body);
+
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('The expected Cloudscape control did not render.');
+  return value;
+}
+
+function table(label: 'Layers' | 'Versions') {
+  return required(page.findAllTables().find((item) => item.find(`table[aria-label="${label}"]`) !== null));
+}
+
+function layerRow(name: string) {
+  const catalogue = table('Layers');
+  return (
+    catalogue
+      .findRows()
+      .findIndex((_row, index) => catalogue.findBodyCell(index + 1, 2)?.getElement().textContent === name) + 1
+  );
+}
+
 async function select(name: string) {
-  fireEvent.click(await screen.findByRole('radio', { name }));
+  const radio = await waitFor(() =>
+    required(table('Layers').findRowSelectionArea(layerRow(name))?.find('input[type="radio"]')),
+  );
+  fireEvent.click(radio.getElement());
+}
+
+function publishControl() {
+  return required(
+    table('Layers')
+      .findHeaderSlot()
+      ?.findAllButtons()
+      .find((button) => button.findTextRegion()?.getElement().textContent === 'Publish layer version'),
+  );
 }
 
 async function openPublish() {
-  fireEvent.click(screen.getByRole('button', { name: 'Publish layer version' }));
-  return within(await screen.findByRole('dialog', { name: 'Publish layer version' }));
+  fireEvent.click(publishControl().getElement());
+  return waitFor(() => {
+    const dialog = required(page.findModal());
+    expect(dialog.findHeader().getElement()).toHaveTextContent('Publish layer version');
+    return dialog;
+  });
 }
 
-function chooseZip() {
+function nameInput(dialog: Awaited<ReturnType<typeof openPublish>>) {
+  const field = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === 'Layer name');
+  return required(field?.findControl()?.findInput()).findNativeInput().getElement();
+}
+
+function chooseZip(dialog: Awaited<ReturnType<typeof openPublish>>) {
   const bytes = new Uint8Array(storedZip('module.py', 'value = 2'));
   const file = new File([bytes], 'layer.zip', { type: 'application/zip' });
-  const input = createWrapper(document.body).findFileUpload()?.findNativeInput().getElement();
-  if (input === undefined) throw new Error('ZIP file input did not open.');
+  const input = required(dialog.findContent().findFileUpload()).findNativeInput().getElement();
   fireEvent.change(input, { target: { files: [file] } });
 }
 
-function button(dialog: ReturnType<typeof within>) {
-  return dialog.getByRole('button', { name: 'Publish layer version' });
+function submitButton(dialog: Awaited<ReturnType<typeof openPublish>>) {
+  return required(
+    dialog
+      .findFooter()
+      ?.findAllButtons()
+      .find((button) => button.findTextRegion()?.getElement().textContent === 'Publish layer version'),
+  ).getElement();
+}
+
+async function submitPublication(name: string) {
+  const dialog = await openPublish();
+  fireEvent.change(nameInput(dialog), { target: { value: name } });
+  chooseZip(dialog);
+  fireEvent.click(submitButton(dialog));
+  return dialog;
+}
+
+function expectVersion(version: number) {
+  const versionsTable = table('Versions');
+  expect(versionsTable.findRows()).toHaveLength(1);
+  expect(versionsTable.findBodyCell(1, 1)?.getElement()).toHaveTextContent(String(version));
+  expect(versionsTable.findBodyCell(1, 2)?.getElement().textContent).toBe(arn('beta', version));
+}
+
+function expectPublication() {
+  const result = page.findFlashbar()?.findItemsByType('success')[0];
+  expect(result?.findContent()?.getElement()).toHaveTextContent('Published beta version 2.');
+}
+
+const publishedLayers: LayerPage<LayerSummary> = {
+  ...layers,
+  items: [
+    { name: 'alpha', latestVersion: 1 },
+    { name: 'beta', latestVersion: 2 },
+  ],
+};
+
+function expectLatestVersion() {
+  expect(table('Layers').findBodyCell(layerRow('beta'), 3)?.getElement()).toHaveTextContent('2');
 }
 
 beforeEach(() => {
@@ -125,11 +201,14 @@ it('shows loading before revealing the first publication action for an empty res
   list.mockReturnValueOnce(read.promise);
   renderPage();
 
-  expect(screen.getByText('Loading layers…')).toBeInTheDocument();
-  expect(screen.queryByText('No layers')).not.toBeInTheDocument();
+  expect(table('Layers').findLoadingText()?.getElement()).toHaveTextContent('Loading layers…');
+  expect(table('Layers').findEmptySlot()?.getElement().textContent ?? '').not.toContain('No layers');
   await act(() => read.resolve({ items: [], nextMarker: undefined }));
-  expect(await screen.findByText('No layers')).toBeInTheDocument();
-  expect(screen.getByText('Publish a ZIP file to create your first layer.')).toBeInTheDocument();
+  await waitFor(() => {
+    const empty = table('Layers').findEmptySlot()?.getElement();
+    expect(empty).toHaveTextContent('No layers');
+    expect(empty).toHaveTextContent('Publish a ZIP file to create your first layer.');
+  });
   expect(await openPublish()).toBeDefined();
 });
 
@@ -139,26 +218,24 @@ it('shows only beta versions when an earlier alpha request answers after the sel
   renderPage();
 
   await select('alpha');
-  expect(screen.getByText('Loading layer versions…')).toBeInTheDocument();
+  expect(table('Versions').findLoadingText()?.getElement()).toHaveTextContent('Loading layer versions…');
   await select('beta');
-  const table = within(await screen.findByRole('table', { name: 'Versions' }));
-  expect(await table.findByRole('cell', { name: arn('beta', 1) })).toBeInTheDocument();
+  await waitFor(() => expectVersion(1));
   await act(() => alpha.resolve(versionsFor('alpha', 1)));
-  expect(table.queryByRole('cell', { name: arn('alpha', 1) })).not.toBeInTheDocument();
-  expect(table.getByRole('cell', { name: arn('beta', 1) })).toBeInTheDocument();
+  expectVersion(1);
 });
 
 it('requires both a layer name and a ZIP file', async () => {
   renderPage();
   const dialog = await openPublish();
-  const name = dialog.getByRole('textbox', { name: 'Layer name' });
+  const name = nameInput(dialog);
   expect(name).toHaveAccessibleDescription('Reuse an existing layer name to publish a new version.');
-  expect(button(dialog)).toBeDisabled();
+  expect(submitButton(dialog)).toBeDisabled();
   fireEvent.change(name, { target: { value: 'beta' } });
-  expect(button(dialog)).toBeDisabled();
+  expect(submitButton(dialog)).toBeDisabled();
   fireEvent.change(name, { target: { value: '' } });
-  chooseZip();
-  expect(button(dialog)).toBeDisabled();
+  chooseZip(dialog);
+  expect(submitButton(dialog)).toBeDisabled();
   expect(publish).not.toHaveBeenCalled();
 });
 
@@ -169,85 +246,130 @@ it('keeps the reported publication result after versions and then the listing re
   versions.mockResolvedValueOnce(versionsFor('beta', 1)).mockReturnValueOnce(refreshedVersions.promise);
   renderPage();
   await select('beta');
-  const table = within(screen.getByRole('table', { name: 'Versions' }));
-  expect(await table.findByRole('cell', { name: arn('beta', 1) })).toBeInTheDocument();
+  await waitFor(() => expectVersion(1));
 
-  const dialog = await openPublish();
-  fireEvent.change(dialog.getByRole('textbox', { name: 'Layer name' }), { target: { value: 'beta' } });
-  chooseZip();
-  fireEvent.click(button(dialog));
+  await submitPublication('beta');
 
-  expect(await screen.findByText('Published beta version 2.')).toBeInTheDocument();
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await waitFor(() => {
+    expectPublication();
+    expect(page.findModal()).toBeNull();
+  });
   expect(list).toHaveBeenCalledTimes(2);
   expect(versions).toHaveBeenCalledTimes(2);
   await act(() => refreshedVersions.resolve(versionsFor('beta', 2)));
-  expect(await table.findByRole('cell', { name: arn('beta', 2) })).toBeInTheDocument();
-  await act(() =>
-    listing.resolve({
-      ...layers,
-      items: [
-        { name: 'alpha', latestVersion: 1 },
-        { name: 'beta', latestVersion: 2 },
-      ],
-    }),
-  );
-  const listingTable = within(screen.getByRole('table', { name: 'Layers' }));
-  const beta = within(await listingTable.findByRole('row', { name: /beta.*2/ }));
-  expect(beta.getByRole('cell', { name: '2' })).toBeInTheDocument();
-  expect(table.getByRole('cell', { name: arn('beta', 2) })).toBeInTheDocument();
-  expect(screen.getByText('Published beta version 2.')).toBeInTheDocument();
+  await waitFor(() => expectVersion(2));
+  await act(() => listing.resolve(publishedLayers));
+  await waitFor(expectLatestVersion);
+  expectVersion(2);
+  expectPublication();
 });
 
-it('shows a publication refusal and lets the user correct the submitted name', async () => {
-  publish.mockRejectedValueOnce(
-    new RequestError({
-      kind: 'other',
-      operation: PUBLISH_LAYER_VERSION,
-      code: 'InvalidParameterValueException',
-      message: 'Invalid layer name.',
-    }),
-  );
+it('keeps the republished layer when the first catalogue response arrives last', async () => {
+  const stale = holdRead<LayerSummary>();
+  list.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(publishedLayers);
+  versions.mockResolvedValueOnce(versionsFor('beta', 2));
   renderPage();
-  const dialog = await openPublish();
-  const name = dialog.getByRole('textbox', { name: 'Layer name' });
-  fireEvent.change(name, { target: { value: 'invalid.name' } });
-  chooseZip();
-  fireEvent.click(button(dialog));
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
 
-  expect(await dialog.findByText('Could not publish layer version.')).toBeInTheDocument();
-  expect(
-    dialog.getByText('PublishLayerVersion returned InvalidParameterValueException. Invalid layer name.'),
-  ).toBeInTheDocument();
-  expect(name).toHaveValue('invalid.name');
-  fireEvent.change(name, { target: { value: 'valid-name' } });
-  expect(name).toHaveValue('valid-name');
-  expect(button(dialog)).toBeEnabled();
-  expect(screen.queryByText(/^Published /)).not.toBeInTheDocument();
+  await submitPublication('beta');
+  await waitFor(() => {
+    expect(list).toHaveBeenCalledTimes(2);
+    expectLatestVersion();
+    expectVersion(2);
+    expectPublication();
+  });
+
+  expect(list.mock.calls[0]?.[2].aborted).toBe(true);
+  await act(() => stale.resolve(layers));
+  expectLatestVersion();
+  expectVersion(2);
+  expectPublication();
+});
+
+it('keeps the republished version when its first version response arrives last', async () => {
+  const stale = holdRead<LayerVersion>();
+  list.mockResolvedValueOnce(layers).mockResolvedValueOnce(publishedLayers);
+  versions.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(versionsFor('beta', 2));
+  renderPage();
+  await select('beta');
+  await waitFor(() => expect(versions).toHaveBeenCalledTimes(1));
+
+  await submitPublication('beta');
+  await waitFor(() => {
+    expect(versions).toHaveBeenCalledTimes(2);
+    expectLatestVersion();
+    expectVersion(2);
+    expectPublication();
+  });
+
+  expect(versions.mock.calls[0]?.[3].aborted).toBe(true);
+  await act(() => stale.resolve(versionsFor('beta', 1)));
+  expectLatestVersion();
+  expectVersion(2);
+  expectPublication();
 });
 
 it.each([
-  { operation: LIST_LAYERS, resource: 'layers' },
-  { operation: LIST_LAYER_VERSIONS, resource: 'layer versions' },
-])('retries $operation without displaying the empty state for a refusal', async ({ operation, resource }) => {
-  const reader = operation === LIST_LAYERS ? list : versions;
-  reader.mockRejectedValueOnce(new RequestError({ kind: 'other', operation, code: 'LayerError' }));
+  { code: 'InvalidParameterValueException', message: 'Invalid layer name.' },
+  { code: 'HTTP 413', message: 'ZIP request is too large.' },
+])('shows a publication refusal ($code) and lets the user correct the submitted name', async ({ code, message }) => {
+  publish.mockRejectedValueOnce(new RequestError({ kind: 'other', operation: PUBLISH_LAYER_VERSION, code, message }));
   renderPage();
-  if (operation === LIST_LAYER_VERSIONS) await select('beta');
+  const dialog = await submitPublication('invalid.name');
+  const name = nameInput(dialog);
 
-  expect(await screen.findByText(`Could not load ${resource}.`)).toBeInTheDocument();
-  expect(screen.getByText(`${operation} returned LayerError.`)).toBeInTheDocument();
-  expect(screen.queryByText(/^(No layers|No versions)$/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  if (operation === LIST_LAYERS) {
-    expect(await screen.findByRole('radio', { name: 'beta' })).toBeInTheDocument();
-    expect(versions).not.toHaveBeenCalled();
-  } else {
-    expect(await screen.findByRole('cell', { name: arn('beta', 1) })).toBeInTheDocument();
-    expect(list).toHaveBeenCalledTimes(1);
-  }
-  expect(reader).toHaveBeenCalledTimes(2);
+  await waitFor(() => {
+    const alert = dialog.findContent().findAlert();
+    expect(alert?.findHeader()?.getElement()).toHaveTextContent('Could not publish layer version.');
+    expect(alert?.findContent().getElement().textContent).toBe(`PublishLayerVersion returned ${code}. ${message}`);
+  });
+  expect(name).toHaveValue('invalid.name');
+  fireEvent.change(name, { target: { value: 'valid-name' } });
+  expect(name).toHaveValue('valid-name');
+  expect(submitButton(dialog)).toBeEnabled();
+  expect(page.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
 });
+
+it.each([
+  { operation: LIST_LAYERS, resource: 'layers', label: 'Layers' },
+  { operation: LIST_LAYER_VERSIONS, resource: 'layer versions', label: 'Versions' },
+] as const)(
+  'retries $operation without displaying the empty state for a refusal',
+  async ({ operation, resource, label }) => {
+    const reader = operation === LIST_LAYERS ? list : versions;
+    reader.mockRejectedValueOnce(new RequestError({ kind: 'other', operation, code: 'LayerError' }));
+    renderPage();
+    if (operation === LIST_LAYER_VERSIONS) await select('beta');
+
+    const alert = await waitFor(() => required(table(label).findEmptySlot()?.findAlert()));
+    expect(alert.findHeader()?.getElement()).toHaveTextContent(`Could not load ${resource}.`);
+    expect(alert.findContent().getElement()).toHaveTextContent(`${operation} returned LayerError.`);
+    expect(table(label).findEmptySlot()?.getElement()).not.toHaveTextContent(/No layers|No versions/);
+    fireEvent.click(required(alert.findActionSlot()?.findButton()).getElement());
+    if (operation === LIST_LAYERS) {
+      await waitFor(() => expect(layerRow('beta')).toBeGreaterThan(0));
+      expect(versions).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expectVersion(1));
+      expect(list).toHaveBeenCalledTimes(1);
+    }
+    expect(reader).toHaveBeenCalledTimes(2);
+  },
+);
+
+async function unavailableRead(label: 'Layers' | 'Versions', operation: string) {
+  return waitFor(() => {
+    const alert = required(table(label).findEmptySlot()?.findAlert());
+    expect(alert.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(alert.findContent().getElement()).toHaveTextContent(
+      `The emulator answered 501 Not Implemented for ${operation}.`,
+    );
+    const retry = required(alert.findActionSlot()?.findButton()).getElement();
+    expect(retry).toHaveTextContent('Retry');
+    expect(retry).toBeDisabled();
+    return retry;
+  });
+}
 
 it.each([LIST_LAYERS, LIST_LAYER_VERSIONS, PUBLISH_LAYER_VERSION])(
   'keeps the unavailable %s control visible and disabled after a 501',
@@ -255,24 +377,38 @@ it.each([LIST_LAYERS, LIST_LAYER_VERSIONS, PUBLISH_LAYER_VERSION])(
     const reader = operation === LIST_LAYERS ? list : operation === LIST_LAYER_VERSIONS ? versions : publish;
     reader.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
     renderPage();
-    if (operation === LIST_LAYER_VERSIONS) await select('beta');
-    if (operation === PUBLISH_LAYER_VERSION) {
-      const dialog = await openPublish();
-      fireEvent.change(dialog.getByRole('textbox', { name: 'Layer name' }), { target: { value: 'beta' } });
-      chooseZip();
-      fireEvent.click(button(dialog));
-    }
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(screen.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeInTheDocument();
-    const control = screen.getByRole('button', {
-      name: operation === PUBLISH_LAYER_VERSION ? 'Publish layer version' : 'Retry',
-    });
-    expect(control).toBeDisabled();
-    fireEvent.click(control);
-    expect(reader).toHaveBeenCalledTimes(1);
-    if (operation !== PUBLISH_LAYER_VERSION) {
-      expect(screen.getByRole('button', { name: 'Publish layer version' })).toBeEnabled();
+    if (operation === PUBLISH_LAYER_VERSION) {
+      await submitPublication('beta');
+      await waitFor(() => {
+        const result = page.findFlashbar()?.findItemsByType('info')[0];
+        expect(result?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+        expect(result?.findContent()?.getElement()).toHaveTextContent(
+          'The emulator answered 501 Not Implemented for PublishLayerVersion.',
+        );
+        expect(publishControl().getElement()).toBeDisabled();
+      });
+      fireEvent.click(publishControl().getElement());
+    } else {
+      if (operation === LIST_LAYER_VERSIONS) await select('beta');
+      const retry = await unavailableRead(operation === LIST_LAYERS ? 'Layers' : 'Versions', operation);
+      fireEvent.click(retry);
+      expect(publishControl().getElement()).toBeEnabled();
     }
+    expect(reader).toHaveBeenCalledTimes(1);
   },
 );
+
+it('remembers a version read 501 when returning to the layer within the same connection', async () => {
+  versions.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: LIST_LAYER_VERSIONS }));
+  renderPage();
+  await select('beta');
+  await unavailableRead('Versions', LIST_LAYER_VERSIONS);
+
+  await select('alpha');
+  await waitFor(() => expect(table('Versions').findBodyCell(1, 2)?.getElement().textContent).toBe(arn('alpha', 1)));
+  await select('beta');
+  await unavailableRead('Versions', LIST_LAYER_VERSIONS);
+
+  expect(versions.mock.calls.map(([, name]) => name)).toEqual(['beta', 'alpha']);
+});

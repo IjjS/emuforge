@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
@@ -43,7 +43,16 @@ function useLayerReading<T>(
 ): LayerReading<T> {
   const { operation } = target;
   const name = 'name' in target ? target.name : undefined;
-  const reading = JSON.stringify([endpoint, scope, operation, name]);
+  const connection = JSON.stringify([endpoint, scope]);
+  const reading = JSON.stringify([connection, operation, name]);
+  const [unsupported, setUnsupported] = useState(() => ({
+    connection,
+    failures: new Map<string | undefined, RequestFailure>(),
+  }));
+  if (unsupported.connection !== connection) {
+    setUnsupported({ connection, failures: new Map() });
+  }
+  const rememberedFailure = unsupported.connection === connection ? unsupported.failures.get(name) : undefined;
   const [pages, setPages] = useState({
     reading,
     markers: [undefined] as (string | undefined)[],
@@ -57,7 +66,7 @@ function useLayerReading<T>(
   const enabled = endpoint !== undefined && (operation === LIST_LAYERS || name !== '');
   const query = useQuery({
     queryKey: [...layerKey(endpoint, scope, operation, name), marker ?? null],
-    enabled,
+    enabled: enabled && rememberedFailure === undefined,
     queryFn: ({ signal }) => {
       if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
       return read(endpoint, marker, signal);
@@ -67,7 +76,13 @@ function useLayerReading<T>(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
-  const failure = enabled && query.isError ? requestFailure(operation, query.error) : undefined;
+  const failure = rememberedFailure ?? (enabled && query.isError ? requestFailure(operation, query.error) : undefined);
+  if (rememberedFailure === undefined && failure?.kind === 'not-implemented') {
+    setUnsupported({
+      connection,
+      failures: new Map(unsupported.connection === connection ? unsupported.failures : []).set(name, failure),
+    });
+  }
   const nextMarker = query.data?.nextMarker;
   const canAdvance = !!nextMarker && !pages.markers.slice(0, pages.index).includes(nextMarker);
   const pageCount = canAdvance ? Math.max(pages.markers.length, pages.index + 1) : pages.markers.length;
@@ -83,7 +98,7 @@ function useLayerReading<T>(
 
   return {
     items: enabled && failure === undefined ? query.data?.items : undefined,
-    loading: enabled && query.isPending,
+    loading: enabled && failure === undefined && query.isPending,
     failure,
     pageIndex: pages.index,
     pageCount,
@@ -113,16 +128,19 @@ export function usePublishLayerVersion({ endpoint, scope }: LayerReadOptions) {
       if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
       return publishLayerVersion(endpoint, name, zip, signal);
     },
-    onSuccess: ({ name }, { signal }) => {
+    onSuccess: async ({ name }, { signal }) => {
       if (signal.aborted) return;
-      for (const key of [
+      const affected = [
         layerKey(endpoint, scope, LIST_LAYERS),
         layerKey(endpoint, scope, LIST_LAYER_VERSIONS, name),
-      ]) {
-        void queryClient.invalidateQueries({
-          queryKey: key,
-          predicate: ({ state }) => requestFailure(PUBLISH_LAYER_VERSION, state.error).kind !== 'not-implemented',
-        });
+      ].map((queryKey): QueryFilters => ({
+        queryKey,
+        predicate: ({ state }) => requestFailure(PUBLISH_LAYER_VERSION, state.error).kind !== 'not-implemented',
+      }));
+      // An invalidation alone can join an in-flight first read that started before publication.
+      await Promise.all(affected.map((filter) => queryClient.cancelQueries(filter)));
+      if (!signal.aborted) {
+        for (const filter of affected) void queryClient.invalidateQueries(filter);
       }
     },
   });

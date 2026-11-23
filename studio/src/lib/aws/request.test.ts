@@ -579,6 +579,23 @@ describe('the code and the message', () => {
     expect(reportedServiceCode(failure)).toBeUndefined();
   });
 
+  it('keeps the service message with HTTP 413 when Lambda supplies no service code', async () => {
+    engine.aws = () => ({
+      status: 413,
+      body: '{"message":"ZIP request is too large"}',
+      headers: { 'content-type': REST_JSON },
+    });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({
+      kind: 'other',
+      operation: 'PublishLayerVersion',
+      code: 'HTTP 413',
+      message: 'ZIP request is too large',
+    });
+    expect(reportedServiceCode(failure)).toBeUndefined();
+  });
+
   it.each<Operation>(['ListBuckets', 'ListRoles'])(
     'gives HTTP 404, not NotFound, and no message for %s answered 404 with an empty body',
     async (operation) => {
