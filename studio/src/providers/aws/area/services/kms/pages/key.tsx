@@ -148,7 +148,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
               {
                 id: 'rotation',
                 label: 'Key rotation',
-                content: <Rotation connection={connection} keyId={keyId} />,
+                content: <Rotation connection={connection} keyId={keyId} keySpec={read.key?.KeySpec} />,
               },
             ]}
           />
