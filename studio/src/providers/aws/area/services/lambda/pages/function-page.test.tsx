@@ -1292,7 +1292,7 @@ describe('Function URL lifecycle', () => {
     handed.renderConfiguration = true;
     engine.functions = [{ ...fn }];
     open(`${pagePath(fn.name)}?tab=configuration`);
-    await screen.findByRole('heading', { name: 'Function overview' });
+    await waitFor(() => overview());
   }
 
   async function openDeleteDialog() {
