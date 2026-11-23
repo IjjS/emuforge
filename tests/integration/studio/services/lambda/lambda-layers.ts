@@ -24,12 +24,23 @@ export function layerFixture(ctx: Ctx, port: number, tag: string) {
   const archive = (value: string) => storedZip('python/check_marker.py', 'value = ' + JSON.stringify(value));
   const versions = async (name: string) =>
     body<{ LayerVersions: Version[] }>(await lambdaDirect(ctx, port, 'GET', versionPath(name))).LayerVersions;
+  async function catalogue() {
+    const names: string[] = [];
+    let marker: string | undefined;
+    do {
+      const result: { Layers: { LayerName: string }[]; NextMarker?: string } = body(
+        await lambdaDirect(ctx, port, 'GET', base, marker ? { Marker: marker } : {}),
+      );
+      names.push(...result.Layers.map((item) => item.LayerName));
+      marker = result.NextMarker;
+    } while (marker);
+    return names;
+  }
   const own = (name: string) => {
     ctx.own({
       async dispose() {
-        const listed = await lambdaDirect(ctx, port, 'GET', versionPath(name));
-        if (!('error' in listed) && listed.status === 404) return;
-        for (const item of body<{ LayerVersions: Version[] }>(listed).LayerVersions) {
+        if (!(await catalogue()).includes(name)) return;
+        for (const item of await versions(name)) {
           expect(await lambdaDirect(ctx, port, 'DELETE', [...versionPath(name), String(item.Version)])).toMatchObject({
             status: 204,
           });
@@ -58,18 +69,7 @@ export function layerFixture(ctx: Ctx, port: number, tag: string) {
         201,
       );
     },
-    async catalogue() {
-      const names: string[] = [];
-      let marker: string | undefined;
-      do {
-        const result: { Layers: { LayerName: string }[]; NextMarker?: string } = body(
-          await lambdaDirect(ctx, port, 'GET', base, marker ? { Marker: marker } : {}),
-        );
-        names.push(...result.Layers.map((item) => item.LayerName));
-        marker = result.NextMarker;
-      } while (marker);
-      return names;
-    },
+    catalogue,
     async createFunction() {
       const seeded = new LambdaSeeded(ctx, port, prefix);
       await seeded.function(prefix, {

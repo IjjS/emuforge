@@ -52,6 +52,7 @@ test('studio.lambda-layer-publish-refused', async ({ ctx, page }) => {
   const layers = layerFixture(ctx, emulatorPort, 'refused');
   const invalid = layers.prefix + '.bad';
   expect(await layers.catalogue()).not.toContain(invalid);
+  layers.own(invalid);
   await page.goto('/aws/lambda/layers');
   await publishForm(page, invalid, layers.archive('refused'));
   await expect(inlinePublicationError(page)).toContainText('InvalidParameterValueException');
@@ -108,7 +109,8 @@ test('studio.lambda-layer-function-refused', async ({ ctx, page }) => {
   expect(await deleteFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({ status: 204 });
   await submitDialog(page, 'Add layer version');
   await expect(functionPage(page, layers.prefix).notFoundSentence).toBeVisible();
-  await expect(errorFlash(page)).toContainText('ResourceNotFoundException');
+  const addFailure = errorFlash(page).filter({ hasText: 'Could not add layer version.' });
+  await expect(addFailure).toContainText('ResourceNotFoundException');
   expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({
     found: false,
     status: 404,
