@@ -90,7 +90,7 @@ class FakeEngine {
   writeCopy: (condition: string | null) => Response | Promise<Response> = () =>
     new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
   writeDelete: () => Response = () => new Response(null, { status: 204 });
-  getVersion: (condition: string | null) => Response = () =>
+  getVersion: (condition: string | null) => Response | Promise<Response> = () =>
     new Response('historical body', { headers: { 'content-type': 'text/plain' } });
 
   fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -684,13 +684,37 @@ it('guides a stale download back to history and replaces the failure after a suc
   engine.readHistory = () => history(row('null', false, 'Version', KEY, liveETag));
   fireEvent.click(action('Refresh'));
   await select('null', liveETag);
-  fireEvent.click(action('Download'));
+  const retry = action('Download');
+  retry.focus();
+  fireEvent.click(retry);
   await waitFor(() => {
     expect(flashContent('success')).toHaveTextContent(DOWNLOAD_STARTED);
     expect(flashContent('error')).toBeUndefined();
+    expect(table().findHeaderSlot()?.getElement()).toHaveTextContent(DOWNLOAD_STARTED);
+    expect(retry).toHaveFocus();
   });
   expect(engine.downloadConditions).toEqual([NULL_ETAG, liveETag]);
   expect(save).toHaveBeenCalledTimes(1);
+});
+
+it('keeps download feedback with the action without taking focus back from another control', async () => {
+  const response = heldResponse();
+  engine.getVersion = () => response.promise;
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:version');
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+  open();
+  await toggleVersions();
+  await select('old');
+  const download = action('Download');
+  download.focus();
+  fireEvent.click(download);
+  await waitFor(() => expect(engine.versionDownloads).toEqual(['old']));
+  const radio = required(selection('old')).control;
+  radio.focus();
+  response.resolve(new Response('historical body'));
+  await waitFor(() => expect(table().findHeaderSlot()?.getElement()).toHaveTextContent(DOWNLOAD_STARTED));
+  await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  expect(radio).toHaveFocus();
 });
 
 it('rejects a restore after the selected null body changes and keeps the current object', async () => {
@@ -855,6 +879,9 @@ it('keeps a replacement body safe when its old reusable delete marker is still l
   const remove = action(REMOVE);
   expectDisabled(remove);
   expect(remove).toHaveAccessibleDescription(/version ID can also refer to an object body/);
+  expect(table().findHeaderSlot()?.getElement()).toHaveTextContent(
+    'This null delete marker cannot be removed safely because its version ID can also refer to an object body.',
+  );
 
   engine.hasCurrent = true;
   engine.body = 'replacement body';

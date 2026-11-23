@@ -19,6 +19,7 @@ import { ObjectVersionsDialog, REMOVE_MARKER, RESTORE_VERSION, type VersionTarge
 import { versionFailure } from './object-versions-failure';
 
 const NARROW_HISTORY = '(max-width: 688px)';
+const DOWNLOAD_STARTED = 'Version download started.';
 
 function subscribeToLayout(onChange: () => void) {
   const query = window.matchMedia(NARROW_HISTORY);
@@ -143,6 +144,12 @@ interface HistoryRow extends ObjectVersion {
   index: number;
 }
 
+interface HistorySelection {
+  view: string;
+  page: ObjectVersionPage<ObjectVersion>;
+  index: number;
+}
+
 function bodyId(row: ObjectVersion): string {
   return JSON.stringify([row.key, row.versionId, row.etag]);
 }
@@ -195,13 +202,19 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const change = useChangeObjectVersion(endpoint, name);
   const flash = usePageFlash();
   const getSignal = usePageSignal();
-  const [selection, setSelection] = useState<{ view: string; page: ObjectVersionPage<ObjectVersion>; index: number }>();
+  const [selection, setSelection] = useState<HistorySelection>();
+  const [downloadCompletion, setDownloadCompletion] = useState<{
+    selection: HistorySelection;
+    focusFrom: Element | null;
+  }>();
   const [unavailable, setUnavailable] = useState<{ view: string; ids: ReadonlySet<string> }>();
   const [changing, setChanging] = useState<VersionTarget>();
   const [pending, setPending] = useState<string>();
   const active = useRef(false);
   const [unsupported, setUnsupported] = useState<ReadonlySet<string>>(() => new Set());
   const refreshButton = useRef<ButtonProps.Ref>(null);
+  const downloadButton = useRef<ButtonProps.Ref>(null);
+  const downloadStatus = useRef<HTMLSpanElement>(null);
   const restoreButton = useRef<ButtonProps.Ref>(null);
   const removeButton = useRef<ButtonProps.Ref>(null);
   const closingAction = useRef<ObjectVersion['kind'] | undefined>(undefined);
@@ -225,6 +238,19 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const target: VersionTarget | undefined =
     selected?.versionId === undefined ? undefined : { ...selected, versionId: selected.versionId };
   const nullMarker = target?.kind === 'delete-marker' && target.versionId === 'null';
+  const showDownloadStatus =
+    target?.kind === 'version' && downloadCompletion !== undefined && downloadCompletion.selection === selection;
+  useEffect(() => {
+    if (!showDownloadStatus || downloadCompletion === undefined) return;
+    const frame = requestAnimationFrame(() => {
+      // The pending button can lose focus. Leave focus alone if the user moved it to another control.
+      if (document.activeElement !== document.body && document.activeElement !== downloadCompletion.focusFrom) return;
+      downloadButton.current?.focus({ preventScroll: true });
+      downloadStatus.current?.scrollIntoView?.({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [downloadCompletion, showDownloadStatus]);
+
   const bodyUnavailable =
     target !== undefined &&
     isNullBody(target) &&
@@ -291,12 +317,15 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   }
 
   function handleDownload() {
-    if (target?.kind !== 'version' || bodyUnavailable) return;
+    if (target?.kind !== 'version' || selection === undefined || bodyUnavailable || active.current) return;
+    const focusFrom = document.activeElement;
+    setDownloadCompletion(undefined);
     void run(OPERATIONS.getObject, 'Download', target, async (signal) => {
       const body = await download(target.key, signal, target.versionId, target.etag);
       if (signal.aborted) return;
       saveVersion(body, target.key);
-      flash.show([{ type: 'success', content: 'Version download started.' }]);
+      setDownloadCompletion({ selection, focusFrom });
+      flash.show([{ type: 'success', content: DOWNLOAD_STARTED }]);
     });
   }
 
@@ -371,82 +400,92 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
           </Box>
         }
         header={
-          <Header
-            variant="h2"
-            actions={
-              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <Button
-                  ref={refreshButton}
-                  iconName="refresh"
-                  disabled={pending !== undefined}
-                  onClick={listing.refresh}
-                >
-                  Refresh
-                </Button>
-                {selected?.kind === 'delete-marker' ? (
+          <SpaceBetween size="xs">
+            <Header
+              variant="h2"
+              actions={
+                <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                   <Button
-                    ref={removeButton}
-                    disabled={
-                      target === undefined ||
-                      nullMarker ||
-                      pending !== undefined ||
-                      unsupported.has(OPERATIONS.deleteObject)
-                    }
-                    disabledReason={
-                      nullMarker
-                        ? NULL_MARKER_REMOVAL_REASON
-                        : disabledReason(OPERATIONS.deleteObject, target !== undefined)
-                    }
-                    onClick={() => {
-                      if (!nullMarker) setChanging(target);
-                    }}
+                    ref={refreshButton}
+                    iconName="refresh"
+                    disabled={pending !== undefined}
+                    onClick={listing.refresh}
                   >
-                    {REMOVE_MARKER}
+                    Refresh
                   </Button>
-                ) : (
-                  <>
+                  {selected?.kind === 'delete-marker' ? (
                     <Button
-                      iconName="download"
-                      loading={pending === OPERATIONS.getObject}
+                      ref={removeButton}
                       disabled={
                         target === undefined ||
-                        bodyUnavailable ||
+                        nullMarker ||
                         pending !== undefined ||
-                        unsupported.has(OPERATIONS.getObject)
-                      }
-                      disabledReason={unavailableReason ?? disabledReason(OPERATIONS.getObject, target !== undefined)}
-                      onClick={handleDownload}
-                    >
-                      Download
-                    </Button>
-                    <Button
-                      ref={restoreButton}
-                      disabled={
-                        target === undefined ||
-                        bodyUnavailable ||
-                        selected?.latest !== false ||
-                        pending !== undefined ||
-                        unsupported.has(OPERATIONS.copyObject)
+                        unsupported.has(OPERATIONS.deleteObject)
                       }
                       disabledReason={
-                        unavailableReason ??
-                        disabledReason(
-                          OPERATIONS.copyObject,
-                          target !== undefined && selected?.latest === false,
-                          'Select an earlier object version to restore.',
-                        )
+                        nullMarker
+                          ? NULL_MARKER_REMOVAL_REASON
+                          : disabledReason(OPERATIONS.deleteObject, target !== undefined)
                       }
-                      onClick={() => setChanging(target)}
+                      onClick={() => {
+                        if (!nullMarker) setChanging(target);
+                      }}
                     >
-                      {RESTORE_VERSION}
+                      {REMOVE_MARKER}
                     </Button>
-                  </>
-                )}
-              </SpaceBetween>
-            }
-          >
-            Object versions
-          </Header>
+                  ) : (
+                    <>
+                      <Button
+                        ref={downloadButton}
+                        iconName="download"
+                        loading={pending === OPERATIONS.getObject}
+                        disabled={
+                          target === undefined ||
+                          bodyUnavailable ||
+                          pending !== undefined ||
+                          unsupported.has(OPERATIONS.getObject)
+                        }
+                        disabledReason={unavailableReason ?? disabledReason(OPERATIONS.getObject, target !== undefined)}
+                        onClick={handleDownload}
+                      >
+                        Download
+                      </Button>
+                      <Button
+                        ref={restoreButton}
+                        disabled={
+                          target === undefined ||
+                          bodyUnavailable ||
+                          selected?.latest !== false ||
+                          pending !== undefined ||
+                          unsupported.has(OPERATIONS.copyObject)
+                        }
+                        disabledReason={
+                          unavailableReason ??
+                          disabledReason(
+                            OPERATIONS.copyObject,
+                            target !== undefined && selected?.latest === false,
+                            'Select an earlier object version to restore.',
+                          )
+                        }
+                        onClick={() => setChanging(target)}
+                      >
+                        {RESTORE_VERSION}
+                      </Button>
+                    </>
+                  )}
+                </SpaceBetween>
+              }
+            >
+              Object versions
+            </Header>
+            {nullMarker && <Box variant="p">{NULL_MARKER_REMOVAL_REASON}</Box>}
+            {showDownloadStatus && (
+              // The area flash announces the result. Keep a visible copy with the action.
+              <span ref={downloadStatus} aria-hidden="true">
+                <StatusIndicator type="success">{DOWNLOAD_STARTED}</StatusIndicator>
+              </span>
+            )}
+          </SpaceBetween>
         }
         pagination={
           <Pagination
