@@ -5,7 +5,7 @@ import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { creationDateText } from '../../../../components/format-date';
@@ -45,6 +45,38 @@ export function VersionHistory({
 }) {
   const listing = useVersionListing(endpoint, name, open);
   const [edit, setEdit] = useState<StageEdit>();
+  const paginationRoot = useRef<HTMLDivElement>(null);
+  const unavailableNotice = useRef<HTMLDivElement>(null);
+  const pageFocusOrigin = useRef<Element | null>(null);
+  const unavailable = listing.failure?.kind === 'not-implemented';
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const handleFocus = (event: FocusEvent) => {
+      if (event.target !== pageFocusOrigin.current && event.target !== document.body) {
+        pageFocusOrigin.current = null;
+      }
+    };
+    document.addEventListener('focusin', handleFocus, true);
+    return () => {
+      document.removeEventListener('focusin', handleFocus, true);
+      pageFocusOrigin.current = null;
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || listing.loading) return;
+    const origin = pageFocusOrigin.current;
+    pageFocusOrigin.current = null;
+    // Disabling or replacing pagination can move focus to the body while the page is read.
+    if (
+      unavailable &&
+      origin !== null &&
+      (document.activeElement === origin || document.activeElement === document.body)
+    ) {
+      unavailableNotice.current?.focus();
+    }
+  }, [open, listing.currentPage, listing.loading, unavailable]);
   const versions = listing.items ?? [];
   const selectedVersion = versions.find(({ VersionId }) => VersionId === selected);
   const selectedStages = selectedVersion?.VersionStages ?? [];
@@ -53,21 +85,25 @@ export function VersionHistory({
   );
 
   const pagination = (listing.openEnd || listing.pagesCount > 1) && (
-    <Pagination
-      currentPageIndex={listing.currentPage}
-      pagesCount={listing.pagesCount}
-      openEnd={listing.openEnd}
-      disabled={listing.loading || listing.failure?.kind === 'not-implemented'}
-      ariaLabels={{
-        nextPageLabel: 'Next version page',
-        previousPageLabel: 'Previous version page',
-        pageLabel: (page) => `Version page ${String(page)}`,
-      }}
-      onChange={({ detail }) => {
-        onSelect(undefined);
-        listing.goToPage(detail.currentPageIndex);
-      }}
-    />
+    <div ref={paginationRoot}>
+      <Pagination
+        currentPageIndex={listing.currentPage}
+        pagesCount={listing.pagesCount}
+        openEnd={listing.openEnd}
+        disabled={listing.loading || unavailable}
+        ariaLabels={{
+          nextPageLabel: 'Next version page',
+          previousPageLabel: 'Previous version page',
+          pageLabel: (page) => `Version page ${String(page)}`,
+        }}
+        onChange={({ detail }) => {
+          const active = document.activeElement;
+          pageFocusOrigin.current = paginationRoot.current?.contains(active) ? active : null;
+          onSelect(undefined);
+          listing.goToPage(detail.currentPageIndex);
+        }}
+      />
+    </div>
   );
 
   return (
@@ -165,8 +201,9 @@ export function VersionHistory({
               connection={connection}
               resource="version history"
               onRetry={listing.refresh}
+              noticeRef={unavailableNotice}
             />
-            {listing.failure.kind === 'not-implemented' && pagination}
+            {unavailable && pagination}
           </SpaceBetween>
         ))}
       {open && edit !== undefined && (
