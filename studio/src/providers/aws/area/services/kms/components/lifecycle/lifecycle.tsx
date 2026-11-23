@@ -67,8 +67,14 @@ export function Lifecycle({ connection, metadata }: LifecycleProps) {
   const unavailableReason = (operation: LifecycleOperation) =>
     action.isUnavailable(operation) ? `Not implemented by the emulator (${operation})` : undefined;
 
-  const control = (operation: LifecycleOperation, label: string, allowed: boolean, onClick: () => void) => {
-    const reason = unavailableReason(operation);
+  const control = (
+    operation: LifecycleOperation,
+    label: string,
+    allowed: boolean,
+    onClick: () => void,
+    stateReason?: string,
+  ) => {
+    const reason = unavailableReason(operation) ?? stateReason;
     return (
       <Button
         disabled={!allowed || action.disabled(operation)}
@@ -89,15 +95,28 @@ export function Lifecycle({ connection, metadata }: LifecycleProps) {
     );
 
   const scheduledDays = waitingDays(days);
+  const pendingDeletionReason = pendingDeletion ? 'Cancel key deletion to use this action.' : undefined;
 
   return (
     <>
       <div role="group" aria-label="Key lifecycle">
         <SpaceBetween direction="horizontal" size="xs">
-          {control(LIFECYCLE_OPERATIONS.describe, 'Edit description', usable, () => open('describe'))}
+          {control(
+            LIFECYCLE_OPERATIONS.describe,
+            'Edit description',
+            usable,
+            () => open('describe'),
+            pendingDeletionReason,
+          )}
           {state === 'Disabled'
             ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', true, handleEnable)
-            : control(LIFECYCLE_OPERATIONS.disable, 'Disable key', state === 'Enabled', () => open('disable'))}
+            : control(
+                LIFECYCLE_OPERATIONS.disable,
+                'Disable key',
+                state === 'Enabled',
+                () => open('disable'),
+                pendingDeletionReason,
+              )}
           {pendingDeletion
             ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', true, () => open('cancel'))
             : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', usable, () => open('schedule'))}
@@ -151,10 +170,7 @@ export function Lifecycle({ connection, metadata }: LifecycleProps) {
           <Box variant="p">
             Disable key <KeyName keyId={keyId} />?
           </Box>
-          <Box variant="p">
-            While it is disabled, your local emulator refuses every cryptographic operation that uses this key, such as
-            Encrypt and Decrypt, for any application that calls it. You can enable it again.
-          </Box>
+          <Box variant="p">The key's state becomes Disabled in your local emulator. You can enable it again.</Box>
         </LifecycleDialog>
       )}
 
@@ -180,12 +196,12 @@ export function Lifecycle({ connection, metadata }: LifecycleProps) {
             Schedule the deletion of key <KeyName keyId={keyId} />?
           </Box>
           <Box variant="p">
-            Until the waiting period ends the key cannot be used and you can cancel the deletion. Then your local
-            emulator deletes the key, and data encrypted under it can no longer be decrypted.
+            The key's state becomes PendingDeletion in your local emulator, with the scheduled deletion date shown in
+            Key metadata. You can cancel the scheduled deletion before that date.
           </Box>
           <FormField
             label="Waiting period (days)"
-            constraintText={RANGE_TEXT}
+            constraintText={scheduledDays === undefined ? undefined : RANGE_TEXT}
             errorText={scheduledDays === undefined ? `Enter a whole number of days. ${RANGE_TEXT}` : undefined}
           >
             <Input

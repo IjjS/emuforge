@@ -9,6 +9,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs from '@cloudscape-design/components/tabs';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
@@ -21,6 +22,7 @@ import type { ScreenPageProps } from '../../../screens';
 import { KMS_OPERATIONS } from '../api';
 import { Access } from '../components/access/access';
 import { Labels } from '../components/labels/labels';
+import { KeyState } from '../components/lifecycle/key-state';
 import { Lifecycle } from '../components/lifecycle/lifecycle';
 import { Rotation } from '../components/rotation/rotation';
 import { KEYS_PATH } from '../paths';
@@ -52,8 +54,9 @@ function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['con
         <KeyValuePairs
           ariaLabel="Key properties"
           columns={3}
+          minColumnWidth={220}
           items={[
-            { label: 'Status', value: <ValueText kind="fixed" value={metadata.KeyState} none="–" /> },
+            { label: 'Status', value: <KeyState state={metadata.KeyState} /> },
             { label: 'Key spec', value: <ValueText kind="fixed" value={metadata.KeySpec} none="–" /> },
             { label: 'Key usage', value: <ValueText kind="fixed" value={metadata.KeyUsage} none="–" /> },
             { label: 'Origin', value: <ValueText kind="fixed" value={metadata.Origin} none="–" /> },
@@ -71,6 +74,7 @@ function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['con
 
 function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & { keyId: string }) {
   const handleFollow = useFollow();
+  const queryClient = useQueryClient();
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
   const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
@@ -78,6 +82,19 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const handleRefresh = () => {
     setAttemptedRetry(true);
     read.refresh();
+    const endpoint = connection.engineOrigin;
+    const panelReads = [
+      ['kms', 'aliases', keyId],
+      ['kms', 'tags', keyId],
+      ['kms', 'policy-names', endpoint, keyId],
+      ['kms', 'default-policy', endpoint, keyId],
+      ['kms', 'grants', keyId],
+      ['kms', 'rotation-status', endpoint, keyId],
+      ['kms', 'rotation-history', keyId],
+    ];
+    for (const queryKey of panelReads) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
   };
 
   return (
@@ -131,7 +148,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
               {
                 id: 'rotation',
                 label: 'Key rotation',
-                content: <Rotation connection={connection} keyId={keyId} />,
+                content: <Rotation connection={connection} keyId={keyId} keySpec={read.key?.KeySpec} />,
               },
             ]}
           />

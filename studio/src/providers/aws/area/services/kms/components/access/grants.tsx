@@ -83,6 +83,7 @@ export function Grants({ connection, keyId }: AccessProps) {
     <>
       <Table
         trackBy="id"
+        wrapLines
         ariaLabels={{ tableLabel: 'Grants' }}
         items={listing.items ?? []}
         loading={listing.loading}
@@ -132,9 +133,11 @@ export function Grants({ connection, keyId }: AccessProps) {
           {
             id: 'actions',
             header: 'Actions',
+            minWidth: 110,
             cell: (grant) => (
               <Button
                 ariaLabel={`Revoke grant ${grant.id}`}
+                wrapText={false}
                 disabled={action.disabled(operations.revokeGrant)}
                 onClick={() => setRevoking(grant)}
               >
@@ -145,7 +148,7 @@ export function Grants({ connection, keyId }: AccessProps) {
         ]}
         empty={
           failure === undefined ? (
-            <Box textAlign="center" color="inherit">
+            <Box textAlign="center" variant="strong">
               {listing.pastEnd ? 'No more grants' : 'No grants'}
             </Box>
           ) : (
@@ -156,18 +159,20 @@ export function Grants({ connection, keyId }: AccessProps) {
           )
         }
         pagination={
-          <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
-            ariaLabels={{
-              paginationLabel: 'Grant pages',
-              previousPageLabel: 'Previous page',
-              nextPageLabel: 'Next page',
-              pageLabel: (page) => `Page ${String(page)}`,
-            }}
-          />
+          (listing.openEnd || listing.pagesCount > 1) && (
+            <Pagination
+              currentPageIndex={listing.currentPage}
+              pagesCount={listing.pagesCount}
+              openEnd={listing.openEnd}
+              onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
+              ariaLabels={{
+                paginationLabel: 'Grant pages',
+                previousPageLabel: 'Previous page',
+                nextPageLabel: 'Next page',
+                pageLabel: (page) => `Page ${String(page)}`,
+              }}
+            />
+          )
         }
         footer={
           unavailable.length > 0 && (
@@ -195,7 +200,9 @@ export function Grants({ connection, keyId }: AccessProps) {
           onSubmit={handleCreate}
         >
           <GrantFields draft={draft} disabled={action.pending === operations.createGrant} onChange={setDraft} />
-          {action.failure !== undefined && <ActionNotice failure={action.failure} endpoint={connection.engineOrigin} />}
+          {action.failure !== undefined && (
+            <ActionNotice failure={action.failure} endpoint={connection.engineOrigin} focusOnFailure />
+          )}
         </AccessDialog>
       )}
       {revoking !== undefined && (
