@@ -158,19 +158,50 @@ const retry = () => screen.getByRole('button', { name: 'Retry' });
 const next = () => screen.getByRole('button', { name: 'Next page' });
 const previous = () => screen.getByRole('button', { name: 'Previous page' });
 const filter = () => screen.getByRole('searchbox', { name: 'Filter by stack name' });
-const stackTable = () => within(screen.getByRole('table'));
 const tokens = () => engine.calls.map((params) => params.get('NextToken'));
+
+function stackTable() {
+  const table = wrapper.findTable();
+  if (table === null) throw new Error('Expected the stacks table');
+  return table;
+}
+
+function emptySlot() {
+  const empty = stackTable().findEmptySlot();
+  if (empty === null) throw new Error('Expected the stacks table empty slot');
+  return within(empty.getElement());
+}
+
+function stackCell(row: number, column: number) {
+  const cell = stackTable().findBodyCell(row, column);
+  if (cell === null) throw new Error(`Expected a stacks table cell in row ${String(row)}, column ${String(column)}`);
+  return cell.getElement();
+}
+
+function stackNames() {
+  return stackTable()
+    .findRows()
+    .map((_, index) => stackCell(index + 1, 1).textContent?.trim());
+}
+
+function columnHeaders() {
+  return stackTable()
+    .findColumnHeaders()
+    .map((header) => header.getElement().textContent?.trim());
+}
 
 function changeFilter(value: string) {
   fireEvent.change(filter(), { target: { value } });
 }
 
 async function expectStack(name: string) {
-  return screen.findByRole('rowheader', { name });
+  await waitFor(() => {
+    expect(stackNames()).toContain(name);
+  });
 }
 
 function expectNoStack(name: string) {
-  expect(screen.queryByRole('rowheader', { name })).not.toBeInTheDocument();
+  expect(stackNames()).not.toContain(name);
 }
 
 function expectNoPagination() {
@@ -204,39 +235,40 @@ it.each(['/aws/cloudformation', '/aws/cloudformation/stacks'])(
   },
 );
 
-it('shows loading, a genuinely empty page with an active filter, and distinct same-name rows', async () => {
+it('shows loading and distinct same-name rows, then refreshes to a genuinely empty page with a filter active', async () => {
   const first = heldResponse();
-  engine.answer
-    .mockReturnValueOnce(first.promise)
-    .mockReturnValueOnce(
-      page([
-        { ...summary('id-1', 'App'), TemplateDescription: 'Local deployment' },
-        summary('id-2', 'App', 'DELETE_COMPLETE'),
-      ]),
-    );
+  engine.answer.mockReturnValueOnce(first.promise).mockReturnValueOnce(page([]));
   open();
-  expect(screen.getByText('Loading stacks')).toBeInTheDocument();
-  changeFilter('app');
-  first.resolve(page([]));
-  expect(await screen.findByText('No stacks')).toBeInTheDocument();
-  expect(screen.getByText('Stacks created in this emulator will appear here.')).toBeInTheDocument();
+  expect(stackTable().findLoadingText()?.getElement()).toHaveTextContent('Loading stacks');
+  first.resolve(
+    page([
+      { ...summary('id-1', 'App'), TemplateDescription: 'Local deployment' },
+      summary('id-2', 'App', 'DELETE_COMPLETE'),
+    ]),
+  );
+  await expectStack('App');
+
+  expect(stackNames()).toEqual(['App', 'App']);
+  expect(columnHeaders()).toEqual(['Stack name', 'Status', 'Created', 'Description']);
+  expect(stackCell(1, 1).textContent).toBe('App');
+  expect(stackCell(2, 1).textContent).toBe('App');
+  expect(within(stackCell(1, 1)).queryByRole('link')).not.toBeInTheDocument();
+  expect(within(stackCell(2, 1)).queryByRole('link')).not.toBeInTheDocument();
+  expect(stackCell(1, 2)).toHaveTextContent('CREATE_COMPLETE');
+  expect(stackCell(2, 2)).toHaveTextContent('DELETE_COMPLETE');
+  expect(stackCell(1, 3)).toHaveTextContent(creationDateText(new Date(CREATED)));
+  expect(stackCell(1, 4)).toHaveTextContent('Local deployment');
+  expect(stackCell(2, 4).textContent?.trim()).toBe('-');
   expectNoPagination();
 
+  changeFilter('app');
+  expect(stackNames()).toEqual(['App', 'App']);
   fireEvent.click(refresh());
-  const names = await screen.findAllByRole('rowheader', { name: 'App' });
-  expect(names).toHaveLength(2);
-  expect(
-    stackTable()
-      .getAllByRole('columnheader')
-      .map((header) => header.textContent?.trim()),
-  ).toEqual(['Stack name', 'Status', 'Created', 'Description']);
-  expect(screen.queryByRole('link', { name: 'App' })).not.toBeInTheDocument();
-  const rows = names.map((name) => within(name.closest('tr') as HTMLElement));
-  expect(rows[0]?.getByRole('cell', { name: 'CREATE_COMPLETE' })).toBeInTheDocument();
-  expect(rows[1]?.getByRole('cell', { name: 'DELETE_COMPLETE' })).toBeInTheDocument();
-  expect(rows[0]?.getByRole('cell', { name: creationDateText(new Date(CREATED)) })).toBeInTheDocument();
-  expect(rows[0]?.getByRole('cell', { name: 'Local deployment' })).toBeInTheDocument();
-  expect(rows[1]?.getByRole('cell', { name: '-' })).toBeInTheDocument();
+  expect(await screen.findByText('No stacks')).toBeInTheDocument();
+  expect(screen.getByText('Stacks created in this emulator will appear here.')).toBeInTheDocument();
+  expect(screen.queryByText('No matching stacks')).not.toBeInTheDocument();
+  expect(filter()).toHaveValue('app');
+  expect(stackTable().findRows()).toHaveLength(0);
   expectNoPagination();
   expect(tokens()).toEqual([null, null]);
 });
@@ -245,9 +277,7 @@ it('keeps a single status beside each name in a narrow table and retains the scr
   const wideName = 'W'.repeat(24);
   const longStatus = 'UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS';
   vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(350);
-  vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
-    return this.querySelector(':scope > table') === null ? 350 : 640;
-  });
+  vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(640);
   engine.answer.mockReturnValueOnce(
     page([
       summary('id-1', 'Local stack'),
@@ -255,22 +285,18 @@ it('keeps a single status beside each name in a narrow table and retains the scr
     ]),
   );
   open();
-  const short = await screen.findByRole('rowheader', { name: /Local stack.*CREATE_COMPLETE/ });
-  expect(within(short).getByText('Local stack')).toBeVisible();
-  expect(within(short).getByText('CREATE_COMPLETE')).toBeVisible();
-  const wide = screen.getByRole('rowheader', { name: new RegExp(`${wideName}.*${longStatus}`) });
-  expect(within(wide).getByText(wideName)).toBeVisible();
-  expect(within(wide).getByText(longStatus)).toBeVisible();
-  expect(screen.getAllByText(longStatus)).toHaveLength(1);
-  expect(screen.getAllByText('CREATE_COMPLETE')).toHaveLength(1);
-  expect(
-    stackTable()
-      .getAllByRole('columnheader')
-      .map((header) => header.textContent?.trim()),
-  ).toEqual(['Stack name and status', 'Created', 'Description']);
-  const wideRow = within(wide.closest('tr') as HTMLElement);
-  expect(wideRow.getByRole('cell', { name: creationDateText(new Date(CREATED)) })).toBeInTheDocument();
-  expect(wideRow.getByRole('cell', { name: 'Recovery test' })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(stackTable().findRows()).toHaveLength(2);
+  });
+  const short = within(stackCell(1, 1));
+  expect(short.getByText('Local stack')).toBeVisible();
+  expect(short.getAllByText('CREATE_COMPLETE')).toHaveLength(1);
+  const wide = within(stackCell(2, 1));
+  expect(wide.getByText(wideName)).toBeVisible();
+  expect(wide.getAllByText(longStatus)).toHaveLength(1);
+  expect(columnHeaders()).toEqual(['Stack name and status', 'Created', 'Description']);
+  expect(stackCell(2, 2)).toHaveTextContent(creationDateText(new Date(CREATED)));
+  expect(stackCell(2, 3)).toHaveTextContent('Recovery test');
   expect(screen.getByText('Scroll sideways to see more columns.')).toBeVisible();
 });
 
@@ -280,7 +306,9 @@ it('rejects a partial page and shows the complete page on retry', async () => {
     .mockReturnValueOnce(page([summary('id-1', 'Complete stack'), summary('id-2', 'Fixed stack')]));
   open();
 
-  await stackTable().findByText('Could not load stacks');
+  await waitFor(() => {
+    expect(emptySlot().getByText('Could not load stacks')).toBeInTheDocument();
+  });
   expect(screen.getByText('The emulator returned an incomplete stack summary.')).toBeInTheDocument();
   expectNoStack('Complete stack');
   expect(screen.queryByText('No stacks')).not.toBeInTheDocument();
@@ -297,7 +325,7 @@ it('filters by case-insensitive substring on the current page without adding rea
   await expectStack('DevWorkers');
 
   changeFilter('wEb');
-  expect(screen.getByRole('rowheader', { name: 'DevWebApp' })).toBeInTheDocument();
+  expect(stackNames()).toEqual(['DevWebApp']);
   expect(filter()).toHaveAccessibleDescription(/1 match on this page/);
   expectNoStack('DevWorkers');
   filter().focus();
@@ -318,7 +346,7 @@ it('filters by case-insensitive substring on the current page without adding rea
   expect(tokens()).toEqual([null]);
   fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
   expect(filter()).toHaveValue('');
-  expect(screen.getAllByRole('rowheader')).toHaveLength(2);
+  expect(stackNames()).toEqual(['DevWebApp', 'DevWorkers']);
   expect(tokens()).toEqual([null]);
 });
 
@@ -389,6 +417,77 @@ it('discards visible rows and the token on disconnect and starts at the first pa
   expectNoPagination();
 });
 
+it.each([true, false])(
+  'uses one fresh connected check to restart a failed continuation (restart succeeds: %s)',
+  async (succeeds) => {
+    const recoveryHelp = /Check that the local emulator is running on the configured port, then retry/;
+    engine.answer
+      .mockReturnValueOnce(page([summary('id-1', 'Old first page')], 'old-token'))
+      .mockImplementation(() => refused(503, 'EmulatorUnavailable', 'The emulator stopped replying.'));
+    const connection = open();
+    await expectStack('Old first page');
+    fireEvent.click(next());
+    await screen.findByText(recoveryHelp);
+    const outageCalls = tokens();
+    expect(outageCalls.length).toBeGreaterThan(1);
+    expect(outageCalls.slice(1)).toEqual(Array.from({ length: outageCalls.length - 1 }, () => 'old-token'));
+
+    connection.setConnection({ ...connected });
+    expect(screen.getByText(recoveryHelp)).toBeVisible();
+    expect(tokens()).toEqual(outageCalls);
+    if (succeeds) {
+      engine.answer.mockReturnValueOnce(page([summary('id-2', 'New first page')]));
+    }
+    connection.setConnection({ ...connected, checkedAt: 2 });
+    if (succeeds) {
+      await expectStack('New first page');
+      expect(tokens()).toEqual([...outageCalls, null]);
+      expectNoPagination();
+    } else {
+      await screen.findByText(recoveryHelp);
+      const recoveryCalls = tokens().slice(outageCalls.length);
+      expect(recoveryCalls.length).toBeGreaterThan(0);
+      expect(recoveryCalls.every((token) => token === null)).toBe(true);
+    }
+
+    const afterRecovery = tokens();
+    connection.setConnection({ ...connected, checkedAt: 3 });
+    if (succeeds) {
+      expect(stackNames()).toEqual(['New first page']);
+    } else {
+      expect(screen.getByText(recoveryHelp)).toBeVisible();
+      expect(retry()).toBeEnabled();
+    }
+    expect(tokens()).toEqual(afterRecovery);
+  },
+);
+
+it.each([
+  { status: 501, code: 'NotImplemented', title: 'Not implemented by the emulator' },
+  { status: 403, code: 'AccessDenied', title: 'Access denied' },
+])('shows the current disconnect over a stale $code response', async ({ status, code, title }) => {
+  engine.answer
+    .mockReturnValueOnce(refused(status, code, 'This session cannot list stacks.'))
+    .mockReturnValueOnce(page([summary('id-1', 'Available after recovery')]));
+  const connection = open();
+  await waitFor(() => {
+    expect(emptySlot().getByText(title)).toBeInTheDocument();
+  });
+
+  connection.setConnection(stopped);
+  expect(
+    emptySlot().getByText(/Check that the local emulator is running on the configured port, then retry/),
+  ).toBeVisible();
+  expect(emptySlot().queryByText(title)).not.toBeInTheDocument();
+  expect(retry()).toBeEnabled();
+  expect(refresh()).toBeEnabled();
+  expect(tokens()).toEqual([null]);
+
+  connection.setConnection({ ...connected, checkedAt: 3 });
+  await expectStack('Available after recovery');
+  expect(tokens()).toEqual([null, null]);
+});
+
 it.each([
   { action: 'Refresh', token: null },
   { action: 'Next page', token: 'more' },
@@ -401,7 +500,9 @@ it.each([
   await expectStack('Old row');
   fireEvent.click(screen.getByRole('button', { name: action }));
 
-  await stackTable().findByText('Could not load stacks');
+  await waitFor(() => {
+    expect(emptySlot().getByText('Could not load stacks')).toBeInTheDocument();
+  });
   expect(screen.getByText('ValidationError')).toBeInTheDocument();
   expectNoStack('Old row');
   expect(screen.queryByText('No stacks')).not.toBeInTheDocument();
@@ -418,7 +519,9 @@ it('explains a 501 on a continuation and leaves read actions disabled', async ()
   await expectStack('First');
   fireEvent.click(next());
 
-  await stackTable().findByText('Not implemented by the emulator');
+  await waitFor(() => {
+    expect(emptySlot().getByText('Not implemented by the emulator')).toBeInTheDocument();
+  });
   expect(screen.getByText(/ListStacks/)).toBeInTheDocument();
   expect(refresh()).toBeDisabled();
   expect(retry()).toBeDisabled();
