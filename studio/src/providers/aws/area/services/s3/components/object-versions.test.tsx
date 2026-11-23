@@ -235,7 +235,7 @@ async function confirmDialog(label: string) {
   const content = dialog.findContent();
   const field = required(content.findFormField());
   expect(field.findLabel()?.getElement()).toHaveTextContent('Enter the full key to confirm');
-  const input = required(field.findTextarea()).findNativeTextarea().getElement();
+  const input = required(field.findControl()?.findTextarea()).findNativeTextarea().getElement();
   const footer = required(dialog.findFooter());
   const confirm = required(findButton(footer, label)).getElement();
   return { content, footer, input, confirm };
