@@ -96,6 +96,10 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
     ({ value }) => value === (hasPolicy ? (drafts.FilterPolicyScope ?? currentScope) : undefined),
   );
   const raw = RAW_OPTIONS.find(({ value }) => value === (drafts.RawMessageDelivery ?? settings.RawMessageDelivery));
+  // Cloudscape loading blocks activation while keeping the submitting button focusable.
+  const savingPolicy = saving?.name === 'FilterPolicy' && saving.value !== '';
+  const savingScope = saving?.name === 'FilterPolicyScope';
+  const savingRawDelivery = saving?.name === 'RawMessageDelivery';
 
   const handleDraft = (name: SubscriptionSetting['name'], value: string | undefined) => {
     const saved = name === 'FilterPolicy' ? savedPolicy : settings[name];
@@ -149,8 +153,9 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         </FormField>
         <SpaceBetween direction="horizontal" size="xs">
           <Button
-            disabled={disabled || policy === '' || policy === settings.FilterPolicy}
-            loading={saving?.name === 'FilterPolicy' && saving.value !== ''}
+            data-testid="subscription-settings-save-policy"
+            disabled={!savingPolicy && (disabled || policy === '' || policy === settings.FilterPolicy)}
+            loading={savingPolicy}
             onClick={() => {
               void handleSave({ name: 'FilterPolicy', value: policy });
             }}
@@ -158,6 +163,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
             Save filter policy
           </Button>
           <Button
+            data-testid="subscription-settings-clear-policy"
             disabled={disabled || !hasPolicy}
             loading={saving?.name === 'FilterPolicy' && saving.value === ''}
             onClick={() => {
@@ -185,8 +191,9 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
           />
         </FormField>
         <Button
-          disabled={disabled || scope === undefined || !hasPolicy || scope.value === currentScope}
-          loading={saving?.name === 'FilterPolicyScope'}
+          data-testid="subscription-settings-save-scope"
+          disabled={!savingScope && (disabled || scope === undefined || !hasPolicy || scope.value === currentScope)}
+          loading={savingScope}
           onClick={() => {
             if (scope !== undefined) {
               void handleSave({ name: 'FilterPolicyScope', value: scope.value });
@@ -209,8 +216,9 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
           />
         </FormField>
         <Button
-          disabled={disabled || raw === undefined || raw.value === settings.RawMessageDelivery}
-          loading={saving?.name === 'RawMessageDelivery'}
+          data-testid="subscription-settings-save-raw-delivery"
+          disabled={!savingRawDelivery && (disabled || raw === undefined || raw.value === settings.RawMessageDelivery)}
+          loading={savingRawDelivery}
           onClick={() => {
             if (raw !== undefined) {
               void handleSave({ name: 'RawMessageDelivery', value: raw.value });
