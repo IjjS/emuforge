@@ -143,10 +143,19 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   }
   if (code === undefined) {
     const reason = text(answer.$response?.reason);
+    const message = text(answer.message);
+    const serviceMessage =
+      typeof answer.$fault === 'string' &&
+      answer.name !== 'SyntaxError' &&
+      message !== undefined &&
+      !NO_MESSAGE.has(message)
+        ? message
+        : undefined;
     return {
       kind: 'other',
       operation,
       code: reason === undefined ? `HTTP ${String(status)}` : `HTTP ${String(status)} ${reason}`,
+      ...(serviceMessage === undefined ? {} : { message: serviceMessage }),
     };
   }
   const rawMessage = text(answer.message);
