@@ -4,9 +4,12 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import type { TextareaProps } from '@cloudscape-design/components/textarea';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
+import { DiscardDialog } from '../../../../components/discard-dialog';
+import { DocumentField } from '../../../../components/document-field';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../../components/failure-states';
 import { failureOf, noEndpoint } from '../../../../components/use-token-listing';
@@ -14,7 +17,6 @@ import { ACCESS_OPERATIONS, getDefaultPolicy, hasDefaultPolicy, putDefaultPolicy
 import { connectionFailure } from '../../queries';
 import { AccessDialog } from './access-dialog';
 import { ActionNotice } from './action-notice';
-import { DocumentField } from '../../../../components/document-field';
 import type { AccessProps } from './access';
 import { useAccessAction } from './use-access-action';
 
@@ -68,20 +70,44 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
 export function KeyPolicy({ connection, keyId }: AccessProps) {
   const policy = useDefaultPolicy(connection, keyId);
   const action = useAccessAction(connection);
-  const [draft, setDraft] = useState<string>();
+  const [draft, setDraft] = useState<{ original: string; text: string }>();
+  const [syntaxError, setSyntaxError] = useState<{ message: string }>();
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const textarea = useRef<TextareaProps.Ref>(null);
   const pending = action.pending === putPolicy;
 
+  useLayoutEffect(() => {
+    if (syntaxError !== undefined) textarea.current?.focus();
+  }, [syntaxError]);
+
   function handleSave() {
-    if (draft === undefined || draft.trim() === '') return;
+    if (draft === undefined) return;
+    try {
+      JSON.parse(draft.text);
+    } catch (error) {
+      action.clearFailure();
+      setSyntaxError({
+        message: error instanceof SyntaxError ? `Invalid JSON. ${error.message}` : 'Enter valid JSON.',
+      });
+      return;
+    }
     void action.run(
       putPolicy,
-      (endpoint, signal) => putDefaultPolicy(endpoint, keyId, draft, signal),
+      (endpoint, signal) => putDefaultPolicy(endpoint, keyId, draft.text, signal),
       'Key policy saved.',
       () => {
         setDraft(undefined);
         policy.refresh();
       },
     );
+  }
+
+  function handleDismiss() {
+    if (draft?.text !== draft?.original) {
+      setConfirmDiscard(true);
+    } else {
+      setDraft(undefined);
+    }
   }
 
   return (
@@ -98,8 +124,10 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
                 policy.document === undefined
               }
               onClick={() => {
+                if (policy.document === undefined) return;
                 action.clearFailure();
-                setDraft(policy.document);
+                setSyntaxError(undefined);
+                setDraft({ original: policy.document, text: policy.document });
               }}
             >
               Edit key policy
@@ -144,14 +172,34 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
           submitLabel="Save policy"
           size="large"
           pending={pending}
-          disabled={action.disabled(putPolicy) || draft.trim() === ''}
-          onDismiss={() => setDraft(undefined)}
+          disabled={action.disabled(putPolicy)}
+          onDismiss={handleDismiss}
           onSubmit={handleSave}
         >
-          <DocumentField label="Policy document" value={draft} onChange={setDraft} disabled={pending} rows={16} />
-          {action.failure !== undefined && <ActionNotice failure={action.failure} endpoint={connection.engineOrigin} />}
+          <DocumentField
+            label="Policy document"
+            value={draft.text}
+            onChange={(text) => {
+              setSyntaxError(undefined);
+              setDraft({ ...draft, text });
+            }}
+            errorText={syntaxError?.message}
+            disabled={pending}
+            textareaRef={textarea}
+            rows={16}
+          />
+          {action.failure !== undefined && (
+            <ActionNotice failure={action.failure} endpoint={connection.engineOrigin} focusOnFailure />
+          )}
         </AccessDialog>
       )}
+      <DiscardDialog
+        visible={confirmDiscard}
+        onAnswer={(answer) => {
+          setConfirmDiscard(false);
+          if (answer === 'discard') setDraft(undefined);
+        }}
+      />
     </Container>
   );
 }
