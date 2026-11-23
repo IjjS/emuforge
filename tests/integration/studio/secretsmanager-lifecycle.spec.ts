@@ -66,11 +66,26 @@ test('studio.secretsmanager-duplicate-name', async ({ ctx, page }) => {
   await page.goto(listPath + '/create');
   await textbox(page, 'Secret name').fill(f.name);
   await textbox(page, 'Secret value').fill('Another value');
-  await button(page, 'Store a secret').click();
-  await expect(
-    page.locator(ui.findAlert().toSelector()).filter({ hasText: /already exists|ResourceExistsException/i }),
-  ).toBeVisible();
-  await expect(textbox(page, 'Secret value')).toHaveValue('Another value');
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.CreateSecret') === true),
+    button(page, 'Store a secret').click(),
+  ]);
+  expect(response.request().postDataJSON()).toMatchObject({ Name: f.name, SecretString: 'Another value' });
+  expect(response.status()).toBe(400);
+  const failure = await response.json();
+  const reason = failure.Message ?? failure.message;
+  expect(reason).toEqual(expect.stringMatching(/\S/));
+  const alert = page.locator(ui.findAlert().toSelector()).filter({ hasText: reason });
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText(reason);
+  for (const [label, value] of [
+    ['Secret name', f.name],
+    ['Secret value', 'Another value'],
+  ] as const) {
+    const field = textbox(page, label);
+    await expect(field).toBeVisible();
+    await expect(field).toHaveValue(value);
+  }
   expect(await f.value()).toMatchObject({ VersionId: before.VersionId, SecretString: 'fixture text' });
 });
 
@@ -231,6 +246,8 @@ test('studio.secretsmanager-permanent-delete', async ({ ctx, page }) => {
   await textbox(modal(page), 'Type ' + f.name + ' to confirm.').fill(f.name);
   await submit(page, 'Permanently delete');
   await expect(page).toHaveURL((url) => url.pathname === listPath);
-  await expect(success(page)).toContainText(f.name);
+  await expect(
+    success(page).getByText('Secret ' + f.name + ' was permanently deleted.', { exact: true }),
+  ).toBeVisible();
   await waitForPurge(f);
 });

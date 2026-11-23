@@ -8,7 +8,6 @@ import {
   expectSettledList,
   listPath,
   secretLink,
-  revealedText,
   expectRevealedText,
   namedRowCell,
   ui,
@@ -101,11 +100,13 @@ test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
 test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
   const f = await fixture(ctx, true);
   const reads = valueRequests(page);
-  await f.seed({ Description: 'Previous instance metadata' });
+  const { ARN } = await f.seed({ Description: 'Previous instance metadata' });
+  const oldArn = page.getByText(ARN!);
   await detail(page, f.name);
+  await expect(oldArn).toBeVisible();
   await expect(page.getByText('Previous instance metadata', { exact: true })).toBeVisible();
   await button(page, 'Retrieve secret value').click();
-  const shown = revealedText(page, 'fixture text');
+  const shown = page.getByText('fixture text');
   await expectRevealedText(shown, 'fixture text');
   expect(reads).toEqual(['GetSecretValue']);
   const documentBeforeStop = await page.evaluateHandle(() => document);
@@ -122,6 +123,7 @@ test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
   await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
   await expect(page.getByRole('link', { name: 'Back to secrets' })).toBeVisible();
   await expect(page.getByText('Previous instance metadata')).toBeHidden();
+  await expect(oldArn).toBeHidden();
   await expect(shown).toBeHidden();
   expect(reads).toEqual(['GetSecretValue']);
   await expect(page).toHaveURL(originalUrl);

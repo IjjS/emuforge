@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './support';
 import { creationDateText, SEOUL } from './support/service-screens';
 import { direct, fixture, localKey, rotationFunction, WEST } from './services/secretsmanager/fixture';
-import { button, detail, modal, submit, success, textbox, ui } from './services/secretsmanager/screen';
+import { button, detail, modal, namedRowCell, submit, success, textbox, ui } from './services/secretsmanager/screen';
 
 test.use({ timezoneId: SEOUL.timeZone });
 
@@ -35,7 +35,8 @@ async function expectSchedule(page: Page, f: Awaited<ReturnType<typeof fixture>>
     );
   await expect(pair(1, 1)).toHaveText('Enabled');
   await expect(pair(1, 2)).toHaveText(creationDateText(d.NextRotationDate!.toISOString(), SEOUL));
-  await expect(pair(2, 1)).toContainText(arn);
+  await expect(pair(2, 1)).toBeVisible();
+  await expect(pair(2, 1)).toHaveText(d.RotationLambdaARN!);
   await expect(pair(2, 2)).toHaveText('30 days');
 }
 
@@ -54,8 +55,22 @@ test('studio.secretsmanager-rotation-refused', async ({ ctx, page }) => {
   await f.seed();
   const arn = await rotationFunction(ctx, f.emulatorPort, false);
   await detail(page, f.name);
-  await configure(page, arn);
-  await expect(modal(page)).toContainText(/cannot invoke the specified Lambda function/i);
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.RotateSecret') === true),
+    configure(page, arn),
+  ]);
+  expect(response.request().postDataJSON()).toMatchObject({
+    SecretId: f.name,
+    RotationLambdaARN: arn,
+    RotationRules: { AutomaticallyAfterDays: 30 },
+    RotateImmediately: false,
+  });
+  expect(response.ok()).toBe(false);
+  const failure = await response.json();
+  const reason = failure.Message ?? failure.message;
+  expect(reason).toEqual(expect.stringMatching(/\S/));
+  await expect(modal(page)).toBeVisible();
+  await expect(modal(page)).toContainText(reason);
   await expect(success(page)).toHaveCount(0);
   expect((await f.describe()).RotationEnabled).not.toBe(true);
 });
@@ -110,8 +125,13 @@ test('studio.secretsmanager-replica-add', async ({ ctx, page }) => {
   const row = page
     .locator(ui.findTable().findRows().toSelector())
     .filter({ has: button(page, 'Remove replica in ' + WEST) });
-  await expect(row).toContainText(WEST);
-  await expect(row).toContainText(replica!.KmsKeyId!);
+  const remove = button(page, 'Remove replica in ' + WEST);
+  const regionCell = await namedRowCell(page, remove, 1);
+  const keyCell = await namedRowCell(page, remove, 3);
+  await expect(regionCell).toBeVisible();
+  await expect(regionCell).toHaveText(replica!.Region!);
+  await expect(keyCell).toBeVisible();
+  await expect(keyCell).toHaveText(replica!.KmsKeyId!);
   await expect(row).toContainText('Promotion requires a connection to the replica Region.');
 });
 
