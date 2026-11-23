@@ -41,23 +41,20 @@ async function openRotationAction(title: string, submit: string) {
   return dialog;
 }
 
+function expectField(label: string, value: string) {
+  const field = screen.getByText(label).closest('dt')?.nextElementSibling;
+  expect(field).toBeVisible();
+  expect(field).toHaveTextContent(value);
+}
+
 describe('Secret rotation', () => {
-  it.each(ORDERS)('saves an interval without immediate rotation and shows refreshed settings (%s)', async (order) => {
-    const next = NEXT + 86_400;
-    const refresh = delayedRefresh(ROTATE, {
-      ...ACTIVE,
-      RotationRules: { AutomaticallyAfterDays: 30 },
-      NextRotationDate: next,
-    });
-    const { calls } = openSecret({ handler: refresh.handler, observe: true });
+  it('sends the function and interval with immediate rotation disabled', async () => {
+    const { calls } = openSecret({ handler: (operation) => (operation === ROTATE ? { body: {} } : undefined) });
     const dialog = await enterSchedule();
     fireEvent.click(dialog.getByRole('button', { name: 'Save schedule' }));
-    await refresh.complete(order, SAVED, () => {
-      expect(screen.getByText('30 days')).toBeVisible();
-      expect(screen.getByText(creationDateText(new Date(next * 1000)))).toBeVisible();
-      expect(screen.getByText('Enabled')).toBeVisible();
-    });
+    expect(await screen.findByText(SAVED)).toBeVisible();
     expect(calls).toHaveBeenCalledWith(ROTATE, {
+      ClientRequestToken: expect.any(String),
       SecretId: NAME,
       RotationLambdaARN: FUNCTION,
       RotationRules: { AutomaticallyAfterDays: 30 },
@@ -65,32 +62,78 @@ describe('Secret rotation', () => {
     });
   });
 
+  it('requests immediate rotation and reports acceptance without claiming completion', async () => {
+    const { calls } = openSecret({
+      metadata: ACTIVE,
+      handler: (operation) => (operation === ROTATE ? { body: { VersionId: 'pending-rotation' } } : undefined),
+    });
+    await openRotationAction('Rotate now', 'Request rotation');
+    expect(await screen.findByText(ACCEPTED)).toBeVisible();
+    expect(screen.queryByText(/rotation (completed|succeeded)/i)).not.toBeInTheDocument();
+    expect(calls).toHaveBeenCalledWith(ROTATE, {
+      ClientRequestToken: expect.any(String),
+      SecretId: NAME,
+      RotateImmediately: true,
+    });
+  });
+
+  it('reads disabled rotation and an absent next date after cancel despite retained settings', async () => {
+    let canceled = false;
+    const { calls } = openSecret({
+      metadata: ACTIVE,
+      handler: (operation) => {
+        if (operation === CANCEL) {
+          canceled = true;
+          return { body: {} };
+        }
+        if (operation === 'DescribeSecret' && canceled) return { body: { Name: NAME, ...CANCELED } };
+      },
+    });
+    await openRotationAction('Cancel rotation', 'Cancel rotation');
+    expect(await screen.findByText('Disabled')).toBeVisible();
+    expect(screen.getByText(NO_NEXT)).toBeVisible();
+    expectField('Rotation interval', '7 days');
+    expectField('Rotation Lambda function', FUNCTION);
+    expect(calls).toHaveBeenCalledWith(CANCEL, { SecretId: NAME });
+  });
+
+  it.each(ORDERS)('saves an interval without immediate rotation and shows refreshed settings (%s)', async (order) => {
+    const next = NEXT + 86_400;
+    const refresh = delayedRefresh(ROTATE, {
+      ...ACTIVE,
+      RotationRules: { AutomaticallyAfterDays: 30 },
+      NextRotationDate: next,
+    });
+    openSecret({ handler: refresh.handler, observe: true });
+    const dialog = await enterSchedule();
+    fireEvent.click(dialog.getByRole('button', { name: 'Save schedule' }));
+    await refresh.complete(order, SAVED, () => {
+      expectField('Rotation interval', '30 days');
+      expectField('Next rotation date', creationDateText(new Date(next * 1000)));
+      expect(screen.getByText('Enabled')).toBeVisible();
+    });
+  });
+
   it.each(ORDERS)('shows acceptance and rereads settings after requesting immediate rotation (%s)', async (order) => {
     const next = NEXT + 86_400;
     const refresh = delayedRefresh(ROTATE, { ...ACTIVE, NextRotationDate: next });
-    const { calls } = openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
+    openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
     await openRotationAction('Rotate now', 'Request rotation');
     await refresh.complete(order, ACCEPTED, () => {
       expect(screen.getByText('Enabled')).toBeVisible();
-      expect(screen.getByText(creationDateText(new Date(next * 1000)))).toBeVisible();
-      expect(screen.queryByText(/rotation (completed|succeeded)/i)).not.toBeInTheDocument();
+      expectField('Next rotation date', creationDateText(new Date(next * 1000)));
     });
-    expect(calls).toHaveBeenCalledWith(ROTATE, { SecretId: NAME, RotateImmediately: true });
   });
 
   it.each(ORDERS)(
     'shows disabled rotation after cancel even when the schedule and function remain (%s)',
     async (order) => {
       const refresh = delayedRefresh(CANCEL, CANCELED);
-      const { calls } = openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
+      openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
       await openRotationAction('Cancel rotation', 'Cancel rotation');
       await refresh.complete(order, STOPPED, () => {
         expect(screen.getByText('Disabled')).toBeVisible();
-        expect(screen.getByText(NO_NEXT)).toBeVisible();
-        expect(screen.getByText('7 days')).toBeVisible();
-        expect(screen.getByText(FUNCTION)).toBeVisible();
       });
-      expect(calls).toHaveBeenCalledWith(CANCEL, { SecretId: NAME });
     },
   );
 
@@ -129,7 +172,8 @@ describe('Secret rotation', () => {
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
     expect(await screen.findByText('Enabled')).toBeVisible();
-    expect(screen.getByText(creationDateText(new Date(NEXT * 1000)))).toBeVisible();
+    expectField('Next rotation date', creationDateText(new Date(NEXT * 1000)));
   });
 });

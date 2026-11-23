@@ -12,6 +12,7 @@ import { useState } from 'react';
 
 import { CopyValue } from '../../../../components/copy-value';
 import { creationDateText, NO_DATE } from '../../../../components/format-date';
+import { ValueText } from '../../../../components/value-text';
 import { CANCEL_ROTATE_SECRET, ROTATE_SECRET, cancelRotateSecret, rotateSecret } from '../../rotation-replication-api';
 import { ChangeDialog, type ChangeDialogContext } from './change-dialog';
 
@@ -66,6 +67,7 @@ export function Rotation({
   const [edit, setEdit] = useState<RotationEdit>();
   const enabled = details.RotationEnabled === true;
   const interval = details.RotationRules?.AutomaticallyAfterDays;
+  const intervalLabel = interval === undefined ? undefined : `${interval} ${interval === 1 ? 'day' : 'days'}`;
   const nextDate = creationDateText(details.NextRotationDate);
   const context = { ...props, onClose: () => setEdit(undefined) };
   const handleOpen = (target: RotationEdit) => {
@@ -114,7 +116,10 @@ export function Rotation({
                   </StatusIndicator>
                 ),
               },
-              { label: 'Next rotation date', value: nextDate === NO_DATE ? 'No next rotation date' : nextDate },
+              {
+                label: 'Next rotation date',
+                value: nextDate === NO_DATE ? 'No next rotation date' : <ValueText kind="fixed" value={nextDate} />,
+              },
             ],
           },
           {
@@ -127,9 +132,11 @@ export function Rotation({
               {
                 label: 'Rotation interval',
                 value:
-                  interval === undefined
-                    ? (details.RotationRules?.ScheduleExpression ?? '-')
-                    : `${interval} ${interval === 1 ? 'day' : 'days'}`,
+                  intervalLabel === undefined ? (
+                    <ValueText kind="text" value={details.RotationRules?.ScheduleExpression} none="-" />
+                  ) : (
+                    <ValueText kind="fixed" value={intervalLabel} />
+                  ),
               },
             ],
           },

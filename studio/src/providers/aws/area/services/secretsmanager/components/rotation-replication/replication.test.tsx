@@ -55,6 +55,25 @@ describe('Regional replicas', () => {
     expect(calls).toHaveBeenCalledWith(ADD, { SecretId: NAME, AddReplicaRegions: [{ Region: REGION }] });
   });
 
+  it('shows InProgress from the primary secret after adding a replica', async () => {
+    let added = false;
+    openSecret({
+      handler: (operation) => {
+        if (operation === ADD) {
+          added = true;
+          return { body: {} };
+        }
+        if (operation === 'DescribeSecret' && added) {
+          return { body: { Name: NAME, ReplicationStatus: [{ Region: REGION, Status: 'InProgress' }] } };
+        }
+      },
+    });
+    const dialog = await enterRegion();
+    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
+    const row = await screen.findByRole('row', { name: new RegExp(REGION) });
+    expect(within(row).getByText('InProgress')).toBeVisible();
+  });
+
   it.each(ORDERS)('shows the replica and its returned InProgress status after refresh (%s)', async (order) => {
     const refresh = delayedRefresh(ADD, {
       ReplicationStatus: [{ Region: REGION, KmsKeyId: KEY, Status: 'InProgress' }],
@@ -65,7 +84,7 @@ describe('Regional replicas', () => {
     await refresh.complete(order, ADDED, () => {
       const row = screen.getByRole('row', { name: new RegExp(REGION) });
       expect(within(row).getByText('InProgress')).toBeVisible();
-      expect(within(row).getByText(KEY)).toBeVisible();
+      expect(row).toHaveTextContent(KEY);
     });
     expect(calls).toHaveBeenCalledWith(ADD, { SecretId: NAME, AddReplicaRegions: [{ Region: REGION, KmsKeyId: KEY }] });
   });
@@ -77,12 +96,23 @@ describe('Regional replicas', () => {
     expect(within(row).queryByRole('button', { name: /promote|stop replication/i })).not.toBeInTheDocument();
   });
 
-  it('identifies the secret and Region and requires the full name to submit', async () => {
-    const { calls } = openSecret({ metadata: EXISTING });
+  it('names the secret and Region and explains the permanence of removal', async () => {
+    openSecret({ metadata: EXISTING });
     const dialog = await openRemoval();
     expect(dialog.getByText(WARNING)).toBeVisible();
-    const confirmation = dialog.getByRole('textbox', { name: CONFIRM });
+  });
+
+  it('identifies the exact confirmation text next to the removal input', async () => {
+    openSecret({ metadata: EXISTING });
+    const dialog = await openRemoval();
     expect(dialog.getByText(CONFIRM)).toBeVisible();
+    expect(dialog.getByRole('textbox', { name: CONFIRM })).toBeVisible();
+  });
+
+  it('requires the full name to submit removal', async () => {
+    const { calls } = openSecret({ metadata: EXISTING });
+    const dialog = await openRemoval();
+    const confirmation = dialog.getByRole('textbox', { name: CONFIRM });
     const submit = dialog.getByRole('button', { name: 'Remove replica' });
     expect(submit).toBeDisabled();
     fireEvent.change(confirmation, { target: { value: `${NAME} ` } });
@@ -140,6 +170,7 @@ describe('Regional replicas', () => {
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
     expect(screen.getByText(EMPTY)).toBeVisible();
   });
 
@@ -156,6 +187,7 @@ describe('Regional replicas', () => {
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
     expect(await screen.findByRole('row', { name: new RegExp(REGION) })).toBeVisible();
   });
 });

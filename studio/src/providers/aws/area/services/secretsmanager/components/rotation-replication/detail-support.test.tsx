@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { expect, vi } from 'vitest';
 
@@ -128,7 +128,7 @@ export function delayedRefresh(operation: string, metadata: Metadata) {
     expect(screen.getByText(success)).toBeVisible();
     const ordered = order === 'list first' ? ([LIST, DETAIL] as const) : ([DETAIL, LIST] as const);
     for (const read of ordered) {
-      await act(() => reads[read].resolve({ body: reads[read].body }));
+      reads[read].resolve({ body: reads[read].body });
       await waitFor(() => expect(screen.getByLabelText(read)).toHaveAttribute('aria-busy', 'false'));
       expect(screen.getByText(success)).toBeVisible();
       if (read === DETAIL) await waitFor(assertDetail);

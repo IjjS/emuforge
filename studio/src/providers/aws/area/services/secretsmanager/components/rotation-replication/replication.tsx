@@ -115,14 +115,14 @@ export function Replication({
             id: 'region',
             header: 'Region',
             isRowHeader: true,
-            cell: ({ Region }) => <ValueText kind="name" value={Region} />,
+            cell: ({ Region }) => <ValueText kind="fixed" value={Region} />,
           },
           {
             id: 'status',
             header: 'Status',
             cell: ({ Status, StatusMessage }) => (
               <SpaceBetween size="xxs">
-                <ValueText kind="name" value={Status} />
+                <ValueText kind="fixed" value={Status} />
                 {StatusMessage && <ValueText kind="text" value={StatusMessage} />}
               </SpaceBetween>
             ),
