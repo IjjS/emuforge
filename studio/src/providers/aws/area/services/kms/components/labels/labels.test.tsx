@@ -9,12 +9,14 @@ import {
 } from '@aws-sdk/client-kms';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
-import { PageFlashContext, type FlashResult } from '../../../../components/page-flash';
+import { AreaFlash } from '../../../../components/area-flash';
+import { PageFlashContext } from '../../../../components/page-flash';
+import { useAreaFlash } from '../../../../components/use-area-flash';
 import { Labels } from './labels';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -32,14 +34,12 @@ const connection = {
 function open() {
   function Area() {
     const root = useRef<HTMLDivElement>(null);
-    const [flash, setFlash] = useState<FlashResult>();
+    const flash = useAreaFlash('/aws/kms/keys/test-key-1', 0, true);
     return (
       <AreaRootContext.Provider value={root}>
-        <PageFlashContext.Provider value={{ show: setFlash, handOver: vi.fn() }}>
+        <PageFlashContext.Provider value={flash.pageFlash}>
           <div ref={root}>
-            {flash?.map((item) => (
-              <div key={item.type}>{item.content}</div>
-            ))}
+            {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
             <Labels connection={connection} keyId={keyId} />
           </div>
         </PageFlashContext.Provider>
@@ -57,6 +57,11 @@ function open() {
 
 function aliasPage(name: string, target = keyId) {
   return { Aliases: [{ AliasName: name, TargetKeyId: target }] };
+}
+
+function aliasCell(name: string) {
+  return (_text: string, element: Element | null) =>
+    element?.matches('td, th') === true && element.textContent === name;
 }
 
 function tagPage(name: string, value: string) {
@@ -97,7 +102,7 @@ describe('key labels', () => {
   });
 
   it('uses each list’s marker to reach later alias and tag pages for the current key', async () => {
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof ListAliasesCommand) {
         expect(command.input.KeyId).toBe(keyId);
         return command.input.Marker === 'next-alias'
@@ -114,13 +119,13 @@ describe('key labels', () => {
     });
     open();
 
-    expect(await screen.findByText(alias)).toBeVisible();
+    expect(await screen.findByText(aliasCell(alias))).toBeVisible();
     expect(await screen.findByText('development')).toBeVisible();
     const aliases = within(screen.getByRole('list', { name: 'Alias pages' }));
     const tags = within(screen.getByRole('list', { name: 'Tag pages' }));
     fireEvent.click(aliases.getByRole('button', { name: 'Next page' }));
     fireEvent.click(tags.getByRole('button', { name: 'Next page' }));
-    expect(await screen.findByText('alias/invoices')).toBeVisible();
+    expect(await screen.findByText(aliasCell('alias/invoices'))).toBeVisible();
     expect(await screen.findByText('billing team')).toBeVisible();
   });
 
@@ -128,7 +133,7 @@ describe('key labels', () => {
     let moved = false;
     const targetList = deferred<{ Keys: { KeyId: string }[] }>();
     const keys = { Keys: [{ KeyId: keyId }, { KeyId: targetId }] };
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof ListKeysCommand) return moved ? targetList.promise : keys;
       if (command instanceof DescribeKeyCommand) {
         return { KeyMetadata: { KeyId: command.input.KeyId, KeyManager: 'CUSTOMER' } };
@@ -145,10 +150,10 @@ describe('key labels', () => {
     });
     open();
 
-    await screen.findByText(alias);
+    await screen.findByText(aliasCell(alias));
     clickButton(`Reassign alias ${alias}`);
     const dialog = within(await screen.findByRole('dialog', { name: 'Reassign alias' }));
-    fireEvent.click(dialog.getByRole('button', { name: 'Target key' }));
+    fireEvent.click(dialog.getByRole('button', { name: /Target key/ }));
     fireEvent.click(await dialog.findByRole('option', { name: targetId }));
     fireEvent.click(dialog.getByRole('button', { name: 'Reassign alias' }));
 
@@ -160,13 +165,14 @@ describe('key labels', () => {
   });
 
   it('retains a duplicate alias’s input and refusal without overwriting the existing alias', async () => {
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof ListAliasesCommand) return aliasPage(alias);
       if (command instanceof CreateAliasCommand) {
         expect(command.input).toEqual({ AliasName: alias, TargetKeyId: keyId });
         throw {
           name: 'AlreadyExistsException',
           message: 'This alias already exists.',
+          $fault: 'client',
           $metadata: { httpStatusCode: 400 },
         };
       }
@@ -174,7 +180,7 @@ describe('key labels', () => {
     });
     open();
 
-    await screen.findByText(alias);
+    await screen.findByText(aliasCell(alias));
     clickButton('Create alias');
     const dialog = within(await screen.findByRole('dialog', { name: 'Create alias' }));
     const name = dialog.getByRole('textbox', { name: 'Alias name' });
@@ -183,18 +189,19 @@ describe('key labels', () => {
 
     expect(await dialog.findByText(/This alias already exists/)).toBeVisible();
     expect(name).toHaveValue('events');
-    expect(screen.getByText(alias)).toBeVisible();
+    expect(screen.getByText(aliasCell(alias))).toBeVisible();
     expect(send.mock.calls.filter(([command]) => command instanceof UpdateAliasCommand)).toHaveLength(0);
   });
 
   it('keeps the selected tag and shows why KMS refused to remove it', async () => {
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof ListResourceTagsCommand) return tagPage('environment', 'development');
       if (command instanceof UntagResourceCommand) {
         expect(command.input).toEqual({ KeyId: keyId, TagKeys: ['environment'] });
         throw {
           name: 'KMSInvalidStateException',
           message: 'This key is pending deletion.',
+          $fault: 'client',
           $metadata: { httpStatusCode: 400 },
         };
       }
