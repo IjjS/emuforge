@@ -77,9 +77,7 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1" description="Create a key in your local emulator for development and tests.">
-        {KEY_CREATE_TITLE}
-      </Header>
+      <Header variant="h1">{KEY_CREATE_TITLE}</Header>
       <form onSubmit={(event) => void handleSubmit(event)}>
         <Form
           actions={
@@ -109,7 +107,7 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
                 ]}
               />
             </Container>
-            <Container header={<Header variant="h2">Description</Header>}>
+            <Container>
               <FormField label="Description" constraintText="Optional">
                 <Textarea
                   value={description}
