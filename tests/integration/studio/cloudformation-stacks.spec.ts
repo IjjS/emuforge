@@ -4,7 +4,8 @@ import {
   waitUntilCreated,
 } from "./services/cloudformation/stacks";
 import { expect, startStack, test } from "./support";
-import { expectLine, notStartedOn } from "./support/aws-area";
+import { crumbLink, expectLine, notStartedOn } from "./support/aws-area";
+import { addressOf, SIDE_NAVIGATION } from "./support/frame";
 import { checkPrefix, SEOUL } from "./support/service-screens";
 
 test.use({ timezoneId: SEOUL.timeZone });
@@ -23,10 +24,22 @@ test("studio.cloudformation-external-stacks", async ({ ctx, page }) => {
   await screen.refresh.click();
   await screen.expectDetails((await direct.list()).rows);
 
-  await waitUntilCreated(direct, await direct.create(prefix + "-second"));
-  await page.goto("/aws");
-  await page.goto("/aws/cloudformation/stacks");
+  await page.locator(SIDE_NAVIGATION).getByRole("link", { name: "Stacks", exact: true }).click();
+  await expect(page).toHaveURL(addressOf("/aws/cloudformation/stacks"));
   await screen.expectDetails((await direct.list()).rows);
+  const originalDocument = await page.evaluateHandle(() => document);
+  await crumbLink(page, "AWS").click();
+  await expect(page).toHaveURL(addressOf("/aws"));
+  expect(await page.evaluate(doc => doc === document, originalDocument)).toBe(true);
+  const secondName = prefix + "-second";
+  await waitUntilCreated(direct, await direct.create(secondName));
+  await page.goBack();
+  await expect(page).toHaveURL(addressOf("/aws/cloudformation/stacks"));
+  expect(await page.evaluate(doc => doc === document, originalDocument)).toBe(true);
+  await originalDocument.dispose();
+  const current = (await direct.list()).rows;
+  expect(current.map(stack => stack.StackName)).toContain(secondName);
+  await screen.expectDetails(current);
 });
 
 test("studio.cloudformation-stack-pages", async ({ ctx, page }) => {
