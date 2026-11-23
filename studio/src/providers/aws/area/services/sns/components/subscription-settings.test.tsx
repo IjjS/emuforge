@@ -130,6 +130,7 @@ async function clearModal() {
     }
     expect(modal.getElement()).toBeVisible();
     expect(modal.findHeader().getElement()).toHaveTextContent('Clear filter policy?');
+    expect(modal.getElement()).toHaveAccessibleName('Clear filter policy?');
     return modal;
   });
 }
@@ -256,6 +257,9 @@ async function confirmClearWhilePending() {
   opener.focus();
   await user.keyboard('{Enter}');
   const dialog = await clearModal();
+  const dismiss = dialog.findHeader().findButton('[data-testid="subscription-settings-clear-dismiss"]')?.getElement();
+  expect(dismiss).toBeVisible();
+  expect(dismiss).toBeEnabled();
   const confirm = dialog.findFooter()?.findAllButtons()[1];
   if (!confirm) {
     throw new Error('Clear policy confirmation is missing');
@@ -263,6 +267,8 @@ async function confirmClearWhilePending() {
   const target = confirm.getElement();
   expect(target).toHaveTextContent('Clear filter policy');
   target.focus();
+  const focusOut = vi.fn();
+  target.addEventListener('focusout', focusOut);
   await user.keyboard('{Enter}');
   expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
   expect(target).toHaveFocus();
@@ -270,8 +276,17 @@ async function confirmClearWhilePending() {
   expect(target).toHaveAttribute('aria-disabled', 'true');
   expect(confirm.findLoadingIndicator()?.getElement()).toBeVisible();
   expect(dialog.findFooter()?.findAllButtons()[0]?.getElement()).toBeDisabled();
-  await user.keyboard('{Enter} {Escape}');
+  expect(dismiss).toBeVisible();
+  expect(dismiss).toBeDisabled();
+  const progress = dialog.findContent().find('[data-testid="subscription-settings-clear-progress"]');
+  expect(progress?.getElement()).toHaveAttribute('role', 'status');
+  expect(progress?.findStatusIndicator()?.getElement()).toHaveTextContent('Clearing filter policy');
+  await user.keyboard('{Enter} ');
+  fireEvent.keyDown(target, { key: 'Escape', code: 'Escape', keyCode: 27 });
   expect(dialog.getElement()).toBeVisible();
+  expect(target).toHaveFocus();
+  expect(focusOut).not.toHaveBeenCalled();
+  await user.tab({ shift: true });
   expect(target).toHaveFocus();
   expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
     ENGINE,
@@ -279,6 +294,10 @@ async function confirmClearWhilePending() {
     { name: 'FilterPolicy', value: '' },
     expect.any(AbortSignal),
   );
+}
+
+function clearFeedback() {
+  return editor()?.findContent().find('[data-testid="subscription-settings-clear-status"]');
 }
 
 describe('subscription settings', () => {
@@ -661,28 +680,50 @@ describe('subscription settings', () => {
   });
 
   it('keeps a clear confirmation focused and restores focus to its opener when the write is refused', async () => {
+    const otherArn = `${TOPIC}:other-subscription`;
+    vi.mocked(api.listSubscriptions).mockResolvedValue({
+      subscriptions: [
+        { arn: ARN, endpoint: ENDPOINT, protocol: 'sqs', pending: false },
+        { arn: otherArn, endpoint: `${ENDPOINT}-other`, protocol: 'sqs', pending: false },
+      ],
+    });
     const write = hold<undefined>();
     vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(
       write.promise.then(() => {
         throw notFound('SetSubscriptionAttributes');
       }),
     );
-    vi.mocked(api.getSubscriptionSettings).mockResolvedValue(SETTINGS);
+    vi.mocked(api.getSubscriptionSettings).mockImplementation(async (_, arn) =>
+      arn === ARN ? SETTINGS : { ...SETTINGS, FilterPolicy: REPLACEMENT },
+    );
     await openSettings();
     await waitFor(() => expectPolicy(POLICY));
+    expect(clearFeedback()?.getElement()).toBeEmptyDOMElement();
     await confirmClearWhilePending();
 
     write.resolve(undefined);
     await waitFor(() => {
       expect(PAGE.findModal()).toBeNull();
-      expect(flash('error')?.findContent()?.getElement()).toHaveTextContent('NotFound: Subscription does not exist');
+      const flashContent = flash('error')?.findContent()?.getElement();
+      expect(flashContent).toHaveTextContent('NotFound: Subscription does not exist');
+      expect(flashContent).toHaveTextContent(ARN);
       const opener = writeButton('clear-policy').getElement();
       expect(opener).toHaveFocus();
       expect(opener).toBeEnabled();
+      const feedback = clearFeedback();
+      expect(feedback?.getElement()).toHaveAttribute('role', 'status');
+      const message = feedback?.findStatusIndicator()?.getElement();
+      expect(message).toBeVisible();
+      expect(message).toHaveTextContent('The filter policy could not be cleared.');
     });
     expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
     expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(1);
     expectPolicy(POLICY);
+    selectRow(2);
+    settingsOpener().click();
+    await waitFor(() => expectPolicy(REPLACEMENT));
+    expect(clearFeedback()?.getElement()).toBeEmptyDOMElement();
+    expect(flash('error')?.findContent()?.getElement()).toHaveTextContent(ARN);
   });
 
   it('keeps a clear confirmation focused, restores focus through readback, and uses the new scope on recreation', async () => {
@@ -702,6 +743,16 @@ describe('subscription settings', () => {
     expect(cancel?.getElement()).toBeVisible();
     expect(cancel?.getElement()).toHaveTextContent('Cancel');
     cancel?.click();
+    expect(PAGE.findModal()).toBeNull();
+    writeButton('clear-policy').click();
+    const dismiss = (await clearModal()).findHeader().findButton('[data-testid="subscription-settings-clear-dismiss"]');
+    expect(dismiss?.getElement()).toHaveAccessibleName('Close dialog');
+    dismiss?.click();
+    expect(PAGE.findModal()).toBeNull();
+    writeButton('clear-policy').click();
+    const escape = await clearModal();
+    fireEvent.keyDown(escape.findHeader().getElement(), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    expect(PAGE.findModal()).toBeNull();
     expect(api.setSubscriptionSetting).not.toHaveBeenCalled();
     expectPolicy(POLICY);
     expectValue('filter-policy-scope', 'Message attributes');
@@ -726,6 +777,7 @@ describe('subscription settings', () => {
     });
     expect(close).toHaveFocus();
     expect(close).toBeEnabled();
+    expect(clearFeedback()?.getElement()).toBeEmptyDOMElement();
     expect(writeButton('clear-policy').isDisabled()).toBe(true);
     expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
     expectValue('filter-policy-scope', 'Not set');
