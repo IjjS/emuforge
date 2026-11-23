@@ -11,6 +11,7 @@ import Flashbar, { type FlashbarProps } from '@cloudscape-design/components/flas
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -248,5 +249,77 @@ describe('KMS key access', () => {
     expectCommand(
       expect.objectContaining({ input: { KeyId: KEY_ID, GranteePrincipal: GRANTEE, Operations: ['Encrypt'] } }),
     );
+  });
+
+  it('keeps focus while saving, focuses the refusal, and restores the opener after dismissal', async () => {
+    const response = deferred<void>();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof PutKeyPolicyCommand) {
+        await response.promise;
+        throw refusal();
+      }
+      return fallback(command);
+    });
+    open();
+    const user = userEvent.setup();
+    await screen.findByText(OLD_POLICY);
+    const opener = screen.getByRole('button', { name: 'Edit key policy' });
+    await user.click(opener);
+    const dialog = within(await screen.findByRole('dialog', { name: 'Edit key policy' }));
+    const save = dialog.getByRole('button', { name: 'Save policy' });
+    await user.click(save);
+    expect(save).toHaveFocus();
+    expect(save).toHaveAttribute('aria-disabled', 'true');
+
+    response.resolve();
+    const reason = await dialog.findByText(REFUSAL, { exact: false });
+    expect(document.activeElement).toContainElement(reason);
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit key policy' })).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+  });
+
+  it('reports a JSON syntax error on the policy field without sending a save', async () => {
+    send.mockImplementation(async (command: unknown) => fallback(command));
+    open();
+    const user = userEvent.setup();
+    await screen.findByText(OLD_POLICY);
+    await user.click(screen.getByRole('button', { name: 'Edit key policy' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Edit key policy' }));
+    const field = dialog.getByRole('textbox', { name: 'Policy document' });
+    fireEvent.change(field, { target: { value: '{"Statement":' } });
+    await user.click(dialog.getByRole('button', { name: 'Save policy' }));
+
+    expect(dialog.getByText(/Invalid JSON/)).toBeVisible();
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    expect(field).toHaveFocus();
+    expect(send.mock.calls.some(([command]) => command instanceof PutKeyPolicyCommand)).toBe(false);
+  });
+
+  it('keeps a dirty policy when the discard prompt is dismissed and drops it only on confirmation', async () => {
+    send.mockImplementation(async (command: unknown) => fallback(command));
+    open();
+    const user = userEvent.setup();
+    await screen.findByText(OLD_POLICY);
+    const opener = screen.getByRole('button', { name: 'Edit key policy' });
+    await user.click(opener);
+    const editor = await screen.findByRole('dialog', { name: 'Edit key policy' });
+    const field = within(editor).getByRole('textbox', { name: 'Policy document' });
+    field.focus();
+    fireEvent.change(field, { target: { value: NEW_POLICY } });
+    fireEvent.keyDown(field, { key: 'Escape', code: 'Escape', keyCode: 27 });
+
+    await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard what you entered?' })).toBeNull());
+    expect(field).toHaveValue(NEW_POLICY);
+    expect(field).toHaveFocus();
+
+    await user.click(within(editor).getByRole('button', { name: 'Close dialog' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(opener).toHaveFocus();
+    expect(screen.getByText(OLD_POLICY)).toBeVisible();
   });
 });
