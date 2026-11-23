@@ -1,7 +1,29 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import type ModalWrapper from '@cloudscape-design/components/test-utils/dom/modal';
+import { waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { click, delayedRefresh, denied, NAME, openSecret, ORDERS, REFUSAL } from './detail-support.test';
+import {
+  buttonNamed,
+  buttons,
+  click,
+  delayedRefresh,
+  denied,
+  dialogAlert,
+  dialogButton,
+  dialogInput,
+  dialogNamed,
+  expectDialogAlert,
+  expectSuccess,
+  findRow,
+  flashContents,
+  NAME,
+  openSecret,
+  ORDERS,
+  REFUSAL,
+  required,
+  tableNamed,
+} from './detail-support.test';
 
 const ADD = 'ReplicateSecretToRegions';
 const REMOVE = 'RemoveRegionsFromReplication';
@@ -13,30 +35,44 @@ const ADDED = 'Replication request accepted.';
 const REMOVED = 'Replica removed.';
 const WARNING = `Remove the replica of ${NAME} from ${REGION}? This permanently deletes the replica and its data from that Region in your local emulator.`;
 const CONFIRM = `Type ${NAME} to confirm.`;
+const REPLICAS = 'Regional replicas';
 const PROMOTION = 'Promotion requires a connection to the replica Region. Studio uses us-east-1.';
 
 afterEach(() => vi.unstubAllGlobals());
 
 async function enterRegion(region = REGION, key?: string) {
   await click('Add');
-  const dialog = within(await screen.findByRole('dialog', { name: 'Add replica' }));
-  fireEvent.change(dialog.getByRole('textbox', { name: 'Target Region' }), { target: { value: region } });
+  const dialog = await dialogNamed('Add replica');
+  dialogInput(dialog, 'Target Region').setInputValue(region);
   if (key !== undefined) {
-    fireEvent.change(dialog.getByRole('textbox', { name: 'KMS key ARN (optional)' }), { target: { value: key } });
+    dialogInput(dialog, 'KMS key ARN (optional)').setInputValue(key);
   }
   return dialog;
 }
 
 async function openRemoval() {
   await click(`Remove replica in ${REGION}`);
-  return within(await screen.findByRole('dialog', { name: 'Remove replica' }));
+  return dialogNamed('Remove replica');
 }
 
 async function confirmRemoval() {
   const dialog = await openRemoval();
-  fireEvent.change(dialog.getByRole('textbox', { name: CONFIRM }), { target: { value: NAME } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Remove replica' }));
+  dialogInput(dialog, CONFIRM).setInputValue(NAME);
+  dialogButton(dialog, 'Remove replica').click();
   return dialog;
+}
+
+function contents(dialog: ModalWrapper) {
+  return within(dialog.findContent().getElement());
+}
+
+function replicaRow() {
+  return required(findRow(REPLICAS, REGION), `replica in ${REGION}`).getElement();
+}
+
+function expectEmpty() {
+  const empty = required(tableNamed(REPLICAS).findEmptySlot(), 'empty replica slot');
+  expect(within(empty.getElement()).getByText(EMPTY)).toBeVisible();
 }
 
 describe('Regional replicas', () => {
@@ -48,21 +84,21 @@ describe('Regional replicas', () => {
         ReplicationStatus: [...EXISTING.ReplicationStatus, { Region: 'eu-west-1', Status: 'InSync' }],
       },
     });
-    const tag = await screen.findByRole('row', { name: /environment.*development/ });
-    expect(within(tag).getAllByRole('cell')).toHaveLength(1);
-    expect(within(tag).getByRole('button', { name: 'Edit tag environment' })).toBeVisible();
-    expect(within(tag).getByRole('button', { name: 'Remove tag environment' })).toBeVisible();
+    const tag = await waitFor(() => required(findRow('Tags', 'environment'), 'environment tag').getElement());
+    expect(tableNamed('Tags').findColumnHeaders()).toHaveLength(1);
+    expect(within(tag).getByText('development')).toBeVisible();
+    expect(buttonNamed('Edit tag environment', createWrapper(tag)).getElement()).toBeVisible();
+    expect(buttonNamed('Remove tag environment', createWrapper(tag)).getElement()).toBeVisible();
 
-    const replica = screen.getByRole('row', { name: new RegExp(REGION) });
-    expect(within(replica).getAllByRole('cell')).toHaveLength(1);
-    fireEvent.click(within(replica).getByRole('button', { name: `Remove replica in ${REGION}` }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Remove replica' }));
-    expect(dialog.getByText(WARNING)).toBeVisible();
+    expect(tableNamed(REPLICAS).findColumnHeaders()).toHaveLength(1);
+    buttonNamed(`Remove replica in ${REGION}`, createWrapper(replicaRow())).click();
+    const dialog = await dialogNamed('Remove replica');
+    expect(contents(dialog).getByText(WARNING)).toBeVisible();
   });
 
   it('shows the empty state when the secret has no replicas', async () => {
     openSecret();
-    expect(await screen.findByText(EMPTY)).toBeVisible();
+    await waitFor(expectEmpty);
   });
 
   it('omits the optional encryption key if it is empty', async () => {
@@ -70,8 +106,8 @@ describe('Regional replicas', () => {
       handler: (operation) => (operation === ADD ? { body: {} } : undefined),
     });
     const dialog = await enterRegion();
-    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
-    expect(await screen.findByText(ADDED)).toBeVisible();
+    dialogButton(dialog, 'Add replica').click();
+    await waitFor(() => expectSuccess(ADDED));
     expect(calls).toHaveBeenCalledWith(ADD, { SecretId: NAME, AddReplicaRegions: [{ Region: REGION }] });
   });
 
@@ -89,8 +125,8 @@ describe('Regional replicas', () => {
       },
     });
     const dialog = await enterRegion();
-    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
-    const row = await screen.findByRole('row', { name: new RegExp(REGION) });
+    dialogButton(dialog, 'Add replica').click();
+    const row = await waitFor(replicaRow);
     expect(within(row).getByText('InProgress')).toBeVisible();
   });
 
@@ -100,9 +136,9 @@ describe('Regional replicas', () => {
     });
     const { calls } = openSecret({ handler: refresh.handler, observe: true });
     const dialog = await enterRegion(REGION, KEY);
-    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
+    dialogButton(dialog, 'Add replica').click();
     await refresh.complete(order, ADDED, () => {
-      const row = screen.getByRole('row', { name: new RegExp(REGION) });
+      const row = replicaRow();
       expect(within(row).getByText('InProgress')).toBeVisible();
       expect(row).toHaveTextContent(KEY);
     });
@@ -111,43 +147,45 @@ describe('Regional replicas', () => {
 
   it('shows the fixed-Region constraint alongside the replica without a promotion action', async () => {
     openSecret({ metadata: EXISTING });
-    const row = await screen.findByRole('row', { name: new RegExp(REGION) });
+    const row = await waitFor(replicaRow);
     expect(within(row).getByText(PROMOTION)).toBeVisible();
-    expect(within(row).queryByRole('button', { name: /promote|stop replication/i })).not.toBeInTheDocument();
+    expect(buttons(createWrapper(row)).map(({ name }) => name)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/promote|stop replication/i)]),
+    );
   });
 
   it('names the secret and Region and explains the permanence of removal', async () => {
     openSecret({ metadata: EXISTING });
     const dialog = await openRemoval();
-    expect(dialog.getByText(WARNING)).toBeVisible();
+    expect(contents(dialog).getByText(WARNING)).toBeVisible();
   });
 
   it('identifies the exact confirmation text next to the removal input', async () => {
     openSecret({ metadata: EXISTING });
     const dialog = await openRemoval();
-    expect(dialog.getByText(CONFIRM)).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: CONFIRM })).toBeVisible();
+    expect(contents(dialog).getByText(CONFIRM)).toBeVisible();
+    expect(dialogInput(dialog, CONFIRM).findNativeInput().getElement()).toBeVisible();
   });
 
   it('requires the full name to submit removal', async () => {
     const { calls } = openSecret({ metadata: EXISTING });
     const dialog = await openRemoval();
-    const confirmation = dialog.getByRole('textbox', { name: CONFIRM });
-    const submit = dialog.getByRole('button', { name: 'Remove replica' });
-    expect(submit).toBeDisabled();
-    fireEvent.change(confirmation, { target: { value: `${NAME} ` } });
-    expect(submit).toBeDisabled();
-    fireEvent.click(submit);
+    const confirmation = dialogInput(dialog, CONFIRM);
+    const submit = dialogButton(dialog, 'Remove replica');
+    expect(submit.getElement()).toBeDisabled();
+    confirmation.setInputValue(`${NAME} `);
+    expect(submit.getElement()).toBeDisabled();
+    submit.click();
     expect(calls.mock.calls.some(([operation]) => operation === REMOVE)).toBe(false);
-    fireEvent.change(confirmation, { target: { value: NAME } });
-    expect(submit).toBeEnabled();
+    confirmation.setInputValue(NAME);
+    expect(submit.getElement()).toBeEnabled();
   });
 
   it('keeps the existing replica when the user cancels removal', async () => {
     const { calls } = openSecret({ metadata: EXISTING });
     const dialog = await openRemoval();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('row', { name: new RegExp(REGION) })).toBeVisible();
+    dialogButton(dialog, 'Cancel').click();
+    expect(replicaRow()).toBeVisible();
     expect(calls.mock.calls.some(([operation]) => operation === REMOVE)).toBe(false);
   });
 
@@ -156,8 +194,8 @@ describe('Regional replicas', () => {
     const { calls } = openSecret({ metadata: EXISTING, handler: refresh.handler, observe: true });
     await confirmRemoval();
     await refresh.complete(order, REMOVED, () => {
-      expect(screen.getByText(EMPTY)).toBeVisible();
-      expect(screen.queryByRole('row', { name: new RegExp(REGION) })).not.toBeInTheDocument();
+      expectEmpty();
+      expect(findRow(REPLICAS, REGION)).toBeUndefined();
     });
     expect(calls).toHaveBeenCalledWith(REMOVE, { SecretId: NAME, RemoveReplicaRegions: [REGION] });
   });
@@ -168,30 +206,34 @@ describe('Regional replicas', () => {
       handler: (operation) => (operation === ADD ? { body: { __type: 'NotImplemented' }, status: 501 } : undefined),
     });
     const dialog = await enterRegion('eu-west-1');
-    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
-    expect(await dialog.findByText(`The emulator answered 501 Not Implemented for ${ADD}.`)).toBeVisible();
-    expect(dialog.getByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.getByRole('button', { name: 'Add replica' })).toBeDisabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    dialogButton(dialog, 'Add replica').click();
+    await waitFor(() =>
+      expect(dialogAlert(dialog).findContent()?.getElement()).toHaveTextContent(
+        `The emulator answered 501 Not Implemented for ${ADD}.`,
+      ),
+    );
+    expect(dialogAlert(dialog).findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(dialogButton(dialog, 'Add replica').getElement()).toBeDisabled();
+    dialogButton(dialog, 'Cancel').click();
+    expect(buttonNamed('Add').getElement()).toBeDisabled();
     const remove = await openRemoval();
-    expect(remove.getByText(WARNING)).toBeVisible();
+    expect(contents(remove).getByText(WARNING)).toBeVisible();
   });
 
   it('shows an add refusal and refreshes to the same empty state', async () => {
     const { calls } = openSecret({ handler: (operation) => (operation === ADD ? denied() : undefined) });
     const dialog = await enterRegion();
-    fireEvent.click(dialog.getByRole('button', { name: 'Add replica' }));
-    expect(await dialog.findByText(`${ADD} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: 'Target Region' })).toHaveValue(REGION);
-    expect(screen.queryByText(ADDED)).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    dialogButton(dialog, 'Add replica').click();
+    await waitFor(() => expectDialogAlert(dialog, `${ADD} was refused: ${REFUSAL}`));
+    expect(dialogInput(dialog, 'Target Region').getInputValue()).toBe(REGION);
+    expect(flashContents()).not.toContain(ADDED);
+    dialogButton(dialog, 'Cancel').click();
     await click('Refresh');
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
-    expect(screen.getByText(EMPTY)).toBeVisible();
+    await waitFor(() => expect(buttonNamed('Refresh').getElement()).toBeEnabled());
+    expectEmpty();
   });
 
   it('shows a remove refusal and still displays the existing replica after refresh', async () => {
@@ -200,14 +242,14 @@ describe('Regional replicas', () => {
       handler: (operation) => (operation === REMOVE ? denied() : undefined),
     });
     const dialog = await confirmRemoval();
-    expect(await dialog.findByText(`${REMOVE} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(screen.queryByText(REMOVED)).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expectDialogAlert(dialog, `${REMOVE} was refused: ${REFUSAL}`));
+    expect(flashContents()).not.toContain(REMOVED);
+    dialogButton(dialog, 'Cancel').click();
     await click('Refresh');
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
-    expect(await screen.findByRole('row', { name: new RegExp(REGION) })).toBeVisible();
+    await waitFor(() => expect(buttonNamed('Refresh').getElement()).toBeEnabled());
+    expect(await waitFor(replicaRow)).toBeVisible();
   });
 });
