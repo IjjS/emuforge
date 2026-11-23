@@ -365,6 +365,23 @@ it('keeps a concurrent-update refusal through both rereads', async () => {
   expect(flashItems('success')).toHaveLength(0);
 });
 
+it('shows the header code for an empty Lambda update refusal without an SDK placeholder', async () => {
+  engine.updateAnswer = () =>
+    new Response(null, {
+      status: 400,
+      headers: { 'content-type': 'application/json', 'x-amzn-errortype': 'LayerError' },
+    });
+  open();
+  const dialog = await openAdd();
+  await chooseOlderVersion(dialog);
+
+  fireEvent.click(dialogSubmit(dialog));
+  await waitFor(() =>
+    expectFlash('error', /^UpdateFunctionConfiguration returned LayerError\.$/, 'Could not add layer version.'),
+  );
+  expect(flashItems('success')).toHaveLength(0);
+});
+
 it('appends an older version from later pages and keeps the existing order', async () => {
   engine.attached = [FIRST, MIDDLE];
   engine.layerAnswer = (marker) =>

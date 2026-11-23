@@ -11,6 +11,7 @@ import Table from '@cloudscape-design/components/table';
 import { useEffect, useState } from 'react';
 
 import {
+  refusalMessage,
   reportedNotImplementedMessage,
   reportedServiceCode,
   type RequestFailure,
@@ -65,7 +66,7 @@ export function LayerFailureDetail({ failure, connection }: { failure: RequestFa
       </SpaceBetween>
     );
   }
-  const message = 'message' in failure ? failure.message : undefined;
+  const message = refusalMessage(failure);
   return <ValueText kind="text" value={`${failure.operation} returned ${code}.${message ? ` ${message}` : ''}`} />;
 }
 
