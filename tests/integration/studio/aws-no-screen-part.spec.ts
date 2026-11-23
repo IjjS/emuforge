@@ -521,9 +521,9 @@ test('studio.aws-no-screen-part-same-page-at-every-unlisted-path', async ({ ctx,
   );
 
   await lines.line(
-    'Open `/aws/lambda/layers` → the changed page; the crumbs are "EmuForge", "AWS", "Lambda", "No screen yet"',
+    'Open `/aws/lambda/code-signing-configurations` → the changed page; the crumbs are "EmuForge", "AWS", "Lambda", "No screen yet"',
     async () => {
-      await openPart('/aws/lambda/layers', LAMBDA.label);
+      await openPart('/aws/lambda/code-signing-configurations', LAMBDA.label);
       await expectCrumbs(page, ['EmuForge', 'AWS', LAMBDA.crumb, NO_SCREEN_PART_H1]);
     },
   );
