@@ -223,8 +223,8 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   useLayoutEffect(() => {
     if (recoveryFailure === undefined || listing.loading) return;
 
-    // Move focus while Retry is still mounted. The empty slot contains only one button in a failure state.
-    if (recovered && tableEmpty.current?.querySelector('button') === document.activeElement) {
+    // Move focus before the recovered list removes the failure panel.
+    if (recovered && tableEmpty.current?.contains(document.activeElement)) {
       filterRef.current?.focus();
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Release the held panel after the focus handoff, before paint.

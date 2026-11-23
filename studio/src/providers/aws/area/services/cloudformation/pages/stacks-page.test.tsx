@@ -399,31 +399,47 @@ it('resets the page and preserves the name filter on refresh and ignores a late 
   expect(tokens()).toEqual([null, 'old-token', null, 'new-token']);
 });
 
-it('discards visible rows and the token on disconnect and starts at the first page on recovery', async () => {
-  engine.answer
-    .mockReturnValueOnce(page([summary('id-1', 'Old first')], 'old-token'))
-    .mockReturnValueOnce(page([summary('id-2', 'Current follow-up')], 'another-old-token'))
-    .mockReturnValueOnce(page([]));
-  const connection = open();
-  await expectStack('Old first');
-  fireEvent.click(next());
-  await expectStack('Current follow-up');
-  const diagnostic = 'Start the emulator on port 9302';
-  connection.setConnection({ ...stopped, message: diagnostic });
-  const instruction = await screen.findByText(
-    'Check that the local emulator is running on the configured port, then retry.',
-  );
-  const lineBreak = instruction.previousElementSibling;
-  expect(lineBreak?.tagName).toBe('BR');
-  expect(lineBreak?.previousElementSibling).toBe(emptySlot().getByText(diagnostic));
-  expectNoStack('Current follow-up');
-  connection.setConnection({ ...connected, checkedAt: 3 });
+it.each(['Connection status', 'Refresh'])(
+  'restarts from page one after disconnect and handles focus on %s',
+  async (focusTarget) => {
+    const pending = heldResponse();
+    engine.answer
+      .mockReturnValueOnce(page([summary('id-1', 'Old first')], 'old-token'))
+      .mockReturnValueOnce(page([summary('id-2', 'Current follow-up')], 'another-old-token'))
+      .mockReturnValueOnce(pending.promise);
+    const connection = open();
+    await expectStack('Old first');
+    fireEvent.click(next());
+    await expectStack('Current follow-up');
+    const diagnostic = 'Start the emulator on port 9302';
+    connection.setConnection({ ...stopped, message: diagnostic });
+    const instruction = await screen.findByText(
+      'Check that the local emulator is running on the configured port, then retry.',
+    );
+    const lineBreak = instruction.previousElementSibling;
+    expect(lineBreak?.tagName).toBe('BR');
+    expect(lineBreak?.previousElementSibling).toBe(emptySlot().getByText(diagnostic));
+    expectNoStack('Current follow-up');
 
-  expect(await screen.findByText('No stacks')).toBeInTheDocument();
-  expectNoStack('Current follow-up');
-  expect(tokens()).toEqual([null, 'old-token', null]);
-  expectNoPagination();
-});
+    const panelLink = emptySlot().getByRole('link', { name: 'Connection status' });
+    act(() => panelLink.focus());
+    connection.setConnection({ ...connected, checkedAt: 3 });
+    await waitFor(() => {
+      expect(tokens()).toEqual([null, 'old-token', null]);
+    });
+    expect(emptySlot().getByRole('link', { name: 'Connection status' })).toBe(panelLink);
+    expect(panelLink).toHaveFocus();
+
+    if (focusTarget === 'Refresh') act(() => refresh().focus());
+    pending.resolve(page([]));
+    expect(await screen.findByText('No stacks')).toBeInTheDocument();
+    expect(panelLink).not.toBeInTheDocument();
+    expect(focusTarget === 'Refresh' ? refresh() : filter()).toHaveFocus();
+    expectNoStack('Current follow-up');
+    expect(tokens()).toEqual([null, 'old-token', null]);
+    expectNoPagination();
+  },
+);
 
 it.each([true, false])(
   'restarts a failed continuation at most once per fresh connected check (first restart succeeds: %s)',
