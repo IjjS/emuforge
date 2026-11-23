@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|kms|keys-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.kms-key-lifecycle
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's KMS keys: the Customer managed keys screen
