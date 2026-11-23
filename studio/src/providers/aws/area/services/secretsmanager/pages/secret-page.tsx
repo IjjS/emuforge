@@ -226,7 +226,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
 
   const editButton = (operation: string, edit: SecretEdit, label: string, ariaLabel?: string) => (
     <Button
-      ariaLabel={ariaLabel}
+      {...(ariaLabel !== undefined && { ariaLabel })}
       disabled={action.disabled(operation)}
       onClick={() => {
         action.clearFailure();
