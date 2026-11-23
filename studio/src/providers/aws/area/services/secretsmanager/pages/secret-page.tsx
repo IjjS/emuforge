@@ -26,6 +26,8 @@ import { ValueText } from '../../../components/value-text';
 import { GET_SECRET_VALUE, getSecretValue } from '../api';
 import { LifecycleDialog, type SecretEdit } from '../components/lifecycle/lifecycle-dialog';
 import { useLifecycleAction } from '../components/lifecycle/use-lifecycle-action';
+import { ResourcePolicy } from '../components/versions-policy/resource-policy';
+import { VersionHistory } from '../components/versions-policy/version-history';
 import {
   DELETE_SECRET,
   PUT_SECRET_VALUE,
@@ -49,18 +51,26 @@ function SecretValue({
   name,
   versionId,
   editAction,
+  unavailable,
+  onUnavailable,
 }: {
   connection: AreaConnection;
   endpoint: string;
   name: string;
-  versionId?: string;
+  versionId: string | undefined;
   editAction?: ReactNode;
+  unavailable: boolean;
+  onUnavailable: () => void;
 }) {
   const [state, setState] = useState<ValueState>({ kind: 'hidden' });
   const request = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => request.current?.abort(), []);
 
-  const failure = state.kind === 'failure' ? state.failure : undefined;
+  const failure: RequestFailure | undefined = unavailable
+    ? { kind: 'not-implemented', operation: GET_SECRET_VALUE }
+    : state.kind === 'failure'
+      ? state.failure
+      : undefined;
   const error = failure === undefined ? undefined : readFailureState(failure, connection, 'secret value');
   const open = state.kind === 'loading' || state.kind === 'shown';
 
@@ -94,7 +104,9 @@ function SecretValue({
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        setState({ kind: 'failure', failure: failureOf(error, GET_SECRET_VALUE) });
+        const failure = failureOf(error, GET_SECRET_VALUE);
+        if (failure.kind === 'not-implemented') onUnavailable();
+        setState({ kind: 'failure', failure });
       }
     } finally {
       if (request.current === controller) request.current = null;
@@ -123,6 +135,11 @@ function SecretValue({
       }
     >
       <SpaceBetween size="s">
+        {versionId !== undefined && (
+          <Box>
+            Version <ValueText kind="name" value={versionId} />
+          </Box>
+        )}
         {error !== undefined && (
           <Alert type={failure?.kind === 'not-implemented' ? 'info' : 'error'} header={error.first}>
             {error.detail}
@@ -210,6 +227,10 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
   const refreshReads = useRefreshSecretReads();
   const action = useLifecycleAction(connection);
   const [edit, setEdit] = useState<SecretEdit>();
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState<string>();
+  const [valueUnavailable, setValueUnavailable] = useState(false);
   const { details, failure, connectionFailure, loading, refresh } = useSecretDetail(connection, name);
   const readFailure = connectionFailure ?? failure;
   const unavailable = readFailure?.kind === 'not-implemented';
@@ -222,7 +243,15 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
   const scheduled = details?.DeletedDate !== undefined;
   const editing = details !== undefined && readFailure === undefined ? edit : undefined;
 
-  if (connectionFailure !== undefined && edit !== undefined) setEdit(undefined);
+  if (connectionFailure !== undefined) {
+    if (edit !== undefined) setEdit(undefined);
+    if (selectedVersion !== undefined) setSelectedVersion(undefined);
+  }
+
+  const handleSectionSaved = (section: 'versions' | 'policy', origin: string, content: string) => {
+    flash.show([{ type: 'success', content }]);
+    refreshReads(origin, name, section);
+  };
 
   const editButton = (operation: string, edit: SecretEdit, label: string, ariaLabel?: string) => (
     <Button
@@ -304,13 +333,48 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
             }
           />
           {endpoint !== undefined && (
-            <SecretValue
-              key={JSON.stringify([endpoint, currentVersion])}
-              endpoint={endpoint}
-              name={name}
-              connection={connection}
-              editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Edit secret value')}
-            />
+            <>
+              <VersionHistory
+                action={action}
+                connection={connection}
+                endpoint={endpoint}
+                name={name}
+                stagesByVersion={details.VersionIdsToStages}
+                scheduled={scheduled}
+                open={versionsOpen}
+                selected={selectedVersion}
+                onOpen={(open) => {
+                  if (!open) setSelectedVersion(undefined);
+                  setVersionsOpen(open);
+                }}
+                onSelect={setSelectedVersion}
+                onSaved={(origin, message) => handleSectionSaved('versions', origin, message)}
+              />
+              <SecretValue
+                key={JSON.stringify([
+                  endpoint,
+                  selectedVersion,
+                  selectedVersion === undefined ? currentVersion : undefined,
+                ])}
+                endpoint={endpoint}
+                name={name}
+                versionId={selectedVersion}
+                connection={connection}
+                unavailable={valueUnavailable}
+                onUnavailable={() => setValueUnavailable(true)}
+                editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Edit secret value')}
+              />
+              <ResourcePolicy
+                action={action}
+                connection={connection}
+                endpoint={endpoint}
+                name={name}
+                open={policyOpen}
+                scheduled={scheduled}
+                onOpen={setPolicyOpen}
+                onSaved={(origin, message) => handleSectionSaved('policy', origin, message)}
+              />
+            </>
           )}
           <Table
             variant="container"
@@ -374,7 +438,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
             if (editing.kind === 'schedule' || editing.kind === 'permanent') flash.handOver(SECRETS_PATH, result);
             else flash.show(result);
             setEdit(undefined);
-            refreshReads(origin, name, editing.kind === 'value');
+            refreshReads(origin, name, editing.kind === 'value' ? 'versions' : undefined);
           }}
         />
       )}
@@ -386,5 +450,5 @@ export function SecretPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('secrets');
   const [query] = useSearchParams();
   const name = secretName(query);
-  return <SecretDetails key={name} name={name} connection={connection} />;
+  return <SecretDetails key={JSON.stringify([name, connection.engineOrigin])} name={name} connection={connection} />;
 }
