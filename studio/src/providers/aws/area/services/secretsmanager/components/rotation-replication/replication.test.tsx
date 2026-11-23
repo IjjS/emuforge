@@ -40,6 +40,26 @@ async function confirmRemoval() {
 }
 
 describe('Regional replicas', () => {
+  it('keeps tag and replica actions inside their stacked rows on a narrow screen', async () => {
+    openSecret({
+      compact: true,
+      metadata: {
+        Tags: [{ Key: 'environment', Value: 'development' }],
+        ReplicationStatus: [...EXISTING.ReplicationStatus, { Region: 'eu-west-1', Status: 'InSync' }],
+      },
+    });
+    const tag = await screen.findByRole('row', { name: /environment.*development/ });
+    expect(within(tag).getAllByRole('cell')).toHaveLength(1);
+    expect(within(tag).getByRole('button', { name: 'Edit tag environment' })).toBeVisible();
+    expect(within(tag).getByRole('button', { name: 'Remove tag environment' })).toBeVisible();
+
+    const replica = screen.getByRole('row', { name: new RegExp(REGION) });
+    expect(within(replica).getAllByRole('cell')).toHaveLength(1);
+    fireEvent.click(within(replica).getByRole('button', { name: `Remove replica in ${REGION}` }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Remove replica' }));
+    expect(dialog.getByText(WARNING)).toBeVisible();
+  });
+
   it('shows the empty state when the secret has no replicas', async () => {
     openSecret();
     expect(await screen.findByText(EMPTY)).toBeVisible();

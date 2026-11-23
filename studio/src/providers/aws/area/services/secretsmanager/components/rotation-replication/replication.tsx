@@ -74,11 +74,33 @@ function RemoveReplicaDialog({ region, ...context }: ChangeDialogContext & { reg
 
 type ReplicaEdit = { kind: 'add' } | { kind: 'remove'; region: string };
 
+const promotionNote = (
+  <Box color="text-body-secondary">Promotion requires a connection to the replica Region. Studio uses us-east-1.</Box>
+);
+
+function replicaStatus({ Status, StatusMessage }: ReplicationStatusType) {
+  return (
+    <SpaceBetween size="xxs">
+      <ValueText kind="fixed" value={Status} />
+      {StatusMessage && <ValueText kind="text" value={StatusMessage} />}
+    </SpaceBetween>
+  );
+}
+
+function replicaKey({ KmsKeyId }: ReplicationStatusType) {
+  return <CopyValue label="Replica encryption key" value={KmsKeyId} none="-" />;
+}
+
 export function Replication({
   replicas,
   scheduled,
+  compact,
   ...props
-}: Omit<ChangeDialogContext, 'onClose'> & { replicas: ReplicationStatusType[]; scheduled: boolean }) {
+}: Omit<ChangeDialogContext, 'onClose'> & {
+  replicas: ReplicationStatusType[];
+  scheduled: boolean;
+  compact: boolean;
+}) {
   const { action } = props;
   const [edit, setEdit] = useState<ReplicaEdit>();
   const context = { ...props, onClose: () => setEdit(undefined) };
@@ -87,6 +109,17 @@ export function Replication({
     setEdit(target);
   };
   const blocked = (operation: string) => action.pending !== undefined || action.disabled(operation);
+  const removeAction = ({ Region }: ReplicationStatusType) =>
+    !scheduled &&
+    Region && (
+      <Button
+        ariaLabel={`Remove replica in ${Region}`}
+        disabled={blocked(REMOVE_REPLICA)}
+        onClick={() => handleOpen({ kind: 'remove', region: Region })}
+      >
+        Remove
+      </Button>
+    );
 
   return (
     <>
@@ -110,49 +143,49 @@ export function Replication({
         trackBy="Region"
         wrapLines
         empty={<Box textAlign="center">This secret has no replicas.</Box>}
-        columnDefinitions={[
-          {
-            id: 'region',
-            header: 'Region',
-            isRowHeader: true,
-            cell: ({ Region }) => <ValueText kind="fixed" value={Region} />,
-          },
-          {
-            id: 'status',
-            header: 'Status',
-            cell: ({ Status, StatusMessage }) => (
-              <SpaceBetween size="xxs">
-                <ValueText kind="fixed" value={Status} />
-                {StatusMessage && <ValueText kind="text" value={StatusMessage} />}
-              </SpaceBetween>
-            ),
-          },
-          {
-            id: 'key',
-            header: 'Encryption key',
-            cell: ({ KmsKeyId }) => <CopyValue label="Replica encryption key" value={KmsKeyId} none="-" />,
-          },
-          {
-            id: 'actions',
-            header: 'Actions',
-            cell: ({ Region }) => (
-              <SpaceBetween size="xxs">
-                {!scheduled && Region && (
-                  <Button
-                    ariaLabel={`Remove replica in ${Region}`}
-                    disabled={blocked(REMOVE_REPLICA)}
-                    onClick={() => handleOpen({ kind: 'remove', region: Region })}
-                  >
-                    Remove
-                  </Button>
-                )}
-                <Box color="text-body-secondary">
-                  Promotion requires a connection to the replica Region. Studio uses us-east-1.
-                </Box>
-              </SpaceBetween>
-            ),
-          },
-        ]}
+        columnDefinitions={
+          compact
+            ? [
+                {
+                  id: 'replica',
+                  header: 'Replica',
+                  cell: (replica) => (
+                    <SpaceBetween size="xs">
+                      <Box variant="strong">
+                        <ValueText kind="fixed" value={replica.Region} />
+                      </Box>
+                      {replicaStatus(replica)}
+                      {removeAction(replica)}
+                      <Box>
+                        <Box variant="small">Encryption key</Box>
+                        {replicaKey(replica)}
+                      </Box>
+                      {promotionNote}
+                    </SpaceBetween>
+                  ),
+                },
+              ]
+            : [
+                {
+                  id: 'region',
+                  header: 'Region',
+                  isRowHeader: true,
+                  cell: ({ Region }) => <ValueText kind="fixed" value={Region} />,
+                },
+                { id: 'status', header: 'Status', cell: replicaStatus },
+                { id: 'key', header: 'Encryption key', cell: replicaKey },
+                {
+                  id: 'actions',
+                  header: 'Actions',
+                  cell: (replica) => (
+                    <SpaceBetween size="xxs">
+                      {removeAction(replica)}
+                      {promotionNote}
+                    </SpaceBetween>
+                  ),
+                },
+              ]
+        }
       />
       {edit?.kind === 'add' && <AddReplicaDialog {...context} />}
       {edit?.kind === 'remove' && <RemoveReplicaDialog {...context} region={edit.region} />}

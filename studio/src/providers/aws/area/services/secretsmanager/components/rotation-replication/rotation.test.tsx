@@ -167,7 +167,7 @@ describe('Secret rotation', () => {
     const dialog = await openRotationAction('Cancel rotation', 'Cancel rotation');
     expect(await dialog.findByText(`${CANCEL} was refused: ${REFUSAL}`)).toBeVisible();
     expect(screen.queryByText(STOPPED)).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Keep rotation' }));
     await click('Refresh');
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),

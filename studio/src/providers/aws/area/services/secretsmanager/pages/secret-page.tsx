@@ -10,7 +10,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -40,6 +40,20 @@ import {
 } from '../lifecycle-api';
 import { SECRETS_PATH, secretName } from '../paths';
 import { useRefreshSecretReads, useSecretDetail } from '../queries';
+
+const COMPACT_DETAIL_VIEWPORT = '(width < 688px)';
+
+function subscribeToCompactDetail(onChange: () => void) {
+  const media = window.matchMedia(COMPACT_DETAIL_VIEWPORT);
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function isCompactDetail() {
+  return window.matchMedia(COMPACT_DETAIL_VIEWPORT).matches;
+}
+
+type SecretTag = NonNullable<DescribeSecretCommandOutput['Tags']>[number];
 
 type ValueState =
   | { kind: 'hidden' }
@@ -224,6 +238,7 @@ function SecretMetadata({
 }
 
 function SecretDetails({ connection, name }: { connection: AreaConnection; name: string }) {
+  const compact = useSyncExternalStore(subscribeToCompactDetail, isCompactDetail);
   const handleFollow = useFollow();
   const flash = usePageFlash();
   const refreshReads = useRefreshSecretReads();
@@ -267,6 +282,15 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
       {label}
     </Button>
   );
+
+  const tagActions = ({ Key, Value }: SecretTag) =>
+    !scheduled &&
+    Key && (
+      <SpaceBetween direction="horizontal" size="xs">
+        {editButton(TAG_RESOURCE, { kind: 'edit-tag', key: Key, value: Value ?? '' }, 'Edit', `Edit tag ${Key}`)}
+        {editButton(UNTAG_RESOURCE, { kind: 'remove-tag', key: Key }, 'Remove', `Remove tag ${Key}`)}
+      </SpaceBetween>
+    );
 
   return (
     <SpaceBetween size="m">
@@ -364,7 +388,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                 connection={connection}
                 unavailable={valueUnavailable}
                 onUnavailable={() => setValueUnavailable(true)}
-                editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Edit secret value')}
+                editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Store new version')}
               />
               <ResourcePolicy
                 action={action}
@@ -388,6 +412,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
           />
           <Replication
             action={action}
+            compact={compact}
             connection={connection}
             name={name}
             replicas={details.ReplicationStatus ?? []}
@@ -401,41 +426,35 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                 Tags
               </Header>
             }
-            columnDefinitions={[
-              {
-                id: 'key',
-                header: 'Key',
-                isRowHeader: true,
-                minWidth: '24ch',
-                cell: ({ Key }) => <ValueText kind="name" value={Key} />,
-              },
-              { id: 'value', header: 'Value', cell: ({ Value }) => <ValueText kind="text" value={Value} /> },
-              ...(!scheduled
+            columnDefinitions={
+              compact
                 ? [
                     {
-                      id: 'actions',
-                      header: 'Actions',
-                      cell: ({ Key, Value }: NonNullable<DescribeSecretCommandOutput['Tags']>[number]) =>
-                        Key && (
-                          <SpaceBetween direction="horizontal" size="xs">
-                            {editButton(
-                              TAG_RESOURCE,
-                              { kind: 'edit-tag', key: Key, value: Value ?? '' },
-                              'Edit',
-                              `Edit tag ${Key}`,
-                            )}
-                            {editButton(
-                              UNTAG_RESOURCE,
-                              { kind: 'remove-tag', key: Key },
-                              'Remove',
-                              `Remove tag ${Key}`,
-                            )}
-                          </SpaceBetween>
-                        ),
+                      id: 'tag',
+                      header: 'Tag',
+                      cell: (tag) => (
+                        <SpaceBetween size="xs">
+                          <Box variant="strong">
+                            <ValueText kind="name" value={tag.Key} />
+                          </Box>
+                          <ValueText kind="text" value={tag.Value} />
+                          {tagActions(tag)}
+                        </SpaceBetween>
+                      ),
                     },
                   ]
-                : []),
-            ]}
+                : [
+                    {
+                      id: 'key',
+                      header: 'Key',
+                      isRowHeader: true,
+                      minWidth: '24ch',
+                      cell: ({ Key }) => <ValueText kind="name" value={Key} />,
+                    },
+                    { id: 'value', header: 'Value', cell: ({ Value }) => <ValueText kind="text" value={Value} /> },
+                    ...(!scheduled ? [{ id: 'actions', header: 'Actions', cell: tagActions }] : []),
+                  ]
+            }
             items={details.Tags ?? []}
             trackBy="Key"
             empty={<Box textAlign="center">No tags</Box>}
