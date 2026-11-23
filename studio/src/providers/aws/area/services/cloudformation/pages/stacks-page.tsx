@@ -199,20 +199,15 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   const disconnected = connectionFailure(connection);
   const check = connection.result;
   const [previousCheck, setPreviousCheck] = useState(check);
-  const [triedRecovery, setTriedRecovery] = useState(false);
   const readLostConnection =
     listing.failure?.kind === 'engine-did-not-answer' || listing.failure?.kind === 'emulator-did-not-answer';
+  // A completed check can restart the list once, even if the previous restart failed.
   if (check?.checkedAt !== previousCheck?.checkedAt || check?.kind !== previousCheck?.kind) {
     setPreviousCheck(check);
     const wasDisconnected = previousCheck !== undefined && previousCheck.kind !== 'connected';
-    if (check?.kind === 'connected' && (wasDisconnected || (readLostConnection && !triedRecovery))) {
-      setTriedRecovery(true);
+    if (check?.kind === 'connected' && (wasDisconnected || readLostConnection)) {
       setGeneration((current) => current + 1);
     }
-  }
-  // A failed automatic restart waits for a user action or an observed disconnect and recovery.
-  if (triedRecovery && (listing.items !== undefined || (listing.failure !== undefined && !readLostConnection))) {
-    setTriedRecovery(false);
   }
 
   const failure = disconnected ?? listing.failure;
@@ -233,12 +228,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   const hasPagination = listing.openEnd || listing.pagesCount > 1;
 
   const handleRefresh = () => {
-    setTriedRecovery(false);
     setGeneration((current) => current + 1);
-  };
-  const handleRetry = () => {
-    setTriedRecovery(false);
-    listing.refresh();
   };
   const handleClearFilter = () => {
     setFilter('');
@@ -258,7 +248,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
         empty={
           <StackListEmpty
             failure={state}
-            onRetry={handleRetry}
+            onRetry={listing.refresh}
             hasStacks={(stacks?.length ?? 0) > 0}
             firstPage={listing.currentPage === 1}
             onClearFilter={handleClearFilter}
