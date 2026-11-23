@@ -339,15 +339,17 @@ it.each([
       id: 'cr',
       key: 'logs/line\rbreak.csv',
       indicator: 'CR at character 10',
+      keyCellName: 'logs/line break.csv Carriage return at character 10',
       spoken: 'logs/line \\r (carriage return) break.csv',
     },
     {
       id: 'lf',
       key: 'logs/line\nbreak.csv',
       indicator: 'LF at character 10',
+      keyCellName: 'logs/line break.csv Line feed at character 10',
       spoken: 'logs/line \\n (line feed) break.csv',
     },
-    { id: 'space', key: 'logs/line break.csv', spoken: 'logs/line break.csv' },
+    { id: 'space', key: 'logs/line break.csv', spoken: 'logs/line break.csv', keyCellName: 'logs/line break.csv' },
     {
       id: 'percent-cr',
       key: 'logs/line%0Dbreak.csv',
@@ -380,7 +382,7 @@ it.each([
   await toggleVersions();
 
   const nativeSelection = required(window.getSelection());
-  for (const { id, key, indicator, spoken } of keys) {
+  for (const { id, key, indicator, keyCellName, spoken } of keys) {
     const { control, index } = await waitFor(() => required(selection(id)));
     const cell = required(table().findBodyCell(index, 2));
     const value = required(cell.find('.aws-area-value-name')).getElement();
@@ -393,9 +395,13 @@ it.each([
     expect(nativeSelection.toString()).toBe(key);
     nativeSelection.removeAllRanges();
 
-    const indicatorElement = cell.find('[aria-hidden="true"]')?.getElement();
+    const indicatorElement = cell.find('[role="note"]')?.getElement();
     expect(indicatorElement?.textContent).toBe(indicator);
     if (indicator !== undefined) expect(indicatorElement).toHaveStyle({ userSelect: 'none' });
+    if (keyCellName !== undefined) {
+      const metadata = narrow ? ` Type: Version · Latest: No Version ID: ${id}` : '';
+      expect(cell.getElement()).toHaveAccessibleName(keyCellName + metadata);
+    }
     expect(control).toHaveAccessibleName('Select ' + spoken + ' version ' + id + ', Type: Version, Latest: No');
     expect(control).not.toBeChecked();
   }
