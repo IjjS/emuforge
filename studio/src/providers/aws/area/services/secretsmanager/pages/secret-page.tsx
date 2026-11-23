@@ -10,21 +10,32 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { usePageFlash } from '../../../components/page-flash';
 import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { GET_SECRET_VALUE, getSecretValue } from '../api';
+import { LifecycleDialog, type SecretEdit } from '../components/lifecycle/lifecycle-dialog';
+import { useLifecycleAction } from '../components/lifecycle/use-lifecycle-action';
+import {
+  DELETE_SECRET,
+  PUT_SECRET_VALUE,
+  RESTORE_SECRET,
+  TAG_RESOURCE,
+  UNTAG_RESOURCE,
+  UPDATE_SECRET,
+} from '../lifecycle-api';
 import { SECRETS_PATH, secretName } from '../paths';
-import { useSecretDetail } from '../queries';
+import { useRefreshSecretReads, useSecretDetail } from '../queries';
 
 type ValueState =
   | { kind: 'hidden' }
@@ -37,11 +48,13 @@ function SecretValue({
   endpoint,
   name,
   versionId,
+  editAction,
 }: {
   connection: AreaConnection;
   endpoint: string;
   name: string;
   versionId?: string;
+  editAction?: ReactNode;
 }) {
   const [state, setState] = useState<ValueState>({ kind: 'hidden' });
   const request = useRef<AbortController | null>(null);
@@ -94,12 +107,15 @@ function SecretValue({
         <Header
           variant="h2"
           actions={
-            <Button
-              disabled={failure?.kind === 'not-implemented'}
-              onClick={open ? handleHide : () => void handleRetrieve()}
-            >
-              {open ? 'Hide secret value' : 'Retrieve secret value'}
-            </Button>
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                disabled={failure?.kind === 'not-implemented'}
+                onClick={open ? handleHide : () => void handleRetrieve()}
+              >
+                {open ? 'Hide secret value' : 'Retrieve secret value'}
+              </Button>
+              {editAction}
+            </SpaceBetween>
           }
         >
           Secret value
@@ -138,13 +154,21 @@ function SecretValue({
 function SecretMetadata({
   details,
   currentVersion,
+  actions,
 }: {
   details: DescribeSecretCommandOutput;
   currentVersion: string | undefined;
+  actions?: ReactNode;
 }) {
   const date = (value: Date | undefined) => <ValueText kind="fixed" value={creationDateText(value)} />;
   return (
-    <Container header={<Header variant="h2">Secret details</Header>}>
+    <Container
+      header={
+        <Header variant="h2" actions={actions}>
+          Secret details
+        </Header>
+      }
+    >
       <KeyValuePairs
         columns={2}
         items={[
@@ -182,6 +206,10 @@ function SecretMetadata({
 
 function SecretDetails({ connection, name }: { connection: AreaConnection; name: string }) {
   const handleFollow = useFollow();
+  const flash = usePageFlash();
+  const refreshReads = useRefreshSecretReads();
+  const action = useLifecycleAction(connection);
+  const [edit, setEdit] = useState<SecretEdit>();
   const { details, failure, connectionFailure, loading, refresh } = useSecretDetail(connection, name);
   const readFailure = connectionFailure ?? failure;
   const unavailable = readFailure?.kind === 'not-implemented';
@@ -191,6 +219,23 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
     stages.includes('AWSCURRENT'),
   )?.[0];
   const endpoint = connection.engineOrigin;
+  const scheduled = details?.DeletedDate !== undefined;
+  const editing = details !== undefined && readFailure === undefined ? edit : undefined;
+
+  if (connectionFailure !== undefined && edit !== undefined) setEdit(undefined);
+
+  const editButton = (operation: string, edit: SecretEdit, label: string, ariaLabel?: string) => (
+    <Button
+      ariaLabel={ariaLabel}
+      disabled={action.disabled(operation)}
+      onClick={() => {
+        action.clearFailure();
+        setEdit(edit);
+      }}
+    >
+      {label}
+    </Button>
+  );
 
   return (
     <SpaceBetween size="m">
@@ -198,17 +243,33 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
         variant="h1"
         actions={
           !missing && (
-            <Button
-              iconName="refresh"
-              ariaLabel="Refresh"
-              disabled={unavailable || loading || connectionFailure !== undefined}
-              onClick={refresh}
-            />
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                iconName="refresh"
+                ariaLabel="Refresh"
+                disabled={unavailable || loading || connectionFailure !== undefined}
+                onClick={refresh}
+              />
+              {details !== undefined &&
+                readFailure === undefined &&
+                (scheduled
+                  ? editButton(RESTORE_SECRET, { kind: 'restore' }, 'Restore secret')
+                  : editButton(DELETE_SECRET, { kind: 'schedule' }, 'Schedule deletion'))}
+              {details !== undefined &&
+                readFailure === undefined &&
+                editButton(DELETE_SECRET, { kind: 'permanent' }, 'Permanently delete')}
+            </SpaceBetween>
           )
         }
       >
         <ValueText kind="name" value={name} none="Secret details" />
       </Header>
+      {editing === undefined &&
+        Array.from(action.unavailable, (operation) => (
+          <Alert key={operation} type="info" header="Not implemented by the emulator">
+            The emulator answered 501 Not Implemented for {operation}.
+          </Alert>
+        ))}
       {missing ? (
         <Alert type="error" header="Secret not found">
           <SpaceBetween size="xs">
@@ -230,18 +291,34 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
         <StatusIndicator type="loading">Loading secret details</StatusIndicator>
       ) : (
         <>
-          <SecretMetadata details={details} currentVersion={currentVersion} />
+          <SecretMetadata
+            details={details}
+            currentVersion={currentVersion}
+            actions={
+              !scheduled && (
+                <SpaceBetween direction="horizontal" size="xs">
+                  {editButton(UPDATE_SECRET, { kind: 'description' }, 'Edit description')}
+                  {editButton(UPDATE_SECRET, { kind: 'key' }, 'Change encryption key')}
+                </SpaceBetween>
+              )
+            }
+          />
           {endpoint !== undefined && (
             <SecretValue
               key={JSON.stringify([endpoint, currentVersion])}
               endpoint={endpoint}
               name={name}
               connection={connection}
+              editAction={!scheduled && editButton(PUT_SECRET_VALUE, { kind: 'value' }, 'Edit secret value')}
             />
           )}
           <Table
             variant="container"
-            header={<Header variant="h2">Tags</Header>}
+            header={
+              <Header variant="h2" actions={!scheduled && editButton(TAG_RESOURCE, { kind: 'add-tag' }, 'Add tag')}>
+                Tags
+              </Header>
+            }
             columnDefinitions={[
               {
                 id: 'key',
@@ -251,6 +328,31 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                 cell: ({ Key }) => <ValueText kind="name" value={Key} />,
               },
               { id: 'value', header: 'Value', cell: ({ Value }) => <ValueText kind="text" value={Value} /> },
+              ...(!scheduled
+                ? [
+                    {
+                      id: 'actions',
+                      header: 'Actions',
+                      cell: ({ Key, Value }: NonNullable<DescribeSecretCommandOutput['Tags']>[number]) =>
+                        Key && (
+                          <SpaceBetween direction="horizontal" size="xs">
+                            {editButton(
+                              TAG_RESOURCE,
+                              { kind: 'edit-tag', key: Key, value: Value ?? '' },
+                              'Edit',
+                              `Edit tag ${Key}`,
+                            )}
+                            {editButton(
+                              UNTAG_RESOURCE,
+                              { kind: 'remove-tag', key: Key },
+                              'Remove',
+                              `Remove tag ${Key}`,
+                            )}
+                          </SpaceBetween>
+                        ),
+                    },
+                  ]
+                : []),
             ]}
             items={details.Tags ?? []}
             trackBy="Key"
@@ -258,6 +360,23 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
             wrapLines
           />
         </>
+      )}
+      {editing !== undefined && details !== undefined && (
+        <LifecycleDialog
+          action={action}
+          connection={connection}
+          edit={editing}
+          details={details}
+          name={name}
+          onClose={() => setEdit(undefined)}
+          onSuccess={(origin, content) => {
+            const result = [{ type: 'success', content }] as const;
+            if (editing.kind === 'schedule' || editing.kind === 'permanent') flash.handOver(SECRETS_PATH, result);
+            else flash.show(result);
+            setEdit(undefined);
+            refreshReads(origin, name, editing.kind === 'value');
+          }}
+        />
       )}
     </SpaceBetween>
   );
