@@ -685,8 +685,10 @@ it('guides a stale download back to history and replaces the failure after a suc
   fireEvent.click(action('Refresh'));
   await select('null', liveETag);
   fireEvent.click(action('Download'));
-  await waitFor(() => expect(flashContent('success')).toHaveTextContent(DOWNLOAD_STARTED));
-  expect(flashContent('error')).toBeUndefined();
+  await waitFor(() => {
+    expect(flashContent('success')).toHaveTextContent(DOWNLOAD_STARTED);
+    expect(flashContent('error')).toBeUndefined();
+  });
   expect(engine.downloadConditions).toEqual([NULL_ETAG, liveETag]);
   expect(save).toHaveBeenCalledTimes(1);
 });
