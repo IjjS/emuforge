@@ -3,12 +3,13 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import Header from '@cloudscape-design/components/header';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState, type ReadFailureState } from '../../../components/failure-states';
@@ -18,6 +19,18 @@ import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { SECRET_CREATE_PATH, secretPath } from '../paths';
 import { useSecretListing } from '../queries';
+
+const NARROW_VIEWPORT = '(width < 688px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia?.(NARROW_VIEWPORT);
+  media?.addEventListener('change', onChange);
+  return () => media?.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia?.(NARROW_VIEWPORT).matches ?? false;
+}
 
 function EmptySecrets({
   state,
@@ -57,6 +70,7 @@ function EmptySecrets({
 export function SecretsPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('secrets');
   const handleFollow = useFollow();
+  const compact = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const [includePlannedDeletion, setIncludePlannedDeletion] = useState(false);
   const listing = useSecretListing(connection, includePlannedDeletion);
   const failure = listing.connectionFailure ?? listing.failure;
@@ -80,46 +94,70 @@ export function SecretsPage({ connection }: { connection: AreaConnection }) {
         }
       : readState;
 
-  const columns: TableProps.ColumnDefinition<SecretListEntry>[] = [
-    {
-      id: 'name',
-      header: 'Name',
-      isRowHeader: true,
-      minWidth: '24ch',
-      cell: ({ Name }) =>
-        Name ? (
-          <Link href={secretPath(Name)} onFollow={handleFollow}>
-            <ValueText kind="name" value={Name} />
-          </Link>
-        ) : (
-          '-'
-        ),
-    },
-    {
-      id: 'description',
-      header: 'Description',
-      minWidth: '20ch',
-      cell: ({ Description }) => <ValueText kind="text" value={Description} none="-" />,
-    },
-    {
-      id: 'changed',
-      header: 'Last changed',
-      minWidth: '16ch',
-      cell: ({ LastChangedDate }) => <ValueText kind="fixed" value={creationDateText(LastChangedDate)} />,
-    },
-    ...(includePlannedDeletion
-      ? [
-          {
-            id: 'deletion',
-            header: 'Scheduled deletion',
-            minWidth: '16ch',
-            cell: ({ DeletedDate }: SecretListEntry) => (
-              <ValueText kind="fixed" value={creationDateText(DeletedDate)} />
-            ),
-          },
-        ]
-      : []),
-  ];
+  const nameCell = ({ Name }: SecretListEntry) =>
+    Name ? (
+      <Link href={secretPath(Name)} onFollow={handleFollow}>
+        <ValueText kind="name" value={Name} />
+      </Link>
+    ) : (
+      '-'
+    );
+  const dateCell = (date: Date | undefined) => <ValueText kind="fixed" value={creationDateText(date)} />;
+
+  const columns: TableProps.ColumnDefinition<SecretListEntry>[] = compact
+    ? [
+        {
+          id: 'name',
+          header: 'Secret',
+          isRowHeader: true,
+          cell: (item) => (
+            <SpaceBetween size="xs">
+              {nameCell(item)}
+              {item.Description && <ValueText kind="text" value={item.Description} />}
+              <KeyValuePairs
+                columns={1}
+                items={[
+                  { label: 'Last changed', value: dateCell(item.LastChangedDate) },
+                  ...(includePlannedDeletion && item.DeletedDate !== undefined
+                    ? [{ label: 'Scheduled deletion', value: dateCell(item.DeletedDate) }]
+                    : []),
+                ]}
+              />
+            </SpaceBetween>
+          ),
+        },
+      ]
+    : [
+        {
+          id: 'name',
+          header: 'Name',
+          isRowHeader: true,
+          minWidth: '24ch',
+          cell: nameCell,
+        },
+        {
+          id: 'description',
+          header: 'Description',
+          minWidth: '20ch',
+          cell: ({ Description }) => <ValueText kind="text" value={Description} none="-" />,
+        },
+        {
+          id: 'changed',
+          header: 'Last changed',
+          minWidth: '16ch',
+          cell: ({ LastChangedDate }) => dateCell(LastChangedDate),
+        },
+        ...(includePlannedDeletion
+          ? [
+              {
+                id: 'deletion',
+                header: 'Scheduled deletion',
+                minWidth: '16ch',
+                cell: ({ DeletedDate }: SecretListEntry) => dateCell(DeletedDate),
+              },
+            ]
+          : []),
+      ];
 
   return (
     <Table<SecretListEntry>
