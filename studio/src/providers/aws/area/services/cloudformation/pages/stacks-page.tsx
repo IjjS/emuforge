@@ -22,20 +22,18 @@ export const STACKS_TITLE = 'Stacks';
 const FILTER_LABEL = 'Filter by stack name';
 const LOAD_FAILED = 'Could not load stacks';
 
-const COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
-  {
-    id: 'name',
-    header: 'Stack name',
-    isRowHeader: true,
-    // A 24-character name can use wide letters such as W. Include the cell's horizontal padding.
-    minWidth: 'calc(22.5em + 36px)',
-    cell: ({ name }) => <ValueText kind="name" value={name} />,
-  },
-  {
-    id: 'status',
-    header: 'Status',
-    cell: ({ status }) => <ValueText kind="fixed" value={status} />,
-  },
+const COMPACT_TABLE_WIDTH = 480;
+
+const NAME_COLUMN: TableProps.ColumnDefinition<StackRow> = {
+  id: 'name',
+  header: 'Stack name',
+  isRowHeader: true,
+  // A 24-character name can use wide letters such as W. Include the cell's horizontal padding.
+  minWidth: 'calc(22.5em + 36px)',
+  cell: ({ name }) => <ValueText kind="name" value={name} />,
+};
+
+const DETAIL_COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
   {
     id: 'created',
     header: 'Created',
@@ -48,6 +46,32 @@ const COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
     minWidth: '20ch',
     cell: ({ description }) => <ValueText kind="text" value={description} none="-" />,
   },
+];
+
+const COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
+  NAME_COLUMN,
+  {
+    id: 'status',
+    header: 'Status',
+    cell: ({ status }) => <ValueText kind="fixed" value={status} />,
+  },
+  ...DETAIL_COLUMNS,
+];
+
+const COMPACT_COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
+  {
+    ...NAME_COLUMN,
+    header: 'Stack name and status',
+    cell: ({ name, status }) => (
+      <>
+        <ValueText kind="name" value={name} />
+        <Box fontSize="body-s">
+          <ValueText kind="fixed" value={status} />
+        </Box>
+      </>
+    ),
+  },
+  ...DETAIL_COLUMNS,
 ];
 
 function connectionFailure(connection: AreaConnection): RequestFailure | undefined {
@@ -140,6 +164,7 @@ function StackListEmpty({
 export function StacksPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('stacks');
   const tableSection = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
   const [tableOverflows, setTableOverflows] = useState(false);
   const [filter, setFilter] = useState('');
   const filterRef = useRef<TextFilterProps.Ref>(null);
@@ -152,7 +177,11 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
     const scrollPane = table?.parentElement;
     if (!table || !scrollPane) return;
 
-    const measure = () => setTableOverflows(scrollPane.scrollWidth > scrollPane.clientWidth);
+    const measure = () => {
+      const width = scrollPane.clientWidth;
+      setCompact(width > 0 && width <= COMPACT_TABLE_WIDTH);
+      setTableOverflows(scrollPane.scrollWidth > width);
+    };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
 
@@ -203,7 +232,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
     <div ref={tableSection}>
       <Table<StackRow>
         variant="full-page"
-        columnDefinitions={COLUMNS}
+        columnDefinitions={compact ? COMPACT_COLUMNS : COLUMNS}
         items={rows}
         trackBy="id"
         wrapLines

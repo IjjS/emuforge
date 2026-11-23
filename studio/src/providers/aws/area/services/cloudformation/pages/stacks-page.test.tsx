@@ -225,6 +225,11 @@ it('shows loading, a genuinely empty page with an active filter, and distinct sa
   fireEvent.click(refresh());
   const names = await screen.findAllByRole('rowheader', { name: 'App' });
   expect(names).toHaveLength(2);
+  expect(
+    stackTable()
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent?.trim()),
+  ).toEqual(['Stack name', 'Status', 'Created', 'Description']);
   expect(screen.queryByRole('link', { name: 'App' })).not.toBeInTheDocument();
   const rows = names.map((name) => within(name.closest('tr') as HTMLElement));
   expect(rows[0]?.getByRole('cell', { name: 'CREATE_COMPLETE' })).toBeInTheDocument();
@@ -236,14 +241,36 @@ it('shows loading, a genuinely empty page with an active filter, and distinct sa
   expect(tokens()).toEqual([null, null]);
 });
 
-it('shows a scroll cue in the table header when its columns overflow', async () => {
+it('keeps a single status beside each name in a narrow table and retains the scroll cue and detail fields', async () => {
+  const wideName = 'W'.repeat(24);
+  const longStatus = 'UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS';
   vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(350);
   vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
     return this.querySelector(':scope > table') === null ? 350 : 640;
   });
-  engine.answer.mockReturnValueOnce(page([summary('id-1', 'Local stack')]));
+  engine.answer.mockReturnValueOnce(
+    page([
+      summary('id-1', 'Local stack'),
+      { ...summary('id-2', wideName, longStatus), TemplateDescription: 'Recovery test' },
+    ]),
+  );
   open();
-  await expectStack('Local stack');
+  const short = await screen.findByRole('rowheader', { name: /Local stack.*CREATE_COMPLETE/ });
+  expect(within(short).getByText('Local stack')).toBeVisible();
+  expect(within(short).getByText('CREATE_COMPLETE')).toBeVisible();
+  const wide = screen.getByRole('rowheader', { name: new RegExp(`${wideName}.*${longStatus}`) });
+  expect(within(wide).getByText(wideName)).toBeVisible();
+  expect(within(wide).getByText(longStatus)).toBeVisible();
+  expect(screen.getAllByText(longStatus)).toHaveLength(1);
+  expect(screen.getAllByText('CREATE_COMPLETE')).toHaveLength(1);
+  expect(
+    stackTable()
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent?.trim()),
+  ).toEqual(['Stack name and status', 'Created', 'Description']);
+  const wideRow = within(wide.closest('tr') as HTMLElement);
+  expect(wideRow.getByRole('cell', { name: creationDateText(new Date(CREATED)) })).toBeInTheDocument();
+  expect(wideRow.getByRole('cell', { name: 'Recovery test' })).toBeInTheDocument();
   expect(screen.getByText('Scroll sideways to see more columns.')).toBeVisible();
 });
 
