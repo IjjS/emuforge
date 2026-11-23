@@ -150,7 +150,7 @@ describe('Secret version history', () => {
     await click('Retrieve secret value');
     await waitFor(() => expect(requests).toHaveBeenCalledOnce());
     await selectVersion(OLDER);
-    expect(requests.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(requests.mock.calls[0]?.[0].signal.aborted).toBe(true);
     await click('Retrieve secret value');
     expect(await screen.findByText('selected test value')).toBeVisible();
     await act(() => late.resolve({ body: { SecretString: 'late test value' } }));
