@@ -280,11 +280,13 @@ describe('Store a secret', () => {
       expect(screen.getByLabelText('Detail read')).toHaveAttribute('aria-busy', 'true');
     });
     for (const { source, label, reply } of order === 'list first' ? reads : [...reads].reverse()) {
-      await act(() => source.resolve(reply));
+      await act(async () => {
+        source.resolve(reply);
+      });
       await waitFor(() => expect(screen.getByLabelText(label)).toHaveAttribute('aria-busy', 'false'));
       assertResult();
     }
-    expect(await screen.findByText('Stored by Studio')).toBeVisible();
+    expect(await within(screen.getByRole('main')).findByText('Stored by Studio')).toBeVisible();
     expect(router.state.location.pathname + router.state.location.search).toBe(secretPath(NAME));
     expect(screen.getByLabelText('List read')).toHaveTextContent(NAME);
     expect(count('GetSecretValue')).toBe(0);
