@@ -36,7 +36,8 @@ const LAYER_COLUMNS: TableProps.ColumnDefinition<LayerSummary>[] = [
     id: 'name',
     header: 'Layer name',
     isRowHeader: true,
-    minWidth: '28ch',
+    // Leave room for the selection control and latest version on narrow screens.
+    minWidth: 'min(28ch, 40vw)',
     cell: ({ name }) => <ValueText kind="name" value={name} />,
   },
   {
@@ -366,7 +367,7 @@ function PublishDialog({
               {failure.content}
             </Alert>
           )}
-          <FormField label="Layer name">
+          <FormField label="Layer name" description="Reuse an existing layer name to publish a new version.">
             <Input value={name} onChange={({ detail }) => setName(detail.value)} disabled={busy} />
           </FormField>
           <FormField label="ZIP file" errorText={fileError}>

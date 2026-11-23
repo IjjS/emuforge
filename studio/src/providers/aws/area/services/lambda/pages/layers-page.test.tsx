@@ -152,6 +152,7 @@ it('requires both a layer name and a ZIP file', async () => {
   renderPage();
   const dialog = await openPublish();
   const name = dialog.getByRole('textbox', { name: 'Layer name' });
+  expect(name).toHaveAccessibleDescription('Reuse an existing layer name to publish a new version.');
   expect(button(dialog)).toBeDisabled();
   fireEvent.change(name, { target: { value: 'beta' } });
   expect(button(dialog)).toBeDisabled();
