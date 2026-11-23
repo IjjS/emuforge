@@ -20,15 +20,19 @@ const REMOVED = 'Delete marker removed.';
 const WARNING =
   'If versioning is suspended when you restore, the restored version replaces any existing null version of this key.';
 
+function encodedKey(key: string): string {
+  return encodeURIComponent(key).replaceAll('%2F', '/').replaceAll('%20', '+');
+}
+
 function row(version: string, latest = false, kind = 'Version', key = KEY): string {
-  return `<${kind}><Key>${key}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest></${kind}>`;
+  return `<${kind}><Key>${encodedKey(key)}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest></${kind}>`;
 }
 
 function history(items: string, cursor?: [string, string]): Response {
   const markers =
     cursor === undefined
       ? ''
-      : `<NextKeyMarker>${cursor[0]}</NextKeyMarker><NextVersionIdMarker>${cursor[1]}</NextVersionIdMarker>`;
+      : `<NextKeyMarker>${encodedKey(cursor[0])}</NextKeyMarker><NextVersionIdMarker>${cursor[1]}</NextVersionIdMarker>`;
   return new Response(
     `<ListVersionsResult><IsTruncated>${String(cursor !== undefined)}</IsTruncated>${markers}${items}</ListVersionsResult>`,
   );
@@ -423,31 +427,76 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
 });
 
 it.each([
-  { label: RESTORE, kind: 'Version', latest: false },
-  { label: REMOVE, kind: 'DeleteMarker', latest: true },
-])('confirms the exact multiline key for $label', async ({ label, kind, latest }) => {
-  const key = 'logs/first line\nsecond line.txt';
+  {
+    label: RESTORE,
+    kind: 'Version',
+    key: 'reports/line\rbreak.csv',
+    wirePath: 'reports/line%0Dbreak.csv',
+    wrongKey: 'reports/line\nbreak.csv',
+  },
+  {
+    label: RESTORE,
+    kind: 'Version',
+    key: 'reports/line\nbreak.csv',
+    wirePath: 'reports/line%0Abreak.csv',
+    wrongKey: 'reports/line%0Abreak.csv',
+  },
+  {
+    label: RESTORE,
+    kind: 'Version',
+    key: 'reports/line%0Dbreak.csv',
+    wirePath: 'reports/line%250Dbreak.csv',
+    wrongKey: 'reports/line\nbreak.csv',
+  },
+  {
+    label: REMOVE,
+    kind: 'DeleteMarker',
+    key: 'reports/line\nbreak.csv',
+    wirePath: 'reports/line%0Abreak.csv',
+    wrongKey: 'reports/line%0Abreak.csv',
+  },
+  {
+    label: REMOVE,
+    kind: 'DeleteMarker',
+    key: 'reports/line\rbreak.csv',
+    wirePath: 'reports/line%0Dbreak.csv',
+    wrongKey: 'reports/line\nbreak.csv',
+  },
+])('uses the exact listed key for $label at $wirePath', async ({ label, kind, key, wirePath, wrongKey }) => {
+  const cursorId = 'cursor%0A+';
+  const selectedId = 'selected%0D+';
+  const restoring = label === RESTORE;
   engine.objectKey = key;
-  engine.readHistory = () => history(row('selected', latest, kind, key));
+  engine.readHistory = (query) =>
+    query.has('key-marker')
+      ? history(row(selectedId, !restoring, kind, key) + row('sibling', false, kind, wrongKey))
+      : history(row(cursorId, true, 'Version', key), [key, cursorId]);
   open();
   await toggleVersions();
-  await select('selected');
+  await waitFor(() => required(selection(cursorId)));
+  fireEvent.click(action('Next page'));
+  await select(selectedId);
+  expectCursor(engine.histories[1], key, cursorId);
+  expect(engine.histories[0]?.get('encoding-type')).toBe('url');
+  expect(engine.histories[1]?.get('encoding-type')).toBe('url');
+
   const { content, input, confirm } = await confirmDialog(label);
-  if (label === RESTORE) {
+  if (restoring) {
     await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
   }
-  expect(dialogValue(content, 'Key').textContent).toBe(key);
-  enter(input, 'logs/first linesecond line.txt');
+  const expected = key.includes('\r') ? JSON.stringify(key) : key;
+  expect(dialogValue(content, 'Key').textContent).toBe(expected);
+  enter(input, wrongKey);
   expectDisabled(confirm);
   expect(engine.destinations).toEqual([]);
-  enter(input, key);
+  enter(input, expected);
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   await waitFor(() => expect(engine.destinations).toEqual([`/${BUCKET}/${key}`]));
-  if (label === RESTORE) {
-    expect(engine.copies).toEqual([`${BUCKET}/logs/first%20line%0Asecond%20line.txt?versionId=selected`]);
+  if (restoring) {
+    expect(engine.copies).toEqual([`${BUCKET}/${wirePath}?versionId=selected%250D%2B`]);
   } else {
-    expect(engine.markerDeletes).toEqual(['selected']);
+    expect(engine.markerDeletes).toEqual([selectedId]);
   }
 });
 
