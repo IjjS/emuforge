@@ -1279,6 +1279,9 @@ describe('Function URL lifecycle', () => {
       }),
     );
     const result = document.activeElement;
+    if (!(result instanceof HTMLElement)) {
+      throw new Error('Expected a focused HTML element in the Flashbar.');
+    }
     expect(PAGE.findFlashbar()?.getElement()).toContainElement(result);
     expect(result).toHaveAccessibleName('Notifications');
     expect(scrollIntoView.mock.contexts[0]).toBe(result);
