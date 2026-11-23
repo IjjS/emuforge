@@ -268,7 +268,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
             ...item,
             content: (
               <SpaceBetween size="xxs">
-                {item.content}
+                <Box>{item.content} </Box>
                 <ValueText kind="address" value={subscriptionArn} />
               </SpaceBetween>
             ),

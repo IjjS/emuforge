@@ -302,7 +302,7 @@ describe('subscription settings', () => {
     changePolicy(REPLACEMENT);
     click('Save filter policy');
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/SetSubscriptionAttributes/)).toBeVisible();
+    expect(screen.getByText('The emulator answered 501 Not Implemented for SetSubscriptionAttributes.')).toBeVisible();
     for (const name of ['Save filter policy', 'Clear filter policy', 'Save scope', 'Save raw message delivery']) {
       expect(button(name)).toBeVisible();
       expect(disabled(button(name))).toBe(true);
