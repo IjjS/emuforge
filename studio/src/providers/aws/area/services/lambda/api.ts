@@ -925,7 +925,6 @@ export async function updateFunctionCode(
   await sendRequest(UPDATE_FUNCTION_CODE, (abortSignal) => client.send(command, { abortSignal }), signal);
 }
 
-/** The fields one "Save" changes; a field left out is not sent. */
 /** Reads the version ARNs in the order the function uses them. */
 export async function readFunctionLayers(endpoint: string, name: string, signal: AbortSignal): Promise<string[]> {
   const client = lambdaClient(endpoint);
@@ -938,6 +937,7 @@ export async function readFunctionLayers(endpoint: string, name: string, signal:
   return (answer.Layers ?? []).flatMap(({ Arn }) => (Arn ? [Arn] : []));
 }
 
+/** The fields one "Save" changes; a field left out is not sent. */
 export interface ConfigurationChange {
   runtime?: string;
   handler?: string;

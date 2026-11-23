@@ -1,6 +1,6 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import createWrapper, { type ElementWrapper, type ModalWrapper } from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -143,53 +143,180 @@ function open() {
   );
 }
 
+const page = createWrapper(document.body);
+const ATTACHED_LOADING = 'Loading attached layers…';
+
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Expected ${label}.`);
+  return value;
+}
+
+function layersTable() {
+  return page
+    .findAllTables()
+    .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Layers');
+}
+
+function functionDescription() {
+  const overview = page
+    .findAllContainers()
+    .find(
+      (container) =>
+        container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Function overview',
+    );
+  const pair = overview?.findContent().findKeyValuePairs()?.findItems()[0];
+  expect(pair?.findLabel()?.getElement()).toHaveTextContent('Description');
+  return required(pair?.findValue(), 'the function description').getElement();
+}
+
+async function expectUpdatedDescription() {
+  await waitFor(() => {
+    const description = functionDescription();
+    expect(description).toBeVisible();
+    expect(description).toHaveTextContent(UPDATED_DESCRIPTION);
+  });
+}
+
 function addButton() {
-  return screen.getByRole('button', { name: ADD });
+  const button = layersTable()?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+  const element = required(button, 'the Layers header action').getElement();
+  expect(element).toHaveAccessibleName(ADD);
+  return element;
+}
+
+async function visibleDialog(title: string) {
+  return waitFor(() => {
+    const dialog = required(page.findModal(), 'the layer dialog');
+    expect(dialog.isVisible()).toBe(true);
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  });
 }
 
 async function openAdd() {
-  await screen.findByRole('table', { name: 'Layers' });
   await waitFor(() => expect(addButton()).toBeEnabled());
   fireEvent.click(addButton());
-  return within(await screen.findByRole('dialog', { name: ADD }));
+  return visibleDialog(ADD);
 }
 
-function dialogSubmit(dialog: ReturnType<typeof within>, action = ADD) {
-  return dialog.getByRole('button', { name: action });
+function dialogButton(dialog: ModalWrapper, index: number, action: string) {
+  const element = required(dialog.findFooter()?.findAllButtons()[index], action).getElement();
+  expect(element).toHaveAccessibleName(action);
+  return element;
 }
 
-function picker(label: string) {
-  const dialog = createWrapper(screen.getByRole('dialog', { name: ADD }));
-  const field = dialog.findAllFormFields().find((field) => field.findLabel()?.getElement().textContent === label);
-  const select = field?.findControl()?.findSelect();
-  if (!select) throw new Error(`Expected the ${label} selector.`);
-  return select;
+function dialogSubmit(dialog: ModalWrapper, action = ADD) {
+  return dialogButton(dialog, 1, action);
 }
 
-async function choose(label: string, value: string) {
-  const select = picker(label);
-  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
+function cancelDialog(dialog: ModalWrapper) {
+  fireEvent.click(dialogButton(dialog, 0, 'Cancel'));
+}
+
+type Picker = 'Layer name' | 'Version';
+
+function picker(dialog: ModalWrapper, label: Picker) {
+  const field = required(dialog.findContent().findAllFormFields()[label === 'Layer name' ? 0 : 1], label);
+  expect(field.findLabel()?.getElement()).toHaveTextContent(label);
+  return required(field.findControl()?.findSelect(), `the ${label} selector`);
+}
+
+async function choose(dialog: ModalWrapper, label: Picker, value: string, selectedLabel: string) {
+  const select = picker(dialog, label);
+  const trigger = select.findTrigger().getElement();
+  await waitFor(() => expect(trigger).toBeEnabled());
   select.openDropdown();
   select.selectOptionByValue(value);
+  expect(trigger).toHaveTextContent(selectedLabel);
 }
 
-async function chooseOlderVersion() {
-  await choose('Layer name', 'tools');
-  await choose('Version', OLDER);
+const chooseLayer = (dialog: ModalWrapper) => choose(dialog, 'Layer name', 'tools', 'tools');
+const chooseVersion = (dialog: ModalWrapper) => choose(dialog, 'Version', OLDER, '1');
+
+async function chooseOlderVersion(dialog: ModalWrapper) {
+  await chooseLayer(dialog);
+  await chooseVersion(dialog);
+}
+
+async function nextPage(dialog: ModalWrapper, index: number, label: string) {
+  const pagination = await waitFor(() => required(dialog.findContent().findAllPaginations()[index], label));
+  expect(pagination.getElement()).toHaveAccessibleName(label);
+  fireEvent.click(pagination.findNextPageButton().getElement());
+}
+
+function attachedArns() {
+  const table = required(layersTable(), 'the attached layers table');
+  return table.findRows().map((_, index) => table.findBodyCell(index + 1, 1)?.getElement().textContent);
+}
+
+function removeButton(layer: string) {
+  const row = attachedArns().indexOf(layer) + 1;
+  const button = required(layersTable()?.findBodyCell(row, 2)?.findButton(), `the Remove action for ${layer}`);
+  const element = button.getElement();
+  expect(element).toHaveAccessibleName(`${REMOVE} ${layer}`);
+  return element;
 }
 
 async function openRemove(layer: string) {
-  fireEvent.click(await screen.findByRole('button', { name: `${REMOVE} ${layer}` }));
-  const dialog = await screen.findByRole('dialog', { name: REMOVE });
-  expect(dialog).toHaveTextContent(layer);
-  return within(dialog);
+  fireEvent.click(await waitFor(() => removeButton(layer)));
+  const dialog = await visibleDialog(REMOVE);
+  expect(dialog.findContent().getElement()).toHaveTextContent(layer);
+  return dialog;
 }
 
 async function expectAttached(layers: readonly string[]) {
+  await waitFor(() => expect(attachedArns()).toEqual(layers));
+}
+
+function emptySlot() {
+  return layersTable()?.findEmptySlot();
+}
+
+async function expectEmpty() {
   await waitFor(() => {
-    const displayed = within(screen.getByRole('table', { name: 'Layers' })).queryAllByRole('rowheader');
-    expect(displayed.map(({ textContent }) => textContent)).toEqual(layers);
+    const empty = required(emptySlot(), 'the attached layers empty state').getElement();
+    expect(empty).toBeVisible();
+    expect(empty).toHaveTextContent(EMPTY);
   });
+}
+
+function expectLoading() {
+  const loading = required(layersTable()?.findLoadingText(), 'the attached layers loading state').getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent(ATTACHED_LOADING);
+}
+
+async function expectReadFailure(scope: () => ElementWrapper | undefined | null, header: string, content: RegExp) {
+  return waitFor(() => {
+    const alert = required(scope()?.findAlert(), header);
+    const heading = required(alert.findHeader(), 'the read alert header').getElement();
+    expect(heading).toBeVisible();
+    expect(heading).toHaveTextContent(header);
+    const detail = alert.findContent().getElement();
+    expect(detail).toBeVisible();
+    expect(detail).toHaveTextContent(content);
+    const button = required(alert.findActionSlot()?.findButton(), 'Retry').getElement();
+    expect(button).toHaveAccessibleName('Retry');
+    return button;
+  });
+}
+
+type FlashType = 'success' | 'error' | 'info';
+
+function flashItems(type: FlashType) {
+  return page.findFlashbar()?.findItemsByType(type) ?? [];
+}
+
+function expectFlash(type: FlashType, content: string | RegExp, header?: string) {
+  const item = required(flashItems(type)[0], `the ${type} Flashbar item`);
+  const detail = required(item.findContent(), 'the flash content').getElement();
+  expect(detail).toBeVisible();
+  expect(detail).toHaveTextContent(content);
+  if (header !== undefined) {
+    const heading = required(item.findHeader(), 'the flash header').getElement();
+    expect(heading).toBeVisible();
+    expect(heading).toHaveTextContent(header);
+  }
 }
 
 it('shows loading and a retryable attached-layer error before showing a successful empty result', async () => {
@@ -200,15 +327,18 @@ it('shows loading and a retryable attached-layer error before showing a successf
     .mockImplementation(() => Response.json({}));
   open();
 
-  expect(await screen.findByText('Loading attached layers…')).toBeVisible();
-  expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+  await waitFor(expectLoading);
+  expect(emptySlot()?.getElement().textContent ?? '').not.toContain(EMPTY);
   await act(() => held.resolve(error(400, 'InvalidParameterValueException')));
-  expect(await screen.findByText('Could not load attached layers.')).toBeVisible();
-  expect(screen.getByText(/GetFunctionConfiguration returned InvalidParameterValueException/)).toBeVisible();
-  expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+  const retry = await expectReadFailure(
+    emptySlot,
+    'Could not load attached layers.',
+    /GetFunctionConfiguration returned InvalidParameterValueException/,
+  );
+  expect(emptySlot()?.getElement().textContent ?? '').not.toContain(EMPTY);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByText(EMPTY)).toBeVisible();
+  fireEvent.click(retry);
+  await expectEmpty();
   expect(engine.count(CONFIG)).toBe(2);
 });
 
@@ -216,17 +346,16 @@ it('keeps a concurrent-update refusal through both rereads', async () => {
   engine.updateAnswer = () => error(409, 'ResourceConflictException', 'Another update is in progress.');
   open();
   const dialog = await openAdd();
-  await chooseOlderVersion();
+  await chooseOlderVersion(dialog);
 
   fireEvent.click(dialogSubmit(dialog));
-  expect(await screen.findByText('Could not add layer version.')).toBeVisible();
+  const message = /UpdateFunctionConfiguration returned ResourceConflictException\. Another update is in progress\./;
+  await waitFor(() => expectFlash('error', message, 'Could not add layer version.'));
   await waitFor(() => expect(engine.count(FUNCTION)).toBe(2));
   await waitFor(() => expect(engine.count(CONFIG)).toBe(2));
-  expect(await screen.findByText(EMPTY)).toBeVisible();
-  expect(
-    screen.getByText(/UpdateFunctionConfiguration returned ResourceConflictException. Another update is in progress./),
-  ).toBeVisible();
-  expect(screen.queryByText('Layer version added.')).not.toBeInTheDocument();
+  await expectEmpty();
+  expectFlash('error', message, 'Could not add layer version.');
+  expect(flashItems('success')).toHaveLength(0);
 });
 
 it('appends an older version from later pages and keeps the existing order', async () => {
@@ -245,27 +374,25 @@ it('appends an older version from later pages and keeps the existing order', asy
     );
   open();
   const dialog = await openAdd();
-  expect(picker('Version').findTrigger().getElement()).toBeDisabled();
-  expect(picker('Version').findPlaceholder()?.getElement()).toHaveTextContent('Select a layer first');
-  const layerPages = within(await dialog.findByRole('list', { name: 'Layer name pages' }));
-  fireEvent.click(layerPages.getByRole('button', { name: 'Next page' }));
-  await choose('Layer name', 'tools');
-  const versionPages = within(await dialog.findByRole('list', { name: 'Version pages' }));
-  fireEvent.click(versionPages.getByRole('button', { name: 'Next page' }));
-  await choose('Version', OLDER);
+  expect(picker(dialog, 'Version').findTrigger().getElement()).toBeDisabled();
+  expect(picker(dialog, 'Version').findPlaceholder()?.getElement()).toHaveTextContent('Select a layer first');
+  await nextPage(dialog, 0, 'Layer name pages');
+  await chooseLayer(dialog);
+  await nextPage(dialog, 1, 'Version pages');
+  await chooseVersion(dialog);
   fireEvent.click(dialogSubmit(dialog));
 
   await expectAttached([FIRST, MIDDLE, OLDER]);
   expect(engine.updates).toEqual([{ Layers: [FIRST, MIDDLE, OLDER] }]);
-  expect((await screen.findAllByText(UPDATED_DESCRIPTION))[0]).toBeVisible();
-  expect(screen.getByText('Layer version added.')).toBeVisible();
+  await expectUpdatedDescription();
+  expectFlash('success', 'Layer version added.');
 });
 
 it('cancels removal without a request, then removes the middle version without reordering the others', async () => {
   engine.attached = [FIRST, MIDDLE, LAST];
   open();
   const cancelled = await openRemove(MIDDLE);
-  fireEvent.click(cancelled.getByRole('button', { name: 'Cancel' }));
+  cancelDialog(cancelled);
   expect(engine.updates).toEqual([]);
   await expectAttached([FIRST, MIDDLE, LAST]);
 
@@ -273,8 +400,8 @@ it('cancels removal without a request, then removes the middle version without r
   fireEvent.click(dialogSubmit(confirmed, REMOVE));
   await expectAttached([FIRST, LAST]);
   expect(engine.updates).toEqual([{ Layers: [FIRST, LAST] }]);
-  expect((await screen.findAllByText(UPDATED_DESCRIPTION))[0]).toBeVisible();
-  expect(screen.getByText('Layer version removed.')).toBeVisible();
+  await expectUpdatedDescription();
+  expectFlash('success', 'Layer version removed.');
 });
 
 describe.each(['add', 'remove'] as const)('persistent %s results', (action) => {
@@ -292,35 +419,35 @@ describe.each(['add', 'remove'] as const)('persistent %s results', (action) => {
     };
     open();
     const dialog = action === 'add' ? await openAdd() : await openRemove(FIRST);
-    if (action === 'add') await chooseOlderVersion();
+    if (action === 'add') await chooseOlderVersion(dialog);
     fireEvent.click(dialogSubmit(dialog, action === 'add' ? ADD : REMOVE));
     const success = action === 'add' ? 'Layer version added.' : 'Layer version removed.';
-    expect(await screen.findByText(success)).toBeVisible();
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expectFlash('success', success));
+    await waitFor(() => expect(page.findModal()).toBeNull());
     await waitFor(() => expect(engine.count(CONFIG)).toBe(2));
     await waitFor(() => expect(engine.count(URL_CONFIG)).toBe(2));
 
     const attachedReady = async () => {
       await act(async () => heldAttached.resolve(await originalAttached()));
       await expectAttached(action === 'add' ? [FIRST, OLDER] : []);
-      if (action === 'remove') expect(await screen.findByText(EMPTY)).toBeVisible();
+      if (action === 'remove') await expectEmpty();
     };
     const detailReady = async () => {
       await act(() => heldUrl.resolve(error(404, 'ResourceNotFoundException')));
-      expect((await screen.findAllByText(UPDATED_DESCRIPTION))[0]).toBeVisible();
+      await expectUpdatedDescription();
     };
     if (first === 'attachment') {
       await attachedReady();
-      expect(screen.queryByText(UPDATED_DESCRIPTION)).not.toBeInTheDocument();
-      expect(screen.getByText(success)).toBeVisible();
+      expect(functionDescription()).not.toHaveTextContent(UPDATED_DESCRIPTION);
+      expectFlash('success', success);
       await detailReady();
     } else {
       await detailReady();
-      expect(screen.getByText('Loading attached layers…')).toBeVisible();
-      expect(screen.getByText(success)).toBeVisible();
+      expectLoading();
+      expectFlash('success', success);
       await attachedReady();
     }
-    expect(screen.getByText(success)).toBeVisible();
+    expectFlash('success', success);
     expect(engine.updates).toEqual([{ Layers: action === 'add' ? [FIRST, OLDER] : [] }]);
   });
 });
@@ -337,23 +464,24 @@ it('keeps the removal refusal after the now-absent function and its Configuratio
   fireEvent.click(dialogSubmit(dialog, REMOVE));
 
   expect(await screen.findByText('Function not found')).toBeVisible();
-  expect(screen.queryByRole('heading', { name: 'Layers' })).not.toBeInTheDocument();
-  expect(screen.getByText('Could not remove layer version.')).toBeVisible();
-  expect(
-    screen.getByText(/UpdateFunctionConfiguration returned ResourceNotFoundException. Function no longer exists./),
-  ).toBeVisible();
+  expect(layersTable()).toBeUndefined();
+  expectFlash(
+    'error',
+    /UpdateFunctionConfiguration returned ResourceNotFoundException\. Function no longer exists\./,
+    'Could not remove layer version.',
+  );
 });
 
 it('disables addition and removal while the function is updating', async () => {
   engine.attached = [FIRST];
   engine.state = 'InProgress';
   open();
-  const remove = await screen.findByRole('button', { name: `${REMOVE} ${FIRST}` });
+  const remove = await waitFor(() => removeButton(FIRST));
   expect(addButton()).toHaveAttribute('aria-disabled', 'true');
   expect(remove).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(addButton());
   fireEvent.click(remove);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(page.findModal()).toBeNull();
   expect(engine.updates).toEqual([]);
 });
 
@@ -374,20 +502,23 @@ describe.each([
       .mockImplementation(engine[mock]);
     open();
     const dialog = await openAdd();
-    if (path === VERSIONS) await choose('Layer name', 'tools');
+    if (path === VERSIONS) await chooseLayer(dialog);
 
-    expect(await dialog.findByText(`Could not load ${resource}.`)).toBeVisible();
-    expect(dialog.getByText(new RegExp(`${operation} returned InvalidParameterValueException`))).toBeVisible();
-    expect(picker(label).findTrigger().getElement()).toBeDisabled();
+    const retry = await expectReadFailure(
+      () => dialog.findContent(),
+      `Could not load ${resource}.`,
+      new RegExp(`${operation} returned InvalidParameterValueException`),
+    );
+    expect(picker(dialog, label).findTrigger().getElement()).toBeDisabled();
     expect(dialogSubmit(dialog)).toBeDisabled();
     const other = path === LAYERS ? VERSIONS : LAYERS;
     const otherCount = engine.count(other);
-    fireEvent.click(dialog.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(picker(label).findTrigger().getElement()).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(picker(dialog, label).findTrigger().getElement()).toBeEnabled());
     expect(engine.count(path)).toBe(2);
     expect(engine.count(other)).toBe(otherCount);
-    if (path === LAYERS) await choose('Layer name', 'tools');
-    await choose('Version', OLDER);
+    if (path === LAYERS) await chooseLayer(dialog);
+    await chooseVersion(dialog);
     expect(dialogSubmit(dialog)).toBeEnabled();
   });
 
@@ -395,21 +526,21 @@ describe.each([
     engine[mock] = () => error(501, 'NotImplemented');
     open();
     const dialog = await openAdd();
-    if (path === VERSIONS) await choose('Layer name', 'tools');
+    if (path === VERSIONS) await chooseLayer(dialog);
 
-    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.getByText(new RegExp(`The emulator answered 501 Not Implemented for ${operation}\\.`))).toBeVisible();
-    expect(picker(label).findTrigger().getElement()).toBeDisabled();
+    const header = 'Not implemented by the emulator';
+    const message = new RegExp(`The emulator answered 501 Not Implemented for ${operation}\\.`);
+    const retry = await expectReadFailure(() => dialog.findContent(), header, message);
+    expect(picker(dialog, label).findTrigger().getElement()).toBeDisabled();
     expect(dialogSubmit(dialog)).toBeDisabled();
     const attempts = engine.count(path);
-    const retry = dialog.getByRole('button', { name: 'Retry' });
     expect(retry).toBeDisabled();
     fireEvent.click(retry);
     fireEvent.click(dialogSubmit(dialog));
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    cancelDialog(dialog);
     const reopened = await openAdd();
-    if (path === VERSIONS) await choose('Layer name', 'tools');
-    expect(await reopened.findByText('Not implemented by the emulator')).toBeVisible();
+    if (path === VERSIONS) await chooseLayer(reopened);
+    await expectReadFailure(() => reopened.findContent(), header, message);
     expect(engine.count(path)).toBe(attempts);
     expect(engine.updates).toEqual([]);
   });
@@ -418,18 +549,21 @@ describe.each([
 it('keeps attached-layer retry and addition disabled after a 501, including a page refresh', async () => {
   engine.attachedAnswer = () => error(501, 'NotImplemented');
   open();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/The emulator answered 501 Not Implemented for GetFunctionConfiguration\./)).toBeVisible();
+  const header = 'Not implemented by the emulator';
+  const message = /The emulator answered 501 Not Implemented for GetFunctionConfiguration\./;
+  const retry = await expectReadFailure(emptySlot, header, message);
   const attempts = engine.count(CONFIG);
-  const retry = screen.getByRole('button', { name: 'Retry' });
   expect(retry).toBeDisabled();
   expect(addButton()).toBeDisabled();
   fireEvent.click(retry);
   fireEvent.click(addButton());
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  const refresh = page.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton();
+  const refreshElement = required(refresh, 'Refresh').getElement();
+  expect(refreshElement).toHaveAccessibleName('Refresh');
+  fireEvent.click(refreshElement);
   await waitFor(() => expect(engine.count(FUNCTION)).toBe(2));
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await expectReadFailure(emptySlot, header, message);
+  expect(page.findModal()).toBeNull();
   expect(engine.count(CONFIG)).toBe(attempts);
 });
 
@@ -439,19 +573,21 @@ it('keeps both mutation actions visible and disabled after an update 501', async
   open();
   const dialog = await openRemove(FIRST);
   fireEvent.click(dialogSubmit(dialog, REMOVE));
-  const notification = within(await screen.findByRole('list', { name: 'Notifications' }));
-  expect(notification.getByText('Not implemented by the emulator')).toBeVisible();
-  expect(
-    notification.getByText(/The emulator answered 501 Not Implemented for UpdateFunctionConfiguration\./),
-  ).toBeVisible();
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await waitFor(() =>
+    expectFlash(
+      'info',
+      /The emulator answered 501 Not Implemented for UpdateFunctionConfiguration\./,
+      'Not implemented by the emulator',
+    ),
+  );
+  await waitFor(() => expect(page.findModal()).toBeNull());
 
   const attempts = engine.count(CONFIG, 'PUT');
-  for (const button of [addButton(), screen.getByRole('button', { name: `${REMOVE} ${FIRST}` })]) {
+  for (const button of [addButton(), removeButton(FIRST)]) {
     expect(button).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(button);
   }
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(page.findModal()).toBeNull();
   expect(engine.count(CONFIG, 'PUT')).toBe(attempts);
   await expectAttached([FIRST]);
 });
