@@ -169,7 +169,7 @@ async function submitPublication(name: string) {
 function expectVersion(version: number) {
   const versionsTable = table('Versions');
   expect(versionsTable.findRows()).toHaveLength(1);
-  expect(versionsTable.findBodyCell(1, 1)?.getElement()).toHaveTextContent(String(version));
+  expect(versionsTable.findBodyCell(1, 1)?.getElement().textContent).toBe(String(version));
   expect(versionsTable.findBodyCell(1, 2)?.getElement().textContent).toBe(arn('beta', version));
 }
 
@@ -187,7 +187,7 @@ const publishedLayers: LayerPage<LayerSummary> = {
 };
 
 function expectLatestVersion() {
-  expect(table('Layers').findBodyCell(layerRow('beta'), 3)?.getElement()).toHaveTextContent('2');
+  expect(table('Layers').findBodyCell(layerRow('beta'), 3)?.getElement().textContent).toBe('2');
 }
 
 beforeEach(() => {
