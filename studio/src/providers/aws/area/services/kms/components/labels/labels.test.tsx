@@ -116,8 +116,8 @@ describe('key labels', () => {
 
     expect(await screen.findByText(alias)).toBeVisible();
     expect(await screen.findByText('development')).toBeVisible();
-    const aliases = within(screen.getByRole('navigation', { name: 'Alias pages' }));
-    const tags = within(screen.getByRole('navigation', { name: 'Tag pages' }));
+    const aliases = within(screen.getByRole('list', { name: 'Alias pages' }));
+    const tags = within(screen.getByRole('list', { name: 'Tag pages' }));
     fireEvent.click(aliases.getByRole('button', { name: 'Next page' }));
     fireEvent.click(tags.getByRole('button', { name: 'Next page' }));
     expect(await screen.findByText('alias/invoices')).toBeVisible();
