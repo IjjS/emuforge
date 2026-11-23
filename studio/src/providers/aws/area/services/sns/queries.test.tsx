@@ -13,8 +13,10 @@ import {
   useDelivery,
   useFunctionChoices,
   useQueueChoices,
+  useSetSubscriptionSetting,
   useSubscribe,
   useSubscriptionListing,
+  useSubscriptionSettings,
   useTopic,
   useTopicListing,
   useUnsubscribe,
@@ -30,6 +32,8 @@ vi.mock('./api', async (importOriginal) => {
     listTopics: vi.fn(),
     listSubscriptions: vi.fn(),
     getTopic: vi.fn(),
+    getSubscriptionSettings: vi.fn(),
+    setSubscriptionSetting: vi.fn(),
     readDelivery: vi.fn(),
     listQueueChoices: vi.fn(),
     listFunctionChoices: vi.fn(),
@@ -457,4 +461,53 @@ describe('the function choices', () => {
     });
     expect(result.current.choices).toEqual([{ name: 'f1', arn: 'arn:f1' }]);
   });
+});
+
+it('supersedes an in-flight settings read only for the subscription that was saved', async () => {
+  const firstArn = `${TOPIC}:first`;
+  const secondArn = `${TOPIC}:second`;
+  const details = held(api.getSubscriptionSettings);
+  const listing = held(api.listSubscriptions);
+  const write = held(api.setSubscriptionSetting);
+  const { result } = renderHook(
+    () => ({
+      first: useSubscriptionSettings(ENDPOINT, firstArn),
+      second: useSubscriptionSettings(ENDPOINT, secondArn),
+      list: useSubscriptionListing(ENDPOINT, TOPIC),
+      save: useSetSubscriptionSetting(ENDPOINT, TOPIC),
+    }),
+    { wrapper },
+  );
+  const previous = await nth(details, 0);
+  const other = await nth(details, 1);
+  const previousList = await nth(listing, 0);
+  const save = result.current.save(
+    firstArn,
+    { name: 'RawMessageDelivery', value: 'true' },
+    new AbortController().signal,
+  );
+  const writeCall = await nth(write, 0);
+  await act(async () => {
+    writeCall.resolve(undefined);
+    await save;
+  });
+  const latest = await nth(details, 2);
+  expect(latest.args.slice(0, 2)).toEqual([ENDPOINT, firstArn]);
+  expect(previous.signal.aborted).toBe(true);
+  expect(other.signal.aborted).toBe(false);
+  expect(previousList.signal.aborted).toBe(true);
+  const latestList = await nth(listing, 1);
+  expect(latestList.args.slice(0, 2)).toEqual([ENDPOINT, TOPIC]);
+  act(() => {
+    latest.resolve({ RawMessageDelivery: 'true' });
+    latestList.resolve({ subscriptions: [] });
+    other.resolve({ FilterPolicy: '{}' });
+  });
+  await waitFor(() => expect(result.current.first.value).toEqual({ RawMessageDelivery: 'true' }));
+  await act(async () => {
+    previous.resolve({ RawMessageDelivery: 'false' });
+  });
+  expect(result.current.first.value).toEqual({ RawMessageDelivery: 'true' });
+  expect(result.current.second.value).toEqual({ FilterPolicy: '{}' });
+  expect(details).toHaveLength(3);
 });

@@ -9,7 +9,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { CopyValue } from '../../../components/copy-value';
@@ -20,13 +20,13 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { OPERATIONS, type Topic } from '../api';
+import { OPERATIONS, type SubscriptionSetting, type Topic } from '../api';
 import { DeleteTopicDialog } from '../components/delete-topic-dialog';
 import { PublishTab } from '../components/publish-tab';
-import { SubscriptionsTab } from '../components/subscriptions-tab';
+import { SubscriptionsTab, type SubscriptionsTabProps } from '../components/subscriptions-tab';
 import { NONE, publishTabHref, TAB_PARAMETER, tabOf, topicHref, topicName, TOPICS_PATH } from '../format';
 import { EMPTY_FORM, type PublishForm, type PublishResult } from '../publish-form';
-import { failureOf, useDeleteTopic, usePageSignal, useTopic } from '../queries';
+import { failureOf, useDeleteTopic, usePageSignal, useSetSubscriptionSetting, useTopic } from '../queries';
 
 // A topic's page, S3 (issue 536, design task 1 step 2, task 3 step 1, task 5 step 2): its header with "Refresh" and
 // "Delete", "Topic details" from `GetTopicAttributes`, then the tabs "Subscriptions" and "Publish", addressed by the
@@ -88,7 +88,7 @@ function NotFound() {
   );
 }
 
-interface TopicTabsProps {
+interface TopicTabsProps extends Pick<SubscriptionsTabProps, 'onSaveSetting' | 'settingsSave'> {
   topic: Topic;
   arn: string;
   connection: AreaConnection;
@@ -105,6 +105,8 @@ function TopicTabs({
   arn,
   connection,
   onTopicChanged,
+  onSaveSetting,
+  settingsSave,
   form,
   onFormChange,
   result,
@@ -132,6 +134,8 @@ function TopicTabs({
           topicName={topicName(arn)}
           connection={connection}
           onTopicChanged={onTopicChanged}
+          onSaveSetting={onSaveSetting}
+          settingsSave={settingsSave}
         />
       ),
     },
@@ -181,6 +185,10 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   const { value: read, failure, refresh } = reading;
   const topic = read?.found === true ? read.topic : undefined;
   const removeTopic = useDeleteTopic(connection.engineOrigin);
+  const saveSetting = useSetSubscriptionSetting(connection.engineOrigin, arn);
+  const savingSetting = useRef(false);
+  const [pendingSetting, setPendingSetting] = useState<SubscriptionsTabProps['settingsSave']['pending']>();
+  const [unavailableArns, setUnavailableArns] = useState<ReadonlySet<string>>(() => new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState<PublishForm>(EMPTY_FORM);
@@ -228,6 +236,51 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   const handleRefresh = () => {
     setRefreshing(true);
     readAgain();
+  };
+
+  const handleSaveSetting = async (subscriptionArn: string, setting: SubscriptionSetting) => {
+    if (savingSetting.current || unavailableArns.has(subscriptionArn)) {
+      return;
+    }
+    const signal = pageSignal();
+    savingSetting.current = true;
+    setPendingSetting({ arn: subscriptionArn, setting });
+    try {
+      await saveSetting(subscriptionArn, setting, signal);
+      if (!signal.aborted) {
+        flash.show([
+          {
+            type: 'success',
+            header: 'Subscription settings updated',
+            content: <ValueText kind="address" value={subscriptionArn} />,
+          },
+        ]);
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        const failure = failureOf(error, OPERATIONS.setSubscriptionAttributes);
+        if (failure.kind === 'not-implemented') {
+          setUnavailableArns((current) => new Set([...current, subscriptionArn]));
+        }
+        const item = actionFailureItem(failure, 'Save subscription settings', connection.engineOrigin);
+        flash.show([
+          {
+            ...item,
+            content: (
+              <SpaceBetween size="xxs">
+                <Box>{item.content} </Box>
+                <ValueText kind="address" value={subscriptionArn} />
+              </SpaceBetween>
+            ),
+          },
+        ]);
+      }
+    } finally {
+      savingSetting.current = false;
+      if (!signal.aborted) {
+        setPendingSetting(undefined);
+      }
+    }
   };
 
   const handleDelete = () => {
@@ -279,6 +332,8 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
           arn={arn}
           connection={connection}
           onTopicChanged={readAgain}
+          onSaveSetting={handleSaveSetting}
+          settingsSave={{ pending: pendingSetting, unavailableArns }}
           form={form}
           onFormChange={setForm}
           result={result}

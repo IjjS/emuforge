@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|sns.subscription|filter-policy-and-raw-delivery
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sns-subscription-filter-policy-and-scope,studio.sns-subscription-raw-delivery,studio.sns-subscription-settings-refusal
 Issue-Commit: 4d83a34569047383fcc3eae64d15771490d949b3
 
 # Show and set an SNS subscription's filter policy and raw message delivery

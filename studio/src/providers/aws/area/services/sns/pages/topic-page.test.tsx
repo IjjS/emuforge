@@ -17,9 +17,17 @@ import type { PublishForm } from '../publish-form';
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case and its two tabs replaced by
 // stand-ins that record what the page hands them (`api.test.ts` proves the calls against a fake engine).
 
+function hold<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, getTopic: vi.fn(), deleteTopic: vi.fn(), listTopics: vi.fn() };
+  return { ...real, getTopic: vi.fn(), deleteTopic: vi.fn(), listTopics: vi.fn(), setSubscriptionSetting: vi.fn() };
 });
 
 const handed: { subscriptions?: SubscriptionsTabProps; publish?: PublishTabProps } = {};
@@ -35,7 +43,18 @@ const TYPED: PublishForm = {
 vi.mock('../components/subscriptions-tab', () => ({
   SubscriptionsTab: (props: SubscriptionsTabProps) => {
     handed.subscriptions = props;
-    return <div data-testid="stand-in-subscriptions" />;
+    return (
+      <div data-testid="stand-in-subscriptions">
+        <button
+          type="button"
+          onClick={() => {
+            void props.onSaveSetting(`${ARN}:subscription`, { name: 'RawMessageDelivery', value: 'true' });
+          }}
+        >
+          Stand-in save subscription settings
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -414,4 +433,29 @@ describe("a topic's page", () => {
     expect(router.state.location.pathname).toBe(pathOf(ARN));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+});
+
+it('reports a successful settings write after a refresh finds the topic missing', async () => {
+  const write = hold<undefined>();
+  vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(write.promise);
+  vi.mocked(api.getTopic).mockResolvedValueOnce(standard()).mockResolvedValueOnce({ found: false });
+  open(pathOf(ARN));
+  fireEvent.click(await screen.findByRole('button', { name: 'Stand-in save subscription settings' }));
+  expect(api.setSubscriptionSetting).toHaveBeenCalledWith(
+    ENGINE,
+    `${ARN}:subscription`,
+    { name: 'RawMessageDelivery', value: 'true' },
+    expect.any(AbortSignal),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByText('Topic not found')).toBeVisible();
+  expect(screen.queryByTestId('stand-in-subscriptions')).not.toBeInTheDocument();
+  expect(vi.mocked(api.setSubscriptionSetting).mock.calls[0]?.[3].aborted).toBe(false);
+  write.resolve(undefined);
+  expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+  expect(
+    screen.getByText((_, element) => element?.textContent === `${ARN}:subscription`, {
+      selector: '.aws-area-value-address',
+    }),
+  ).toBeVisible();
 });

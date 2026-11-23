@@ -14,11 +14,21 @@ import * as api from '../api';
 // S3's "Subscriptions" tab rendered on the topic's page inside the area's layout, as Studio's frame renders it, with
 // the calls of `api.ts` answered by the case (`api.test.ts` proves the calls against a fake engine).
 
+function hold<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
   return {
     ...real,
     getTopic: vi.fn(),
+    getSubscriptionSettings: vi.fn(),
+    setSubscriptionSetting: vi.fn(),
     listSubscriptions: vi.fn(),
     readDelivery: vi.fn(),
     allowDelivery: vi.fn(),
@@ -570,4 +580,124 @@ describe('the "Subscriptions" tab', () => {
     expect(last?.[1]).toBe(TOPIC_ARN);
     expect(last?.[2]).toBe('next-1');
   });
+});
+
+describe('the selected subscription settings', () => {
+  const first = sqs('jobs');
+  const second = sqs('archive');
+  const policy = '{"color":["red"]}';
+  const replacement = '{"color":["blue"]}';
+
+  function openSettings(row: api.Subscription) {
+    select(`${row.protocol} ${row.endpoint}`);
+    fireEvent.click(action('Subscription settings'));
+  }
+
+  it('gives the disabled reasons and identifies the confirmed subscription when opened', async () => {
+    const pending = email('dev@example.com');
+    holdSubscriptions({ '': { subscriptions: [first, pending] } });
+    holdDeliveries({});
+    vi.mocked(api.getSubscriptionSettings).mockResolvedValue({});
+    open();
+    await screen.findByRole('radio', { name: `email ${pending.endpoint}` });
+    const button = action('Subscription settings');
+    expect(isDisabled(button)).toBe(true);
+    expect(disabledReason(button)).toBe('Select a subscription.');
+    select(`email ${pending.endpoint}`);
+    expect(isDisabled(button)).toBe(true);
+    expect(disabledReason(button)).toBe('A pending subscription has no ARN.');
+    expect(api.getSubscriptionSettings).not.toHaveBeenCalled();
+    openSettings(first);
+    expect(await screen.findByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+    expect(
+      screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText((_, element) => element?.textContent === first.endpoint, {
+        selector: '.aws-area-value-address',
+      }),
+    ).toHaveLength(2);
+  });
+
+  it('keeps the second subscription when the first subscription answers late', async () => {
+    const readFirst = hold<api.SubscriptionSettingsAttributes>();
+    const readSecond = hold<api.SubscriptionSettingsAttributes>();
+    holdSubscriptions({ '': { subscriptions: [first, second] } });
+    holdDeliveries({});
+    vi.mocked(api.getSubscriptionSettings)
+      .mockReturnValueOnce(readFirst.promise)
+      .mockReturnValueOnce(readSecond.promise);
+    open();
+    await screen.findByRole('radio', { name: `sqs ${first.endpoint}` });
+    openSettings(first);
+    await screen.findByText('Loading subscription settings');
+    select(`sqs ${second.endpoint}`);
+    expect(screen.queryByRole('heading', { name: 'Subscription settings' })).not.toBeInTheDocument();
+    fireEvent.click(action('Subscription settings'));
+    readSecond.resolve({ FilterPolicy: replacement });
+    expect(await screen.findByDisplayValue(replacement)).toBeVisible();
+    await act(async () => {
+      readFirst.resolve({ FilterPolicy: policy });
+    });
+    expect(screen.getByDisplayValue(replacement)).toBeVisible();
+    expect(screen.queryByDisplayValue(policy)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(['detail first', 'list first'] as const)(
+    'keeps the write result when the follow-up reads resolve %s',
+    async (order) => {
+      const refreshedDetails = hold<api.SubscriptionSettingsAttributes>();
+      const refreshedList = hold<api.SubscriptionPage>();
+      vi.mocked(api.listSubscriptions)
+        .mockResolvedValueOnce({ subscriptions: [first] })
+        .mockReturnValueOnce(refreshedList.promise);
+      vi.mocked(api.getSubscriptionSettings)
+        .mockResolvedValueOnce({ FilterPolicy: policy })
+        .mockReturnValueOnce(refreshedDetails.promise);
+      vi.mocked(api.setSubscriptionSetting).mockResolvedValue(undefined);
+      holdDeliveries({});
+      open();
+      await screen.findByRole('radio', { name: `sqs ${first.endpoint}` });
+      openSettings(first);
+      const editor = await screen.findByDisplayValue(policy);
+      fireEvent.change(editor, { target: { value: replacement } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save filter policy' }));
+      expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+      await waitFor(() => {
+        expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2);
+        expect(api.listSubscriptions).toHaveBeenCalledTimes(2);
+      });
+      expect(screen.getByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+      if (order === 'detail first') {
+        refreshedDetails.resolve({ FilterPolicy: replacement, RawMessageDelivery: 'true' });
+        expect(await screen.findByText('On', { exact: true })).toBeVisible();
+        expect(screen.getByDisplayValue(replacement)).toBeVisible();
+        refreshedList.resolve({ subscriptions: [first] });
+        await waitFor(() => {
+          expect(isDisabled(action('Subscription settings'))).toBe(false);
+        });
+        expect(screen.getByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+        expect(
+          screen.getAllByText((_, element) => element?.textContent === first.arn, {
+            selector: '.aws-area-value-address',
+          }),
+        ).toHaveLength(2);
+      } else {
+        refreshedList.resolve({ subscriptions: [] });
+        await waitFor(() => {
+          expect(screen.queryByRole('heading', { name: 'Subscription settings' })).not.toBeInTheDocument();
+        });
+        await act(async () => {
+          refreshedDetails.resolve({ FilterPolicy: replacement });
+        });
+        expect(screen.getByText('Subscription settings updated')).toBeVisible();
+        expect(
+          screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
+        ).toBeVisible();
+      }
+    },
+  );
 });

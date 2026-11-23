@@ -6,6 +6,7 @@ import {
   allowDelivery,
   createTopic,
   deleteTopic,
+  getSubscriptionSettings,
   getTopic,
   GONE_REASON,
   listFunctionChoices,
@@ -14,7 +15,9 @@ import {
   listTopics,
   publish,
   readDelivery,
+  setSubscriptionSetting,
   subscribe,
+  type SubscriptionSetting,
   unsubscribe,
 } from './api';
 import { DENY_REASON } from './policy';
@@ -380,6 +383,54 @@ describe('subscribe', () => {
     expect(params?.get('Protocol')).toBe('sqs');
     expect(params?.get('Endpoint')).toBe(QUEUE);
     expect(params?.get('ReturnSubscriptionArn')).toBe('true');
+  });
+});
+
+describe('subscription settings', () => {
+  const arn = `${TOPIC}:9`;
+  const operation = 'GetSubscriptionAttributes';
+
+  it('requests the subscription ARN, preserving the supplied settings and any omissions', async () => {
+    const policy = '{ "color": ["red"] }';
+    engine.on(operation, () =>
+      snsOk(
+        operation,
+        `<Attributes><entry><key>FilterPolicy</key><value>${policy}</value></entry><entry><key>FilterPolicyScope</key><value>MessageBody</value></entry><entry><key>RawMessageDelivery</key><value>true</value></entry></Attributes>`,
+      ),
+    );
+    expect(await getSubscriptionSettings(endpoint, arn, signal())).toEqual({
+      FilterPolicy: policy,
+      FilterPolicyScope: 'MessageBody',
+      RawMessageDelivery: 'true',
+    });
+    expect(engine.of(operation)[0]?.params.get('SubscriptionArn')).toBe(arn);
+    engine.on(operation, () =>
+      snsOk(operation, '<Attributes><entry><key>RawMessageDelivery</key><value>false</value></entry></Attributes>'),
+    );
+    expect(await getSubscriptionSettings(endpoint, arn, signal())).toEqual({ RawMessageDelivery: 'false' });
+    engine.on(operation, () => snsOk(operation, ''));
+    expect(await getSubscriptionSettings(endpoint, arn, signal())).toEqual({});
+  });
+
+  const settings: SubscriptionSetting[] = [
+    { name: 'FilterPolicy', value: '{ "color": ["blue"] }' },
+    { name: 'FilterPolicy', value: '' },
+    { name: 'FilterPolicyScope', value: 'MessageBody' },
+    { name: 'FilterPolicyScope', value: 'MessageAttributes' },
+    { name: 'RawMessageDelivery', value: 'true' },
+    { name: 'RawMessageDelivery', value: 'false' },
+  ];
+
+  it.each(settings)('sends only $name with the exact value "$value" for the given ARN', async (setting) => {
+    await setSubscriptionSetting(endpoint, arn, setting, signal());
+    expect(engine.of('SetSubscriptionAttributes')).toHaveLength(1);
+    expect(Object.fromEntries(engine.of('SetSubscriptionAttributes')[0]?.params ?? [])).toEqual({
+      Action: 'SetSubscriptionAttributes',
+      Version: '2010-03-31',
+      SubscriptionArn: arn,
+      AttributeName: setting.name,
+      AttributeValue: setting.value,
+    });
   });
 });
 
