@@ -1,5 +1,5 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
@@ -8,7 +8,7 @@ import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { CopyValue } from '../../../components/copy-value';
@@ -48,13 +48,16 @@ interface SettingsFieldsProps {
   arn: string;
   disabled: boolean;
   saving: SubscriptionSetting | undefined;
+  settingsClose: RefObject<ButtonProps.Ref | null>;
   onSave: (setting: SubscriptionSetting, recovery?: FilterPolicyRecovery) => Promise<boolean>;
 }
 
 type Drafts = Record<SubscriptionSetting['name'], string | undefined>;
 
-function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFieldsProps) {
+function SettingsFields({ settings, arn, disabled, saving, settingsClose, onSave }: SettingsFieldsProps) {
   const policyInput = useRef<TextareaProps.Ref>(null);
+  const clearOpener = useRef<ButtonProps.Ref>(null);
+  const wasClearOpen = useRef(false);
   const editorSignal = usePageSignal();
   const [policyError, setPolicyError] = useState<ReactNode>();
   const [read, setRead] = useState(settings);
@@ -63,13 +66,25 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
     FilterPolicyScope: undefined,
     RawMessageDelivery: undefined,
   });
-  const [clearOpen, setClearOpen] = useState(false);
+  const [clearDialog, setClearDialog] = useState<'closed' | 'open' | 'cleared'>('closed');
   const [submitted, setSubmitted] = useState<{
     name: SubscriptionSetting['name'];
     before: SubscriptionSettingsAttributes;
   }>();
   const savedPolicy = settings.FilterPolicy ?? '';
   const hasPolicy = settings.FilterPolicy !== undefined;
+  const clearOpen = clearDialog === 'open';
+  const clearing = saving?.name === 'FilterPolicy' && saving.value === '';
+  const clearDisabled = disabled || !hasPolicy;
+  useLayoutEffect(() => {
+    if (wasClearOpen.current && !clearOpen) {
+      // A successful clear invalidates its opener, even if readback is still settling.
+      const target = clearDialog === 'cleared' || clearDisabled ? settingsClose : clearOpener;
+      target.current?.focus();
+    }
+    wasClearOpen.current = clearOpen;
+  }, [clearOpen, clearDialog, clearDisabled, settingsClose]);
+
   const currentScope = hasPolicy ? settings.FilterPolicyScope : undefined;
   const savedName = submitted !== undefined && submitted.before !== settings ? submitted.name : undefined;
   if (settings !== read || savedName !== undefined) {
@@ -89,7 +104,9 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
     if (savedName !== undefined) {
       setSubmitted(undefined);
     }
-    setClearOpen(false);
+    if (clearOpen && !clearing) {
+      setClearDialog('closed');
+    }
   }
   const policy = drafts.FilterPolicy ?? savedPolicy;
   const scope = SCOPE_OPTIONS.find(
@@ -118,8 +135,24 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         };
       }
     }
-    if (await onSave(setting, recovery)) {
+    const saved = await onSave(setting, recovery);
+    if (saved) {
       setSubmitted({ name: setting.name, before: settings });
+    }
+    return saved;
+  };
+
+  const handleClear = async () => {
+    if (clearDisabled) {
+      return;
+    }
+    const cleared = await handleSave({ name: 'FilterPolicy', value: '' });
+    setClearDialog(cleared ? 'cleared' : 'closed');
+  };
+
+  const handleDismissClear = () => {
+    if (!clearing) {
+      setClearDialog('closed');
     }
   };
 
@@ -163,11 +196,11 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
             Save filter policy
           </Button>
           <Button
+            ref={clearOpener}
             data-testid="subscription-settings-clear-policy"
-            disabled={disabled || !hasPolicy}
-            loading={saving?.name === 'FilterPolicy' && saving.value === ''}
+            disabled={clearDisabled}
             onClick={() => {
-              setClearOpen(true);
+              setClearDialog('open');
             }}
           >
             Clear filter policy
@@ -232,26 +265,19 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         visible={clearOpen}
         header="Clear filter policy?"
         closeAriaLabel="Close dialog"
-        onDismiss={() => {
-          setClearOpen(false);
-        }}
+        onDismiss={handleDismissClear}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
-                variant="link"
-                onClick={() => {
-                  setClearOpen(false);
-                }}
-              >
+              <Button variant="link" disabled={clearing} onClick={handleDismissClear}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
-                disabled={disabled}
+                disabled={!clearing && clearDisabled}
+                loading={clearing}
                 onClick={() => {
-                  setClearOpen(false);
-                  void handleSave({ name: 'FilterPolicy', value: '' });
+                  void handleClear();
                 }}
               >
                 Clear filter policy
@@ -285,6 +311,7 @@ export function SubscriptionSettings({
     failure === undefined ? undefined : readFailureState(failure, connection, 'subscription settings');
   const readUnavailable = failure?.kind === 'not-implemented';
   const headingText = useRef<HTMLSpanElement>(null);
+  const settingsClose = useRef<ButtonProps.Ref>(null);
   useLayoutEffect(() => {
     const heading = headingText.current?.closest('h2');
     if (heading !== undefined && heading !== null) {
@@ -306,7 +333,9 @@ export function SubscriptionSettings({
               <Button onClick={refresh} disabled={readUnavailable || loading}>
                 Refresh
               </Button>
-              <Button onClick={onClose}>Close</Button>
+              <Button ref={settingsClose} onClick={onClose}>
+                Close
+              </Button>
             </SpaceBetween>
           }
         >
@@ -344,6 +373,7 @@ export function SubscriptionSettings({
             arn={arn}
             disabled={disabled}
             saving={pending?.arn === arn ? pending.setting : undefined}
+            settingsClose={settingsClose}
             onSave={(setting, recovery) => (disabled ? Promise.resolve(false) : onSave(arn, setting, recovery))}
           />
         )}
