@@ -26,6 +26,8 @@ import { ValueText } from '../../../components/value-text';
 import { GET_SECRET_VALUE, getSecretValue } from '../api';
 import { LifecycleDialog, type SecretEdit } from '../components/lifecycle/lifecycle-dialog';
 import { useLifecycleAction } from '../components/lifecycle/use-lifecycle-action';
+import { Replication } from '../components/rotation-replication/replication';
+import { Rotation } from '../components/rotation-replication/rotation';
 import { ResourcePolicy } from '../components/versions-policy/resource-policy';
 import { VersionHistory } from '../components/versions-policy/version-history';
 import {
@@ -248,7 +250,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
     if (selectedVersion !== undefined) setSelectedVersion(undefined);
   }
 
-  const handleSectionSaved = (section: 'versions' | 'policy', origin: string, content: string) => {
+  const handleSectionSaved = (origin: string, content: string, section?: 'versions' | 'policy') => {
     flash.show([{ type: 'success', content }]);
     refreshReads(origin, name, section);
   };
@@ -348,7 +350,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                   setVersionsOpen(open);
                 }}
                 onSelect={setSelectedVersion}
-                onSaved={(origin, message) => handleSectionSaved('versions', origin, message)}
+                onSaved={(origin, message) => handleSectionSaved(origin, message, 'versions')}
               />
               <SecretValue
                 key={JSON.stringify([
@@ -372,10 +374,26 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
                 open={policyOpen}
                 scheduled={scheduled}
                 onOpen={setPolicyOpen}
-                onSaved={(origin, message) => handleSectionSaved('policy', origin, message)}
+                onSaved={(origin, message) => handleSectionSaved(origin, message, 'policy')}
               />
             </>
           )}
+          <Rotation
+            action={action}
+            connection={connection}
+            details={details}
+            name={name}
+            scheduled={scheduled}
+            onSaved={handleSectionSaved}
+          />
+          <Replication
+            action={action}
+            connection={connection}
+            name={name}
+            replicas={details.ReplicationStatus ?? []}
+            scheduled={scheduled}
+            onSaved={handleSectionSaved}
+          />
           <Table
             variant="container"
             header={
