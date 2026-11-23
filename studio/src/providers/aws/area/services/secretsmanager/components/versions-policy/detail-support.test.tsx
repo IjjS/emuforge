@@ -119,10 +119,6 @@ export function versionRows(stages: Record<string, string[]>) {
   return Object.entries(stages).map(([VersionId, VersionStages]) => ({ VersionId, VersionStages }));
 }
 
-export async function click(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name }));
-}
-
 export const page = () => createWrapper(document.body);
 
 export function required<T>(element: T | undefined | null, description: string): T {
@@ -140,6 +136,23 @@ export async function section(name: string) {
   return waitFor(() => required(findSection(name), name));
 }
 
+export function findButton(scope: ReturnType<typeof page>, name: string) {
+  return scope.findAllButtons().find((button) => button.findTextRegion()?.getElement().textContent === name);
+}
+
+export async function sectionAction(sectionName: string, name: string) {
+  const wrapper = await section(sectionName);
+  return waitFor(() => {
+    const actions = createWrapper(wrapper.findHeader().getElement()).findHeader()?.findActions();
+    return required(actions && findButton(createWrapper(actions.getElement()), name), name);
+  });
+}
+
+export async function sectionContentButton(sectionName: string, name: string) {
+  const wrapper = await section(sectionName);
+  return waitFor(() => required(findButton(createWrapper(wrapper.findContent().getElement()), name), name));
+}
+
 export async function findDialog(name: string) {
   return waitFor(() =>
     required(
@@ -155,12 +168,7 @@ type Dialog = Awaited<ReturnType<typeof findDialog>>;
 
 export function dialogButton(dialog: Dialog, name: string) {
   const footer = required(dialog.findFooter(), 'dialog footer');
-  return required(
-    createWrapper(footer.getElement())
-      .findAllButtons()
-      .find((button) => button.findTextRegion()?.getElement().textContent === name),
-    name,
-  );
+  return required(findButton(createWrapper(footer.getElement()), name), name);
 }
 
 export function press(dialog: Dialog, name: string) {

@@ -2,7 +2,6 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  click,
   CURRENT,
   delayedRefresh,
   denied,
@@ -19,6 +18,8 @@ import {
   refusalReread,
   required,
   section,
+  sectionAction,
+  sectionContentButton,
 } from './detail-support.test';
 
 const ORIGINAL =
@@ -38,12 +39,12 @@ async function openPolicy() {
 }
 
 async function editPolicy() {
-  await click('Edit resource policy');
+  fireEvent.click((await sectionAction('Resource policy', 'Edit resource policy')).getElement());
   return findDialog('Edit resource policy');
 }
 
 async function removePolicy() {
-  await click('Remove resource policy');
+  fireEvent.click((await sectionAction('Resource policy', 'Remove resource policy')).getElement());
   return findDialog('Remove resource policy');
 }
 
@@ -105,7 +106,7 @@ describe('Secret resource policy', () => {
     await openPolicy();
     expect(await screen.findByText(`${GET} was refused: ${REFUSAL}`)).toBeVisible();
     expect(screen.queryByText(NO_POLICY)).not.toBeInTheDocument();
-    await click('Retry');
+    fireEvent.click((await sectionContentButton('Resource policy', 'Retry')).getElement());
     expect(await screen.findByText(ORIGINAL)).toBeVisible();
   });
 
@@ -211,8 +212,8 @@ describe('Secret resource policy', () => {
     await expectAlert(dialogContent(dialog), `The emulator answered 501 Not Implemented for ${DELETE}.`);
     expect(dialogButton(dialog, 'Remove resource policy').isDisabled()).toBe(true);
     press(dialog, 'Cancel');
-    expect(screen.getByRole('button', { name: 'Remove resource policy' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Edit resource policy' })).toBeEnabled();
+    expect((await sectionAction('Resource policy', 'Remove resource policy')).getElement()).toBeDisabled();
+    expect((await sectionAction('Resource policy', 'Edit resource policy')).getElement()).toBeEnabled();
   });
   it.each([VALIDATE, PUT])(
     'keeps the %s 501 explanation in the editor after edits and reopening',
