@@ -34,6 +34,7 @@ import {
   listObjectVersions,
   NO_SUCH_BUCKET,
   OPERATIONS,
+  readBucketVersioning,
   type Bucket,
   type BucketPage,
   type DeleteBucketResult,
@@ -553,6 +554,13 @@ export function useBucketProperty<P extends BucketProperty>(
     generation,
     (at, signal) => PROPERTY_READS[property](at, name, signal) as Promise<BucketPropertyValue<P>>,
     enabled,
+  );
+}
+
+/** Read versioning for the editor, retaining the details of any refusal. */
+export function useVersioningEditorStatus(endpoint: string | undefined, name: string) {
+  return useFreshRead(endpoint, name, 'versioning', OPERATIONS.getBucketVersioning, 0, (at, signal) =>
+    readBucketVersioning(at, name, signal),
   );
 }
 
