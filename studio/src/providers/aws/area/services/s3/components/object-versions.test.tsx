@@ -178,8 +178,12 @@ async function toggleVersions() {
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Show versions' }));
 }
 
+function selectionName(id: string) {
+  return (label: string) => label.startsWith(`Select ${KEY} version ${id},`);
+}
+
 async function select(id: string) {
-  fireEvent.click(await screen.findByRole('radio', { name: `Select ${KEY} version ${id}` }));
+  fireEvent.click(await screen.findByRole('radio', { name: selectionName(id) }));
 }
 
 function action(name: string) {
@@ -205,7 +209,9 @@ function expectDisabled(button: HTMLElement) {
 }
 
 async function expectVersion(id: string, kind: string, latest: boolean) {
-  const radio = await screen.findByRole('radio', { name: `Select ${KEY} version ${id}` });
+  const radio = await screen.findByRole('radio', {
+    name: `Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latest ? 'Yes' : 'No'}`,
+  });
   const tableRow = radio.closest('tr');
   if (tableRow === null) throw new Error('Expected a table row');
   const item = within(tableRow);
@@ -229,6 +235,31 @@ it('shows loading until the history response and then the empty state', async ()
   expect(screen.getByText('Loading versions')).toBeVisible();
   response.resolve(history(''));
   expect(await screen.findByText('No versions found')).toBeVisible();
+  expect(screen.getByText(/This listing covers keys/)).toHaveTextContent(
+    'This listing covers keys that start with logs/ in bucket alpha.',
+  );
+});
+
+it('shows the type, latest state and full ID with the key at narrow widths', async () => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: media === '(max-width: 688px)',
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+  const id = '1234567890abcdef1234567890abcdef';
+  engine.readHistory = () => history(row(id, true, 'DeleteMarker'));
+  open();
+  await toggleVersions();
+  const radio = await screen.findByRole('radio', {
+    name: `Select ${KEY} version ${id}, Type: Delete marker, Latest: Yes`,
+  });
+  const tableRow = radio.closest('tr');
+  if (tableRow === null) throw new Error('Expected a table row');
+  const keyCell = within(tableRow).getByRole('rowheader');
+  expect(within(keyCell).getByText(KEY)).toBeVisible();
+  expect(within(keyCell).getByText('Type: Delete marker · Latest: Yes')).toBeVisible();
+  expect(within(keyCell).getByText(id)).toBeVisible();
 });
 
 it('selects a different ID of the same key on the next page and returns to the ordinary listing of the folder', async () => {
@@ -240,7 +271,7 @@ it('selects a different ID of the same key on the next page and returns to the o
   await select('v1');
   fireEvent.click(action('Next page'));
   await select('v2');
-  expect(screen.getByRole('radio', { name: `Select ${KEY} version v2` })).toBeChecked();
+  expect(screen.getByRole('radio', { name: selectionName('v2') })).toBeChecked();
   expectCursor(engine.histories[1], KEY, 'v1');
   await toggleVersions();
   expect(screen.getByRole('link', { name: 'history.txt' })).toBeVisible();
@@ -272,7 +303,7 @@ it('keeps the refreshed history and its cursors when a previous page request fin
   fireEvent.click(action('Refresh'));
   await expectVersion('new-cursor', 'Version', true);
   await act(async () => oldSecondPage.resolve(history(row('obsolete'), [KEY, 'obsolete'])));
-  expect(screen.queryByRole('radio', { name: `Select ${KEY} version obsolete` })).toBeNull();
+  expect(screen.queryByRole('radio', { name: selectionName('obsolete') })).toBeNull();
   fireEvent.click(action('Next page'));
   await expectVersion('next', 'Version', false);
   expectCursor(engine.histories[3], KEY, 'new-cursor');
@@ -316,6 +347,7 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
   expect(within(dialog).getByText('old')).toBeVisible();
   engine.status = 'Suspended';
   expect(within(dialog).getByText(WARNING)).toBeVisible();
+  expect(within(dialog).getByText('The selected version’s contents will become the current object.')).toBeVisible();
   expectDisabled(confirm);
   fireEvent.click(confirm);
   enter(input, 'history.txt');
@@ -371,6 +403,9 @@ it('retains the marker and shows the marker removal refusal', async () => {
   const { dialog, input, confirm } = await confirmDialog(REMOVE);
   expect(within(dialog).getByText(KEY)).toBeVisible();
   expect(within(dialog).getByText('marker')).toBeVisible();
+  expect(
+    within(dialog).getByText('Removing this marker can make an earlier version visible as the current object.'),
+  ).toBeVisible();
   enter(input, KEY);
   fireEvent.click(confirm);
   expect(await screen.findByText('AccessDenied')).toBeVisible();
@@ -478,7 +513,7 @@ it('removes a marker from page two and uses the new cursor when history answers 
   fireEvent.click(action('Next page'));
   await expectVersion('previous', 'Version', true);
   expectCursor(engine.histories[3], KEY, 'current-cursor');
-  expect(screen.queryByRole('radio', { name: `Select ${KEY} version marker` })).toBeNull();
+  expect(screen.queryByRole('radio', { name: selectionName('marker') })).toBeNull();
   expect(screen.getByText(REMOVED)).toBeVisible();
   expect(engine.markerDeletes).toEqual(['marker']);
   await toggleVersions();

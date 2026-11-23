@@ -84,6 +84,15 @@ export function ObjectVersionsDialog({
             ...(restoring && status !== undefined ? [{ label: 'Bucket versioning', value: status }] : []),
           ]}
         />
+        {restoring ? (
+          <Box variant="p">The selected version’s contents will become the current object.</Box>
+        ) : (
+          <Box variant="p">
+            {target.latest
+              ? 'Removing this marker can make an earlier version visible as the current object.'
+              : 'The selected marker will be removed from the object’s version history.'}
+          </Box>
+        )}
         {restoring && (
           <Alert type="warning">
             If versioning is suspended when you restore, the restored version replaces any existing null version of this
