@@ -16,6 +16,7 @@ import {
   deleteFunctions,
   deleteFunctionUrl,
   DELETE_FUNCTION_URL_CONFIG,
+  GET_FUNCTION_CONFIGURATION,
   INVOKE,
   invoke,
   isFunctionNotFound,
@@ -23,6 +24,7 @@ import {
   listFunctions,
   listRoles,
   readFunction,
+  readFunctionLayers,
   UPDATE_FUNCTION_CODE,
   UPDATE_FUNCTION_CONFIGURATION,
   updateFunctionCode,
@@ -908,4 +910,74 @@ export function useDeleteFunctionUrl(endpoint: string | undefined, name: string)
   return useFunctionChange(endpoint, name, DELETE_FUNCTION_URL_CONFIG, (at, _, signal) =>
     deleteFunctionUrl(at, name, signal),
   );
+}
+
+export function useFunctionLayersReading(endpoint: string | undefined, name: string, scope: string, active: boolean) {
+  const [revision, setRevision] = useState(0);
+  const query = useQuery({
+    queryKey: [...lambdaKey(endpoint), 'attached-layers', name, scope, revision],
+    enabled: (query) =>
+      active &&
+      endpoint !== undefined &&
+      requestFailure(GET_FUNCTION_CONFIGURATION, query.state.error).kind !== 'not-implemented',
+    queryFn: ({ signal }) => {
+      if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
+      return readFunctionLayers(endpoint, name, signal);
+    },
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const failure = query.isError ? requestFailure(GET_FUNCTION_CONFIGURATION, query.error) : undefined;
+  return {
+    layers: active && !query.isFetching && failure === undefined ? query.data : undefined,
+    loading: active && (query.isPending || query.isFetching),
+    failure,
+    refresh: () => {
+      if (failure?.kind !== 'not-implemented') setRevision((current) => current + 1);
+    },
+  };
+}
+
+/** The function page owns a submission even if its Configuration tab unmounts during the request. */
+export function useFunctionLayersUpdate(endpoint: string | undefined, name: string, scope: string) {
+  const inFlight = useRef<AbortController | undefined>(undefined);
+  useLayoutEffect(
+    () => () => {
+      inFlight.current?.abort();
+      inFlight.current = undefined;
+    },
+    [scope],
+  );
+  const mutation = useMutation({
+    networkMode: 'always',
+    mutationFn: ({ layers, signal }: { scope: string; layers: readonly string[]; signal: AbortSignal }) => {
+      signal.throwIfAborted();
+      if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
+      return updateFunctionConfiguration(endpoint, name, { layers }, signal);
+    },
+  });
+  const current = mutation.variables?.scope === scope;
+  const unsupported =
+    current && requestFailure(UPDATE_FUNCTION_CONFIGURATION, mutation.error).kind === 'not-implemented';
+
+  async function submit(layers: readonly string[], settle: (failure?: RequestFailure) => void) {
+    if (endpoint === undefined || !navigator.onLine || inFlight.current !== undefined || unsupported) return;
+    const controller = new AbortController();
+    inFlight.current = controller;
+    const dispose = bindAwsMutationAuthorization(controller);
+    let failure: RequestFailure | undefined;
+    try {
+      await mutation.mutateAsync({ layers, signal: controller.signal, scope });
+    } catch (error) {
+      failure = requestFailure(UPDATE_FUNCTION_CONFIGURATION, error);
+    } finally {
+      dispose();
+      if (inFlight.current === controller) inFlight.current = undefined;
+    }
+    if (!controller.signal.aborted) settle(failure);
+  }
+
+  return { submit, pending: current && mutation.isPending, unsupported };
 }
