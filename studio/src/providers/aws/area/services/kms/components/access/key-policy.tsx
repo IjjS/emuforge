@@ -119,7 +119,13 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
         )}
         {policy.failure !== undefined ? (
           <ReadFailure
-            state={readFailureState(policy.failure, connection, 'default key policy')}
+            state={readFailureState(
+              policy.failure,
+              connection,
+              policy.failure.kind === 'other'
+                ? `default key policy (${policy.failure.operation})`
+                : 'default key policy',
+            )}
             onRetry={policy.refresh}
           />
         ) : policy.loading ? (
