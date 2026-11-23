@@ -69,7 +69,9 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
       empty={
         failure === undefined ? (
           <Box textAlign="center" variant="strong">
-            {listing.openEnd || listing.pastEnd ? 'No customer managed keys on this page' : 'No customer managed keys'}
+            {listing.openEnd || listing.pagesCount > 1
+              ? 'No customer managed keys on this page'
+              : 'No customer managed keys'}
           </Box>
         ) : (
           <ReadFailure
