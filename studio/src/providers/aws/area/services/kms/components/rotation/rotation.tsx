@@ -6,12 +6,12 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useQuery } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem, Code, ReadFailure, readFailureState } from '../../../../components/failure-states';
-import { creationDateText } from '../../../../components/format-date';
-import { usePageFlash } from '../../../../components/page-flash';
+import { creationDateText, NO_DATE } from '../../../../components/format-date';
+import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, noEndpoint, usePageSignal, useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { connectionFailure } from '../../queries';
@@ -42,6 +42,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const reasonId = useId();
   const [visit] = useState(() => (visits += 1));
   const [revision, setRevision] = useState(0);
   const [statusRetry, setStatusRetry] = useState(false);
@@ -73,18 +74,45 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   const historyFailure = history.failure ?? (historyRetry ? undefined : historyOffline);
   const enabled = status.data?.KeyRotationEnabled;
   const period = status.data?.RotationPeriodInDays;
+  const nextDate = creationDateText(status.data?.NextRotationDate);
   const toggleAction = enabled === true ? 'disable' : 'enable';
-  const busy = engineOrigin === undefined || statusOffline !== undefined || pending !== undefined;
+  const offline = engineOrigin === undefined || statusOffline !== undefined;
+  const toggleReason = unavailable[toggleAction] ? `${reasonId}-automatic` : undefined;
+  const rotateReason = unavailable.rotate ? `${reasonId}-on-demand` : undefined;
 
   const handleAction = async (action: RotationAction) => {
-    if (busy || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
+    if (offline || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
+    const initiatingFocus = document.activeElement;
+    const showResult = (item: FlashItem) => {
+      if (document.activeElement !== initiatingFocus) {
+        flash.show([item]);
+        return;
+      }
+      const result = (
+        <span
+          tabIndex={-1}
+          ref={(element) => {
+            if (element === null) return;
+            const { activeElement, body } = element.ownerDocument;
+            // A 501 can disable the focused button in the same commit that renders the result.
+            if (activeElement !== initiatingFocus && activeElement !== body) return;
+            element.focus({ preventScroll: true });
+            element.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+          }}
+        >
+          {item.header ?? item.content}
+        </span>
+      );
+      flash.show([item.header === undefined ? { ...item, content: result } : { ...item, header: result }]);
+    };
+
     inFlight.current = true;
     setPending(action);
     const signal = pageSignal();
     try {
       await changeKeyRotation(engineOrigin, keyId, action, signal);
       if (signal.aborted) return;
-      flash.show([{ type: 'success', content: successMessage[action] }]);
+      showResult({ type: 'success', content: successMessage[action] });
       setRevision((current) => current + 1);
     } catch (error) {
       if (signal.aborted) return;
@@ -102,7 +130,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
           </SpaceBetween>
         );
       }
-      flash.show([item]);
+      showResult(item);
     } finally {
       inFlight.current = false;
       if (!signal.aborted) setPending(undefined);
@@ -115,19 +143,37 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
         header={
           <Header
             variant="h2"
+            description={
+              (toggleReason !== undefined || rotateReason !== undefined) && (
+                <SpaceBetween size="xxs">
+                  {toggleReason !== undefined && (
+                    <div id={toggleReason}>The emulator does not implement {ROTATION_OPERATIONS[toggleAction]}.</div>
+                  )}
+                  {rotateReason !== undefined && (
+                    <div id={rotateReason}>The emulator does not implement {ROTATION_OPERATIONS.rotate}.</div>
+                  )}
+                </SpaceBetween>
+              )
+            }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
                   disabled={
-                    busy || enabled === undefined || statusFailure !== undefined || unavailable[toggleAction] === true
+                    offline ||
+                    pending === 'rotate' ||
+                    enabled === undefined ||
+                    statusFailure !== undefined ||
+                    toggleReason !== undefined
                   }
+                  {...(toggleReason === undefined ? {} : { ariaDescribedby: toggleReason })}
                   loading={pending === toggleAction}
                   onClick={() => void handleAction(toggleAction)}
                 >
                   {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
-                  disabled={busy || unavailable.rotate === true}
+                  disabled={offline || (pending !== undefined && pending !== 'rotate') || rotateReason !== undefined}
+                  {...(rotateReason === undefined ? {} : { ariaDescribedby: rotateReason })}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
                 >
@@ -158,7 +204,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                 label: 'Automatic rotation',
                 value:
                   enabled === undefined ? (
-                    '-'
+                    '–'
                   ) : (
                     <StatusIndicator type={enabled ? 'success' : 'stopped'}>
                       {enabled ? 'Enabled' : 'Disabled'}
@@ -167,11 +213,11 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
               },
               {
                 label: 'Rotation period',
-                value: <ValueText kind="fixed" value={period === undefined ? '-' : `${period} days`} />,
+                value: <ValueText kind="fixed" value={period === undefined ? undefined : `${period} days`} none="–" />,
               },
               {
                 label: 'Next rotation date',
-                value: <ValueText kind="fixed" value={creationDateText(status.data.NextRotationDate)} />,
+                value: <ValueText kind="fixed" value={nextDate === NO_DATE ? undefined : nextDate} none="–" />,
               },
             ]}
           />
