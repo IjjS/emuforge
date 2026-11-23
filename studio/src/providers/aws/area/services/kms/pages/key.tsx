@@ -8,6 +8,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import Tabs from '@cloudscape-design/components/tabs';
 import { useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
@@ -18,12 +19,28 @@ import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { KMS_OPERATIONS } from '../api';
+import { Access } from '../components/access/access';
+import { Labels } from '../components/labels/labels';
+import { Lifecycle } from '../components/lifecycle/lifecycle';
+import { Rotation } from '../components/rotation/rotation';
 import { KEYS_PATH } from '../paths';
 import { connectionFailure, useKmsKey } from '../queries';
 
-function KeyDetails({ metadata }: { metadata: KeyMetadata }) {
+type ReadKey = KeyMetadata & { KeyId: string };
+
+function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['connection']; metadata: ReadKey }) {
+  const deletion =
+    metadata.DeletionDate === undefined
+      ? []
+      : [{ label: 'Deletion date', value: creationDateText(metadata.DeletionDate) }];
   return (
-    <Container header={<Header variant="h2">Key metadata</Header>}>
+    <Container
+      header={
+        <Header variant="h2" actions={<Lifecycle connection={connection} metadata={metadata} />}>
+          Key metadata
+        </Header>
+      }
+    >
       <SpaceBetween size="l">
         <KeyValuePairs
           ariaLabel="Key identifiers"
@@ -41,6 +58,7 @@ function KeyDetails({ metadata }: { metadata: KeyMetadata }) {
             { label: 'Key usage', value: <ValueText kind="fixed" value={metadata.KeyUsage} none="–" /> },
             { label: 'Origin', value: <ValueText kind="fixed" value={metadata.Origin} none="–" /> },
             { label: 'Created', value: creationDateText(metadata.CreationDate) },
+            ...deletion,
           ]}
         />
         <KeyValuePairs
@@ -77,10 +95,6 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
             onRetry={handleRefresh}
           />
         </Container>
-      ) : read.key === undefined ? (
-        <Container>
-          <StatusIndicator type="loading">Loading key…</StatusIndicator>
-        </Container>
       ) : read.key === null ? (
         <Container>
           <Box textAlign="center">
@@ -93,7 +107,35 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
           </Box>
         </Container>
       ) : (
-        <KeyDetails metadata={read.key} />
+        <SpaceBetween size="l">
+          {read.key === undefined ? (
+            <Container>
+              <StatusIndicator type="loading">Loading key…</StatusIndicator>
+            </Container>
+          ) : (
+            <KeyDetails connection={connection} metadata={read.key as ReadKey} />
+          )}
+          <Tabs
+            ariaLabel="Key settings"
+            tabs={[
+              {
+                id: 'labels',
+                label: 'Aliases and tags',
+                content: <Labels connection={connection} keyId={keyId} />,
+              },
+              {
+                id: 'access',
+                label: 'Key policy and grants',
+                content: <Access connection={connection} keyId={keyId} />,
+              },
+              {
+                id: 'rotation',
+                label: 'Key rotation',
+                content: <Rotation connection={connection} keyId={keyId} />,
+              },
+            ]}
+          />
+        </SpaceBetween>
       )}
     </ContentLayout>
   );

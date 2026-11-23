@@ -1,4 +1,5 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
+import { CreateKeyPage, KEY_CREATE_PATH, KEY_CREATE_TITLE } from './pages/create';
 import { KeyPage } from './pages/key';
 import { KeysPage } from './pages/keys';
 import { KEY_PATH, KEYS_PATH, KEYS_TITLE } from './paths';
@@ -16,6 +17,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: KEYS_TITLE }],
     navigation,
     Page: KeysPage,
+  },
+  {
+    paths: [KEY_CREATE_PATH],
+    title: KEY_CREATE_TITLE,
+    crumbs: [{ text: KEYS_TITLE, href: KEYS_PATH }, { text: KEY_CREATE_TITLE }],
+    navigation,
+    Page: CreateKeyPage,
   },
   {
     paths: [KEY_PATH],

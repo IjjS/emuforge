@@ -63,10 +63,9 @@ describe('key details', () => {
     open(metadata.KeyId);
 
     await screen.findByRole('heading', { name: 'Key metadata' });
-    expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ input: { KeyId: metadata.KeyId } }), {
-      abortSignal: expect.any(AbortSignal),
-    });
-    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(DescribeKeyCommand);
+    expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toEqual([
+      [expect.objectContaining({ input: { KeyId: metadata.KeyId } }), { abortSignal: expect.any(AbortSignal) }],
+    ]);
     expectField('Key ID', metadata.KeyId);
     expectField('ARN', metadata.Arn);
     expectField('Status', metadata.KeyState);
