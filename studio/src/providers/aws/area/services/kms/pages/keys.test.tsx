@@ -8,7 +8,9 @@ import { KEY_PAGE_SIZE } from '../api';
 import { KeysPage } from './keys';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
-vi.mock('../../../../../../lib/aws/client-factory', () => ({ createAwsClient: () => ({ send }) }));
+vi.mock('../../../../../../lib/aws/client-factory', () => ({
+  createAwsClient: () => ({ send: (...args: unknown[]) => Promise.resolve(send(...args) as unknown) }),
+}));
 
 const endpoint = 'http://127.0.0.1:8311';
 

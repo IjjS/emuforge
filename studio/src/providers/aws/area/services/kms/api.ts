@@ -104,8 +104,8 @@ export async function listCustomerKeys(
       const key = await describeKey(endpoint, KeyId, signal);
       if (key?.KeyManager !== 'CUSTOMER') return undefined;
 
-      const aliases = await listKeyAliases(endpoint, key.KeyId, undefined, signal);
-      return { id: key.KeyId, aliases: aliases.items, state: key.KeyState, description: key.Description };
+      const aliases = await listKeyAliases(endpoint, KeyId, undefined, signal);
+      return { id: KeyId, aliases: aliases.items, state: key.KeyState, description: key.Description };
     }),
   );
 
