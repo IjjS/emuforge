@@ -20,6 +20,7 @@ export type RequestFailure =
 
 const reportedCodes = new WeakMap<RequestFailure, string>();
 const reportedNotImplementedMessages = new WeakMap<RequestFailure, string>();
+const sdkPlaceholderFailures = new WeakSet<RequestFailure>();
 
 /**
  * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
@@ -34,9 +35,17 @@ export function reportedNotImplementedMessage(failure: RequestFailure): string |
   return reportedNotImplementedMessages.get(failure);
 }
 
-function withReportedCode(failure: RequestFailure, code: string | undefined): RequestFailure {
+/** Message for a refusal detail that omits the SDK's default message. */
+export function refusalMessage(failure: RequestFailure): string | undefined {
+  return 'message' in failure && !sdkPlaceholderFailures.has(failure) ? failure.message : undefined;
+}
+
+function withReportedCode(failure: RequestFailure, code: string | undefined, sdkPlaceholder = false): RequestFailure {
   if (code !== undefined) {
     reportedCodes.set(failure, code);
+  }
+  if (sdkPlaceholder) {
+    sdkPlaceholderFailures.add(failure);
   }
   return failure;
 }
@@ -163,15 +172,21 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
     answer.name === 'SyntaxError' || (code === 'NotFound' && status === 404 && NO_MESSAGE.has(rawMessage ?? ''))
       ? undefined
       : rawMessage;
+  const sdkPlaceholder = typeof answer.$fault === 'string' && message !== undefined && NO_MESSAGE.has(message);
   if (ACCESS_DENIED.has(code)) {
-    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code);
+    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code, sdkPlaceholder);
   }
   if (EMULATOR_SILENT.has(code)) {
-    return withReportedCode({ kind: 'emulator-did-not-answer', operation, message: message ?? '' }, code);
+    return withReportedCode(
+      { kind: 'emulator-did-not-answer', operation, message: message ?? '' },
+      code,
+      sdkPlaceholder,
+    );
   }
   return withReportedCode(
     message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message },
     code,
+    sdkPlaceholder,
   );
 }
 

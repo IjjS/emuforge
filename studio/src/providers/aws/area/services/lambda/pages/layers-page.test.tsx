@@ -3,7 +3,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -328,6 +328,28 @@ it.each([
   expect(name).toHaveValue('valid-name');
   expect(submitButton(dialog)).toBeEnabled();
   expect(page.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
+});
+
+it('shows the service code alone for an empty Lambda publication rejection', async () => {
+  const api = await vi.importActual<typeof import('../layer-api')>('../layer-api');
+  publish.mockImplementationOnce(api.publishLayerVersion);
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    const path = new URL(request.url).pathname;
+    if (path === '/__emuforge/session') return Response.json({ token: 'local-test-session' });
+    expect(path).toBe('/2018-10-31/layers/beta/versions');
+    return new Response(null, { status: 400, headers: { 'x-amzn-errortype': 'LayerError' } });
+  });
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  renderPage();
+  const dialog = await submitPublication('beta');
+
+  await waitFor(() => {
+    const alert = required(dialog.findContent().findAlert());
+    expect(alert.findContent().getElement().textContent).toBe('PublishLayerVersion returned LayerError.');
+  });
 });
 
 it.each([

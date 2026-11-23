@@ -20,6 +20,7 @@ import { createAwsClient, createS3Client, engineEndpoint } from './client-factor
 import {
   reportedNotImplementedMessage,
   reportedServiceCode,
+  refusalMessage,
   requestFailure,
   RequestError,
   sendRequest,
@@ -569,6 +570,27 @@ describe('the code and the message', () => {
     const failure = await failureOf('PublishLayerVersion');
     expect(failure).toEqual({ kind: 'other', operation: 'PublishLayerVersion', code: 'LayerError' });
     expect(reportedServiceCode(failure)).toBe('LayerError');
+  });
+
+  it.each([
+    { body: '', message: undefined },
+    { body: '{"message":"Layer publication was refused"}', message: 'Layer publication was refused' },
+  ])('exposes only the service message for a Lambda header-code rejection ($body)', async ({ body, message }) => {
+    engine.aws = () => ({
+      status: 400,
+      body,
+      headers: { 'content-type': REST_JSON, 'x-amzn-errortype': 'LayerError' },
+    });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({
+      kind: 'other',
+      operation: 'PublishLayerVersion',
+      code: 'LayerError',
+      message: message ?? 'UnknownError',
+    });
+    expect(reportedServiceCode(failure)).toBe('LayerError');
+    expect(refusalMessage(failure)).toBe(message);
   });
 
   it('keeps HTTP 413 for a layer publication refusal with no body or error code', async () => {
