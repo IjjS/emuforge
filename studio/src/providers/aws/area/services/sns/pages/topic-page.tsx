@@ -9,7 +9,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { CopyValue } from '../../../components/copy-value';
@@ -20,9 +20,10 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { OPERATIONS, type SubscriptionSetting, type Topic } from '../api';
+import { OPERATIONS, type Topic } from '../api';
 import { DeleteTopicDialog } from '../components/delete-topic-dialog';
 import { PublishTab } from '../components/publish-tab';
+import type { FilterPolicyRecovery } from '../components/subscription-settings';
 import { SubscriptionsTab, type SubscriptionsTabProps } from '../components/subscriptions-tab';
 import { NONE, publishTabHref, TAB_PARAMETER, tabOf, topicHref, topicName, TOPICS_PATH } from '../format';
 import { EMPTY_FORM, type PublishForm, type PublishResult } from '../publish-form';
@@ -35,6 +36,19 @@ import { failureOf, useDeleteTopic, usePageSignal, useSetSubscriptionSetting, us
 
 const REFRESHED = 'Topic refreshed';
 const ARN_LABEL = 'ARN';
+
+function FilterPolicyFocusAction({ recovery }: { recovery: FilterPolicyRecovery }) {
+  const { signal, focus } = recovery;
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      signal.addEventListener('abort', notify);
+      return () => signal.removeEventListener('abort', notify);
+    },
+    [signal],
+  );
+  const open = useSyncExternalStore(subscribe, () => !signal.aborted);
+  return open ? <Button onClick={focus}>Return to filter policy</Button> : null;
+}
 
 /** "Topic details". */
 function TopicDetails({ topic }: { topic: Topic }) {
@@ -238,7 +252,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
     readAgain();
   };
 
-  const handleSaveSetting = async (subscriptionArn: string, setting: SubscriptionSetting) => {
+  const handleSaveSetting: SubscriptionsTabProps['onSaveSetting'] = async (subscriptionArn, setting, recovery) => {
     if (savingSetting.current || unavailableArns.has(subscriptionArn)) {
       return false;
     }
@@ -264,6 +278,8 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
           setUnavailableArns((current) => new Set([...current, subscriptionArn]));
         }
         const item = actionFailureItem(failure, 'Save subscription settings', connection.engineOrigin);
+        const editor = item.type === 'error' && recovery?.signal.aborted === false ? recovery : undefined;
+        editor?.showError(item.content ?? item.header);
         flash.show([
           {
             ...item,
@@ -271,6 +287,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
               <SpaceBetween size="xxs">
                 <Box>{item.content} </Box>
                 <ValueText kind="address" value={subscriptionArn} />
+                {editor !== undefined && <FilterPolicyFocusAction recovery={editor} />}
               </SpaceBetween>
             ),
           },

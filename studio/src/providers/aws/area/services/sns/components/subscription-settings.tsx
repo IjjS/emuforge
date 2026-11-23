@@ -7,8 +7,8 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import Textarea from '@cloudscape-design/components/textarea';
-import { useLayoutEffect, useRef, useState } from 'react';
+import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { CopyValue } from '../../../components/copy-value';
@@ -16,7 +16,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
 import { ValueText } from '../../../components/value-text';
 import type { Subscription, SubscriptionSetting, SubscriptionSettingsAttributes } from '../api';
-import { useSubscriptionSettings } from '../queries';
+import { usePageSignal, useSubscriptionSettings } from '../queries';
 
 const SCOPE_OPTIONS = [
   { value: 'MessageAttributes', label: 'Message attributes' },
@@ -28,12 +28,18 @@ const RAW_OPTIONS = [
   { value: 'false', label: 'Off' },
 ] as const;
 
+export interface FilterPolicyRecovery {
+  signal: AbortSignal;
+  showError: (detail: ReactNode) => void;
+  focus: () => void;
+}
+
 interface SubscriptionSettingsProps {
   subscription: Subscription;
   connection: AreaConnection;
   pending: { arn: string; setting: SubscriptionSetting } | undefined;
   saveUnavailable: boolean;
-  onSave: (arn: string, setting: SubscriptionSetting) => Promise<boolean>;
+  onSave: (arn: string, setting: SubscriptionSetting, recovery?: FilterPolicyRecovery) => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -42,12 +48,15 @@ interface SettingsFieldsProps {
   arn: string;
   disabled: boolean;
   saving: SubscriptionSetting | undefined;
-  onSave: (setting: SubscriptionSetting) => Promise<boolean>;
+  onSave: (setting: SubscriptionSetting, recovery?: FilterPolicyRecovery) => Promise<boolean>;
 }
 
 type Drafts = Record<SubscriptionSetting['name'], string | undefined>;
 
 function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFieldsProps) {
+  const policyInput = useRef<TextareaProps.Ref>(null);
+  const editorSignal = usePageSignal();
+  const [policyError, setPolicyError] = useState<ReactNode>();
   const [read, setRead] = useState(settings);
   const [drafts, setDrafts] = useState<Drafts>({
     FilterPolicy: undefined,
@@ -94,7 +103,18 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
   };
 
   const handleSave = async (setting: SubscriptionSetting) => {
-    if (await onSave(setting)) {
+    let recovery: FilterPolicyRecovery | undefined;
+    if (setting.name === 'FilterPolicy') {
+      setPolicyError(undefined);
+      if (setting.value !== '') {
+        recovery = {
+          signal: editorSignal(),
+          showError: setPolicyError,
+          focus: () => policyInput.current?.focus(),
+        };
+      }
+    }
+    if (await onSave(setting, recovery)) {
       setSubmitted({ name: setting.name, before: settings });
     }
   };
@@ -105,6 +125,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         <FormField
           label="Filter policy"
           constraintText="Enter a JSON filter policy."
+          errorText={policyError}
           description={
             !hasPolicy ? (
               'No filter policy'
@@ -116,9 +137,11 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
           }
         >
           <Textarea
+            ref={policyInput}
             value={policy}
             disabled={disabled}
             onChange={({ detail }) => {
+              setPolicyError(undefined);
               handleDraft('FilterPolicy', detail.value);
             }}
           />
@@ -306,7 +329,7 @@ export function SubscriptionSettings({
             arn={arn}
             disabled={disabled}
             saving={pending?.arn === arn ? pending.setting : undefined}
-            onSave={(setting) => (disabled ? Promise.resolve(false) : onSave(arn, setting))}
+            onSave={(setting, recovery) => (disabled ? Promise.resolve(false) : onSave(arn, setting, recovery))}
           />
         )}
       </SpaceBetween>

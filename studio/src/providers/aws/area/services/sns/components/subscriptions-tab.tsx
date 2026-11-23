@@ -32,7 +32,7 @@ import {
 } from '../queries';
 import { DeleteSubscriptionDialog } from './delete-subscription-dialog';
 import { DELIVERY_LABELS, DeliveryStatus, deliveryView, type DeliveryView } from './delivery-status';
-import { SubscriptionSettings } from './subscription-settings';
+import { SubscriptionSettings, type FilterPolicyRecovery } from './subscription-settings';
 
 // S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5 and task 5 step 1): the topic's subscriptions, a
 // page of `ListSubscriptionsByTopic` at a time on its own tokens, each with whether the policy of its queue or
@@ -45,7 +45,7 @@ export interface SubscriptionsTabProps {
   connection: AreaConnection;
   /** Reads the topic again, after a change of its subscriptions. */
   onTopicChanged: () => void;
-  onSaveSetting: (arn: string, setting: SubscriptionSetting) => Promise<boolean>;
+  onSaveSetting: (arn: string, setting: SubscriptionSetting, recovery?: FilterPolicyRecovery) => Promise<boolean>;
   settingsSave: {
     pending: { arn: string; setting: SubscriptionSetting } | undefined;
     unavailableArns: ReadonlySet<string>;
