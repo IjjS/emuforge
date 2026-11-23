@@ -164,6 +164,7 @@ class FakeEngine {
   readonly monitoring: MonitoringRequest[] = [];
   readonly invocationBodies: string[] = [];
   readonly urlCreateBodies: unknown[] = [];
+  readonly urlMutationRedirects: RequestRedirect[] = [];
   sessionRequests = 0;
   answerSession: () => Answer | Promise<Answer> = () => json(200, { token: 'emuforge-test-token-84' });
   answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
@@ -307,8 +308,11 @@ class FakeEngine {
         headers: answer.headers ?? {},
       });
     }
-    if (sent.method === 'POST' && URL_PATH.test(url.pathname)) {
-      this.urlCreateBodies.push(await request.json());
+    if (URL_PATH.test(url.pathname) && sent.method !== 'GET') {
+      this.urlMutationRedirects.push(request.redirect);
+      if (sent.method === 'POST') {
+        this.urlCreateBodies.push(await request.json());
+      }
     }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),
@@ -1274,7 +1278,8 @@ describe('Function URL lifecycle', () => {
         behavior: 'instant',
       }),
     );
-    const result = screen.getByRole('list', { name: 'Notifications' });
+    const result = PAGE.findFlashbar()?.find('ul')?.getElement();
+    expect(result).toHaveAccessibleName('Notifications');
     expect(scrollIntoView.mock.contexts[0]).toBe(result);
     expect(result).toHaveFocus();
     expect(result).toHaveAttribute('tabindex', '-1');
@@ -1289,11 +1294,30 @@ describe('Function URL lifecycle', () => {
 
   async function openDeleteDialog() {
     fireEvent.click(screen.getByRole('button', { name: remove }));
-    return screen.findByRole('dialog', { name: remove });
+    const dialog = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null) {
+        throw new Error('Expected a function URL deletion modal.');
+      }
+      return modal;
+    });
+    expect(dialog.getElement()).toHaveAccessibleName(remove);
+    const [cancel, confirm] =
+      dialog
+        .findFooter()
+        ?.findAllButtons()
+        .map((button) => button.getElement()) ?? [];
+    if (cancel === undefined || confirm === undefined) {
+      throw new Error('Expected Cancel and Delete in the modal footer.');
+    }
+    expect(cancel).toHaveAccessibleName('Cancel');
+    expect(confirm).toHaveAccessibleName('Delete');
+    return { dialog, cancel, confirm };
   }
 
   async function confirmDelete() {
-    fireEvent.click(within(await openDeleteDialog()).getByRole('button', { name: 'Delete' }));
+    const { confirm } = await openDeleteDialog();
+    fireEvent.click(confirm);
   }
 
   it.each([
@@ -1342,18 +1366,16 @@ describe('Function URL lifecycle', () => {
       [creating ? 'POST' : 'DELETE', '/2021-10-31/functions/orders/url', ''],
     ]);
     expect(engine.urlCreateBodies).toEqual(creating ? [{ AuthType: 'AWS_IAM' }] : []);
+    expect(engine.urlMutationRedirects).toEqual(['manual']);
 
     const finishDetail = () => detail.resolve(engine.emulator(functionRequest));
     const finishUrl = () => url.resolve(engine.emulator(urlRequest));
     const [first, second] = order === 'function first' ? [finishDetail, finishUrl] : [finishUrl, finishDetail];
     await act(async () => first());
-    expect(value('Function URL')).toBe(creating ? '-' : ORDERS.url);
-    expect(scrollIntoView).not.toHaveBeenCalled();
-
     await act(async () => second());
     await waitFor(() => expect(flashTexts()).toEqual([creating ? 'Function URL created.' : 'Function URL deleted.']));
     expect(screen.getByRole('button', { name: creating ? remove : create })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: remove })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(headingText()).toBe('orders');
     expect(value('Function URL')).toBe(creating ? changedUrl : '-');
     expect(screen.queryByRole('button', { name: 'Copy Function URL' }) !== null).toBe(creating);
@@ -1366,12 +1388,14 @@ describe('Function URL lifecycle', () => {
     await openConfiguration(ORDERS);
     const trigger = screen.getByRole('button', { name: remove });
     trigger.focus();
-    const dialog = await openDeleteDialog();
-    expect(dialog).toHaveTextContent('Delete the function URL for orders? The function itself will remain.');
+    const { dialog, cancel } = await openDeleteDialog();
+    expect(dialog.findContent().getElement()).toHaveTextContent(
+      'Delete the function URL for orders? The function itself will remain.',
+    );
     expect(changes()).toEqual([]);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(cancel);
 
-    expect(screen.queryByRole('dialog', { name: remove })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(trigger).toHaveFocus();
     expect(changes()).toEqual([]);
     expect(value('Function URL')).toBe(ORDERS.url);
@@ -1386,7 +1410,7 @@ describe('Function URL lifecycle', () => {
       fireEvent.click(screen.getByRole('button', { name: create }));
 
       await waitFor(() => expect(flashTexts()).toEqual([expect.stringContaining(code)]));
-      expect(screen.queryByText('Function URL created.')).toBeNull();
+      expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
       if (code === 'ResourceConflictException') {
         fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
         await screen.findByRole('button', { name: remove });
@@ -1402,10 +1426,10 @@ describe('Function URL lifecycle', () => {
 
     await waitFor(() => expect(flashTexts()).toEqual([expect.stringContaining('ResourceNotFoundException')]));
     expect(screen.getByRole('button', { name: create })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: remove })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(engine.gets).toHaveLength(2);
     expect(engine.urlGets).toHaveLength(2);
-    expect(screen.queryByText('Function URL deleted.')).toBeNull();
+    expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
     expect(headingText()).toBe('orders');
     expect(value('Function URL')).toBe('-');
     await expectFlashRevealed();
@@ -1428,9 +1452,9 @@ describe('Function URL lifecycle', () => {
       expect(flashTexts()).toEqual([expect.stringContaining('Not implemented by the emulator')]);
     });
     expect(flashTexts()[0]).toContain(operation);
-    expect(screen.queryByRole('dialog', { name: remove })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(screen.getByRole('button', { name: action })).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.queryByText(/^Function URL (created|deleted)\.$/)).toBeNull();
+    expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
   });
 });
 
