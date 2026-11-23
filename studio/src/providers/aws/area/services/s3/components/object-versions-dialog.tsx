@@ -2,10 +2,10 @@ import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
-import Input from '@cloudscape-design/components/input';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import Textarea from '@cloudscape-design/components/textarea';
 import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
@@ -45,7 +45,10 @@ export function ObjectVersionsDialog({
   const failure =
     read.failure === undefined ? undefined : versionFailure(read.failure, 'Reading bucket versioning', endpoint);
   const [typed, setTyped] = useState('');
-  const matches = typed !== '' && confirmsName(typed, target.key);
+  // A textarea preserves LF, but the browser normalizes CR. Show the lossless JSON string for those keys.
+  const escaped = target.key.includes('\r');
+  const expected = escaped ? JSON.stringify(target.key) : target.key;
+  const matches = typed !== '' && confirmsName(typed, expected);
 
   return (
     <AreaModal
@@ -73,7 +76,7 @@ export function ObjectVersionsDialog({
               label: 'Key',
               value: (
                 <Box nativeAttributes={{ style: { whiteSpace: 'break-spaces' } }}>
-                  <ValueText kind="name" value={target.key} />
+                  <ValueText kind="name" value={expected} />
                 </Box>
               ),
             },
@@ -112,12 +115,15 @@ export function ObjectVersionsDialog({
         )}
         <FormField
           label="Enter the full key to confirm"
+          description={
+            escaped ? 'Enter the key as shown, including the quotation marks and escape sequences.' : undefined
+          }
           errorText={typed !== '' && !matches ? 'Enter the exact key shown above.' : undefined}
         >
-          <Input
+          <Textarea
             value={typed}
             disabled={pending}
-            autoComplete={false}
+            rows={expected.includes('\n') ? 3 : 2}
             spellcheck={false}
             onChange={({ detail }) => setTyped(detail.value)}
           />

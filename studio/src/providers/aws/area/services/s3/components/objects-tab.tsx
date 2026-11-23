@@ -81,7 +81,7 @@ export function ObjectsTab(props: ObjectsTabProps) {
       <Toggle checked={showVersions} onChange={({ detail }) => setShowVersions(detail.checked)}>
         Show versions
       </Toggle>
-      <CurrentObjects key={objectsRevision} {...props} visible={!showVersions} />
+      <CurrentObjects {...props} visible={!showVersions} revision={objectsRevision} />
       {showVersions && (
         <ObjectVersions
           name={props.name}
@@ -95,7 +95,14 @@ export function ObjectsTab(props: ObjectsTabProps) {
 }
 
 /** The ordinary listing stays ready at this prefix while version history is open. */
-function CurrentObjects({ name, prefix, connection, announce, visible }: ObjectsTabProps & { visible: boolean }) {
+function CurrentObjects({
+  name,
+  prefix,
+  connection,
+  announce,
+  visible,
+  revision,
+}: ObjectsTabProps & { visible: boolean; revision: number }) {
   const handleFollow = useFollow();
   const modalRoot = useAreaModalRoot();
   const filterRef = useRef<TextFilterProps.Ref>(null);
@@ -109,6 +116,7 @@ function CurrentObjects({ name, prefix, connection, announce, visible }: Objects
     prefix,
     filter,
     pageSize: preferences.pageSize,
+    revision,
   });
   const { page, refresh } = listing;
   const rows = page === undefined || page === NO_SUCH_BUCKET ? undefined : objectRows(page, prefix);

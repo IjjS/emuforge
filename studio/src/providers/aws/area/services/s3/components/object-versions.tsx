@@ -1,11 +1,11 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { requestFailure } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
@@ -109,12 +109,30 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const [pending, setPending] = useState<string>();
   const active = useRef(false);
   const [unsupported, setUnsupported] = useState<ReadonlySet<string>>(() => new Set());
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const restoreButton = useRef<ButtonProps.Ref>(null);
+  const removeButton = useRef<ButtonProps.Ref>(null);
+  const closingAction = useRef<ObjectVersion['kind'] | undefined>(undefined);
+
+  useEffect(() => {
+    if (changing !== undefined || closingAction.current === undefined) return;
+    const opener = closingAction.current === 'version' ? restoreButton : removeButton;
+    closingAction.current = undefined;
+    // The modal releases focus on close. A history refresh may also have removed the opener.
+    const frame = requestAnimationFrame(() => (opener.current ?? refreshButton.current)?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [changing]);
 
   const page = listing.answer;
   const items = page === NO_SUCH_BUCKET || listing.failure !== undefined ? [] : (page?.items ?? []);
   const selected = selection?.view === listing.view ? items.find((row) => rowId(row) === selection.id) : undefined;
   const target: VersionTarget | undefined =
     selected?.versionId === undefined ? undefined : { ...selected, versionId: selected.versionId };
+
+  function closeDialog() {
+    closingAction.current = changing?.kind;
+    setChanging(undefined);
+  }
 
   async function run(operation: string, label: string, action: (signal: AbortSignal) => Promise<void>) {
     if (active.current) return;
@@ -135,7 +153,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
       if (!signal.aborted) {
         active.current = false;
         setPending(undefined);
-        setChanging(undefined);
+        closeDialog();
       }
     }
   }
@@ -218,11 +236,17 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
             variant="h2"
             actions={
               <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <Button iconName="refresh" disabled={pending !== undefined} onClick={listing.refresh}>
+                <Button
+                  ref={refreshButton}
+                  iconName="refresh"
+                  disabled={pending !== undefined}
+                  onClick={listing.refresh}
+                >
                   Refresh
                 </Button>
                 {selected?.kind === 'delete-marker' ? (
                   <Button
+                    ref={removeButton}
                     disabled={target === undefined || pending !== undefined || unsupported.has(OPERATIONS.deleteObject)}
                     disabledReason={disabledReason(OPERATIONS.deleteObject, target !== undefined)}
                     onClick={() => setChanging(target)}
@@ -241,6 +265,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
                       Download
                     </Button>
                     <Button
+                      ref={restoreButton}
                       disabled={
                         target === undefined ||
                         selected?.latest !== false ||
@@ -286,7 +311,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
           target={changing}
           pending={pending !== undefined}
           onCancel={() => {
-            if (!active.current) setChanging(undefined);
+            if (!active.current) closeDialog();
           }}
           onConfirm={handleConfirm}
         />
