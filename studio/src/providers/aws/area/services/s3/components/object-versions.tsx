@@ -5,15 +5,15 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { requestFailure } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
 import { usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { OPERATIONS, type ObjectBody, type ObjectVersion } from '../api';
+import { OPERATIONS, type ObjectBody, type ObjectVersion, type ObjectVersionPage } from '../api';
 import { keyName, NO_VALUE } from '../format';
-import { useChangeObjectVersion, useDownloadObject, useObjectHistory } from '../queries';
+import { NULL_MARKER_REMOVAL_REASON, useChangeObjectVersion, useDownloadObject, useObjectHistory } from '../queries';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import { ObjectVersionsDialog, REMOVE_MARKER, RESTORE_VERSION, type VersionTarget } from './object-versions-dialog';
 import { versionFailure } from './object-versions-failure';
@@ -139,8 +139,12 @@ const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
   },
 ];
 
-function rowId(row: ObjectVersion): string {
-  return JSON.stringify([row.key, row.versionId, row.kind, nullBodyETag(row)]);
+interface HistoryRow extends ObjectVersion {
+  index: number;
+}
+
+function bodyId(row: ObjectVersion): string {
+  return JSON.stringify([row.key, row.versionId, row.etag]);
 }
 
 function saveVersion({ bytes, contentType }: ObjectBody, key: string) {
@@ -191,7 +195,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const change = useChangeObjectVersion(endpoint, name);
   const flash = usePageFlash();
   const getSignal = usePageSignal();
-  const [selection, setSelection] = useState<{ view: string; id: string }>();
+  const [selection, setSelection] = useState<{ view: string; page: ObjectVersionPage<ObjectVersion>; index: number }>();
   const [unavailable, setUnavailable] = useState<{ view: string; ids: ReadonlySet<string> }>();
   const [changing, setChanging] = useState<VersionTarget>();
   const [pending, setPending] = useState<string>();
@@ -212,12 +216,20 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   }, [changing]);
 
   const page = listing.answer;
-  const items = listing.failure !== undefined ? [] : (page?.items ?? []);
-  const selected = selection?.view === listing.view ? items.find((row) => rowId(row) === selection.id) : undefined;
+  const items = useMemo<HistoryRow[]>(() => (page?.items ?? []).map((row, index) => ({ ...row, index })), [page]);
+  // A listed row's position belongs to this answer, independently of the condition its actions send.
+  const selected =
+    listing.failure === undefined && selection?.view === listing.view && selection.page === page
+      ? items[selection.index]
+      : undefined;
   const target: VersionTarget | undefined =
     selected?.versionId === undefined ? undefined : { ...selected, versionId: selected.versionId };
+  const nullMarker = target?.kind === 'delete-marker' && target.versionId === 'null';
   const bodyUnavailable =
-    target !== undefined && unavailable?.view === listing.view && unavailable.ids.has(rowId(target));
+    target !== undefined &&
+    isNullBody(target) &&
+    unavailable?.view === listing.view &&
+    unavailable.ids.has(bodyId(target));
   const unavailableReason = bodyUnavailable
     ? 'The emulator could not address this body. Refresh the version history and reselect the version.'
     : undefined;
@@ -252,7 +264,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         const listingView = listing.view;
         setUnavailable((current) => ({
           view: listingView,
-          ids: new Set([...(current?.view === listingView ? current.ids : []), rowId(requested)]),
+          ids: new Set([...(current?.view === listingView ? current.ids : []), bodyId(requested)]),
         }));
       }
       const unverifiedBody = failure.kind === 'other' && failure.code === 'UnverifiedVersionBody';
@@ -282,7 +294,9 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
     if (target?.kind !== 'version' || bodyUnavailable) return;
     void run(OPERATIONS.getObject, 'Download', target, async (signal) => {
       const body = await download(target.key, signal, target.versionId, target.etag);
-      if (!signal.aborted) saveVersion(body, target.key);
+      if (signal.aborted) return;
+      saveVersion(body, target.key);
+      flash.show([{ type: 'success', content: 'Version download started.' }]);
     });
   }
 
@@ -306,15 +320,17 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
 
   return (
     <>
-      <Table<ObjectVersion>
-        items={items}
-        trackBy={rowId}
+      <Table<HistoryRow>
+        items={listing.failure === undefined ? items : []}
+        trackBy={(row) => String(row.index)}
         columnDefinitions={narrow ? narrowColumns : columns}
         selectionType="single"
         selectedItems={selected === undefined ? [] : [selected]}
         onSelectionChange={({ detail }) => {
           const row = detail.selectedItems[0];
-          setSelection(row === undefined ? undefined : { view: listing.view, id: rowId(row) });
+          setSelection(
+            row === undefined || page === undefined ? undefined : { view: listing.view, page, index: row.index },
+          );
         }}
         ariaLabels={{
           selectionGroupLabel: 'Version selection',
@@ -370,9 +386,20 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
                 {selected?.kind === 'delete-marker' ? (
                   <Button
                     ref={removeButton}
-                    disabled={target === undefined || pending !== undefined || unsupported.has(OPERATIONS.deleteObject)}
-                    disabledReason={disabledReason(OPERATIONS.deleteObject, target !== undefined)}
-                    onClick={() => setChanging(target)}
+                    disabled={
+                      target === undefined ||
+                      nullMarker ||
+                      pending !== undefined ||
+                      unsupported.has(OPERATIONS.deleteObject)
+                    }
+                    disabledReason={
+                      nullMarker
+                        ? NULL_MARKER_REMOVAL_REASON
+                        : disabledReason(OPERATIONS.deleteObject, target !== undefined)
+                    }
+                    onClick={() => {
+                      if (!nullMarker) setChanging(target);
+                    }}
                   >
                     {REMOVE_MARKER}
                   </Button>

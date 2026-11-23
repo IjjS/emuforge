@@ -17,6 +17,7 @@ const RESTORE = 'Restore version';
 const REMOVE = 'Remove delete marker';
 const RESTORED = 'Version restored.';
 const REMOVED = 'Delete marker removed.';
+const DOWNLOAD_STARTED = 'Version download started.';
 const NULL_ETAG = '"observed-null-body"';
 const CHANGED_BODY = 'The null version points to a different body than the one you selected.';
 const RESELECT = 'Refresh the version history and reselect the version.';
@@ -654,14 +655,15 @@ it.each([
   }
 });
 
-it('rejects a download after the selected null body changes and guides the user back to history', async () => {
+it('guides a stale download back to history and replaces the failure after a successful retry', async () => {
   engine.readHistory = () => history(row('null'));
   let liveETag = NULL_ETAG;
   engine.getVersion = (condition) =>
     condition !== null && condition !== liveETag
       ? refusal(412, 'PreconditionFailed', 'The specified ETag no longer matches.')
       : new Response('replacement bytes');
-  const save = vi.spyOn(URL, 'createObjectURL');
+  const save = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:null-version-retry');
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
   open();
   await toggleVersions();
   await select('null');
@@ -678,6 +680,15 @@ it('rejects a download after the selected null body changes and guides the user 
   await waitFor(() => expect(recovery).toHaveFocus());
   expect(engine.downloadConditions).toEqual([NULL_ETAG]);
   expect(save).not.toHaveBeenCalled();
+
+  engine.readHistory = () => history(row('null', false, 'Version', KEY, liveETag));
+  fireEvent.click(action('Refresh'));
+  await select('null', liveETag);
+  fireEvent.click(action('Download'));
+  await waitFor(() => expect(flashContent('success')).toHaveTextContent(DOWNLOAD_STARTED));
+  expect(flashContent('error')).toBeUndefined();
+  expect(engine.downloadConditions).toEqual([NULL_ETAG, liveETag]);
+  expect(save).toHaveBeenCalledTimes(1);
 });
 
 it('rejects a restore after the selected null body changes and keeps the current object', async () => {
@@ -789,6 +800,68 @@ it.each([
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(engine.downloadConditions).toEqual([NULL_ETAG, replacement]);
   }
+});
+
+it.each([
+  { layout: 'desktop', narrow: false },
+  { layout: 'mobile', narrow: true },
+])('selects each equal-ETag null row with its own actions on $layout', async ({ narrow }) => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: narrow && media === '(max-width: 688px)',
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+  engine.readHistory = () => history(row('null', true) + row('null'));
+  open();
+  await toggleVersions();
+  const radioAt = (index: number) =>
+    required(table().findRowSelectionArea(index)?.find('input[type="radio"]')).getElement();
+  const latest = await waitFor(() => radioAt(1));
+  const earlier = radioAt(2);
+  expect(latest).toHaveAccessibleName(`Select ${KEY} version null, Type: Version, Latest: Yes, ETag: ${NULL_ETAG}`);
+  expect(earlier).toHaveAccessibleName(`Select ${KEY} version null, Type: Version, Latest: No, ETag: ${NULL_ETAG}`);
+
+  fireEvent.click(latest);
+  expect(latest).toBeChecked();
+  expect(earlier).not.toBeChecked();
+  expect(table().findSelectedRows()).toHaveLength(1);
+  expect(action('Download')).toBeEnabled();
+  expectDisabled(action(RESTORE));
+
+  fireEvent.click(earlier);
+  expect(earlier).toBeChecked();
+  expect(latest).not.toBeChecked();
+  expect(table().findSelectedRows()).toHaveLength(1);
+  expect(action('Download')).toBeEnabled();
+  expect(action(RESTORE)).toBeEnabled();
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+  expect(dialogValue(content, 'Source ETag')).toHaveTextContent(NULL_ETAG);
+  enter(input, KEY);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
+  expect(engine.copyConditions).toEqual([NULL_ETAG]);
+});
+
+it('keeps a replacement body safe when its old reusable delete marker is still listed', async () => {
+  engine.hasCurrent = false;
+  engine.readHistory = () => history(row('null', true, 'DeleteMarker'));
+  open();
+  await toggleVersions();
+  await select('null');
+  const remove = action(REMOVE);
+  expectDisabled(remove);
+  expect(remove).toHaveAccessibleDescription(/version ID can also refer to an object body/);
+
+  engine.hasCurrent = true;
+  engine.body = 'replacement body';
+  fireEvent.click(remove);
+  expect(createWrapper().findModal()).toBeNull();
+  expect(engine.markerDeletes).toEqual([]);
+  await toggleVersions();
+  fireEvent.click(action('Refresh'));
+  await expectCurrentDetails('replacement body');
 });
 
 it('preserves the reported code and message when the bucket disappears before reading history', async () => {
