@@ -40,8 +40,8 @@ import {
 // The TanStack Query hooks of SNS's screens (issue 536, design "States and reading again"). Every read is a request of
 // its own on every mount, "Refresh" and "Retry", under a key that begins with the service's key and the engine's
 // address and holds every token and argument; a read no longer wanted is aborted, and its late answer, under a key
-// nobody shows any more, changes nothing shown. An action that succeeded reads again the topic list, the topic, its
-// subscriptions and the deliveries; one that failed reads nothing again.
+// nobody shows any more, changes nothing shown. Most successful actions invalidate all SNS reads. Saving a
+// subscription setting invalidates the affected subscription settings and its topic's subscription list.
 
 /** The start of every key of SNS's reads. */
 const SNS_KEY = ['aws', 'sns'] as const;

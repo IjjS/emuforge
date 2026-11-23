@@ -36,8 +36,8 @@ import { SubscriptionSettings } from './subscription-settings';
 
 // S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5 and task 5 step 1): the topic's subscriptions, a
 // page of `ListSubscriptionsByTopic` at a time on its own tokens, each with whether the policy of its queue or
-// function lets the topic deliver. An action that succeeds reads again, through `queries.ts`, every SNS read shown:
-// the topic, its subscriptions and the deliveries, so the tab asks nothing of the page itself.
+// function lets the topic deliver. A confirmed row can open its subscription settings. The topic page owns
+// the settings writes so their results survive the tab unmounting.
 
 export interface SubscriptionsTabProps {
   topicArn: string;
