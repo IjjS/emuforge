@@ -3,11 +3,17 @@ import { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH } from './format';
 import { CREATE_FUNCTION_TITLE, CreateFunctionPage } from './pages/create-function-page';
 import { FUNCTIONS_TITLE, FunctionListPage } from './pages/function-list-page';
 import { FunctionPage } from './pages/function-page';
+import { LAYERS_TITLE, LayersPage } from './pages/layers-page';
 
-/** Lambda's side navigation on its screens (requirement R6.1): its header and the one entry "Event Functions". */
+const LAYERS_PATH = `${LAMBDA_PATH}/layers`;
+
+/** Lambda's side navigation on its screens. */
 const NAVIGATION: ServiceScreen['navigation'] = {
   header: { text: 'Lambda', href: LAMBDA_PATH },
-  items: [{ type: 'link', text: 'Event Functions', href: FUNCTIONS_PATH }],
+  items: [
+    { type: 'link', text: 'Event Functions', href: FUNCTIONS_PATH },
+    { type: 'link', text: LAYERS_TITLE, href: LAYERS_PATH },
+  ],
   activeHref: FUNCTIONS_PATH,
 };
 
@@ -36,5 +42,12 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: FUNCTIONS_TITLE, href: FUNCTIONS_PATH }, { text: CREATE_FUNCTION_TITLE }],
     navigation: NAVIGATION,
     Page: CreateFunctionPage,
+  },
+  {
+    paths: [LAYERS_PATH],
+    title: LAYERS_TITLE,
+    crumbs: [{ text: LAYERS_TITLE }],
+    navigation: { ...NAVIGATION, activeHref: LAYERS_PATH },
+    Page: LayersPage,
   },
 ];
