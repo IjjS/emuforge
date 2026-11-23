@@ -1278,10 +1278,10 @@ describe('Function URL lifecycle', () => {
         behavior: 'instant',
       }),
     );
-    const result = PAGE.findFlashbar()?.find('ul')?.getElement();
+    const result = document.activeElement;
+    expect(PAGE.findFlashbar()?.getElement()).toContainElement(result);
     expect(result).toHaveAccessibleName('Notifications');
     expect(scrollIntoView.mock.contexts[0]).toBe(result);
-    expect(result).toHaveFocus();
     expect(result).toHaveAttribute('tabindex', '-1');
   }
 
@@ -1382,6 +1382,54 @@ describe('Function URL lifecycle', () => {
     if (!creating) {
       await expectFlashRevealed();
     }
+  });
+
+  it('rereads the URL when creation supersedes a pending Refresh', async () => {
+    await openConfiguration(withoutUrl(ORDERS));
+
+    const write = deferredAnswer();
+    const refresh = deferredAnswer();
+    let refreshAnswer: Answer | undefined;
+    engine.answerUrl = (request) => {
+      if (request.method !== 'GET') {
+        return write.promise;
+      }
+      const answer = engine.emulator(request);
+      if (refreshAnswer === undefined) {
+        refreshAnswer = answer;
+        return refresh.promise;
+      }
+      return answer;
+    };
+
+    fireEvent.click(screen.getByRole('button', { name: create }));
+    await waitFor(() => expect(changes()).toHaveLength(1));
+    const [writeRequest] = changes();
+    if (writeRequest === undefined) {
+      throw new Error('Expected a pending function URL write.');
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(2);
+      expect(refreshAnswer?.status).toBe(404);
+    });
+
+    await act(async () => write.resolve(engine.emulator(writeRequest)));
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(3);
+      expect(engine.urlGets).toHaveLength(3);
+      expect(flashTexts()).toEqual(['Function URL created.']);
+    });
+
+    const stale = refreshAnswer;
+    if (stale === undefined) {
+      throw new Error('Expected a stale URL reply from Refresh.');
+    }
+    await act(async () => refresh.resolve(stale));
+    expect(value('Function URL')).toBe(changedUrl);
+    expect(screen.getByRole('button', { name: remove })).toBeInTheDocument();
+    expect(flashTexts()).toEqual(['Function URL created.']);
   });
 
   it('keeps the URL and sends no changes on opening or cancelling deletion', async () => {
