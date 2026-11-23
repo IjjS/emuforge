@@ -33,7 +33,16 @@ export function VersioningPage({ connection, params }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1">{VERSIONING_TITLE}</Header>
+      <Header
+        variant="h1"
+        description={
+          <>
+            Bucket <ValueText kind="name" value={bucket} />
+          </>
+        }
+      >
+        {VERSIONING_TITLE}
+      </Header>
       {state.kind === 'loading' && (
         <Container>
           <StatusIndicator type="loading">Loading bucket versioning</StatusIndicator>
