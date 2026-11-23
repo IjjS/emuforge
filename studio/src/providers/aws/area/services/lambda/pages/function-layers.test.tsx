@@ -437,8 +437,11 @@ it('keeps both mutation actions visible and disabled after an update 501', async
   open();
   const dialog = await openRemove(FIRST);
   fireEvent.click(dialogSubmit(dialog, REMOVE));
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/The emulator answered 501 Not Implemented for UpdateFunctionConfiguration\./)).toBeVisible();
+  const notification = within(await screen.findByRole('list', { name: 'Notifications' }));
+  expect(notification.getByText('Not implemented by the emulator')).toBeVisible();
+  expect(
+    notification.getByText(/The emulator answered 501 Not Implemented for UpdateFunctionConfiguration\./),
+  ).toBeVisible();
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
   const attempts = engine.count(CONFIG, 'PUT');

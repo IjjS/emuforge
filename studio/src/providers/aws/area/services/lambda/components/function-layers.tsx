@@ -307,7 +307,7 @@ export function FunctionLayers({
         variant="container"
         ariaLabels={{ tableLabel: 'Layers' }}
         items={items}
-        loading={loading && items.length === 0}
+        loading={loading === true}
         loadingText={LOADING}
         trackBy={({ index }) => String(index)}
         columnDefinitions={[
