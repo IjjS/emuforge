@@ -44,7 +44,8 @@ export function openSecret({
   metadata = {},
   handler,
   observe = false,
-}: { metadata?: Metadata; handler?: Handler; observe?: boolean } = {}) {
+  compact = false,
+}: { metadata?: Metadata; handler?: Handler; observe?: boolean; compact?: boolean } = {}) {
   const connection: AreaConnection = {
     engineOrigin: `http://127.0.0.1:${String(port++)}`,
     result: { kind: 'connected', checkedAt: Date.now(), emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' } },
@@ -52,7 +53,7 @@ export function openSecret({
   const calls = vi.fn<(operation: string, input: Input) => void>();
   vi.stubGlobal('matchMedia', (media: string) => ({
     media,
-    matches: false,
+    matches: compact && media === '(width < 688px)',
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }));

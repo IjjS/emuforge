@@ -24,6 +24,7 @@ export function ChangeDialog({
   operation,
   title,
   submit,
+  dismiss = 'Cancel',
   result,
   valid = true,
   send,
@@ -32,6 +33,7 @@ export function ChangeDialog({
   operation: string;
   title: string;
   submit: string;
+  dismiss?: string;
   result: string;
   valid?: boolean;
   send: (endpoint: string, signal: AbortSignal) => Promise<unknown>;
@@ -60,7 +62,7 @@ export function ChangeDialog({
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={handleDismiss} disabled={pending}>
-              Cancel
+              {dismiss}
             </Button>
             <Button variant="primary" onClick={handleSubmit} disabled={disabled} loading={action.pending === operation}>
               {submit}

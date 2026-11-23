@@ -161,6 +161,7 @@ export function Rotation({
           operation={CANCEL_ROTATE_SECRET}
           title="Cancel rotation"
           submit="Cancel rotation"
+          dismiss="Keep rotation"
           result="Rotation canceled."
           send={(endpoint, signal) => cancelRotateSecret(endpoint, name, signal)}
         >
