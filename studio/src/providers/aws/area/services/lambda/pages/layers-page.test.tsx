@@ -392,7 +392,10 @@ it('replaces an earlier publication success with a refusal while the draft remai
   expect(publish).toHaveBeenCalledTimes(2);
 });
 
-it('shows the service code alone for an empty Lambda publication rejection', async () => {
+it.each([
+  { body: null, detail: 'PublishLayerVersion returned LayerError.' },
+  { body: '{"message":"UnknownError"}', detail: 'PublishLayerVersion returned LayerError. UnknownError' },
+])('renders the message supplied by the Lambda response ($body)', async ({ body, detail }) => {
   const api = await vi.importActual<typeof import('../layer-api')>('../layer-api');
   publish.mockImplementationOnce(api.publishLayerVersion);
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -400,7 +403,10 @@ it('shows the service code alone for an empty Lambda publication rejection', asy
     const path = new URL(request.url).pathname;
     if (path === '/__emuforge/session') return Response.json({ token: 'local-test-session' });
     expect(path).toBe('/2018-10-31/layers/beta/versions');
-    return new Response(null, { status: 400, headers: { 'x-amzn-errortype': 'LayerError' } });
+    return new Response(body, {
+      status: 400,
+      headers: { 'content-type': 'application/json', 'x-amzn-errortype': 'LayerError' },
+    });
   });
   onTestFinished(() => {
     vi.unstubAllGlobals();
@@ -410,7 +416,7 @@ it('shows the service code alone for an empty Lambda publication rejection', asy
 
   await waitFor(() => {
     const alert = required(dialog.findContent().findAlert());
-    expect(alert.findContent().getElement().textContent).toBe('PublishLayerVersion returned LayerError.');
+    expect(alert.findContent().getElement().textContent).toBe(detail);
   });
 });
 

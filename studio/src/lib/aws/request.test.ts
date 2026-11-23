@@ -574,6 +574,7 @@ describe('the code and the message', () => {
 
   it.each([
     { body: '', message: undefined },
+    { body: '{"message":"UnknownError"}', message: 'UnknownError' },
     { body: '{"message":"Layer publication was refused"}', message: 'Layer publication was refused' },
   ])('exposes only the service message for a Lambda header-code rejection ($body)', async ({ body, message }) => {
     engine.aws = () => ({

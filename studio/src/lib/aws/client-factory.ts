@@ -4,7 +4,7 @@ import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { acceptedChannel, ENGINE_HOST } from '../engine/engine-base';
 import { SESSION_HEADER } from '../engine/engine-client';
 import { EngineCommandSessionRefusal, engineSession, type EngineSession } from './engine-session';
-import { assertAwsRequestAuthorized } from './request';
+import { assertAwsRequestAuthorized, recordJsonResponseMessage } from './request';
 
 export { EngineSessionError, type EngineSessionFailure } from './engine-session';
 
@@ -145,6 +145,7 @@ type HttpRequest = Parameters<FetchHttpHandler['handle']>[0];
 class EngineRequestHandler extends FetchHttpHandler {
   private readonly address: EngineAddress;
   private readonly attemptSignals: WeakMap<object, AbortSignal>;
+  recordJsonErrorMessages = false;
 
   constructor(address: EngineAddress, rejectWriteRedirects: boolean) {
     const attemptSignals = new WeakMap<object, AbortSignal>();
@@ -195,7 +196,12 @@ class EngineRequestHandler extends FetchHttpHandler {
     } else {
       this.attemptSignals.delete(request);
     }
-    return super.handle(request, options);
+    const handled = super.handle(request, options);
+    if (!this.recordJsonErrorMessages) return handled;
+    return handled.then(async (result) => {
+      if (result.response.statusCode >= 300) await recordJsonResponseMessage(result.response);
+      return result;
+    });
   }
 }
 
@@ -367,5 +373,7 @@ export function createAwsClient<C extends SdkClient, A extends unknown[]>(
     throw new SettingRefusedError(refused);
   }
   const client = new ClientClass(...([{ ...own, ...config }] as unknown as A));
+  const serviceId = (client as C & { config?: { serviceId?: unknown } }).config?.serviceId;
+  config.requestHandler.recordJsonErrorMessages = serviceId === 'Lambda';
   return carrySession(client, engineSession(config.endpoint));
 }
