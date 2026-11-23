@@ -46,14 +46,15 @@ test("studio.cloudformation-stack-pages", async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx, { ownEmulator: true });
   const direct = directStacks(ctx, emulatorPort);
   const prefix = checkPrefix(ctx, "cfn-pages");
-  for (let index = 0; index < 101; index++)
+  for (let index = 0; index < 102; index++)
     await direct.create(`${prefix}-${String(index).padStart(3, "0")}`);
   const first = await direct.list();
   expect(first.next).toBeTruthy();
   const second = await direct.list(first.next);
-  expect(second.rows).toHaveLength(1);
+  expect(second.rows).toHaveLength(2);
   expect(second.next).toBeUndefined();
-  const term = second.rows[0]!.StackName!;
+  const match = second.rows[0]!;
+  const term = match.StackName!;
   expect(first.rows.some((stack) => stack.StackName === term)).toBe(false);
 
   const screen = stacksScreen(page);
@@ -62,9 +63,10 @@ test("studio.cloudformation-stack-pages", async ({ ctx, page }) => {
   await screen.filter.fill(term);
   await expect(screen.empty).toContainText("No matching stacks");
   await screen.next.click();
-  await screen.expectNames(second.rows);
+  await screen.expectNames([match]);
   await expect(screen.filter).toHaveValue(term);
   await screen.filter.fill("");
+  await expect(screen.filter).toHaveValue("");
   await screen.expectNames(second.rows);
   await screen.refresh.click();
   await screen.expectNames((await direct.list()).rows);
