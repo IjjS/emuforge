@@ -471,7 +471,7 @@ describe('subscription settings', () => {
       vi.mocked(api.getSubscriptionSettings).mockImplementation(async (_, arn) =>
         arn === ARN ? SETTINGS : { ...SETTINGS, FilterPolicy: REPLACEMENT },
       );
-      const write = hold<void>();
+      const write = hold<undefined>();
       vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(
         write.promise.then(() => {
           throw invalidPolicy();
@@ -482,14 +482,14 @@ describe('subscription settings', () => {
       changePolicy('{{');
       clickWrapped('Save filter policy');
       if (when === 'after') {
-        write.resolve();
+        write.resolve(undefined);
         await waitFor(() => expect(returnToPolicy()).toBeVisible());
       }
       PAGE.findTable()?.findRowSelectionArea(2)?.find('input[type="radio"]')?.click();
       clickWrapped('Subscription settings');
       await waitFor(() => expect(policyTextarea()).toHaveValue(REPLACEMENT));
       if (when === 'before') {
-        write.resolve();
+        write.resolve(undefined);
       }
       await waitFor(() => {
         const content = flash('error')?.findContent()?.getElement();
