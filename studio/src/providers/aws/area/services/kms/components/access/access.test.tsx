@@ -252,7 +252,7 @@ describe('KMS key access', () => {
   });
 
   it('keeps focus while saving, focuses the refusal, and restores the opener after dismissal', async () => {
-    const response = deferred<void>();
+    const response = deferred<undefined>();
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof PutKeyPolicyCommand) {
         await response.promise;
@@ -271,7 +271,7 @@ describe('KMS key access', () => {
     expect(save).toHaveFocus();
     expect(save).toHaveAttribute('aria-disabled', 'true');
 
-    response.resolve();
+    response.resolve(undefined);
     const reason = await dialog.findByText(REFUSAL, { exact: false });
     expect(document.activeElement).toContainElement(reason);
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
