@@ -80,6 +80,29 @@ function describeHistoryKey(key: string) {
     .replaceAll('\n', ' \\n (line feed) ');
 }
 
+function isNullBody(row: ObjectVersion) {
+  return row.kind === 'version' && row.versionId === 'null';
+}
+
+function nullBodyETag(row: ObjectVersion) {
+  return isNullBody(row) ? row.etag : undefined;
+}
+
+function VersionIdentifier({ row, showLabel = false }: { row: ObjectVersion; showLabel?: boolean }) {
+  const etag = nullBodyETag(row);
+  return (
+    <>
+      {showLabel && 'Version ID: '}
+      <ValueText kind="name" value={row.versionId ?? NO_VALUE} />
+      {etag !== undefined && (
+        <Box variant="small" display="block" color="text-body-secondary">
+          ETag: <ValueText kind="name" value={etag} />
+        </Box>
+      )}
+    </>
+  );
+}
+
 const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
   {
     id: 'key',
@@ -91,7 +114,7 @@ const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
   {
     id: 'version-id',
     header: 'Version ID',
-    cell: (row) => <ValueText kind="name" value={row.versionId ?? NO_VALUE} />,
+    cell: (row) => <VersionIdentifier row={row} />,
   },
   { id: 'type', header: 'Type', cell: versionType },
   { id: 'latest', header: 'Latest', cell: latestValue },
@@ -109,7 +132,7 @@ const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
           Type: {versionType(row)} · Latest: {latestValue(row)}
         </Box>
         <Box variant="small">
-          Version ID: <ValueText kind="name" value={row.versionId ?? NO_VALUE} />
+          <VersionIdentifier row={row} showLabel />
         </Box>
       </SpaceBetween>
     ),
@@ -117,7 +140,7 @@ const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
 ];
 
 function rowId(row: ObjectVersion): string {
-  return JSON.stringify([row.key, row.versionId, row.kind]);
+  return JSON.stringify([row.key, row.versionId, row.kind, nullBodyETag(row)]);
 }
 
 function saveVersion({ bytes, contentType }: ObjectBody, key: string) {
@@ -146,6 +169,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const flash = usePageFlash();
   const getSignal = usePageSignal();
   const [selection, setSelection] = useState<{ view: string; id: string }>();
+  const [unavailable, setUnavailable] = useState<{ view: string; ids: ReadonlySet<string> }>();
   const [changing, setChanging] = useState<VersionTarget>();
   const [pending, setPending] = useState<string>();
   const active = useRef(false);
@@ -169,13 +193,23 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   const selected = selection?.view === listing.view ? items.find((row) => rowId(row) === selection.id) : undefined;
   const target: VersionTarget | undefined =
     selected?.versionId === undefined ? undefined : { ...selected, versionId: selected.versionId };
+  const bodyUnavailable =
+    target !== undefined && unavailable?.view === listing.view && unavailable.ids.has(rowId(target));
+  const unavailableReason = bodyUnavailable
+    ? 'The emulator could not address this body. Refresh the version history and reselect the version.'
+    : undefined;
 
   function closeDialog() {
     closingAction.current = changing?.kind;
     setChanging(undefined);
   }
 
-  async function run(operation: string, label: string, action: (signal: AbortSignal) => Promise<void>) {
+  async function run(
+    operation: string,
+    label: string,
+    requested: VersionTarget,
+    action: (signal: AbortSignal) => Promise<void>,
+  ) {
     if (active.current) return;
     const signal = getSignal();
     active.current = true;
@@ -189,8 +223,15 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         setUnsupported((current) => new Set([...current, operation]));
       }
       const view = versionFailure(failure, label, endpoint);
-      const refreshNeeded =
-        failure.kind === 'other' && (failure.code === 'PreconditionFailed' || failure.code === 'UnverifiedVersionBody');
+      const changedBody = isNullBody(requested) && failure.kind === 'other' && failure.code === 'PreconditionFailed';
+      if (changedBody) {
+        const listingView = listing.view;
+        setUnavailable((current) => ({
+          view: listingView,
+          ids: new Set([...(current?.view === listingView ? current.ids : []), rowId(requested)]),
+        }));
+      }
+      const refreshNeeded = changedBody || (failure.kind === 'other' && failure.code === 'UnverifiedVersionBody');
       flash.show([
         {
           type: view.type,
@@ -198,7 +239,12 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
           content: (
             <>
               {view.detail}
-              {refreshNeeded && <Box variant="p">Refresh the version history and reselect the version.</Box>}
+              {refreshNeeded && (
+                <Box variant="p">
+                  {changedBody && 'The null version points to a different body than the one you selected. '}
+                  Refresh the version history and reselect the version.
+                </Box>
+              )}
             </>
           ),
         },
@@ -213,8 +259,8 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   }
 
   function handleDownload() {
-    if (target?.kind !== 'version') return;
-    void run(OPERATIONS.getObject, 'Download', async (signal) => {
+    if (target?.kind !== 'version' || bodyUnavailable) return;
+    void run(OPERATIONS.getObject, 'Download', target, async (signal) => {
       const body = await download(target.key, signal, target.versionId, target.etag);
       if (!signal.aborted) saveVersion(body, target.key);
     });
@@ -224,7 +270,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
     if (changing === undefined) return;
     const restores = changing.kind === 'version';
     const operation = restores ? OPERATIONS.copyObject : OPERATIONS.deleteObject;
-    void run(operation, restores ? RESTORE_VERSION : REMOVE_MARKER, async (signal) => {
+    void run(operation, restores ? RESTORE_VERSION : REMOVE_MARKER, changing, async (signal) => {
       await change(changing, signal);
       if (signal.aborted) return;
       listing.refresh();
@@ -252,8 +298,13 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         }}
         ariaLabels={{
           selectionGroupLabel: 'Version selection',
-          itemSelectionLabel: (_, row) =>
-            `Select ${describeHistoryKey(row.key)} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}`,
+          itemSelectionLabel: (_, row) => {
+            const etag = nullBodyETag(row);
+            return (
+              `Select ${describeHistoryKey(row.key)} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}` +
+              (etag === undefined ? '' : `, ETag: ${etag}`)
+            );
+          },
         }}
         wrapLines
         loading={listing.loading}
@@ -310,8 +361,13 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
                     <Button
                       iconName="download"
                       loading={pending === OPERATIONS.getObject}
-                      disabled={target === undefined || pending !== undefined || unsupported.has(OPERATIONS.getObject)}
-                      disabledReason={disabledReason(OPERATIONS.getObject, target !== undefined)}
+                      disabled={
+                        target === undefined ||
+                        bodyUnavailable ||
+                        pending !== undefined ||
+                        unsupported.has(OPERATIONS.getObject)
+                      }
+                      disabledReason={unavailableReason ?? disabledReason(OPERATIONS.getObject, target !== undefined)}
                       onClick={handleDownload}
                     >
                       Download
@@ -320,15 +376,19 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
                       ref={restoreButton}
                       disabled={
                         target === undefined ||
+                        bodyUnavailable ||
                         selected?.latest !== false ||
                         pending !== undefined ||
                         unsupported.has(OPERATIONS.copyObject)
                       }
-                      disabledReason={disabledReason(
-                        OPERATIONS.copyObject,
-                        target !== undefined && selected?.latest === false,
-                        'Select an earlier object version to restore.',
-                      )}
+                      disabledReason={
+                        unavailableReason ??
+                        disabledReason(
+                          OPERATIONS.copyObject,
+                          target !== undefined && selected?.latest === false,
+                          'Select an earlier object version to restore.',
+                        )
+                      }
                       onClick={() => setChanging(target)}
                     >
                       {RESTORE_VERSION}

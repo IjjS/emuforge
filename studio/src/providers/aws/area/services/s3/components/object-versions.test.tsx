@@ -18,6 +18,7 @@ const REMOVE = 'Remove delete marker';
 const RESTORED = 'Version restored.';
 const REMOVED = 'Delete marker removed.';
 const NULL_ETAG = '"observed-null-body"';
+const CHANGED_BODY = 'The null version points to a different body than the one you selected.';
 const RESELECT = 'Refresh the version history and reselect the version.';
 const WARNING =
   'If versioning is suspended when you restore, the restored version replaces any existing null version of this key.';
@@ -26,9 +27,15 @@ function encodedKey(key: string): string {
   return encodeURIComponent(key).replaceAll('%2F', '/').replaceAll('%20', '+');
 }
 
-function row(version: string, latest = false, kind = 'Version', key = KEY): string {
-  const etag = kind === 'Version' && version === 'null' ? `<ETag>${NULL_ETAG}</ETag>` : '';
-  return `<${kind}><Key>${encodedKey(key)}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest>${etag}</${kind}>`;
+function row(
+  version: string,
+  latest = false,
+  kind = 'Version',
+  key = KEY,
+  etag = kind === 'Version' && version === 'null' ? NULL_ETAG : undefined,
+): string {
+  const tag = etag === undefined ? '' : `<ETag>${etag}</ETag>`;
+  return `<${kind}><Key>${encodedKey(key)}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest>${tag}</${kind}>`;
 }
 
 function history(items: string, cursor?: [string, string]): Response {
@@ -213,12 +220,14 @@ async function toggleVersions() {
   fireEvent.click(toggle.findNativeInput().getElement());
 }
 
-function selection(id: string) {
+function selection(id: string, etag?: string) {
   const list = main().findTable();
   for (let index = 1; index <= (list?.findRows().length ?? 0); index += 1) {
-    const desktopId = list?.findBodyCell(index, 3)?.getElement();
-    const mobileId = list?.findBodyCell(index, 2)?.findAll('.aws-area-value-name')[1]?.getElement();
-    if ((desktopId ?? mobileId)?.textContent === id) {
+    const versionNames =
+      list?.findBodyCell(index, 3)?.findAll('.aws-area-value-name') ??
+      list?.findBodyCell(index, 2)?.findAll('.aws-area-value-name').slice(1);
+    const [version, tag] = versionNames ?? [];
+    if (version?.getElement().textContent === id && (etag === undefined || tag?.getElement().textContent === etag)) {
       const control = list?.findRowSelectionArea(index)?.find('input[type="radio"]')?.getElement();
       if (control !== undefined) return { control, index };
     }
@@ -226,8 +235,8 @@ function selection(id: string) {
   return undefined;
 }
 
-async function select(id: string) {
-  fireEvent.click((await waitFor(() => required(selection(id)))).control);
+async function select(id: string, etag?: string) {
+  fireEvent.click((await waitFor(() => required(selection(id, etag)))).control);
 }
 
 function findButton(scope: ElementWrapper, label: string) {
@@ -278,10 +287,11 @@ function expectDisabled(button: HTMLElement) {
   expect(button.matches(':disabled') || button.getAttribute('aria-disabled') === 'true').toBe(true);
 }
 
-async function expectVersion(id: string, kind: string, latest: boolean) {
-  const { control, index } = await waitFor(() => required(selection(id)));
+async function expectVersion(id: string, kind: string, latest: boolean, etag?: string) {
+  const { control, index } = await waitFor(() => required(selection(id, etag)));
   const latestText = latest ? 'Yes' : 'No';
-  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latestText}`);
+  const etagLabel = etag === undefined ? '' : `, ETag: ${etag}`;
+  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latestText}${etagLabel}`);
   [KEY, id, kind, latestText].forEach((text, column) => {
     expect(
       table()
@@ -528,7 +538,7 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
   await waitFor(() => expect(engine.copies).toEqual([`${BUCKET}/${KEY}?versionId=old`]));
   copyResponse.resolve(new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>'));
   await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
-  await expectVersion('null', 'Version', true);
+  await expectVersion('null', 'Version', true, NULL_ETAG);
 });
 
 it.each([
@@ -590,7 +600,7 @@ it.each([
     await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
   }
   const expected = key.includes('\r') ? 'JSON ' + JSON.stringify(key) : key;
-  expect(dialogValue(content, 'Key').textContent).toBe(expected);
+  expect(dialogValue(content, key.includes('\r') ? 'Confirmation text' : 'Key').textContent).toBe(expected);
   enter(input, wrongKey);
   expectDisabled(confirm);
   expect(engine.destinations).toEqual([]);
@@ -626,7 +636,12 @@ it.each([
     if (restoring) {
       await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
     }
-    expect(dialogValue(content, 'Key').textContent).toBe(spelling);
+    expect(dialogValue(content, id === 'cr-body' ? 'Confirmation text' : 'Key').textContent).toBe(spelling);
+    if (id === 'cr-body') {
+      expect(input).toHaveAccessibleDescription(
+        'Enter the confirmation text exactly as shown, including JSON and the quoted key.',
+      );
+    }
     enter(input, otherSpelling);
     expectDisabled(confirm);
     const priorWrites = engine.destinations.length;
@@ -654,6 +669,7 @@ it('rejects a download after the selected null body changes and guides the user 
   fireEvent.click(action('Download'));
   await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
   expect(flashContent('error')).toHaveTextContent('The specified ETag no longer matches.');
+  expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
   expect(flashContent('error')).toHaveTextContent(RESELECT);
   expect(engine.downloadConditions).toEqual([NULL_ETAG]);
   expect(save).not.toHaveBeenCalled();
@@ -679,12 +695,89 @@ it('rejects a restore after the selected null body changes and keeps the current
   fireEvent.click(confirm);
   await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
   expect(flashContent('error')).toHaveTextContent('The specified copy source ETag no longer matches.');
+  expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
   expect(flashContent('error')).toHaveTextContent(RESELECT);
   expect(engine.copyConditions).toEqual([NULL_ETAG]);
   expect(flashContent('success')).toBeUndefined();
   await expectVersion('current', 'Version', true);
   await toggleVersions();
   await expectCurrentDetails('before change');
+});
+
+it.each([
+  { layout: 'desktop', narrow: false, operation: 'Download' },
+  { layout: 'mobile', narrow: true, operation: 'Download' },
+  { layout: 'desktop', narrow: false, operation: RESTORE },
+  { layout: 'mobile', narrow: true, operation: RESTORE },
+])('binds $operation to either refreshed null row on $layout', async ({ narrow, operation }) => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: narrow && media === '(max-width: 688px)',
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+  const replacement = '"replacement-null-body"';
+  const preconditionMessage = 'The selected ETag did not match the addressable body.';
+  engine.readHistory = () => history(row('current', true) + row('null'));
+  engine.getVersion = (condition) =>
+    condition === replacement ? new Response('replacement') : refusal(412, 'PreconditionFailed', preconditionMessage);
+  engine.writeCopy = (condition) =>
+    condition === replacement
+      ? new Response('<CopyObjectResult><ETag>"replacement-null-body"</ETag></CopyObjectResult>')
+      : refusal(412, 'PreconditionFailed', preconditionMessage);
+  const save = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:null-version');
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+  open();
+  await toggleVersions();
+  await select('null', NULL_ETAG);
+
+  engine.readHistory = () =>
+    history(row('current', true) + row('null', false, 'Version', KEY, replacement) + row('null'));
+  fireEvent.click(action('Refresh'));
+  const newer = await waitFor(() => required(selection('null', replacement)));
+  const older = required(selection('null', NULL_ETAG));
+  expect(newer.control).toHaveAccessibleName(/ETag: "replacement-null-body"$/);
+  expect(older.control).toHaveAccessibleName(/ETag: "observed-null-body"$/);
+  expect(newer.control).not.toBeChecked();
+  expect(older.control).not.toBeChecked();
+
+  async function submit() {
+    if (operation === RESTORE) {
+      const { content, input, confirm } = await confirmDialog(RESTORE);
+      await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+      enter(input, KEY);
+      fireEvent.click(confirm);
+    } else {
+      fireEvent.click(action('Download'));
+    }
+  }
+
+  fireEvent.click(older.control);
+  expect(older.control).toBeChecked();
+  expect(newer.control).not.toBeChecked();
+  expect(table().findSelectedRows()).toHaveLength(1);
+  await submit();
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
+  expect(flashContent('error')).toHaveTextContent(preconditionMessage);
+  expect(flashContent('error')).toHaveTextContent(CHANGED_BODY);
+  expect(flashContent('error')).toHaveTextContent(RESELECT);
+  expectDisabled(action('Download'));
+  expectDisabled(action(RESTORE));
+  expect(save).not.toHaveBeenCalled();
+
+  fireEvent.click(newer.control);
+  expect(newer.control).toBeChecked();
+  expect(older.control).not.toBeChecked();
+  expect(table().findSelectedRows()).toHaveLength(1);
+  expect(action(operation)).toBeEnabled();
+  await submit();
+  if (operation === RESTORE) {
+    await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
+    expect(engine.copyConditions).toEqual([NULL_ETAG, replacement]);
+  } else {
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(engine.downloadConditions).toEqual([NULL_ETAG, replacement]);
+  }
 });
 
 it('preserves the reported code and message when the bucket disappears before reading history', async () => {

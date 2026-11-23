@@ -75,7 +75,7 @@ export function ObjectVersionsDialog({
         <KeyValuePairs
           items={[
             {
-              label: 'Key',
+              label: escaped ? 'Confirmation text' : 'Key',
               value: (
                 <Box nativeAttributes={{ style: { whiteSpace: 'break-spaces' } }}>
                   <ValueText kind="name" value={expected} />
@@ -112,8 +112,16 @@ export function ObjectVersionsDialog({
         )}
         <FormField
           label="Enter the full key to confirm"
-          description={escaped ? 'Enter the JSON prefix and quoted key exactly as shown.' : undefined}
-          errorText={typed !== '' && !matches ? 'Enter the exact key shown above.' : undefined}
+          description={
+            escaped ? 'Enter the confirmation text exactly as shown, including JSON and the quoted key.' : undefined
+          }
+          errorText={
+            typed !== '' && !matches
+              ? escaped
+                ? 'Enter the exact confirmation text shown above.'
+                : 'Enter the exact key shown above.'
+              : undefined
+          }
         >
           <Textarea
             value={typed}
