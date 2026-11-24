@@ -1029,3 +1029,57 @@ export async function chooseFunction(page: Page, fn: MadeFunction): Promise<void
   await option.click(ACTION);
   await expect(s.endpoint, `"Function" shows ${name}`).toContainText(name);
 }
+
+/** Three editable settings, read directly so the UI cannot supply its own expected state. */
+export async function readSubscriptionSettings(ctx: Ctx, port: number, arn: string) {
+  const answer = await snsGiven(ctx, port, 'GetSubscriptionAttributes', { SubscriptionArn: arn });
+  const attributes = new Map<string, string>();
+  for (const [entry] of answer.body.matchAll(/<entry(?:\s[^>]*)?>[\s\S]*?<\/entry>/g)) {
+    const key = element(entry, 'key');
+    if (key !== null) attributes.set(key, element(entry, 'value') ?? '');
+  }
+  expect(attributes.get('SubscriptionArn')).toBe(arn);
+  return {
+    policy: attributes.get('FilterPolicy'),
+    scope: attributes.get('FilterPolicyScope'),
+    raw: attributes.get('RawMessageDelivery'),
+  };
+}
+
+export async function writeSubscriptionSetting(
+  ctx: Ctx, port: number, arn: string, name: string, value: string,
+) {
+  const answer = await sns(ctx, port, 'SetSubscriptionAttributes', {
+    SubscriptionArn: arn, AttributeName: name, AttributeValue: value,
+  });
+  return { status: answer.status, code: answer.code, message: element(answer.body, 'Message') };
+}
+
+export function subscriptionSettingsScreen(page: Page) {
+  const locate = (control: { toSelector(): string }) => page.locator(control.toSelector());
+  const table = wrapper.findTable();
+  const field = (id: string) => wrapper.findFormField(`[data-testid="${id}"]`);
+  const policy = field('subscription-filter-policy');
+  const scope = field('subscription-filter-policy-scope').findSelect();
+  const raw = field('subscription-raw-message-delivery').findSelect();
+  const button = (id: string) => locate(wrapper.findButton(`[data-testid="subscription-settings-${id}"]`));
+  const footer = locate(wrapper.findModal().findFooter().findAllButtons());
+
+  return {
+    row: locate(table.findRowSelectionArea(1)),
+    open: locate(table.findHeaderSlot().findHeader().findActions().findAllButtons()).first(),
+    editor: locate(wrapper.findContainer('[data-testid="subscription-settings"]')),
+    policy: locate(policy.findTextarea().findNativeTextarea()),
+    policyDescription: locate(policy.findDescription()),
+    scope: locate(scope.findTrigger()),
+    raw: locate(raw.findTrigger()),
+    choose: (value: string) => choice(page, value).click(ACTION),
+    savePolicy: button('save-policy'),
+    saveScope: button('save-scope'),
+    saveRaw: button('save-raw-delivery'),
+    clear: button('clear-policy'),
+    cancel: footer.first(),
+    confirm: footer.last(),
+    modal: locate(wrapper.findModal()),
+  };
+}
