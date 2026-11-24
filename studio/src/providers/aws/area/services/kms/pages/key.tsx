@@ -24,13 +24,14 @@ import { Access } from '../components/access/access';
 import { Labels } from '../components/labels/labels';
 import { KeyState } from '../components/lifecycle/key-state';
 import { Lifecycle } from '../components/lifecycle/lifecycle';
+import { useLifecycleAction, type LifecycleAction } from '../components/lifecycle/use-lifecycle-action';
 import { Rotation } from '../components/rotation/rotation';
 import { KEYS_PATH } from '../paths';
-import { connectionFailure, useKmsKey } from '../queries';
+import { connectionFailure, KMS_KEYS, useKmsKey } from '../queries';
 
 type ReadKey = KeyMetadata & { KeyId: string };
 
-function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['connection']; metadata: ReadKey }) {
+function KeyDetails({ action, metadata }: { action: LifecycleAction; metadata: ReadKey }) {
   const deletion =
     metadata.DeletionDate === undefined
       ? []
@@ -38,7 +39,7 @@ function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['con
   return (
     <Container
       header={
-        <Header variant="h2" actions={<Lifecycle connection={connection} metadata={metadata} />}>
+        <Header variant="h2" actions={<Lifecycle action={action} metadata={metadata} />}>
           Key metadata
         </Header>
       }
@@ -75,14 +76,17 @@ function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['con
 function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & { keyId: string }) {
   const handleFollow = useFollow();
   const queryClient = useQueryClient();
+  const action = useLifecycleAction(connection, keyId);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
   const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
   const failure = read.failure ?? (attemptedRetry ? undefined : offline);
   const handleRefresh = () => {
     setAttemptedRetry(true);
-    read.refresh();
     const endpoint = connection.engineOrigin;
+    // Keep the previous metadata mounted while this visit's query reads again.
+    const detail = { queryKey: [...KMS_KEYS.detail(keyId), endpoint] };
+    void queryClient.cancelQueries(detail).then(() => queryClient.invalidateQueries(detail));
     const panelReads = [
       ['kms', 'aliases', keyId],
       ['kms', 'tags', keyId],
@@ -137,7 +141,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
                     <StatusIndicator type="loading">Loading key…</StatusIndicator>
                   </Container>
                 ) : (
-                  <KeyDetails connection={connection} metadata={read.key as ReadKey} />
+                  <KeyDetails action={action} metadata={read.key as ReadKey} />
                 ),
             },
             {
