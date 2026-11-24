@@ -8,7 +8,7 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router';
 
@@ -77,11 +77,13 @@ function ParameterForm({
   name,
   metadata,
   awaitingMetadata = false,
+  onPreflight,
 }: {
   connection: AreaConnection;
   name: string;
   metadata?: ParameterMetadata | undefined;
   awaitingMetadata?: boolean;
+  onPreflight?: (metadata: ParameterMetadata) => void;
 }) {
   const editing = metadata !== undefined;
   const navigate = useNavigate();
@@ -89,8 +91,9 @@ function ParameterForm({
   const refresh = useRefreshParameterSave(connection);
   const writes = useUnsupportedOperation(connection, PUT_PARAMETER);
   const reads = useUnsupportedOperation(connection, DESCRIBE_PARAMETERS);
-  const [initial] = useState(() => initialDraft(name, metadata));
-  const [draft, setDraft] = useState(initial);
+  const initial = useMemo(() => initialDraft(name, metadata), [name, metadata]);
+  const [changes, setChanges] = useState<Partial<ParameterDraft>>({});
+  const draft = { ...initial, ...changes };
   const [submitted, setSubmitted] = useState(false);
   const [asking, setAsking] = useState(false);
   const [pendingRequest, setPending] = useState<AbortController>();
@@ -113,11 +116,19 @@ function ParameterForm({
   const cancelPath = editing ? parameterPath(name) : PARAMETER_STORE_PATH;
   const blocked = writes.failure ?? (editing ? reads.failure : undefined);
   const saveDisabled = !connected || endpoint === undefined || awaitingMetadata || pending || blocked !== undefined;
-  const reason = blocked ?? failure;
+  const reason = writes.failure ?? failure;
   const feedback = reason === undefined ? undefined : actionFailureItem(reason, 'Saving the parameter', endpoint);
 
+  const handleChange = <Field extends keyof ParameterDraft>(field: Field, value: ParameterDraft[Field]) => {
+    setChanges((previous) => {
+      if (value !== initial[field]) return { ...previous, [field]: value };
+      const { [field]: oldValue, ...remaining } = previous;
+      return oldValue === undefined ? previous : remaining;
+    });
+  };
+
   const handleCancel = () => {
-    if (JSON.stringify(draft) !== JSON.stringify(initial)) setAsking(true);
+    if (Object.keys(changes).length > 0) setAsking(true);
     else void navigate(cancelPath);
   };
 
@@ -153,7 +164,8 @@ function ParameterForm({
           setMissing(true);
           return;
         }
-        input = editInput(draft, initial, current, policies);
+        onPreflight?.(current);
+        input = editInput(name, draft.value, changes, current, policies);
       } else {
         input = createInput(draft, policies);
       }
@@ -175,10 +187,11 @@ function ParameterForm({
     } catch (cause) {
       if (signal.aborted) return;
       const rejection = failureOf(cause, operation);
-      setFailure(rejection);
       if (rejection.kind === 'not-implemented') {
         if (operation === PUT_PARAMETER) writes.markUnsupported(rejection);
         else reads.markUnsupported(rejection);
+      } else {
+        setFailure(rejection);
       }
     } finally {
       if (!saved && request.current === controller) {
@@ -210,7 +223,7 @@ function ParameterForm({
               draft={draft}
               errors={submitted ? errors : {}}
               disabled={pending}
-              onChange={setDraft}
+              onChange={handleChange}
             />
             {feedback !== undefined && (
               <Alert type={reason?.kind === 'not-implemented' ? 'info' : 'error'} header={feedback.header}>
@@ -232,34 +245,26 @@ function ParameterForm({
 }
 
 function EditParameter({ name, connection }: { name: string; connection: AreaConnection }) {
-  const { metadata, failure, loading, refresh, rememberFailure } = useParameterMetadata(connection, name);
-  const [parameter, setParameter] = useState<ParameterMetadata>();
-  if (metadata && !loading && parameter === undefined) setParameter(metadata);
+  const { metadata, metadataUpdatedAt, failure, loading, refresh, rememberFailure } = useParameterMetadata(
+    connection,
+    name,
+  );
+  const [snapshot, setSnapshot] = useState<{
+    read: ParameterMetadata;
+    updatedAt: number;
+    current: ParameterMetadata;
+  }>();
+  if (metadata && !loading && (snapshot?.read !== metadata || snapshot.updatedAt !== metadataUpdatedAt)) {
+    setSnapshot({ read: metadata, updatedAt: metadataUpdatedAt, current: metadata });
+  }
   useEffect(() => {
     if (failure?.kind === 'not-implemented') rememberFailure(failure);
   }, [failure, rememberFailure]);
 
-  if (parameter && (metadata || failure !== undefined || loading)) {
-    return (
-      <>
-        {failure !== undefined && failure.kind !== 'not-implemented' && (
-          <Container>
-            <ReadFailure state={readFailureState(failure, connection, 'parameter')} onRetry={refresh} />
-          </Container>
-        )}
-        {loading && <StatusIndicator type="loading">Loading parameter…</StatusIndicator>}
-        <ParameterForm
-          connection={connection}
-          name={name}
-          metadata={parameter}
-          awaitingMetadata={!metadata || loading}
-        />
-      </>
-    );
-  }
+  let readStatus;
   if (failure !== undefined) {
     const state = readFailureState(failure, connection, 'parameter');
-    return (
+    readStatus = (
       <Container>
         {failure.kind === 'not-implemented' ? (
           <Box textAlign="center">
@@ -274,9 +279,25 @@ function EditParameter({ name, connection }: { name: string; connection: AreaCon
         )}
       </Container>
     );
+  } else if (loading) {
+    readStatus = <StatusIndicator type="loading">Loading parameter…</StatusIndicator>;
   }
-  if (loading) return <StatusIndicator type="loading">Loading parameter…</StatusIndicator>;
-  return <MissingParameter name={name} />;
+
+  if (snapshot && (metadata || readStatus !== undefined)) {
+    return (
+      <>
+        {readStatus}
+        <ParameterForm
+          connection={connection}
+          name={name}
+          metadata={snapshot.current}
+          awaitingMetadata={!metadata || loading}
+          onPreflight={(current) => setSnapshot((previous) => previous && { ...previous, current })}
+        />
+      </>
+    );
+  }
+  return readStatus ?? <MissingParameter name={name} />;
 }
 
 export function CreateParameterPage({ connection }: { connection: AreaConnection }) {

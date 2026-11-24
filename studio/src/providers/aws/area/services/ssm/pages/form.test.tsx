@@ -613,6 +613,104 @@ describe('Parameter Store forms', () => {
     expect(requests.slice(0, 7)).toEqual([...Array<string>(6).fill('DescribeParameters'), 'PutParameter']);
   });
 
+  it('reconciles changed metadata on the same target and uses the metadata shown during preflight', async () => {
+    const recovered = {
+      ...PARAMETER,
+      Version: 2,
+      KeyId: 'alias/recovered-key',
+      Description: 'External description',
+      AllowedPattern: '[0-9]+',
+      Policies: [{ PolicyText: JSON.stringify(NEXT_POLICY) }],
+    };
+    const preflight = {
+      ...recovered,
+      Version: 3,
+      KeyId: 'alias/preflight-key',
+      AllowedPattern: '[A-Z]+',
+      Policies: [{ PolicyText: JSON.stringify(OTHER_POLICY) }],
+    };
+    const write = pendingResponse();
+    describeParameters
+      .mockImplementationOnce(() => answer({ Parameters: [PARAMETER] }))
+      .mockImplementationOnce(() => answer({ Parameters: [recovered] }))
+      .mockImplementationOnce(() => answer({ Parameters: [preflight] }));
+    putParameter.mockReturnValueOnce(write.response);
+    const { connect } = await openEdit();
+    change('New value', 'replacement');
+    change('Description', 'Buffered description');
+    expect(detailValue('KMS key ID')).toHaveTextContent(PARAMETER.KeyId);
+
+    connect(DISCONNECTED[0]);
+    expect(save()).toBeDisabled();
+    connect({ ...CONNECTED, checkedAt: 3 });
+    await waitFor(() => expect(save()).toBeEnabled());
+    expect(detailValue('Name')).toHaveTextContent(NAME);
+    expect(detailValue('Type')).toHaveTextContent(recovered.Type);
+    expect(detailValue('Tier')).toHaveTextContent(recovered.Tier);
+    expect(detailValue('Data type')).toHaveTextContent(recovered.DataType);
+    expect(detailValue('KMS key ID')).toHaveTextContent(recovered.KeyId);
+    expect(field('Allowed pattern')).toHaveValue(recovered.AllowedPattern);
+    expect(field('Parameter policies')).toHaveValue(JSON.stringify([NEXT_POLICY], null, 2));
+    expect(field('Description')).toHaveValue('Buffered description');
+    expect(field('New value')).toHaveValue('replacement');
+
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(putParameter).toHaveBeenCalledExactlyOnceWith({
+        Name: NAME,
+        Type: preflight.Type,
+        Tier: preflight.Tier,
+        KeyId: preflight.KeyId,
+        DataType: preflight.DataType,
+        Overwrite: true,
+        Value: 'replacement',
+        Description: 'Buffered description',
+        AllowedPattern: preflight.AllowedPattern,
+        Policies: JSON.stringify([OTHER_POLICY]),
+      }),
+    );
+    expect(detailValue('KMS key ID')).toHaveTextContent(preflight.KeyId);
+    expect(field('Allowed pattern')).toHaveValue(preflight.AllowedPattern);
+    expect(field('Parameter policies')).toHaveValue(JSON.stringify([OTHER_POLICY], null, 2));
+    expect(field('Description')).toHaveValue('Buffered description');
+    expect(field('New value')).toHaveValue('replacement');
+    expect(describeParameters.mock.calls).toEqual(Array.from({ length: 3 }, () => [{ ParameterFilters: FILTERS }]));
+    await act(async () => write.resolve(answer({ Version: 4, Tier: 'Advanced' })));
+    await visibleHeading('Parameter details');
+  });
+
+  it('keeps Retry visible and disabled when an open edit form gets a DescribeParameters 501 on retry', async () => {
+    describeParameters
+      .mockImplementationOnce(() => answer({ Parameters: [PARAMETER] }))
+      .mockImplementationOnce(() => answer({ __type: 'ValidationException', message: 'Metadata read failed.' }, 400))
+      .mockImplementationOnce(() => answer({ __type: 'NotImplemented' }, 501));
+    const { connect, where } = await openEdit();
+    change('New value', 'replacement');
+    connect(DISCONNECTED[0]);
+    connect({ ...CONNECTED, checkedAt: 3 });
+
+    const retry = () => ui.findAllButtons().find((button) => button.getElement().textContent === 'Retry');
+    await waitFor(() => expect(retry()?.getElement()).toBeEnabled());
+    expect(screen.getByText('Metadata read failed.', { exact: false })).toBeVisible();
+    required(retry(), 'Retry button').click();
+    await waitFor(() => expect(retry()?.getElement()).toBeDisabled());
+    expect(retry()?.getElement()).toBeVisible();
+    expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
+    expect(screen.getByText(/The emulator answered 501 Not Implemented for DescribeParameters/)).toBeVisible();
+    required(retry(), 'disabled Retry button').click();
+    expect(save()).toBeDisabled();
+    fireEvent.submit(required(field('New value').form, 'edit form'));
+
+    expect(field('New value')).toHaveValue('replacement');
+    expect(field('Description')).toBeEnabled();
+    expect(formButton('Cancel')).toBeEnabled();
+    fireEvent.click(formButton('Cancel'));
+    fireEvent.click(await discardButton('Keep editing'));
+    expect(where()).toBe(parameterEditPath(NAME));
+    expect(requests).toEqual(['DescribeParameters', 'DescribeParameters', 'DescribeParameters']);
+    expect(putParameter).not.toHaveBeenCalled();
+  });
+
   it('starts with a blank value and fresh metadata when the same name is on a different target', async () => {
     const { connect } = await openEdit();
     change('New value', 'local-replacement');

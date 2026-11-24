@@ -62,23 +62,24 @@ export function createInput(draft: ParameterDraft, policies: string | undefined)
 }
 
 export function editInput(
-  draft: ParameterDraft,
-  initial: ParameterDraft,
+  name: string,
+  value: string,
+  changes: Partial<ParameterDraft>,
   metadata: ParameterMetadata,
   policies: string | undefined,
 ): PutParameterCommandInput {
   const existingPolicies = metadataPolicies(metadata);
   return {
-    Name: initial.name,
-    Value: draft.value,
+    Name: name,
+    Value: value,
     Type: metadata.Type,
     Tier: metadata.Tier,
     KeyId: metadata.KeyId,
     DataType: metadata.DataType,
-    Description: draft.description === initial.description ? metadata.Description : draft.description,
-    AllowedPattern: draft.pattern === initial.pattern ? metadata.AllowedPattern : draft.pattern,
+    Description: changes.description ?? metadata.Description,
+    AllowedPattern: changes.pattern ?? metadata.AllowedPattern,
     Policies:
-      draft.policies === initial.policies
+      changes.policies === undefined
         ? existingPolicies
           ? policyObjects(existingPolicies)
           : undefined
