@@ -440,6 +440,31 @@ describe('KMS key access', () => {
     expect(submit).toBeEnabled();
   });
 
+  it('keeps Enter focus on the protected revoke confirmation and sends a single write', async () => {
+    const response = deferred<undefined>();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      if (command instanceof RevokeGrantCommand) return response.promise;
+      return fallback(command);
+    });
+    open();
+    const user = userEvent.setup();
+    const dialog = await openRevocation();
+    const confirmation = dialog.getByRole('textbox');
+    await user.type(confirmation, 'revoke{Enter}');
+
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAttribute('readonly');
+    expect(confirmation).toBeEnabled();
+    await user.keyboard('x{Enter}{Enter}');
+    expect(confirmation).toHaveValue('revoke');
+    expect(confirmation).toHaveFocus();
+    expect(send.mock.calls.filter(([command]) => command instanceof RevokeGrantCommand)).toHaveLength(1);
+
+    await act(async () => response.resolve(undefined));
+    expect(successFlash('Grant revoked.')).toBeVisible();
+  });
+
   it('keeps a grant action 501 received while offline and clears it for another key or target', async () => {
     const response = deferred<undefined>();
     let revokeSignal: AbortSignal | undefined;

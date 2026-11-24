@@ -277,7 +277,7 @@ export function Grants({
             <Input
               value={revoking.confirmation}
               placeholder={REVOKE_WORD}
-              disabled={action.pending === operations.revokeGrant}
+              readOnly={action.pending === operations.revokeGrant}
               onChange={({ detail }) => setRevoking({ ...revoking, confirmation: detail.value })}
               onKeyDown={({ detail }) => {
                 if (detail.key === 'Enter') handleRevoke();
