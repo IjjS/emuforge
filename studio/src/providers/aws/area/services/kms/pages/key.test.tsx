@@ -18,6 +18,7 @@ vi.mock('../../../../../../lib/aws/client-factory', () => ({ createAwsClient: ()
 
 const endpoint = 'http://127.0.0.1:8311';
 const emulator = { port: 9311, endpoint: 'https://127.0.0.1:9311' };
+const startPort = 9545;
 const online = { engineOrigin: endpoint, result: { kind: 'connected', checkedAt: 0, emulator } } as const;
 const page = createWrapper(document.body);
 const metadata = {
@@ -147,27 +148,45 @@ describe('key details', () => {
       },
       status: `Not answering at ${emulator.endpoint}`,
     },
-  ])('shows $status when DescribeKey fails while the frame is connected', async ({ failure, status }) => {
-    send.mockRejectedValue(failure);
-    open(metadata.KeyId, online);
+    {
+      failure: {
+        name: 'EmulatorUnavailable',
+        message: `the emulator at https://127.0.0.1:${startPort} is not reachable (not_started): start the emulator on port ${startPort}`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 },
+      },
+      status: `Not started on port ${startPort}`,
+      startInstruction: `start the emulator on port ${startPort}`,
+    },
+  ])(
+    'shows $status when DescribeKey fails while the frame is connected',
+    async ({ failure, status, startInstruction }) => {
+      send.mockRejectedValue(failure);
+      open(metadata.KeyId, online);
 
-    const recovery = await waitFor(() => {
-      const content = metadataRecovery();
-      const indicator = content.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent(status);
-      return within(content.getElement());
-    });
-    const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
-    expect(connectionStatus).toBeVisible();
-    expect(connectionStatus).toHaveAttribute('href', '/');
-    const retry = recovery.getByRole('button', { name: 'Retry' });
-    expect(retry).toBeVisible();
+      const recovery = await waitFor(() => {
+        const content = metadataRecovery();
+        const indicator = content.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        return within(content.getElement());
+      });
+      const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
+      if (startInstruction !== undefined) {
+        expect(recovery.getByText(failure.message)).toHaveTextContent(startInstruction);
+      }
+      expect(connectionStatus).toBeVisible();
+      expect(connectionStatus).toHaveAttribute('href', '/');
+      const retry = recovery.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
 
-    send.mockResolvedValue({ KeyMetadata: metadata });
-    fireEvent.click(retry);
-    await waitFor(() => expect(metadataHeading()).toBeVisible());
-  });
+      send.mockResolvedValue({ KeyMetadata: metadata });
+      fireEvent.click(retry);
+      await waitFor(() => expect(metadataHeading()).toBeVisible());
+      expectField('Key ID', metadata.KeyId);
+      expectField('Description', metadata.Description);
+    },
+  );
 
   // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
   it.each([
