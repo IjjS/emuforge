@@ -104,8 +104,34 @@ function expectCommand(command: object) {
 
 const grant = { GrantId: 'grant-on-page-two', GranteePrincipal: GRANTEE, Operations: ['Encrypt', 'DescribeKey'] };
 
+function grantsTable() {
+  const table = createWrapper(screen.getByRole('region', { name: 'Grants' })).findTable();
+  if (table === null) throw new Error('Expected the grants table.');
+  return table;
+}
+
+function grantRow(id: string) {
+  return grantsTable()
+    .findRows()
+    .map((row) => row.getElement())
+    .find((row) => within(row).queryByText(id, { exact: true }) !== null);
+}
+
+function successFlash(message: string) {
+  return createWrapper()
+    .findFlashbar()
+    ?.findItemsByType('success')
+    .map((item) => item.findContent()?.getElement())
+    .find((content) => content?.textContent === message);
+}
+
 async function openRevocation() {
-  fireEvent.click(await screen.findByRole('button', { name: `Revoke grant ${grant.GrantId}` }));
+  const revoke = await waitFor(() => {
+    const row = grantRow(grant.GrantId);
+    if (row === undefined) throw new Error(`Expected the row for grant ${grant.GrantId}.`);
+    return within(row).getByRole('button', { name: `Revoke grant ${grant.GrantId}` });
+  });
+  fireEvent.click(revoke);
   return within(await screen.findByRole('dialog', { name: 'Revoke grant' }));
 }
 
@@ -159,13 +185,13 @@ describe('KMS key access', () => {
 
     await editPolicy();
 
-    expect(await screen.findByText('Key policy saved.')).toBeVisible();
+    await waitFor(() => expect(successFlash('Key policy saved.')).toBeVisible());
     expect(await screen.findByText(NEW_POLICY, { selector: ':not(textarea)' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
     await act(async () => names.resolve({ PolicyNames: ['default'] }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeEnabled());
     expect(screen.getByText(NEW_POLICY)).toBeVisible();
-    expect(screen.getByText('Key policy saved.')).toBeVisible();
+    expect(successFlash('Key policy saved.')).toBeVisible();
   });
 
   it('reads the next grants page and keeps the grant when revocation is cancelled', async () => {
@@ -179,19 +205,21 @@ describe('KMS key access', () => {
     });
     open();
 
-    await screen.findByText('grant-on-page-one');
+    await waitFor(() => expect(grantRow('grant-on-page-one')).toBeVisible());
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-    const id = await screen.findByText(grant.GrantId);
-    const row = id.closest('tr');
-    expect(row).toHaveTextContent(GRANTEE);
-    expect(row).toHaveTextContent('Encrypt');
-    expect(row).toHaveTextContent('DescribeKey');
+    await waitFor(() => {
+      const row = grantRow(grant.GrantId);
+      expect(row).toBeVisible();
+      expect(row).toHaveTextContent(GRANTEE);
+      expect(row).toHaveTextContent('Encrypt');
+      expect(row).toHaveTextContent('DescribeKey');
+    });
     expectCommand(expect.objectContaining({ input: { KeyId: KEY_ID, Marker: 'next-grants', Limit: 20 } }));
 
     const dialog = await openRevocation();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
 
-    expect(await screen.findByText(grant.GrantId)).toBeVisible();
+    await waitFor(() => expect(grantRow(grant.GrantId)).toBeVisible());
     expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
   });
 
@@ -215,14 +243,16 @@ describe('KMS key access', () => {
     fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Revoke grant' }));
 
-    expect(await screen.findByText('No grants')).toBeVisible();
-    expect(screen.queryByText(grant.GrantId)).not.toBeInTheDocument();
-    expect(screen.getByText('Grant revoked.')).toBeVisible();
+    await waitFor(() => {
+      expect(grantsTable().findEmptySlot()?.getElement()).toHaveTextContent('No grants');
+      expect(grantRow(grant.GrantId)).toBeUndefined();
+      expect(successFlash('Grant revoked.')).toBeVisible();
+    });
     expectCommand(expect.objectContaining({ input: { KeyId: KEY_ID, GrantId: grant.GrantId } }));
     expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(2);
     await act(async () => detail.resolve({ KeyMetadata: { KeyId: KEY_ID, Description: 'Refreshed key details' } }));
     expect(await screen.findByRole('heading', { name: 'Refreshed key details' })).toBeVisible();
-    expect(screen.getByText('Grant revoked.')).toBeVisible();
+    expect(successFlash('Grant revoked.')).toBeVisible();
   });
 
   it('keeps the grantee and selected operations visible when CreateGrant is refused', async () => {
@@ -285,12 +315,18 @@ describe('KMS key access', () => {
     const user = userEvent.setup();
     await screen.findByText(OLD_POLICY);
     await user.click(screen.getByRole('button', { name: 'Edit key policy' }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Edit key policy' }));
+    const modal = await screen.findByRole('dialog', { name: 'Edit key policy' });
+    const dialog = within(modal);
     const field = dialog.getByRole('textbox', { name: 'Policy document' });
     fireEvent.change(field, { target: { value: '{"Statement":' } });
     await user.click(dialog.getByRole('button', { name: 'Save policy' }));
 
-    expect(dialog.getByText(/Invalid JSON/)).toBeVisible();
+    const policyField = createWrapper(modal)
+      .findAllFormFields()
+      .find((candidate) => candidate.findLabel()?.getElement().textContent === 'Policy document');
+    const error = policyField?.findError()?.getElement();
+    expect(error).toBeVisible();
+    expect(error).toHaveTextContent(/Invalid JSON/);
     expect(field).toHaveAttribute('aria-invalid', 'true');
     expect(field).toHaveFocus();
     expect(send.mock.calls.some(([command]) => command instanceof PutKeyPolicyCommand)).toBe(false);
