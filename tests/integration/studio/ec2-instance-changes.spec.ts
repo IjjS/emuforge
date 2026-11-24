@@ -48,7 +48,9 @@ test('studio.ec2-change-termination-protection', async ({ ctx, page }) => {
   await f.open(page);
   for (const enabled of [true, false]) {
     await edit(page, 'Change termination protection');
-    await page.locator(ui.findModal().findToggle().findNativeInput().toSelector()).setChecked(enabled, ACTION);
+    const toggle = dialogOf(page).locator(ui.findToggle().findNativeInput().toSelector().replace(/^body /, ''));
+    await expect(toggle).toHaveAccessibleName('Enable termination protection');
+    await toggle.setChecked(enabled, ACTION);
     await save(page);
     await expect.poll(() => valuePartsOf(page.getByRole('main'), 'Termination protection')).toContain(enabled ? 'On' : 'Off');
     if (enabled) {
