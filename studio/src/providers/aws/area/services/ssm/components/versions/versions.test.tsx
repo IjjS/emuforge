@@ -5,11 +5,12 @@ import type {
   LabelParameterVersionCommandInput,
   UnlabelParameterVersionCommandInput,
 } from '@aws-sdk/client-ssm';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useEffect, useState } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CheckResult } from '../../../../../../../lib/engine/engine-client';
 import { creationDateText } from '../../../../components/format-date';
@@ -147,52 +148,137 @@ function open() {
   };
 }
 
+const page = createWrapper(document.body);
 const currentRegion = () => screen.findByRole('region', { name: 'Current value' });
-const versionTable = () => screen.getByRole('table', { name: 'Parameter versions' });
+const versionTable = () =>
+  page.findAllTables().find((table) => table.find('table[aria-label="Parameter versions"]') !== null);
 const versionRegion = (version: number) => screen.getByRole('region', { name: `Version ${version} actions` });
-const notification = () => screen.getByRole('list', { name: 'Notifications' });
+const pagination = () => versionTable()?.findPagination();
+const historyEmpty = () => versionTable()?.findEmptySlot();
+const flashItems = (type: 'success' | 'warning') => page.findFlashbar()?.findItemsByType(type) ?? [];
+const flashContent = (type: 'success' | 'warning') => flashItems(type)[0]?.findContent()?.getElement();
 
-function click(name: string, region: HTMLElement = document.body) {
-  fireEvent.click(within(region).getByRole('button', { name }));
+function namedButton(name: string, region: HTMLElement) {
+  const button = createWrapper(region)
+    .findAllButtons()
+    .find((candidate) => candidate.getElement().textContent?.trim() === name)
+    ?.getElement();
+  expect(button).toHaveAccessibleName(name);
+  return button;
+}
+
+function click(name: string, region: HTMLElement) {
+  const button = namedButton(name, region);
+  assert(button);
+  fireEvent.click(button);
+}
+
+function versionRow(version: number) {
+  const table = versionTable();
+  // The radio selection control occupies the first column.
+  return (
+    (table?.findRows() ?? []).findIndex(
+      (_, index) => table?.findBodyCell(index + 1, 2)?.getElement().textContent === String(version),
+    ) + 1
+  );
+}
+
+function labelCell(version: number) {
+  return versionTable()?.findBodyCell(versionRow(version), 4)?.getElement();
+}
+
+function expectLabels(version: number, labels: string) {
+  const cell = labelCell(version);
+  expect(cell).toBeVisible();
+  expect(cell?.textContent).toBe(labels);
+}
+
+function toggleHistory() {
+  const section = page
+    .findAllExpandableSections()
+    .find((candidate) => candidate.findHeaderText()?.getElement().textContent === 'Version history');
+  const toggle = section?.findExpandButton().getElement();
+  assert(toggle);
+  expect(toggle).toHaveAccessibleName('Version history');
+  fireEvent.click(toggle);
 }
 
 async function openHistory() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Version history' }));
-  return screen.findByRole('table', { name: 'Parameter versions' });
+  await currentRegion();
+  toggleHistory();
+  await waitFor(() => expect(versionTable()?.getElement()).toBeVisible());
 }
 
 async function selectVersion(version = 1) {
-  const row = within(await screen.findByRole('table', { name: 'Parameter versions' }));
-  fireEvent.click(await row.findByRole('radio', { name: `Version ${version}` }));
+  const radio = await waitFor(() => {
+    const selection = versionTable()?.findRowSelectionArea(versionRow(version))?.getElement();
+    assert(selection);
+    return within(selection).getByRole('radio', { name: `Version ${version}` });
+  });
+  fireEvent.click(radio);
   return versionRegion(version);
 }
 
 async function labelDialog(action: 'Add labels' | 'Remove labels') {
   click(action, versionRegion(1));
-  return screen.findByRole('dialog', { name: action });
+  return waitFor(() => {
+    const modal = page.findModal();
+    assert(modal);
+    expect(modal.findHeader().getElement()).toHaveTextContent(action);
+    expect(modal.getElement()).toBeVisible();
+    expect(modal.getElement()).toHaveAccessibleName(action);
+    return modal;
+  });
 }
 
-function enterRemoval(dialog: HTMLElement, labels: string[]) {
+type LabelDialog = Awaited<ReturnType<typeof labelDialog>>;
+
+function labelInput(dialog: LabelDialog) {
+  const input = dialog.findContent().findInput()?.findNativeInput().getElement();
+  assert(input);
+  expect(input).toHaveAccessibleName('Labels');
+  return input;
+}
+
+function submitLabels(dialog: LabelDialog, action: 'Add labels' | 'Remove labels') {
+  const footer = dialog.findFooter()?.getElement();
+  assert(footer);
+  click(action, footer);
+}
+
+function enterRemoval(dialog: LabelDialog, labels: string[]) {
+  const checkboxes = dialog.findContent().findAllCheckboxes();
   for (const label of labels) {
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: label }));
+    const checkbox = checkboxes.find((candidate) => candidate.findLabel().getElement().textContent === label);
+    assert(checkbox);
+    const input = checkbox.findNativeInput().getElement();
+    expect(input).toHaveAccessibleName(label);
+    fireEvent.click(input);
   }
+}
+
+function changePage(direction: 'next' | 'previous') {
+  const control = pagination();
+  assert(control);
+  const button = direction === 'next' ? control.findNextPageButton() : control.findPreviousPageButton();
+  expect(button.getElement()).toHaveAccessibleName(direction === 'next' ? 'Next page' : 'Previous page');
+  fireEvent.click(button.getElement());
 }
 
 describe('Parameter Store values and versions', () => {
   it('places the current value reveal before the metadata fields', async () => {
     open();
     const current = await currentRegion();
-    expect(within(current).getByRole('button', { name: 'Show value' })).toBeVisible();
+    expect(namedButton('Show value', current)).toBeVisible();
     expect(current.compareDocumentPosition(screen.getByText('ARN'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(getParameter).not.toHaveBeenCalled();
   });
 
   it('omits pagination when all versions are on one page', async () => {
     open();
-    const table = await openHistory();
-    expect(await within(table).findByText('stable')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+    await openHistory();
+    await waitFor(() => expectLabels(1, 'stable'));
+    expect(pagination()).toBeNull();
   });
 
   it('keeps the previous page available on the final page', async () => {
@@ -201,12 +287,12 @@ describe('Parameter Store values and versions', () => {
       .mockReturnValueOnce(history([second]))
       .mockReturnValueOnce(history([first], 'page-two'));
     open();
-    const table = await openHistory();
-    expect(await within(table).findByText('stable')).toBeVisible();
-    click('Next page');
-    expect(await within(table).findByText('latest')).toBeVisible();
-    click('Previous page');
-    expect(await within(table).findByText('stable')).toBeVisible();
+    await openHistory();
+    await waitFor(() => expectLabels(1, 'stable'));
+    changePage('next');
+    await waitFor(() => expectLabels(2, 'latest'));
+    changePage('previous');
+    await waitFor(() => expectLabels(1, 'stable'));
     expect(getHistory).toHaveBeenLastCalledWith({ Name: NAME, WithDecryption: false, MaxResults: 50 });
   });
 
@@ -258,19 +344,19 @@ describe('Parameter Store values and versions', () => {
     await navigate(PARAMETER_STORE_PATH);
     await left.finish(value(CURRENT));
     await navigate(parameterPath(NAME));
-    expect(within(await currentRegion()).getByRole('button', { name: 'Show value' })).toBeEnabled();
+    expect(namedButton('Show value', await currentRegion())).toBeEnabled();
     expect(screen.queryByText(CURRENT)).not.toBeInTheDocument();
 
     const renamed = await start(await currentRegion(), NAME);
     await navigate(parameterPath(OTHER));
     await renamed.finish(value(CURRENT));
-    expect(within(await currentRegion()).getByRole('button', { name: 'Show value' })).toBeEnabled();
+    expect(namedButton('Show value', await currentRegion())).toBeEnabled();
     expect(screen.queryByText(CURRENT)).not.toBeInTheDocument();
 
     const retargeted = await start(await currentRegion(), OTHER, false);
     connect({ ...connected, target: 'alternate', checkedAt: 2 });
     await retargeted.finish(value(CURRENT));
-    expect(within(await currentRegion()).getByRole('button', { name: 'Show value' })).toBeEnabled();
+    expect(namedButton('Show value', await currentRegion())).toBeEnabled();
     expect(screen.queryByText(CURRENT)).not.toBeInTheDocument();
   });
 
@@ -313,11 +399,11 @@ describe('Parameter Store values and versions', () => {
     expect(
       await within(current).findByText('The emulator answered 501 Not Implemented for GetParameter.'),
     ).toBeVisible();
-    expect(within(current).getByRole('button', { name: 'Show value' })).toBeDisabled();
+    expect(namedButton('Show value', current)).toBeDisabled();
 
     await openHistory();
     const version = await selectVersion();
-    expect(within(version).getByRole('button', { name: 'Show value' })).toBeDisabled();
+    expect(namedButton('Show value', version)).toBeDisabled();
     expect(getHistory).toHaveBeenCalledOnce();
     expect(getParameter).toHaveBeenCalledTimes(2);
   });
@@ -326,14 +412,22 @@ describe('Parameter Store values and versions', () => {
     getHistory.mockReturnValueOnce(history([first], 'page-two')).mockReturnValueOnce(history([second]));
     const { client } = open();
     await openHistory();
-    expect(await within(versionTable()).findByText('stable')).toBeVisible();
-    expect(versionTable()).toHaveTextContent(creationDateText(new Date(first.LastModifiedDate * 1000)));
-    expect(within(versionTable()).getByRole('rowheader', { name: '1' })).toBeVisible();
-    click('Next page');
-    expect(await within(versionTable()).findByText('latest')).toBeVisible();
-    expect(versionTable()).toHaveTextContent(creationDateText(new Date(second.LastModifiedDate * 1000)));
-    expect(within(versionTable()).getByRole('rowheader', { name: '2' })).toBeVisible();
-    expect(within(versionTable()).queryByText('stable')).not.toBeInTheDocument();
+    await waitFor(() => expectLabels(1, 'stable'));
+    const firstVersion = versionTable()?.findBodyCell(1, 2)?.getElement();
+    expect(firstVersion).toBeVisible();
+    expect(firstVersion).toHaveAccessibleName('1');
+    expect(versionTable()?.findBodyCell(1, 3)?.getElement()).toHaveTextContent(
+      creationDateText(new Date(first.LastModifiedDate * 1000)),
+    );
+    changePage('next');
+    await waitFor(() => expectLabels(2, 'latest'));
+    const secondVersion = versionTable()?.findBodyCell(1, 2)?.getElement();
+    expect(secondVersion).toBeVisible();
+    expect(secondVersion).toHaveAccessibleName('2');
+    expect(versionTable()?.findBodyCell(1, 3)?.getElement()).toHaveTextContent(
+      creationDateText(new Date(second.LastModifiedDate * 1000)),
+    );
+    expect(versionTable()?.findRows()).toHaveLength(1);
     expect(getHistory.mock.calls).toEqual([
       [{ Name: NAME, WithDecryption: false, MaxResults: 50 }],
       [{ Name: NAME, WithDecryption: false, MaxResults: 50, NextToken: 'page-two' }],
@@ -353,23 +447,23 @@ describe('Parameter Store values and versions', () => {
     await selectVersion();
     describeParameters.mockReturnValueOnce(afterAdd.response).mockReturnValueOnce(afterRemove.response);
     const add = await labelDialog('Add labels');
-    fireEvent.change(within(add).getByRole('textbox', { name: 'Labels' }), { target: { value: 'release' } });
-    click('Add labels', add);
-    expect(await within(versionTable()).findByText('stable, release')).toBeVisible();
-    expect(notification()).toHaveTextContent(`Added labels for ${NAME}, version 1: release.`);
+    fireEvent.change(labelInput(add), { target: { value: 'release' } });
+    submitLabels(add, 'Add labels');
+    await waitFor(() => expectLabels(1, 'stable, release'));
+    expect(flashContent('success')).toHaveTextContent(`Added labels for ${NAME}, version 1: release.`);
     await afterAdd.finish(answer({ Parameters: [metadata] }));
-    expect(within(versionTable()).getByText('stable, release')).toBeVisible();
-    expect(notification()).toHaveTextContent('release.');
+    expectLabels(1, 'stable, release');
+    expect(flashContent('success')).toHaveTextContent('release.');
     expect(addLabels.mock.calls).toEqual([[{ Name: NAME, ParameterVersion: 1, Labels: ['release'] }]]);
 
     const remove = await labelDialog('Remove labels');
     enterRemoval(remove, ['release']);
-    click('Remove labels', remove);
-    expect(await within(versionTable()).findByText('stable')).toBeVisible();
-    expect(notification()).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
+    submitLabels(remove, 'Remove labels');
+    await waitFor(() => expectLabels(1, 'stable'));
+    expect(flashContent('success')).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
     await afterRemove.finish(answer({ Parameters: [metadata] }));
-    expect(within(versionTable()).getByText('stable')).toBeVisible();
-    expect(notification()).toHaveTextContent('Removed labels');
+    expectLabels(1, 'stable');
+    expect(flashContent('success')).toHaveTextContent('Removed labels');
     expect(removeLabels.mock.calls).toEqual([[{ Name: NAME, ParameterVersion: 1, Labels: ['release'] }]]);
     expect(describeParameters).toHaveBeenCalledTimes(3);
   });
@@ -384,20 +478,20 @@ describe('Parameter Store values and versions', () => {
     await openHistory();
     await selectVersion();
     const add = await labelDialog('Add labels');
-    fireEvent.change(within(add).getByRole('textbox', { name: 'Labels' }), {
+    fireEvent.change(labelInput(add), {
       target: { value: 'release, reserved' },
     });
-    click('Add labels', add);
-    expect(await within(versionTable()).findByText('stable, release')).toBeVisible();
-    expect(notification()).toHaveTextContent('version 1: release.');
-    expect(notification()).toHaveTextContent('Rejected labels: reserved.');
+    submitLabels(add, 'Add labels');
+    await waitFor(() => expectLabels(1, 'stable, release'));
+    expect(flashContent('warning')).toHaveTextContent(`Added labels for ${NAME}, version 1: release.`);
+    expect(flashContent('warning')).toHaveTextContent('Rejected labels: reserved.');
 
     const remove = await labelDialog('Remove labels');
     enterRemoval(remove, ['release', 'stable']);
-    click('Remove labels', remove);
-    expect(await within(versionTable()).findByText('stable')).toBeVisible();
-    expect(notification()).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
-    expect(notification()).toHaveTextContent('Rejected labels: stable.');
+    submitLabels(remove, 'Remove labels');
+    await waitFor(() => expectLabels(1, 'stable'));
+    expect(flashContent('warning')).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
+    expect(flashContent('warning')).toHaveTextContent('Rejected labels: stable.');
     expect(removeLabels.mock.calls).toEqual([[{ Name: NAME, ParameterVersion: 1, Labels: ['release', 'stable'] }]]);
   });
 
@@ -412,17 +506,19 @@ describe('Parameter Store values and versions', () => {
     await selectVersion();
     const dialog = await labelDialog(action);
     if (adding) {
-      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Labels' }), { target: { value: 'release' } });
+      fireEvent.change(labelInput(dialog), { target: { value: 'release' } });
     } else {
       enterRemoval(dialog, ['stable']);
     }
-    click(action, dialog);
-    expect(await screen.findByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
-    expect(within(versionRegion(1)).getByRole('button', { name: action })).toBeDisabled();
-    expect(within(versionRegion(1)).getByRole('button', { name: available })).toBeEnabled();
+    submitLabels(dialog, action);
+    expect(
+      await within(versionRegion(1)).findByText(`The emulator answered 501 Not Implemented for ${operation}.`),
+    ).toBeVisible();
+    expect(namedButton(action, versionRegion(1))).toBeDisabled();
+    expect(namedButton(available, versionRegion(1))).toBeEnabled();
     const otherVersion = await selectVersion(2);
-    expect(within(otherVersion).getByRole('button', { name: action })).toBeDisabled();
-    expect(within(otherVersion).getByRole('button', { name: available })).toBeEnabled();
+    expect(namedButton(action, otherVersion)).toBeDisabled();
+    expect(namedButton(available, otherVersion)).toBeEnabled();
   });
 
   it('V9 retries ordinary history errors and disables further history reads after 501', async () => {
@@ -432,14 +528,25 @@ describe('Parameter Store values and versions', () => {
       .mockReturnValueOnce(notImplemented());
     open();
     await openHistory();
-    expect(await screen.findByText(/History read failed\./)).toBeVisible();
-    click('Retry');
-    expect(await within(versionTable()).findByText('stable')).toBeVisible();
-    click('Next page');
-    expect(await screen.findByText('The emulator answered 501 Not Implemented for GetParameterHistory.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Previous page' })).toHaveAttribute('aria-disabled', 'true');
-    click('Version history');
+    await waitFor(() => {
+      const empty = historyEmpty()?.getElement();
+      expect(empty).toBeVisible();
+      expect(empty).toHaveTextContent(/History read failed\./);
+    });
+    const retry = historyEmpty()?.findButton()?.getElement();
+    assert(retry);
+    expect(retry).toHaveAccessibleName('Retry');
+    fireEvent.click(retry);
+    await waitFor(() => expectLabels(1, 'stable'));
+    changePage('next');
+    await waitFor(() => {
+      const empty = historyEmpty()?.getElement();
+      expect(empty).toBeVisible();
+      expect(empty).toHaveTextContent('The emulator answered 501 Not Implemented for GetParameterHistory.');
+    });
+    expect(historyEmpty()?.findButton()?.getElement()).toBeDisabled();
+    expect(pagination()?.findPreviousPageButton().getElement()).toHaveAttribute('aria-disabled', 'true');
+    toggleHistory();
     await openHistory();
     expect(getHistory).toHaveBeenCalledTimes(3);
     click('Show value', await currentRegion());
@@ -455,16 +562,23 @@ describe('Parameter Store values and versions', () => {
     await openHistory();
     await selectVersion();
     const dialog = await labelDialog('Add labels');
-    const input = within(dialog).getByRole('textbox', { name: 'Labels' });
+    const input = labelInput(dialog);
     fireEvent.change(input, { target: { value: 'blocked' } });
-    click('Add labels', dialog);
-    expect(await within(dialog).findByText(/Cannot attach that label/)).toBeVisible();
+    submitLabels(dialog, 'Add labels');
+    await waitFor(() => {
+      const message = dialog.findContent().findAlert()?.findContent().getElement();
+      expect(message).toBeVisible();
+      expect(message).toHaveTextContent(/Cannot attach that label/);
+    });
     expect(input).toHaveValue('blocked');
-    expect(screen.queryByText(/Added labels for/)).not.toBeInTheDocument();
+    const notifications = page.findFlashbar()?.findItems() ?? [];
+    expect(notifications.map((item) => item.findContent()?.getElement().textContent).join('\n')).not.toContain(
+      'Added labels for',
+    );
 
     fireEvent.change(input, { target: { value: 'release' } });
-    click('Add labels', dialog);
-    expect(await within(versionTable()).findByText('stable, release')).toBeVisible();
+    submitLabels(dialog, 'Add labels');
+    await waitFor(() => expectLabels(1, 'stable, release'));
     expect(addLabels).toHaveBeenLastCalledWith({ Name: NAME, ParameterVersion: 1, Labels: ['release'] });
   });
 
@@ -476,14 +590,21 @@ describe('Parameter Store values and versions', () => {
     await selectVersion();
     const dialog = await labelDialog('Remove labels');
     enterRemoval(dialog, ['stable']);
-    click('Remove labels', dialog);
-    expect(await within(dialog).findByText(/Cannot remove that label/)).toBeVisible();
-    expect(within(versionTable()).getByText('stable')).toBeInTheDocument();
-    expect(screen.queryByText(/Removed labels for/)).not.toBeInTheDocument();
+    submitLabels(dialog, 'Remove labels');
+    await waitFor(() => {
+      const message = dialog.findContent().findAlert()?.findContent().getElement();
+      expect(message).toBeVisible();
+      expect(message).toHaveTextContent(/Cannot remove that label/);
+    });
+    expectLabels(1, 'stable');
+    const notifications = page.findFlashbar()?.findItems() ?? [];
+    expect(notifications.map((item) => item.findContent()?.getElement().textContent).join('\n')).not.toContain(
+      'Removed labels for',
+    );
 
-    click('Remove labels', dialog);
-    await waitFor(() => expect(within(versionTable()).queryByText('stable')).not.toBeInTheDocument());
-    expect(notification()).toHaveTextContent('Removed labels');
+    submitLabels(dialog, 'Remove labels');
+    await waitFor(() => expectLabels(1, '-'));
+    expect(flashContent('success')).toHaveTextContent('Removed labels');
     expect(removeLabels.mock.calls).toEqual([
       [{ Name: NAME, ParameterVersion: 1, Labels: ['stable'] }],
       [{ Name: NAME, ParameterVersion: 1, Labels: ['stable'] }],
