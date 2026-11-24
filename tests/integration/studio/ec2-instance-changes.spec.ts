@@ -3,11 +3,11 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './support';
 import { ACTION, heading } from './support/frame';
 import {
-  alertWith, button, chooseOption, closeActions, dialogOf, expectActionAvailable, expectActionUnavailable,
+  alertWith, chooseOption, closeActions, dialogOf, expectActionAvailable, expectActionUnavailable,
   expectCell, expectFlash, expectRows, field, findBy, INSTANCES_H1, INSTANCES_PATH, multiselectOf,
-  open, PROTECTION_IS_ON, rowsOf, TABLE, tableOf, typeInMultiselect, valuePartsOf,
+  open, parseXml, textAt, PROTECTION_IS_ON, rowsOf, TABLE, tableOf, typeInMultiselect, valuePartsOf,
 } from './services/ec2/ec2';
-import { edit, instanceFixture, save, submit, tagRows, ui, userDataField } from './services/ec2/instance-changes';
+import { edit, instanceFixture, nativeInput, save, submit, tagRows, ui, userDataField } from './services/ec2/instance-changes';
 
 test('studio.ec2-change-instance-type', async ({ ctx, page }) => {
   const f = await instanceFixture(ctx, 'edittype');
@@ -81,11 +81,11 @@ test('studio.ec2-change-instance-tags', async ({ ctx, page }) => {
   ] as const) {
     const dialog = await edit(page, action === 'Add tag' ? action : action + ' Name', action);
     if (action === 'Delete tag') {
-      await dialog.getByRole('textbox').fill('delete', ACTION);
+      await nativeInput(dialog).fill('delete', ACTION);
       await save(page, action);
     } else {
-      if (action === 'Add tag') await field(dialog, 'Key').getByRole('textbox').fill('Name', ACTION);
-      await field(dialog, 'Value').getByRole('textbox').fill(name, ACTION);
+      if (action === 'Add tag') await nativeInput(field(dialog, 'Key')).fill('Name', ACTION);
+      await nativeInput(field(dialog, 'Value')).fill(name, ACTION);
       await save(page);
     }
     await expect(heading(page, name || f.id)).toBeVisible();
@@ -115,7 +115,10 @@ async function findInstancePage(page: Page, id: string) {
     if (rows.some(row => row['Instance ID'] === id)) return;
     await expect(next).toBeEnabled();
     await next.click(ACTION);
-    await expect.poll(async () => (await rowsOf(table))[0]?.['Instance ID']).not.toBe(rows[0]?.['Instance ID']);
+    await expect.poll(async () => {
+      const firstId = (await rowsOf(table))[0]?.['Instance ID'];
+      return Boolean(firstId && firstId !== rows[0]?.['Instance ID']);
+    }).toBe(true);
   }
 }
 
@@ -123,12 +126,24 @@ test('studio.ec2-refuses-reserved-instance-tag', async ({ ctx, page }) => {
   const f = await instanceFixture(ctx, 'refusetag');
   await f.open(page);
   const dialog = await edit(page, 'Add tag');
-  await field(dialog, 'Key').getByRole('textbox').fill('aws:probe', ACTION);
-  await field(dialog, 'Value').getByRole('textbox').fill('rejected', ACTION);
-  await submit(page);
-  const reason = "Tag key 'aws:probe' is invalid: the 'aws:' prefix is reserved";
-  await expect(alertWith(dialog, reason)).toContainText('InvalidParameterValue');
-  await expectFlash(page, 'error', 'InvalidParameterValue', reason);
+  await nativeInput(field(dialog, 'Key')).fill('aws:probe', ACTION);
+  await nativeInput(field(dialog, 'Value')).fill('rejected', ACTION);
+  const [response] = await Promise.all([
+    page.waitForResponse(response => {
+      const params = new URLSearchParams(response.request().postData() ?? '');
+      return params.get('Action') === 'CreateTags' && params.get('ResourceId.1') === f.id
+        && params.get('Tag.1.Key') === 'aws:probe';
+    }),
+    submit(page),
+  ]);
+  expect(response.status()).toBe(400);
+  const reply = parseXml(await response.text());
+  const code = textAt(reply, 'Errors', 'Error', 'Code');
+  const reason = textAt(reply, 'Errors', 'Error', 'Message');
+  expect(code).toBe('InvalidParameterValue');
+  expect(reason).toBe("Tag key 'aws:probe' is invalid: the 'aws:' prefix is reserved");
+  await expect(alertWith(dialog, reason!)).toContainText(code!);
+  await expectFlash(page, 'error', code!, reason!);
   expect((await f.direct())?.tags).toEqual({ Name: f.prefix });
 });
 
@@ -160,7 +175,9 @@ test('studio.ec2-change-instance-user-data', async ({ ctx, page }) => {
   expect(await f.attribute('userData')).toBeUndefined();
   const empty = await userDataField(page);
   await expect(empty).toHaveValue('');
-  await button(dialogOf(page), 'Edit as JSON string').click(ACTION);
+  const jsonButton = page.locator(ui.findModal().findContent().findButton().toSelector());
+  await expect(jsonButton).toHaveAccessibleName('Edit as JSON string');
+  await jsonButton.click(ACTION);
   const mixed = 'A\r\nB\rC';
   await empty.fill(JSON.stringify(mixed), ACTION);
   await save(page);

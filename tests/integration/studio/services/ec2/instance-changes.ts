@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { EnvError, expect, startStack, type Ctx } from '../../support';
 import { ACTION } from '../../support/frame';
 import { checkPrefix } from '../../support/service-screens';
@@ -43,9 +43,13 @@ export async function save(page: Page, name?: string) {
   await expect(dialogOf(page)).toHaveCount(0);
 }
 
+export function nativeInput(scope: Locator) {
+  return scope.locator(ui.findInput().findNativeInput().toSelector().replace(/^body /, ''));
+}
+
 export async function userDataField(page: Page) {
   const dialog = await edit(page, 'Edit user data');
-  const input = field(dialog, 'User data').getByRole('textbox');
+  const input = field(dialog, 'User data').locator(ui.findTextarea().findNativeTextarea().toSelector().replace(/^body /, ''));
   await expect(input).toBeEditable();
   return input;
 }
@@ -67,11 +71,27 @@ export async function detailValueParts(page: Page, label: string) {
 /** Read each tag key and value from the same rendered row, excluding only the key cell's buttons. */
 export async function tagRows(page: Page) {
   const table = tableOf(page.getByRole('main'), 'Tags');
-  const rowSelector = ui.findTable().findRows().toSelector();
-  const rows = page.locator(rowSelector).and(table.locator('tr'));
-  return rows.evaluateAll(elements => elements.map(row => {
-    const keyCell = row.children[0]!.cloneNode(true) as HTMLElement;
-    keyCell.querySelectorAll('button').forEach(button => button.remove());
-    return { Key: keyCell.textContent?.trim() ?? '', Value: row.children[1]!.textContent?.trim() ?? '' };
-  }));
+  const wrapper = ui.findTable();
+  const selectors = {
+    headers: wrapper.findColumnHeaders().toSelector(),
+    rows: wrapper.findRows().toSelector(),
+    cell: wrapper.findBodyCell(987654, 123456).toSelector(),
+  };
+  return table.evaluate((root, selectors) => {
+    const headers = [...root.querySelectorAll(selectors.headers)].map(header => header.textContent?.trim());
+    const keyColumn = headers.indexOf('Key') + 1;
+    const valueColumn = headers.indexOf('Value') + 1;
+    if (!keyColumn || !valueColumn) throw new Error('Missing Key or Value column in the Tags table');
+    return [...root.querySelectorAll(selectors.rows)].map((row, index) => {
+      const cell = (column: number) => {
+        const selector = selectors.cell.replace('987654', String(index + 1)).replace('123456', String(column));
+        const found = row.querySelector(selector);
+        if (!found) throw new Error('Missing tag cell for column ' + headers[column - 1]);
+        return found;
+      };
+      const key = cell(keyColumn).cloneNode(true) as HTMLElement;
+      key.querySelectorAll('button').forEach(button => button.remove());
+      return { Key: key.textContent?.trim() ?? '', Value: cell(valueColumn).textContent?.trim() ?? '' };
+    });
+  }, selectors);
 }
