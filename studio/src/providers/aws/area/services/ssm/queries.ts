@@ -113,9 +113,10 @@ export function useParameterListing(connection: AreaConnection) {
 export function useParameterMetadata(connection: AreaConnection, name: string) {
   const scope = useReadScope(connection);
   const endpoint = connection.engineOrigin;
+  const emulatorEndpoint = connection.result?.kind === 'connected' ? connection.result.emulator.endpoint : undefined;
   const unsupported = useUnsupportedOperation(connection, DESCRIBE_PARAMETERS);
   const query = useQuery({
-    queryKey: [...targetKey(connection), 'metadata', name, scope.generation],
+    queryKey: [...targetKey(connection), 'metadata', name, scope.generation, emulatorEndpoint],
     queryFn: ({ signal }) => findParameter(endpoint ?? noEndpoint(), name, signal),
     enabled: endpoint !== undefined && name !== '' && scope.failure === undefined && unsupported.failure === undefined,
     retry: false,
@@ -126,6 +127,8 @@ export function useParameterMetadata(connection: AreaConnection, name: string) {
     unsupported.failure ?? scope.failure ?? (query.isError ? failureOf(query.error, DESCRIBE_PARAMETERS) : undefined);
   return {
     metadata: failure === undefined ? query.data : undefined,
+    retainedMetadata:
+      connection.result?.kind === 'connected' && failure?.kind === 'not-implemented' ? query.data : undefined,
     metadataUpdatedAt: query.dataUpdatedAt,
     failure,
     rememberFailure: unsupported.markUnsupported,
