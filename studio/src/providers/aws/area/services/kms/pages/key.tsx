@@ -242,47 +242,49 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
             </SpaceBetween>
           </Container>
         )}
-        {showPanels && (
-          <Tabs
-            key="key-settings"
-            ariaLabel="Key settings"
-            tabs={[
-              {
-                id: 'details',
-                label: 'Details',
-                contentRenderStrategy: 'lazy',
-                content:
-                  metadata !== undefined && metadata !== null ? (
-                    <KeyDetails action={action} metadata={metadata as ReadKey} statusNote={statusNote} />
-                  ) : null,
-              },
-              {
-                id: 'labels',
-                label: 'Labels',
-                contentRenderStrategy: 'eager',
-                content: <Labels connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
-              },
-              {
-                id: 'access',
-                label: 'Access',
-                contentRenderStrategy: 'lazy',
-                content: <Access connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
-              },
-              {
-                id: 'rotation',
-                label: 'Rotation',
-                contentRenderStrategy: 'lazy',
-                content: (
-                  <Rotation
-                    connection={connection}
-                    keyId={keyId}
-                    keySpec={metadata?.KeySpec}
-                    writesEnabled={writesEnabled}
-                  />
-                ),
-              },
-            ]}
-          />
+        {openedPanels && (
+          // A missing-key read hides the panels. The visit still owns any pending writes.
+          <div key="key-settings" hidden={!showPanels}>
+            <Tabs
+              ariaLabel="Key settings"
+              tabs={[
+                {
+                  id: 'details',
+                  label: 'Details',
+                  contentRenderStrategy: 'lazy',
+                  content:
+                    metadata !== undefined && metadata !== null ? (
+                      <KeyDetails action={action} metadata={metadata as ReadKey} statusNote={statusNote} />
+                    ) : null,
+                },
+                {
+                  id: 'labels',
+                  label: 'Labels',
+                  contentRenderStrategy: 'eager',
+                  content: <Labels connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
+                },
+                {
+                  id: 'access',
+                  label: 'Access',
+                  contentRenderStrategy: 'lazy',
+                  content: <Access connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
+                },
+                {
+                  id: 'rotation',
+                  label: 'Rotation',
+                  contentRenderStrategy: 'lazy',
+                  content: (
+                    <Rotation
+                      connection={connection}
+                      keyId={keyId}
+                      keySpec={metadata?.KeySpec}
+                      writesEnabled={writesEnabled}
+                    />
+                  ),
+                },
+              ]}
+            />
+          </div>
         )}
       </SpaceBetween>
     </ContentLayout>

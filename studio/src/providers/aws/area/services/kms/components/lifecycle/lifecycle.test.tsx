@@ -4,6 +4,7 @@ import {
   DisableKeyCommand,
   EnableKeyCommand,
   ListKeysCommand,
+  NotFoundException,
   RotateKeyOnDemandCommand,
   ScheduleKeyDeletionCommand,
   UpdateKeyDescriptionCommand,
@@ -81,13 +82,31 @@ function ListObserver() {
   );
 }
 
-function Page({ observeList, keyId, target }: { observeList: boolean; keyId: string; target: AreaConnection }) {
+function Page({
+  observeList,
+  keyId,
+  target,
+  onFlash,
+}: {
+  observeList: boolean;
+  keyId: string;
+  target: AreaConnection;
+  onFlash: ((result: FlashResult) => void) | undefined;
+}) {
   const [flash, setFlash] = useState<FlashResult>();
   const root = useRef<HTMLDivElement>(null);
   return (
     <AreaRootContext.Provider value={root}>
       <div ref={root}>
-        <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
+        <PageFlashContext.Provider
+          value={{
+            show: (result) => {
+              onFlash?.(result);
+              setFlash(result);
+            },
+            handOver: () => undefined,
+          }}
+        >
           <Flashbar items={flash ? [...flash] : []} />
           {observeList && <ListObserver />}
           <main>
@@ -99,11 +118,16 @@ function Page({ observeList, keyId, target }: { observeList: boolean; keyId: str
   );
 }
 
-function open(observeList = false, client = new QueryClient(), initialTarget: AreaConnection = connection) {
+function open(
+  observeList = false,
+  client = new QueryClient(),
+  initialTarget: AreaConnection = connection,
+  onFlash?: (result: FlashResult) => void,
+) {
   const page = (keyId: string, target: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Page observeList={observeList} keyId={keyId} target={target} />
+        <Page observeList={observeList} keyId={keyId} target={target} onFlash={onFlash} />
       </MemoryRouter>
     </QueryClientProvider>
   );
@@ -207,6 +231,78 @@ describe('Key detail panel lifetime', () => {
   }
 
   const rotateButton = () => panelButton('Rotate now');
+
+  async function holdRotationThroughMissingKey() {
+    const write = deferred<unknown>();
+    const onFlash = vi.fn<(result: FlashResult) => void>();
+    let missing = false;
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof DescribeKeyCommand) {
+        if (missing) throw new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } });
+        return { KeyMetadata: key('Enabled', { KeyId: command.input.KeyId ?? KEY_ID }) };
+      }
+      if (command instanceof RotateKeyOnDemandCommand) return write.promise;
+      return undefined;
+    });
+    const changeVisit = open(false, new QueryClient(), connection, onFlash);
+    await expectStatus('Enabled');
+    selectTab('rotation');
+    const rotate = rotateButton();
+    fireEvent.click(rotate);
+    await waitFor(() => expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1));
+    const options = sent(RotateKeyOnDemandCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    if (!options) throw new Error('Missing rotation request signal');
+
+    missing = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('Key not found')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'View customer managed keys' })).toBeVisible();
+    expect(rotate).toBeInTheDocument();
+    expect(rotate).not.toBeVisible();
+    expect(options.abortSignal.aborted).toBe(false);
+    expect(onFlash).not.toHaveBeenCalled();
+    return {
+      write,
+      rotate,
+      signal: options.abortSignal,
+      onFlash,
+      changeVisit: (keyId: string, target: AreaConnection) => {
+        missing = false;
+        changeVisit(keyId, target);
+      },
+    };
+  }
+
+  it('delivers a held rotation once when Refresh reports the same key missing and blocks new writes', async () => {
+    const { write, rotate, signal, onFlash } = await holdRotationThroughMissingKey();
+    fireEvent.click(rotate);
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
+    expect(onFlash).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: 'On-demand rotation requested.' }]);
+    expect(signal.aborted).toBe(false);
+    expect(screen.getByText('Key not found')).toBeVisible();
+    expect(rotate).toBeDisabled();
+    fireEvent.click(rotate);
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+  });
+
+  it.each([
+    { change: 'key', keyId: 'different-key', target: connection },
+    { change: 'target', keyId: KEY_ID, target: { ...connection, engineOrigin: 'http://127.0.0.1:8313' } },
+  ])('cancels the held rotation on a change of $change after the missing-key read', async ({ keyId, target }) => {
+    const { write, rotate, signal, onFlash, changeVisit } = await holdRotationThroughMissingKey();
+    changeVisit(keyId, target);
+    await waitFor(() => expect(field('Key ID')).toHaveTextContent(keyId));
+    expect(signal.aborted).toBe(true);
+    expect(rotate).not.toBeInTheDocument();
+
+    await act(async () => write.resolve({}));
+    expect(onFlash).not.toHaveBeenCalled();
+    expect(flashText()).toBe('');
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+  });
 
   it('announces the initial metadata failure once before and after the frame detects it, then recovers on Retry', async () => {
     const firstRead = deferred<unknown>();
