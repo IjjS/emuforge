@@ -599,7 +599,7 @@ describe('Parameter Store values and versions', () => {
 
     const refusal = 'The emulator answered 501 Not Implemented for GetParameterHistory.';
     expect(await screen.findByText(refusal)).toBeVisible();
-    expectLabels(1, 'stable');
+    expectLabels(1, 'stable, release');
     expect(versionTable()?.findRows()).toHaveLength(1);
     const selection = versionTable()?.findRowSelectionArea(versionRow(1))?.getElement();
     assert(selection);
