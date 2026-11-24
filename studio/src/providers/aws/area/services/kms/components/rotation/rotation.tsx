@@ -36,6 +36,9 @@ const automaticActionLabels = {
   disable: 'Disable automatic rotation',
 };
 
+const HISTORY_FOLLOW_INTERVAL_MS = 500;
+const HISTORY_FOLLOW_WINDOW_MS = 5_000;
+
 interface RotationProps {
   connection: AreaConnection;
   keyId: string;
@@ -53,6 +56,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const reasonId = useId();
   const [visit] = useState(() => (visits += 1));
   const [revision, setRevision] = useState(0);
+  const [historyFollowUntil, setHistoryFollowUntil] = useState(0);
   const [statusRetry, setStatusRetry] = useState(false);
   const [historyRetry, setHistoryRetry] = useState(false);
   const [lastEnabled, setLastEnabled] = useState<boolean>();
@@ -74,6 +78,10 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     operation: ROTATION_OPERATIONS.history,
     enabled: historyOffline === undefined || historyRetry,
     read: (endpoint, marker, signal) => listKeyRotations(endpoint, keyId, marker, signal),
+    readAgainAfter: () =>
+      historyOffline === undefined && Date.now() + HISTORY_FOLLOW_INTERVAL_MS <= historyFollowUntil
+        ? HISTORY_FOLLOW_INTERVAL_MS
+        : false,
   });
   const statusFailure = status.isError
     ? failureOf(status.error, ROTATION_OPERATIONS.status)
@@ -130,6 +138,8 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     try {
       await changeKeyRotation(engineOrigin, keyId, action, signal);
       if (signal.aborted) return;
+      // Acknowledgment and the pending-status field can both precede the completed row in ListKeyRotations.
+      if (action === 'rotate') setHistoryFollowUntil(Date.now() + HISTORY_FOLLOW_WINDOW_MS);
       showResult({ type: 'success', content: successMessage[action] });
       setRevision((current) => current + 1);
     } catch (error) {
