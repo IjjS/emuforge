@@ -10,7 +10,7 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
-import { PARAMETER_STORE_PATH, parameterPath } from '../paths';
+import { PARAMETER_STORE_PATH } from '../paths';
 import { useParameterMetadata } from '../queries';
 
 const FIRST = '/app/database';
@@ -159,13 +159,27 @@ function selection(name: string) {
 
 const select = (name: string) => fireEvent.click(required(selection(name), `selection for ${name}`));
 
+function firstRowCell(column: string) {
+  const listing = required(table(), 'parameter table');
+  const index = listing.findColumnHeaders().findIndex((header) => header.getElement().textContent?.trim() === column);
+  if (index < 0) throw new Error(`Expected the ${column} column`);
+  return required(listing.findBodyCell(1, index + 1), `${column} cell`).getElement();
+}
+
+function expectFirstRowCell(column: string, value: string) {
+  const cell = firstRowCell(column);
+  expect(cell).toBeVisible();
+  expect(cell.textContent).toBe(value);
+}
+
 async function expectMetadata({ Name, Type, Version, LastModifiedDate }: ReturnType<typeof parameter>) {
   await waitFor(() => {
-    const entry = required(findRow(Name), `parameter row for ${Name}`);
-    expect(entry.getByRole('link', { name: Name })).toHaveAttribute('href', parameterPath(Name));
-    for (const value of [Type, String(Version), creationDateText(new Date(LastModifiedDate * 1000))]) {
-      expect(entry.getByRole('cell', { name: value })).toBeVisible();
-    }
+    const link = within(firstRowCell('Name')).getByRole('link', { name: Name });
+    expect(link).toBeVisible();
+    expect(link).toHaveAttribute('href', '/aws/ssm/parameters/detail?name=%2Fapp%2Fdatabase');
+    expectFirstRowCell('Type', Type);
+    expectFirstRowCell('Version', String(Version));
+    expectFirstRowCell('Last modified', creationDateText(new Date(LastModifiedDate * 1000)));
   });
 }
 
@@ -432,13 +446,15 @@ describe('Parameter Store list', () => {
     open();
     await row(FIRST);
     fireEvent.click(button('Next page'));
-    expect((await row(SECOND)).getByText('2')).toBeVisible();
+    await row(SECOND);
+    await waitFor(() => expectFirstRowCell('Version', '2'));
     fireEvent.click(button('Previous page'));
     confirm(await deleteDialog([FIRST]), FIRST);
     await row('/app/remaining');
     expect(remove).toHaveBeenCalledWith({ Name: FIRST }, 'DeleteParameter');
     fireEvent.click(button('Next page'));
-    expect((await row(SECOND)).getByText('3')).toBeVisible();
+    await row(SECOND);
+    await waitFor(() => expectFirstRowCell('Version', '3'));
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([
       undefined,
       'old-next',
