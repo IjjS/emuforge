@@ -347,6 +347,10 @@ describe('key labels', () => {
     const add = screen.getByRole('button', { name: 'Add tag' });
     expect(create).toBeDisabled();
     expect(add).toBeDisabled();
+    fireEvent.click(create);
+    expect(screen.queryByRole('dialog', { name: 'Create alias' })).not.toBeInTheDocument();
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(0);
+
     update({ writesEnabled: true });
     fireEvent.click(create);
     const modal = await screen.findByRole('dialog', { name: 'Create alias' });
@@ -354,6 +358,7 @@ describe('key labels', () => {
     fireEvent.change(dialog.getByRole('textbox', { name: 'Alias name' }), { target: { value: 'events' } });
     const submit = dialog.getByRole('button', { name: 'Create alias' });
     fireEvent.click(submit);
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(1);
     expect(signal?.aborted).toBe(false);
 
     update({ currentConnection: offlineConnection });
