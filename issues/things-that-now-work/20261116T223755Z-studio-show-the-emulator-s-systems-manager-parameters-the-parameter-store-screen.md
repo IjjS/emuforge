@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|ssm|parameters-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ssm-parameter-list studio.ssm-parameter-save studio.ssm-parameter-duplicate studio.ssm-parameter-versions studio.ssm-parameter-tags studio.ssm-parameter-resource-policy studio.ssm-parameter-delete studio.ssm-parameter-bulk-delete studio.ssm-parameter-list-restart studio.ssm-parameter-detail-restart
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's Systems Manager parameters: the Parameter Store screen

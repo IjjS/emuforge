@@ -20,6 +20,8 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { DeleteControl } from '../components/delete/delete-control';
+import { ParameterResourcePolicies } from '../components/policies/policies';
+import { ParameterTags } from '../components/tags/tags';
 import { ValueReveal } from '../components/versions/value-reveal';
 import { VersionHistory } from '../components/versions/version-history';
 import { PARAMETER_STORE_PATH, parameterEditPath, parameterName } from '../paths';
@@ -148,6 +150,15 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
               connection={connection}
               name={name}
               secure={parameter.Type === 'SecureString'}
+            />
+          )}
+          {!disconnected && <ParameterTags key={valuesKey} connection={connection} name={name} />}
+          {!disconnected && parameter.Tier === 'Advanced' && parameter.ARN && (
+            <ParameterResourcePolicies
+              key={JSON.stringify([valuesKey, parameter.ARN])}
+              connection={connection}
+              name={name}
+              arn={parameter.ARN}
             />
           )}
         </>
