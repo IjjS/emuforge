@@ -5,7 +5,7 @@ import { expect, test } from './support';
 import { ABOUT_CONTROL, connectedAt, crumbLink, crumbs, expectLine, notStartedOn } from './support/aws-area';
 import { SEOUL } from './support/service-screens';
 import { direct, fixture } from './services/kms/fixture';
-import { button, content, dateText, detail, empty, field, flash, keyLink, list, openModal, rowWith, submit, ui } from './services/kms/screen';
+import { button, content, dateText, detail, empty, field, flash, keyLink, list, openModal, expectListedAlias, submit, ui } from './services/kms/screen';
 
 test.use({ timezoneId: SEOUL.timeZone });
 
@@ -39,12 +39,12 @@ test('studio.kms-find-external-keys', async ({ ctx, page }) => {
   }
   const first = await external('first');
   await button(page, 'Refresh').click();
-  await expect(rowWith(page, first.AliasName!)).toContainText(first.TargetKeyId!);
+  await expectListedAlias(page, first.TargetKeyId!, first.AliasName!);
   await keyLink(page, first.TargetKeyId!).click();
   await metadata(page, (await f.kms.describeKey({ KeyId: first.TargetKeyId })).KeyMetadata!);
   const second = await external('second');
   await crumbLink(page, 'Customer managed keys').click();
-  for (const alias of [first, second]) await expect(rowWith(page, alias.AliasName!)).toContainText(alias.TargetKeyId!);
+  for (const alias of [first, second]) await expectListedAlias(page, alias.TargetKeyId!, alias.AliasName!);
 });
 
 test('studio.kms-page-through-keys', async ({ ctx, page }) => {
@@ -62,7 +62,7 @@ test('studio.kms-page-through-keys', async ({ ctx, page }) => {
   await expect(keyLink(page, first.Keys![0]!.KeyId!)).toBeVisible();
   await page.locator(ui.findPagination().findNextPageButton().toSelector()).click();
   await expect(keyLink(page, id)).toBeVisible();
-  await expect(rowWith(page, alias.AliasName!)).toContainText(alias.TargetKeyId!);
+  await expectListedAlias(page, alias.TargetKeyId!, alias.AliasName!);
 });
 
 test('studio.kms-missing-key', async ({ ctx, page }) => {

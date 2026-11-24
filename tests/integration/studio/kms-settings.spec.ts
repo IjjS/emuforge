@@ -1,7 +1,7 @@
 import { expect, test } from './support';
 import { SEOUL } from './support/service-screens';
 import { fixture } from './services/kms/fixture';
-import { button, content, dateText, field, flash, footer, openModal, openTab, rows, rowWith, submit, ui } from './services/kms/screen';
+import { button, content, dateText, field, flash, footer, openModal, openTab, expectEmptyTable, expectTableRows, submit, ui } from './services/kms/screen';
 
 test.use({ timezoneId: SEOUL.timeZone });
 
@@ -16,21 +16,21 @@ test('studio.kms-manage-aliases', async ({ ctx, page }) => {
   await field(page, 'Alias name').fill(alias);
   await submit(page, 'Create alias', 'Alias created.');
   expect(await directAlias()).toMatchObject({ AliasName: alias, TargetKeyId: first });
-  await expect(rowWith(page, alias)).toBeVisible();
+  await expectTableRows(page, 'Aliases', [1], [[alias]]);
   await openModal(page, 'Reassign alias ' + alias, 'Reassign alias');
   const picker = ui.findModal().findContent().findSelect();
   await page.locator(picker.findTrigger().toSelector()).click();
   await page.locator(picker.findDropdown().findOptionByValue(second).toSelector()).click();
   await submit(page, 'Reassign alias', 'Alias reassigned.');
   expect(await directAlias()).toMatchObject({ AliasName: alias, TargetKeyId: second });
-  await expect(rowWith(page, alias)).toHaveCount(0);
+  await expectEmptyTable(page, 'Aliases', 'No aliases');
   await openTab(page, second, 'Labels');
-  await expect(rowWith(page, alias)).toBeVisible();
+  await expectTableRows(page, 'Aliases', [1], [[alias]]);
   await openModal(page, 'Delete alias ' + alias, 'Delete alias');
   await content(page).getByRole('textbox').fill('delete');
   await submit(page, 'Delete alias', 'Alias deleted.');
   expect(await directAlias()).toBeUndefined();
-  await expect(rowWith(page, alias)).toHaveCount(0);
+  await expectEmptyTable(page, 'Aliases', 'No aliases');
 });
 
 test('studio.kms-alias-refused', async ({ ctx, page }) => {
@@ -57,18 +57,20 @@ test('studio.kms-manage-tags', async ({ ctx, page }) => {
   await field(page, 'Tag name').fill(name);
   await field(page, 'Value').fill('original');
   await submit(page, 'Add tag', 'Tag added.');
-  expect(await directTag()).toEqual({ TagKey: name, TagValue: 'original' });
-  await expect(rowWith(page, name)).toContainText('original');
+  const original = await directTag();
+  expect(original).toEqual({ TagKey: name, TagValue: 'original' });
+  await expectTableRows(page, 'Tags', [1, 2], [[original!.TagKey!, original!.TagValue!]]);
   await openModal(page, 'Edit tag ' + name, 'Edit tag');
   await field(page, 'Value').fill('updated');
   await submit(page, 'Save tag', 'Tag updated.');
-  expect(await directTag()).toEqual({ TagKey: name, TagValue: 'updated' });
-  await expect(rowWith(page, name)).toContainText('updated');
+  const updated = await directTag();
+  expect(updated).toEqual({ TagKey: name, TagValue: 'updated' });
+  await expectTableRows(page, 'Tags', [1, 2], [[updated!.TagKey!, updated!.TagValue!]]);
   await openModal(page, 'Remove tag ' + name, 'Remove tag');
   await content(page).getByRole('textbox').fill('remove');
   await submit(page, 'Remove tag', 'Tag removed.');
   expect(await directTag()).toBeUndefined();
-  await expect(rowWith(page, name)).toHaveCount(0);
+  await expectEmptyTable(page, 'Tags', 'No tags');
 });
 
 test('studio.kms-edit-policy', async ({ ctx, page }) => {
@@ -103,14 +105,12 @@ test('studio.kms-manage-grants', async ({ ctx, page }) => {
   await submit(page, 'Create grant', 'Grant created.');
   const grant = (await grants()).find(g => g.GranteePrincipal === principal)!;
   expect(grant.Operations).toEqual(['Encrypt']);
-  const row = rowWith(page, grant.GrantId!);
-  await expect(row).toContainText(grant.GranteePrincipal!);
-  await expect(row).toContainText(grant.Operations![0]!);
+  await expectTableRows(page, 'Grants', [1, 2, 3], [[grant.GranteePrincipal!, grant.Operations![0]!, grant.GrantId!]]);
   await openModal(page, 'Revoke grant ' + grant.GrantId!, 'Revoke grant');
   await content(page).getByRole('textbox').fill('revoke');
   await submit(page, 'Revoke grant', 'Grant revoked.');
   expect((await grants()).map(g => g.GrantId)).not.toContain(grant.GrantId);
-  await expect(row).toHaveCount(0);
+  await expectEmptyTable(page, 'Grants', 'No grants');
 });
 
 test('studio.kms-rotate-key', async ({ ctx, page }) => {
@@ -123,19 +123,26 @@ test('studio.kms-rotate-key', async ({ ctx, page }) => {
   async function verify(enabled: boolean) {
     const status = await settings();
     expect(status.KeyRotationEnabled).toBe(enabled);
-    await expect(panel.getByText(enabled ? 'Enabled' : 'Disabled', { exact: true })).toBeVisible();
-    if (status.RotationPeriodInDays) await expect(panel.getByText(status.RotationPeriodInDays + ' days', { exact: true })).toBeVisible();
-    if (status.NextRotationDate) await expect(panel.getByText(dateText(status.NextRotationDate), { exact: true })).toBeVisible();
-    const records = (await history()).Rotations ?? [];
-    const tableRows = rows(page).and(panel.getByRole('row'));
-    await expect(tableRows).toHaveCount(records.length);
-    if (records.length === 0) {
-      await expect(panel.locator(ui.findTable().findEmptySlot().toSelector().replace(/^body /, ''))).toHaveText('No completed rotations');
+    const pairs = ui.findKeyValuePairs().findItems();
+    const values = [
+      ['Automatic rotation', enabled ? 'Enabled' : 'Disabled'],
+      ['Rotation period', status.RotationPeriodInDays === undefined ? '–' : status.RotationPeriodInDays + ' days'],
+      ['Next rotation date', status.NextRotationDate === undefined ? '–' : dateText(status.NextRotationDate)],
+    ];
+    for (const [i, [label, value]] of values.entries()) {
+      const pair = pairs.get(i + 1);
+      await expect(panel.locator(pair.findLabel().toSelector().replace(/^body /, ''))).toHaveText(label!);
+      await expect(panel.locator(pair.findValue().toSelector().replace(/^body /, ''))).toHaveText(value!);
     }
-    for (const entry of records) {
-      const row = rowWith(page, dateText(entry.RotationDate!));
-      const type = entry.RotationType === 'ON_DEMAND' ? 'On-demand' : 'Automatic';
-      await expect(row).toContainText(type);
+    const records = (await history()).Rotations ?? [];
+    if (records.length === 0) {
+      await expectEmptyTable(page, 'Rotation history', 'No completed rotations');
+    } else {
+      const expected = records.map(entry => [
+        dateText(entry.RotationDate!),
+        entry.RotationType === 'ON_DEMAND' ? 'On-demand' : entry.RotationType === 'AUTOMATIC' ? 'Automatic' : entry.RotationType!,
+      ]);
+      await expectTableRows(page, 'Rotation history', [1, 2], expected);
     }
   }
   await verify(false);

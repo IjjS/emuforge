@@ -8,10 +8,44 @@ export const list = '/aws/kms';
 export const detail = (id: string) => list + '/keys/' + id;
 export const dateText = (date: Date) => creationDateText(date.toISOString(), SEOUL);
 export const button = (root: Page | Locator, name: string) => root.getByRole('button', { name, exact: true });
-export const rows = (page: Page) => page.locator(ui.findTable().findRows().toSelector());
-export const rowWith = (page: Page, name: string) => rows(page).filter({ has: page.getByText(name, { exact: true }) });
-export const keyLink = (page: Page, id: string) => rows(page).getByRole('link', { name: id, exact: true });
-export const empty = (page: Page) => page.getByRole('table', { name: /^Customer managed keys/ }).locator(ui.findTable().findEmptySlot().toSelector().split(' ').at(-1)!);
+const table = ui.findTable();
+
+function tableRoot(page: Page, title: string) {
+  return page.locator(table.toSelector()).filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+}
+
+function tableSlot(page: Page, title: string, selector: string) {
+  return tableRoot(page, title).locator(selector.slice(table.toSelector().length).trim());
+}
+
+export const keyLink = (page: Page, id: string) =>
+  tableSlot(page, 'Customer managed keys', table.findRows().toSelector()).getByRole('link', { name: id, exact: true });
+export const empty = (page: Page) => tableSlot(page, 'Customer managed keys', table.findEmptySlot().toSelector());
+
+export async function expectTableRows(page: Page, title: string, columns: number[], expected: string[][]) {
+  const rows = tableSlot(page, title, table.findRows().toSelector());
+  await expect(rows).toHaveCount(expected.length);
+  for (let i = 0; i < expected.length; i++) {
+    for (const [j, column] of columns.entries()) {
+      const cell = tableSlot(page, title, table.findBodyCell(i + 1, column).toSelector());
+      await expect(cell).toHaveText(expected[i]![j]!);
+    }
+  }
+}
+
+export async function expectEmptyTable(page: Page, title: string, message: string) {
+  await expect(tableSlot(page, title, table.findEmptySlot().toSelector())).toHaveText(message);
+  await expect(tableSlot(page, title, table.findRows().toSelector())).toHaveCount(0);
+}
+
+export async function expectListedAlias(page: Page, id: string, alias: string) {
+  const row = tableSlot(page, 'Customer managed keys', table.findRows().toSelector())
+    .filter({ has: page.getByRole('link', { name: id, exact: true }) });
+  await expect(row).toBeVisible();
+  const index = await row.evaluate(node => (node as HTMLTableRowElement).sectionRowIndex + 1);
+  await expect(tableSlot(page, 'Customer managed keys', table.findBodyCell(index, 2).toSelector())).toHaveText(id);
+  await expect(tableSlot(page, 'Customer managed keys', table.findBodyCell(index, 3).toSelector())).toHaveText(alias);
+}
 export const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true });
 export const modal = (page: Page) => page.locator(ui.findModal().toSelector());
 export const content = (page: Page) => page.locator(ui.findModal().findContent().toSelector());
