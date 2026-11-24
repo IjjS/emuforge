@@ -173,8 +173,29 @@ function modalSections(title: string) {
     if (footer === null) throw new Error(`Expected the ${title} modal footer.`);
     expect(modal.isVisible()).toBe(true);
     expect(modal.findHeader().getElement()).toHaveTextContent(title);
-    return { content: within(modal.findContent().getElement()), footer: within(footer.getElement()) };
+    const body = modal.findContent();
+    return { body, content: within(body.getElement()), footer: within(footer.getElement()) };
   });
+}
+
+async function expectOpenRefusal(
+  dialog: Awaited<ReturnType<typeof modalSections>>,
+  operation: string,
+  published: ReturnType<typeof openRefreshableAccess>['published'],
+) {
+  const reason = await dialog.content.findByText(REFUSAL, { exact: false });
+  expect(reason).toBeVisible();
+  const alert = dialog.content.getByRole('alert');
+  expect(alert).toHaveTextContent(`${operation} failed`);
+  expect(alert).toContainElement(reason);
+  expect(alert).toContainElement(document.activeElement);
+  expect(document.activeElement).toContainElement(reason);
+  expect(published).toHaveBeenCalledTimes(1);
+  expect(published.mock.calls[0]?.[0][0]).toHaveProperty('announcedInDialog', true);
+  const matchingPageAnnouncements = [
+    ...document.querySelectorAll('[role="alert"], [role="status"], [aria-live]:not([aria-live="off"])'),
+  ].filter((element) => !dialog.body.getElement().contains(element) && element.textContent.includes(REFUSAL));
+  expect(matchingPageAnnouncements).toHaveLength(0);
 }
 
 async function editPolicy() {
@@ -480,11 +501,11 @@ describe('KMS key access', () => {
       if (command instanceof PutKeyPolicyCommand) throw refusal();
       return fallback(command);
     });
-    open();
+    const { published } = openRefreshableAccess();
 
     const dialog = await editPolicy();
 
-    expect(await dialog.content.findByText(REFUSAL, { exact: false })).toBeVisible();
+    await expectOpenRefusal(dialog, 'PutKeyPolicy', published);
     expect(dialog.content.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
     expectCommand(expect.objectContaining({ input: { KeyId: KEY_ID } }));
     expect(send.mock.calls.some(([command]) => command instanceof ListKeyPoliciesCommand)).toBe(true);
@@ -502,6 +523,7 @@ describe('KMS key access', () => {
           command.input.Policy === NEW_POLICY,
       ),
     ).toBe(true);
+    expect(send.mock.calls.filter(([command]) => command instanceof PutKeyPolicyCommand)).toHaveLength(1);
   });
 
   it('keeps the saved document and flash when the policy names finish after the document', async () => {
@@ -595,25 +617,25 @@ describe('KMS key access', () => {
       if (command instanceof CreateGrantCommand) throw refusal();
       return fallback(command);
     });
-    open();
+    const { published } = openRefreshableAccess();
     fireEvent.click(screen.getByRole('button', { name: 'Create grant' }));
-    const modal = await screen.findByRole('dialog', { name: 'Create grant' });
-    const dialog = within(modal);
-    const grantee = dialog.getByRole('textbox', { name: 'Grantee principal ARN' });
+    const dialog = await modalSections('Create grant');
+    const grantee = dialog.content.getByRole('textbox', { name: 'Grantee principal ARN' });
     fireEvent.change(grantee, { target: { value: GRANTEE } });
-    const operations = createWrapper(modal).findMultiselect();
+    const operations = dialog.body.findMultiselect();
     if (operations === null) throw new Error('Expected the allowed operations field.');
     operations.openDropdown();
     await waitFor(() => expect(operations.findDropdown().findOptionByValue('Encrypt')).not.toBeNull());
     operations.selectOptionByValue('Encrypt');
-    fireEvent.click(dialog.getByRole('button', { name: 'Create grant' }));
+    fireEvent.click(dialog.footer.getByRole('button', { name: 'Create grant' }));
 
-    expect(await dialog.findByText(REFUSAL, { exact: false })).toBeVisible();
+    await expectOpenRefusal(dialog, 'CreateGrant', published);
     expect(grantee).toHaveValue(GRANTEE);
-    expect(dialog.getByRole('button', { name: 'Remove Encrypt' })).toBeVisible();
+    expect(dialog.content.getByRole('button', { name: 'Remove Encrypt' })).toBeVisible();
     expectCommand(
       expect.objectContaining({ input: { KeyId: KEY_ID, GranteePrincipal: GRANTEE, Operations: ['Encrypt'] } }),
     );
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateGrantCommand)).toHaveLength(1);
   });
 
   it('keeps focus while saving, focuses the refusal, and restores the opener after dismissal', async () => {
@@ -630,14 +652,14 @@ describe('KMS key access', () => {
     await screen.findByText(OLD_POLICY);
     const opener = screen.getByRole('button', { name: 'Edit key policy' });
     await user.click(opener);
-    const dialog = within(await screen.findByRole('dialog', { name: 'Edit key policy' }));
-    const save = dialog.getByRole('button', { name: 'Save policy' });
+    const dialog = await modalSections('Edit key policy');
+    const save = dialog.footer.getByRole('button', { name: 'Save policy' });
     await user.click(save);
     expect(save).toHaveFocus();
     expect(save).toHaveAttribute('aria-disabled', 'true');
 
     response.resolve(undefined);
-    const reason = await dialog.findByText(REFUSAL, { exact: false });
+    const reason = await dialog.content.findByText(REFUSAL, { exact: false });
     expect(document.activeElement).toContainElement(reason);
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit key policy' })).not.toBeInTheDocument());
@@ -650,13 +672,12 @@ describe('KMS key access', () => {
     const user = userEvent.setup();
     await screen.findByText(OLD_POLICY);
     await user.click(screen.getByRole('button', { name: 'Edit key policy' }));
-    const modal = await screen.findByRole('dialog', { name: 'Edit key policy' });
-    const dialog = within(modal);
-    const field = dialog.getByRole('textbox', { name: 'Policy document' });
+    const dialog = await modalSections('Edit key policy');
+    const field = dialog.content.getByRole('textbox', { name: 'Policy document' });
     fireEvent.change(field, { target: { value: '{"Statement":' } });
-    await user.click(dialog.getByRole('button', { name: 'Save policy' }));
+    await user.click(dialog.footer.getByRole('button', { name: 'Save policy' }));
 
-    const policyField = createWrapper(modal)
+    const policyField = dialog.body
       .findAllFormFields()
       .find((candidate) => candidate.findLabel()?.getElement().textContent === 'Policy document');
     const error = policyField?.findError()?.getElement();

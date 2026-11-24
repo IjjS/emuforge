@@ -19,9 +19,10 @@ export function ActionNotice({
   }, [failure, focusOnFailure]);
 
   const { type, header, content } = actionFailureItem(failure, failure.operation, endpoint);
-  return (
+  const notice = (
     <Alert ref={alert} type={type} header={header}>
       {content}
     </Alert>
   );
+  return focusOnFailure && type === 'error' ? <div role="alert">{notice}</div> : notice;
 }
