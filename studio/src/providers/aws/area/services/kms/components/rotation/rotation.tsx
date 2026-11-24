@@ -6,7 +6,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useQuery } from '@tanstack/react-query';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem, Code, ReadFailure } from '../../../../components/failure-states';
@@ -36,6 +36,9 @@ const automaticActionLabels = {
   disable: 'Disable automatic rotation',
 };
 
+const HISTORY_FOLLOW_INTERVAL_MS = 500;
+const HISTORY_FOLLOW_WINDOW_MS = 5_000;
+
 interface RotationProps {
   connection: AreaConnection;
   keyId: string;
@@ -53,6 +56,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const reasonId = useId();
   const [visit] = useState(() => (visits += 1));
   const [revision, setRevision] = useState(0);
+  const [historyFollow, setHistoryFollow] = useState<symbol>();
   const [statusRetry, setStatusRetry] = useState(false);
   const [historyRetry, setHistoryRetry] = useState(false);
   const [lastEnabled, setLastEnabled] = useState<boolean>();
@@ -61,6 +65,13 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const inFlight = useRef(false);
   const statusOffline = connectionFailure(connection, ROTATION_OPERATIONS.status);
   const historyOffline = connectionFailure(connection, ROTATION_OPERATIONS.history);
+  useEffect(() => {
+    if (historyFollow === undefined) return;
+    const timer = setTimeout(() => {
+      setHistoryFollow((current) => (current === historyFollow ? undefined : current));
+    }, HISTORY_FOLLOW_WINDOW_MS);
+    return () => clearTimeout(timer);
+  }, [historyFollow]);
   const status = useQuery({
     queryKey: ['kms', 'rotation-status', engineOrigin, keyId, visit, revision],
     queryFn: ({ signal }) => getKeyRotationStatus(engineOrigin ?? noEndpoint(), keyId, signal),
@@ -74,6 +85,8 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     operation: ROTATION_OPERATIONS.history,
     enabled: historyOffline === undefined || historyRetry,
     read: (endpoint, marker, signal) => listKeyRotations(endpoint, keyId, marker, signal),
+    readAgainAfter: () =>
+      historyOffline === undefined && historyFollow !== undefined ? HISTORY_FOLLOW_INTERVAL_MS : false,
   });
   const statusFailure = status.isError
     ? failureOf(status.error, ROTATION_OPERATIONS.status)
@@ -130,6 +143,8 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     try {
       await changeKeyRotation(engineOrigin, keyId, action, signal);
       if (signal.aborted) return;
+      // Acknowledgment and the pending-status field can both precede the completed row in ListKeyRotations.
+      if (action === 'rotate') setHistoryFollow(Symbol());
       showResult({ type: 'success', content: successMessage[action] });
       setRevision((current) => current + 1);
     } catch (error) {

@@ -209,6 +209,90 @@ describe('Key rotation', () => {
     expectSuccess('On-demand rotation requested.');
   });
 
+  it('reads a delayed on-demand history row after automatic rotation is disabled', async () => {
+    let automatic = true;
+    let requested = false;
+    const completed = pendingAnswer<undefined>();
+    const historyAfterRequest = vi.fn();
+    const historyAfterDisable = vi.fn();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) {
+        return automatic ? enabledSettings : { KeyRotationEnabled: false };
+      }
+      if (command instanceof RotateKeyOnDemandCommand) requested = true;
+      if (command instanceof DisableKeyRotationCommand) automatic = false;
+      if (command instanceof ListKeyRotationsCommand) {
+        if (requested) historyAfterRequest();
+        if (!automatic) {
+          historyAfterDisable();
+          if (historyAfterDisable.mock.calls.length > 1) {
+            await completed.promise;
+            return { Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] };
+          }
+        }
+        return { Rotations: [] };
+      }
+      return {};
+    });
+    open();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    const expectEmptyHistory = () =>
+      expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No completed rotations');
+    await waitFor(expectEmptyHistory);
+    expect(historyAfterRequest).not.toHaveBeenCalled();
+
+    click('Rotate now');
+    await waitFor(() => expectSuccess('On-demand rotation requested.'));
+    await waitFor(() => expect(historyAfterRequest).toHaveBeenCalled());
+    await waitFor(expectEmptyHistory);
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    click('Disable automatic rotation');
+
+    await waitFor(() => expectSuccess('Automatic rotation disabled.'));
+    await waitFor(() => expectField('Automatic rotation', 'Disabled'));
+    expectField('Rotation period', '–');
+    expectField('Next rotation date', '–');
+    await waitFor(() => expect(historyAfterDisable).toHaveBeenCalled());
+    expectEmptyHistory();
+    await act(() => completed.resolve(undefined));
+    await waitFor(() => expectRotation('On-demand', rotationDate), { timeout: 3_000 });
+    expectSuccess('Automatic rotation disabled.');
+  });
+
+  it('cancels an in-flight history follow-up when the key changes', async () => {
+    const completion = pendingAnswer<undefined>();
+    let requested = false;
+    const followUp = vi.fn<(signal: AbortSignal) => void>();
+    const historyAfterRequest = vi.fn();
+    send.mockImplementation(async (command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => {
+      if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
+      if (command instanceof RotateKeyOnDemandCommand) requested = true;
+      if (command instanceof ListKeyRotationsCommand && requested && command.input.KeyId === keyId) {
+        historyAfterRequest();
+        if (historyAfterRequest.mock.calls.length > 1) {
+          followUp(abortSignal);
+          await completion.promise;
+          return { Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] };
+        }
+      }
+      return { Rotations: [] };
+    });
+    const update = open();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    click('Rotate now');
+    await waitFor(() => expect(followUp).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    const signal = followUp.mock.calls[0]?.[0];
+    expect(signal?.aborted).toBe(false);
+
+    update(connection, 'other-key');
+    expect(signal?.aborted).toBe(true);
+    await act(() => completion.resolve(undefined));
+    await waitFor(() =>
+      expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No completed rotations'),
+    );
+    expect(followUp).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves the settings and shows the reason when rotation is refused for the key state', async () => {
     const reason = 'On-demand rotation requires the key to be enabled.';
     send.mockImplementation(async (command: unknown) => {
