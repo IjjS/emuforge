@@ -27,6 +27,15 @@ import { VersionHistory } from '../components/versions/version-history';
 import { PARAMETER_STORE_PATH, parameterEditPath, parameterName } from '../paths';
 import { useParameterMetadata } from '../queries';
 
+function formatPolicyText(text: string | undefined) {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
 function Metadata({ parameter, children }: { parameter: ParameterMetadata; children: React.ReactNode }) {
   const metadata = [
     { label: 'ARN', value: <CopyValue label="ARN" value={parameter.ARN} none="-" /> },
@@ -65,8 +74,8 @@ function Metadata({ parameter, children }: { parameter: ParameterMetadata; child
               <SpaceBetween size="xxs" key={index}>
                 <Box variant="strong">{PolicyType}</Box>
                 <ValueText kind="fixed" value={PolicyStatus} />
-                <Box variant="code">
-                  <ValueText kind="name" value={PolicyText} />
+                <Box variant="pre" nativeAttributes={{ style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
+                  <ValueText kind="name" value={formatPolicyText(PolicyText)} />
                 </Box>
               </SpaceBetween>
             ))}

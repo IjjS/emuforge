@@ -54,10 +54,13 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
           id: 'name',
           header: 'Name',
           isRowHeader: true,
+          minWidth: '28ch',
           cell: ({ Name }) =>
             Name ? (
               <Link href={parameterPath(Name)} onFollow={handleFollow}>
-                <ValueText kind="name" value={Name} />
+                <span style={Name.length <= 24 ? { display: 'inline-block', minWidth: 'max-content' } : undefined}>
+                  <ValueText kind="name" value={Name} />
+                </span>
               </Link>
             ) : (
               '-'
