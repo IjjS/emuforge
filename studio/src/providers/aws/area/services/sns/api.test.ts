@@ -12,13 +12,18 @@ import {
   listFunctionChoices,
   listQueueChoices,
   listSubscriptions,
+  listTopicTags,
   listTopics,
   publish,
   readDelivery,
   setSubscriptionSetting,
+  setTopicSetting,
   subscribe,
+  tagTopic,
   type SubscriptionSetting,
+  type TopicSetting,
   unsubscribe,
+  untagTopic,
 } from './api';
 import { DENY_REASON } from './policy';
 
@@ -222,7 +227,8 @@ describe('topics', () => {
   it('a topic: its attributes; NotFound → not found; InvalidParameter → a failure with code and message', async () => {
     const entries = {
       TopicArn: 'arn:aws:sns:us-east-1:000000000000:o.fifo',
-      DisplayName: 'Orders',
+      DisplayName: '  Orders  ',
+      Policy: ' {\n  "Version": "2012-10-17",\n  "Statement": []\n} ',
       FifoTopic: 'true',
       ContentBasedDeduplication: 'true',
       SubscriptionsConfirmed: '2',
@@ -240,7 +246,8 @@ describe('topics', () => {
       found: true,
       topic: {
         arn: entries.TopicArn,
-        displayName: 'Orders',
+        displayName: entries.DisplayName,
+        policy: entries.Policy,
         fifo: true,
         contentBasedDeduplication: true,
         confirmed: 2,
@@ -334,6 +341,79 @@ describe('topics', () => {
     expect(engine.of('Unsubscribe')[0]?.params.get('SubscriptionArn')).toBe(`${TOPIC}:1`);
     await deleteTopic(endpoint, TOPIC, signal());
     expect(engine.of('DeleteTopic')[0]?.params.get('TopicArn')).toBe(TOPIC);
+  });
+});
+
+describe('topic settings', () => {
+  const settings: TopicSetting[] = [
+    { name: 'DisplayName', value: 'Local orders' },
+    { name: 'DisplayName', value: '' },
+    { name: 'Policy', value: ' {\n  "Statement": []\n} ' },
+  ];
+
+  it.each(settings)('sends only $name with the exact value "$value" for the given ARN', async (setting) => {
+    await setTopicSetting(endpoint, TOPIC, setting, signal());
+    expect(engine.of('SetTopicAttributes')).toHaveLength(1);
+    expect(Object.fromEntries(engine.of('SetTopicAttributes')[0]?.params ?? [])).toEqual({
+      Action: 'SetTopicAttributes',
+      Version: '2010-03-31',
+      TopicArn: TOPIC,
+      AttributeName: setting.name,
+      AttributeValue: setting.value,
+    });
+  });
+
+  it('keeps the code and reason when a policy write is refused', async () => {
+    const message = 'Invalid parameter: Policy Error: null';
+    engine.on('SetTopicAttributes', () => snsRefused(400, 'InvalidParameter', message));
+    expect(await failureOf(setTopicSetting(endpoint, TOPIC, { name: 'Policy', value: 'invalid' }, signal()))).toEqual({
+      kind: 'other',
+      operation: 'SetTopicAttributes',
+      code: 'InvalidParameter',
+      message,
+    });
+  });
+
+  it('reads an empty tag response as an empty list', async () => {
+    engine.on('ListTagsForResource', () => snsOk('ListTagsForResource', '<Tags/>'));
+    expect(await listTopicTags(endpoint, TOPIC, signal())).toEqual([]);
+    expect(engine.of('ListTagsForResource')[0]?.params.get('ResourceArn')).toBe(TOPIC);
+  });
+
+  it('preserves the keys and values of all returned tags', async () => {
+    engine.on('ListTagsForResource', () =>
+      snsOk(
+        'ListTagsForResource',
+        '<Tags><member><Key> color </Key><Value> blue </Value></member><member><Key>keep</Key><Value/></member></Tags>',
+      ),
+    );
+    expect(await listTopicTags(endpoint, TOPIC, signal())).toEqual([
+      { key: ' color ', value: ' blue ' },
+      { key: 'keep', value: '' },
+    ]);
+  });
+
+  it('saves one exact tag key and value on the given ARN', async () => {
+    await tagTopic(endpoint, TOPIC, { key: ' color ', value: ' blue ' }, signal());
+    expect(engine.of('TagResource')).toHaveLength(1);
+    expect(Object.fromEntries(engine.of('TagResource')[0]?.params ?? [])).toEqual({
+      Action: 'TagResource',
+      Version: '2010-03-31',
+      ResourceArn: TOPIC,
+      'Tags.member.1.Key': ' color ',
+      'Tags.member.1.Value': ' blue ',
+    });
+  });
+
+  it('removes only the selected key on the given ARN', async () => {
+    await untagTopic(endpoint, TOPIC, ' color ', signal());
+    expect(engine.of('UntagResource')).toHaveLength(1);
+    expect(Object.fromEntries(engine.of('UntagResource')[0]?.params ?? [])).toEqual({
+      Action: 'UntagResource',
+      Version: '2010-03-31',
+      ResourceArn: TOPIC,
+      'TagKeys.member.1': ' color ',
+    });
   });
 });
 
@@ -673,6 +753,9 @@ describe('every call', () => {
   const calls: [string, () => Promise<unknown>][] = [
     ['ListTopics', () => listTopics(endpoint, undefined, signal())],
     ['GetTopicAttributes', () => getTopic(endpoint, TOPIC, signal())],
+    ['ListTagsForResource', () => listTopicTags(endpoint, TOPIC, signal())],
+    ['TagResource', () => tagTopic(endpoint, TOPIC, { key: 'color', value: 'blue' }, signal())],
+    ['UntagResource', () => untagTopic(endpoint, TOPIC, 'color', signal())],
     ['ListSubscriptionsByTopic', () => listSubscriptions(endpoint, TOPIC, undefined, signal())],
     [
       'CreateTopic',
