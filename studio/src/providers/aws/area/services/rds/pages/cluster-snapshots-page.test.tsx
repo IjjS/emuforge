@@ -383,8 +383,9 @@ describe('DB cluster snapshots', () => {
     await waitFor(() => {
       expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots');
       expect(tableOf()?.findSelectedRows()).toHaveLength(0);
+      expect(rowIndex(ORPHAN.id)).toBe(-1);
+      expect(PAGE.findModal()).toBeNull();
     });
-    expect(rowIndex(ORPHAN.id)).toBe(-1);
     expect(flashOf('success')).toBeUndefined();
 
     await act(async () => {
