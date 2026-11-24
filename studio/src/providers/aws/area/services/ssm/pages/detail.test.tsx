@@ -137,6 +137,23 @@ const details = () =>
     return required(heading, 'Parameter details heading');
   });
 
+function expectDetailReadFailure(message: string) {
+  const container = ui
+    .findAllContainers()
+    .find((item) => within(item.findContent().getElement()).queryByText('The parameter could not be read.'));
+  const content = required(container, 'parameter read-failure container').findContent();
+  const status = required(content.findStatusIndicator(), 'parameter read status').getElement();
+  expect(status).toBeVisible();
+  expect(status.textContent).toBe(message);
+  const panel = within(content.getElement());
+  const recovery = panel.getByRole('link', { name: 'Connection status' });
+  expect(recovery).toBeVisible();
+  expect(recovery).toHaveAttribute('href', '/');
+  const retry = panel.getByRole('button', { name: 'Retry' });
+  expect(retry).toBeVisible();
+  expect(retry).toBeEnabled();
+}
+
 const flash = (type: 'success' | 'info') => ui.findFlashbar()?.findItemsByType(type)[0];
 
 async function openDelete() {
@@ -181,30 +198,36 @@ describe('Parameter Store detail', () => {
       ).toBeVisible();
     });
     await details();
-    const metadata = within(required(detailSection(), 'details section').findContent().getElement());
+    const content = required(detailSection(), 'details section').findContent();
+    const fields = required(content.findKeyValuePairs(), 'parameter metadata').findItems();
     expect(describeParameters.mock.calls).toEqual([[{ ParameterFilters: parameterFilters }]]);
-    for (const value of [
-      'SecureString',
-      '12',
-      'Application password',
-      'Advanced',
-      'text',
-      '[a-z]+',
-      'Expiration',
-      'Pending',
-    ]) {
-      expect(metadata.getByText(value)).toBeVisible();
+    for (const [label, expected] of [
+      ['ARN', ARN],
+      ['Type', 'SecureString'],
+      ['Version', '12'],
+      ['Description', 'Application password'],
+      ['Last modified by', USER],
+      ['Last modified', creationDateText(new Date(MODIFIED * 1000))],
+      ['KMS key ID', 'alias/app-key'],
+      ['Tier', 'Advanced'],
+      ['Data type', 'text'],
+      ['Allowed pattern', '[a-z]+'],
+    ] as const) {
+      const field = required(
+        fields.find((item) => item.findLabel()?.getElement().textContent === label),
+        label,
+      );
+      const value = required(field.findValue(), `${label} value`);
+      const displayed = (value.findCopyToClipboard()?.findDisplayedText() ?? value).getElement();
+      expect(displayed).toBeVisible();
+      expect(displayed.textContent).toBe(expected);
     }
+    const metadata = within(content.getElement());
+    expect(metadata.getByText('Expiration')).toBeVisible();
+    expect(metadata.getByText('Pending')).toBeVisible();
     expect(
       metadata.getByText(JSON.stringify(JSON.parse(POLICY), null, 2), { normalizer: (text) => text }),
     ).toBeVisible();
-    for (const value of [ARN, USER, 'alias/app-key', creationDateText(new Date(MODIFIED * 1000))]) {
-      expect(
-        metadata.getByText((_, element) =>
-          Boolean(element?.classList.contains('aws-area-value') && element.textContent === value),
-        ),
-      ).toBeVisible();
-    }
     expect(screen.queryByText(VALUE)).toBeNull();
     expect(screen.queryByText('Prefix match only')).toBeNull();
   });
@@ -234,13 +257,10 @@ describe('Parameter Store detail', () => {
     expect(screen.getByRole('link', { name: 'Back to Parameter Store' })).toHaveAttribute('href', PARAMETER_STORE_PATH);
 
     connect({ kind: 'engine-unreachable', checkedAt: 2, lastEmulatorPort: emulator.port });
-    expect(screen.getAllByText(/is not answering/).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: 'Connection status' })[0]).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expectDetailReadFailure(`The EmuForge engine at ${engineOrigin} is not answering`);
 
     connect({ ...connected, kind: 'emulator-unreachable', checkedAt: 3, reason: 'not_started', message: '' });
-    expect(screen.getAllByText(/Not started on port/).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: 'Connection status' })[0]).toBeVisible();
+    expectDetailReadFailure(`Not started on port ${emulator.port}`);
   });
 
   it('D3 confirms the whole name and hands the deletion flash to the list after metadata settles', async () => {
