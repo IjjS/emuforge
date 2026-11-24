@@ -172,12 +172,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           )}
           failure={action.failure}
           onDismiss={close}
-          onSubmit={() =>
+          onSubmit={(isOpen) =>
             void action.run(
               LIFECYCLE_OPERATIONS.describe,
               (endpoint, signal) => updateKeyDescription(endpoint, keyId, description, signal),
               'Key description updated.',
-              close,
+              { close, isOpen },
             )
           }
         >
@@ -200,12 +200,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           blockedReason={disableReason}
           failure={action.failure}
           onDismiss={close}
-          onSubmit={() =>
+          onSubmit={(isOpen) =>
             void action.run(
               LIFECYCLE_OPERATIONS.disable,
               (endpoint, signal) => disableKey(endpoint, keyId, signal),
               'Key disabled.',
-              close,
+              { close, isOpen },
             )
           }
         >
@@ -231,13 +231,13 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           )}
           failure={action.failure}
           onDismiss={close}
-          onSubmit={() => {
+          onSubmit={(isOpen) => {
             if (scheduledDays === undefined) return;
             void action.run(
               LIFECYCLE_OPERATIONS.schedule,
               (endpoint, signal) => scheduleKeyDeletion(endpoint, keyId, scheduledDays, signal),
               'Key deletion scheduled.',
-              close,
+              { close, isOpen },
             );
           }}
         >
@@ -278,12 +278,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           )}
           failure={action.failure}
           onDismiss={close}
-          onSubmit={() =>
+          onSubmit={(isOpen) =>
             void action.run(
               LIFECYCLE_OPERATIONS.cancel,
               (endpoint, signal) => cancelKeyDeletion(endpoint, keyId, signal),
               'Key deletion canceled.',
-              close,
+              { close, isOpen },
             )
           }
         >

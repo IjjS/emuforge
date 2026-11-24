@@ -41,14 +41,14 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string, re
   }, []);
 
   /**
-   * Sends `request`. `close` ends the dialog that asked for it, if any: on success, and on a 501, whose action then
-   * stays on the page as unavailable. Any other failure stays in the open dialog, or in the flash without one.
+   * A confirmation closes on success or a 501. An ordinary refusal is announced in the original dialog if it
+   * is still open, and through the page Flashbar otherwise.
    */
   const run = async (
     operation: LifecycleOperation,
     request: (endpoint: string, signal: AbortSignal) => Promise<unknown>,
     success: string,
-    close?: (operation: LifecycleOperation) => void,
+    dialog?: { close: (operation: LifecycleOperation) => void; isOpen: () => boolean },
   ) => {
     if (endpoint === undefined || disabled(operation) || inFlight.current || awaitingReadback.current) return;
     const signal = signalForPage();
@@ -63,9 +63,9 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string, re
       const item = actionFailureItem(reason, operation, endpoint);
       if (reason.kind === 'not-implemented') {
         setUnavailable((operations) => [...operations, operation]);
-        close?.(operation);
+        dialog?.close(operation);
         flash.show([item]);
-      } else if (close !== undefined) {
+      } else if (dialog?.isOpen()) {
         setFailure(item);
         flash.show([{ ...item, announcedInDialog: true }]);
       } else {
@@ -83,7 +83,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string, re
       setConfirmingState(true);
     }
     flash.show([{ type: 'success', content: success }]);
-    close?.(operation);
+    dialog?.close(operation);
     if (changedState) refreshState();
     else void queryClient.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
     void queryClient.invalidateQueries({ queryKey: KMS_KEYS.list });
