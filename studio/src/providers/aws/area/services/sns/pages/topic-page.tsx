@@ -351,11 +351,15 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
         return { saved: false };
       }
       const failure = failureOf(error, operation);
+      const item = actionFailureItem(failure, action, endpoint);
+      if (currentScope.current === scope) {
+        flash.show([item]);
+      }
       if (failure.kind === 'not-implemented') {
         rememberUnavailable(operation);
         return { saved: false };
       }
-      return { saved: false, error: actionFailureItem(failure, action, endpoint) };
+      return { saved: false, error: item };
     } finally {
       activeWrites.current.delete(key);
       if (!signal.aborted) {

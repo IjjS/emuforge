@@ -484,8 +484,9 @@ describe('Settings on a topic page', () => {
   const refreshButton = () => screen.getByRole('button', { name: 'Refresh' });
 
   const unavailable = (operation: string) => new RequestError({ kind: 'not-implemented', operation });
-  const expectUnavailable = async (operation: string) => {
-    const detail = await screen.findByText(`The emulator answered 501 Not Implemented for ${operation}.`);
+  const expectUnavailable = async (operation: string, inSettings = false) => {
+    const view = inSettings ? within(await screen.findByRole('tabpanel', { name: 'Settings' })) : screen;
+    const detail = await view.findByText(`The emulator answered 501 Not Implemented for ${operation}.`);
     expect(
       within(detail.closest('[role="group"]') ?? document.body).getByText('Not implemented by the emulator'),
     ).toBeVisible();
@@ -507,7 +508,10 @@ describe('Settings on a topic page', () => {
     expect(await screen.findByRole('heading', { name: 'Access policy' })).toBeVisible();
     expect(activeTab()).toBe('Settings');
     expect(api.getTopic).toHaveBeenCalledWith(ENGINE, ARN, expect.any(AbortSignal));
-    expect(await screen.findByRole('rowheader', { name: 'color' })).toBeVisible();
+    const tagRow = within(await screen.findByRole('row', { name: /color/ }));
+    expect(tagRow.getByText('color')).toBeVisible();
+    expect(tagRow.getByRole('button', { name: 'Edit tag color' })).toBeVisible();
+    expect(tagRow.getByRole('button', { name: 'Remove tag color' })).toBeVisible();
     expect(api.listTopicTags).toHaveBeenCalledWith(ENGINE, ARN, expect.any(AbortSignal));
   });
 
@@ -622,9 +626,14 @@ describe('Settings on a topic page', () => {
     async ({ operation, write, attempt, disabledActions, supportedAction, useSupported, success }) => {
       vi.mocked(write).mockRejectedValueOnce(unavailable(operation));
       open(settingsPath);
-      await screen.findByRole('rowheader', { name: 'color' });
+      await screen.findByRole('row', { name: /color/ });
       await attempt();
-      await expectUnavailable(operation);
+      await expectUnavailable(operation, true);
+      const flash = PAGE.findFlashbar()?.findItemsByType('info') ?? [];
+      expect(flash).toHaveLength(1);
+      expect(flash[0]?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(flash[0]?.findContent()?.getElement()).toHaveTextContent(operation);
+      flash[0]?.findDismissButton()?.click();
 
       const detail = hold<api.TopicRead>();
       vi.mocked(api.getTopic).mockReturnValueOnce(detail.promise);
@@ -635,7 +644,8 @@ describe('Settings on a topic page', () => {
         detail.resolve(standard({ policy }));
       });
 
-      await expectUnavailable(operation);
+      await expectUnavailable(operation, true);
+      expect(PAGE.findFlashbar()?.findItemsByType('info') ?? []).toHaveLength(0);
       for (const name of disabledActions) {
         const button = await screen.findByRole('button', { name });
         expect(button).toBeDisabled();
