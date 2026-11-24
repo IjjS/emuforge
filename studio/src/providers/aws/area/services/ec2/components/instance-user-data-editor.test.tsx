@@ -10,8 +10,10 @@ import { RequestError, requestFailure } from '../../../../../../lib/aws/request'
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
+import { usePageSignal } from '../../../components/use-token-listing';
 import type { Instance } from '../api';
 import { changeInstanceContent, getInstanceUserData, type InstanceUserData } from '../instance-content-api';
+import { useInstanceContentChange } from '../instance-content-queries';
 import { InstanceUserDataEditor } from './instance-user-data-editor';
 
 vi.mock('../instance-content-api', async (original) => ({
@@ -30,6 +32,13 @@ const LABEL = 'Edit user data';
 const READ = 'DescribeInstanceAttribute';
 const WRITE = 'ModifyInstanceAttribute';
 
+const PAGE = createWrapper(document.body);
+
+function Editor() {
+  const writes = useInstanceContentChange(ENDPOINT, INSTANCE.id, usePageSignal());
+  return <InstanceUserDataEditor instance={INSTANCE} connection={CONNECTION} writes={writes} />;
+}
+
 function showEditor(value: InstanceUserData = { kind: 'text', text: 'first\nsecond\n' }) {
   vi.resetAllMocks();
   vi.mocked(getInstanceUserData).mockResolvedValue(value);
@@ -42,7 +51,9 @@ function showEditor(value: InstanceUserData = { kind: 'text', text: 'first\nseco
         <PageFlashContext.Provider value={{ show: setFlash, handOver: vi.fn() }}>
           <div ref={root}>
             <Flashbar items={flash ?? []} />
-            <InstanceUserDataEditor instance={INSTANCE} connection={CONNECTION} />
+            <div data-testid="user-data-editor">
+              <Editor />
+            </div>
           </div>
         </PageFlashContext.Provider>
       </AreaRootContext.Provider>
@@ -65,7 +76,12 @@ function refusal(operation: string, code: string, message: string, status: numbe
 
 async function open() {
   fireEvent.click(screen.getByRole('button', { name: LABEL }));
-  return screen.findByRole('dialog', { name: LABEL });
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error('Missing user data dialog');
+    expect(modal.findHeader().getElement()).toHaveTextContent(LABEL);
+    return modal.getElement();
+  });
 }
 
 function field(dialog: HTMLElement) {
@@ -90,8 +106,11 @@ it('allows Retry after a failed read and enables saving a change once the actual
     refusal(READ, 'InternalError', 'The current value could not be read.', 500),
   );
   const dialog = await open();
-  expect(await within(dialog).findByText(/The current value could not be read\./)).toBeVisible();
-  expect(within(dialog).getByText('InternalError')).toBeVisible();
+  await waitFor(() => {
+    expect(PAGE.findModal()?.findContent().getElement()).toHaveTextContent(
+      'InternalError: The current value could not be read.',
+    );
+  });
   expect(field(dialog)).toBeUndefined();
   expect(save(dialog)).toBeDisabled();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
@@ -106,7 +125,11 @@ it('allows Retry after a failed read and enables saving a change once the actual
 it('explains why binary user data cannot be edited and prevents saving it', async () => {
   showEditor({ kind: 'binary' });
   const dialog = await open();
-  expect(await within(dialog).findByText('The existing user data cannot be edited as UTF-8 text.')).toBeVisible();
+  await waitFor(() => {
+    expect(createWrapper(dialog).findStatusIndicator()?.getElement()).toHaveTextContent(
+      'The existing user data cannot be edited as UTF-8 text.',
+    );
+  });
   expect(field(dialog)).toBeUndefined();
   expect(save(dialog)).toBeDisabled();
   fireEvent.click(save(dialog));
@@ -139,13 +162,17 @@ it('keeps the original refusal and multiline draft when the instance was started
   fireEvent.click(save(dialog));
   const message = 'IncorrectInstanceState: The instance is running.';
   expect(await within(dialog).findByRole('alert')).toHaveTextContent(message);
-  expect(createWrapper(document.body).findFlashbar()?.getElement()).toHaveTextContent(message);
+  expect(PAGE.findFlashbar()?.findItemsByType('error')[0]?.findContent()?.getElement()).toHaveTextContent(message);
   expect(textarea).toHaveValue(draft);
-  expect(screen.queryByText('User data updated.')).toBeNull();
+  expect(PAGE.findFlashbar()?.findItemsByType('success')).toHaveLength(0);
 
   fireEvent.change(textarea, { target: { value: draft + 'corrected' } });
   fireEvent.click(save(dialog));
-  expect(await screen.findByText('User data updated.')).toBeVisible();
+  await waitFor(() => {
+    expect(PAGE.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement()).toHaveTextContent(
+      'User data updated.',
+    );
+  });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(changeInstanceContent).toHaveBeenLastCalledWith(
     ENDPOINT,
@@ -165,9 +192,14 @@ it.each([READ, WRITE])('keeps the edit action visible and unavailable after a 50
     fireEvent.change(await loadedField(dialog), { target: { value: 'new content' } });
     fireEvent.click(save(dialog));
   }
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(new RegExp(`501 Not Implemented for ${operation}`))).toBeVisible();
-  expect(screen.getByText(/User data operation unavailable\./)).toBeVisible();
+  await waitFor(() => {
+    const flash = PAGE.findFlashbar()?.findItemsByType('info')[0];
+    const header = operation === READ ? PAGE.findStatusIndicator()?.getElement() : flash?.findHeader()?.getElement();
+    const content = operation === READ ? screen.getByTestId('user-data-editor') : flash?.findContent()?.getElement();
+    expect(header).toHaveTextContent('Not implemented by the emulator');
+    expect(content).toHaveTextContent(`501 Not Implemented for ${operation}`);
+    expect(content).toHaveTextContent('User data operation unavailable.');
+  });
   const edit = screen.getByRole('button', { name: LABEL });
   expect(edit).toBeVisible();
   expect(edit).toHaveAttribute('aria-disabled', 'true');
@@ -178,12 +210,17 @@ it.each(['x\r\ny\rz\n', '\uFEFF한글\n'])('opens %j as reversible JSON and reje
   showEditor({ kind: 'text', text });
   const dialog = await open();
   const textarea = await loadedField(dialog);
-  expect(within(dialog).getByText(/Use a JSON string to preserve line endings and leading BOM/)).toBeVisible();
+  const form = createWrapper(dialog).findFormField();
+  expect(form?.findDescription()?.getElement()).toHaveTextContent(
+    'Use a JSON string to preserve line endings and leading BOM',
+  );
   expect(JSON.parse(textarea.value)).toBe(text);
   expect(textarea.value).toBe(JSON.stringify(text).replace(/^"\uFEFF/u, '"\\uFEFF'));
   for (const invalid of ['{"not":"a string"}', '"unterminated', '"\\uD800"']) {
     fireEvent.change(textarea, { target: { value: invalid } });
-    expect(within(dialog).getByText('Enter a valid JSON string with valid Unicode characters.')).toBeVisible();
+    expect(form?.findError()?.getElement()).toHaveTextContent(
+      'Enter a valid JSON string with valid Unicode characters.',
+    );
     expect(save(dialog)).toBeDisabled();
   }
   expect(changeInstanceContent).not.toHaveBeenCalled();

@@ -13,7 +13,7 @@ import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import { modifyInstanceAttribute } from '../instance-attribute-api';
-import { changeInstanceContent } from '../instance-content-api';
+import { changeInstanceContent, getInstanceUserData } from '../instance-content-api';
 import { EC2_KEYS, useInstanceListing } from '../queries';
 import { getVolume } from '../volume-api';
 
@@ -39,6 +39,7 @@ vi.mock('../instance-attribute-api', async (original) => ({
 vi.mock('../instance-content-api', async (original) => ({
   ...(await original<typeof import('../instance-content-api')>()),
   changeInstanceContent: vi.fn(),
+  getInstanceUserData: vi.fn(),
 }));
 
 vi.mock('../volume-api', async (original) => ({
@@ -50,7 +51,7 @@ vi.mock('../volume-api', async (original) => ({
 // The area as Studio's frame renders it.
 
 class Connection {
-  value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  value: AreaConnection & { targetGeneration?: number } = { result: undefined, engineOrigin: undefined };
   private readonly listeners = new Set<() => void>();
 
   readonly subscribe = (listener: () => void) => {
@@ -61,6 +62,11 @@ class Connection {
   };
 
   readonly get = () => this.value;
+
+  changeTarget() {
+    this.value = { ...this.value, targetGeneration: (this.value.targetGeneration ?? 0) + 1 };
+    for (const listener of this.listeners) listener();
+  }
 }
 
 const EMULATOR = { port: 9309, endpoint: 'https://127.0.0.1:9309' };
@@ -92,6 +98,7 @@ function AreaWithStudioProps() {
       onContentTarget={() => undefined}
       routeChanges={changes}
       connection={current}
+      targetGeneration={current.targetGeneration}
     />
   );
 }
@@ -223,11 +230,18 @@ function pairs(): Record<string, string> {
 
 /** A table of the page by its heading, as rows of cell texts, or its empty text. */
 function tableOf(heading: string) {
-  const found = PAGE.findAllTables().find((table) => text(table.findHeaderSlot()?.getElement()).startsWith(heading));
+  const found = PAGE.findAllTables().find((table) =>
+    text(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).startsWith(heading),
+  );
   expect(found, heading).toBeDefined();
   const table = found as NonNullable<typeof found>;
   return {
-    rows: (table.findRows() ?? []).map((row) => [...row.getElement().querySelectorAll('td, th')].map(text)),
+    rows: table
+      .findRows()
+      .map((_, row) =>
+        table.findColumnHeaders().map((_, column) => text(table.findBodyCell(row + 1, column + 1)?.getElement())),
+      ),
+    wrapper: table,
     empty: text(table.findEmptySlot()?.getElement()),
     element: table.getElement(),
   };
@@ -925,14 +939,45 @@ describe('instance setting actions', () => {
   });
 });
 
-async function editName(value: string) {
-  const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
-  fireEvent.click(within(row).getByRole('button', { name: 'Edit tag Name' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Edit tag' });
-  const field = createWrapper(dialog).findInput()?.findNativeInput().getElement();
-  if (!field) throw new Error('Missing tag value input');
+function tagButton(action: 'edit' | 'delete') {
+  const button = tableOf('Tags').wrapper.findBodyCell(1, 1)?.findAllButtons()[action === 'edit' ? 0 : 1];
+  if (button === undefined) throw new Error(`Missing ${action} action for the Name tag`);
+  expect(button.getElement()).toHaveAccessibleName(action === 'edit' ? 'Edit tag Name' : 'Delete tag Name');
+  return button.getElement();
+}
+
+function detailHeading() {
+  return PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+}
+
+function flashItem(type: 'success' | 'error') {
+  return PAGE.findFlashbar()?.findItemsByType(type)[0];
+}
+
+async function editContent(editor: 'tags' | 'user-data', value: string) {
+  const userData = editor === 'user-data';
+  fireEvent.click(userData ? screen.getByRole('button', { name: 'Edit user data' }) : tagButton('edit'));
+  await waitFor(() => {
+    expect(PAGE.findModal()?.findHeader().getElement()).toHaveTextContent(userData ? 'Edit user data' : 'Edit tag');
+  });
+  const field = await waitFor(() => {
+    const modal = PAGE.findModal()?.findContent();
+    const input = userData ? modal?.findTextarea()?.findNativeTextarea() : modal?.findInput()?.findNativeInput();
+    if (input === undefined) throw new Error('Missing editor field');
+    return input.getElement();
+  });
   fireEvent.change(field, { target: { value } });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+  PAGE.findModal()?.findFooter()?.findAllButtons()[1]?.click();
+}
+
+function held<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (error: Error) => void = () => undefined;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('instance tags and user data', () => {
@@ -943,17 +988,17 @@ describe('instance tags and user data', () => {
     const userData = screen.getByRole('button', { name: 'Edit user data' });
     expect(isDisabled(userData)).toBe(true);
     expect(reasonOf(userData)).toBe('Stop the instance to edit user data.');
-    expect(screen.getByText('Stop the instance to edit user data.')).toBeVisible();
+    expect(document.getElementById(userData.getAttribute('aria-describedby') ?? '')).toBeVisible();
     expect(isDisabled(screen.getByRole('button', { name: 'Add tag' }))).toBe(false);
-    const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
-    expect(isDisabled(within(row).getByRole('button', { name: 'Edit tag Name' }))).toBe(false);
-    expect(isDisabled(within(row).getByRole('button', { name: 'Delete tag Name' }))).toBe(false);
+    expect(isDisabled(tagButton('edit'))).toBe(false);
+    expect(isDisabled(tagButton('delete'))).toBe(false);
   });
 
   it.each(['detail', 'list'] as const)(
     'updates the Name and keeps the flash when the %s refresh finishes first',
     async (first) => {
       const initial = full();
+      const client = new QueryClient();
       const updated = full({
         tags: [
           { key: 'Name', value: 'new-name' },
@@ -963,7 +1008,7 @@ describe('instance tags and user data', () => {
       holding(initial);
       vi.mocked(api.listInstances).mockResolvedValue({ instances: [initial] });
       vi.mocked(changeInstanceContent).mockResolvedValue(undefined);
-      const router = open(pathOf(initial.id), true);
+      const router = open(pathOf(initial.id), true, client);
       await loaded();
       const list = screen.getByLabelText('Observed instance list');
       await waitFor(() => expect(list).toHaveTextContent('web-1'));
@@ -982,31 +1027,33 @@ describe('instance tags and user data', () => {
             listing = resolve;
           }),
       );
-      await editName('new-name');
-      expect(await screen.findByText('Tag updated.')).toBeVisible();
+      await editContent('tags', 'new-name');
+      const flash = await waitFor(() => {
+        const item = flashItem('success');
+        expect(item?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
+        return item?.getElement();
+      });
       await waitFor(() => {
         expect(api.getInstance).toHaveBeenCalledTimes(2);
         expect(api.listInstances).toHaveBeenCalledTimes(2);
       });
-      if (first === 'detail') {
-        await act(() => detail({ found: true, instance: updated }));
-        expect(await screen.findByRole('heading', { level: 1, name: 'new-name' })).toBeVisible();
-        expect(list).toHaveTextContent('web-1');
-        await act(() => listing({ instances: [updated] }));
-      } else {
-        await act(() => listing({ instances: [updated] }));
-        await waitFor(() => expect(list).toHaveTextContent('new-name'));
-        expect(screen.getByRole('heading', { level: 1, name: 'web-1' })).toBeVisible();
-        await act(() => detail({ found: true, instance: updated }));
-      }
-      await waitFor(() => expect(list).toHaveTextContent('new-name'));
-      expect(await screen.findByRole('heading', { level: 1, name: 'new-name' })).toBeVisible();
-      expect(tableOf('Tags').rows[0]).toEqual(['NameEdit tagDelete tag', 'new-name']);
-      expect(screen.getByText('Tag updated.')).toBeVisible();
+      const detailRead = () => detail({ found: true, instance: updated });
+      const listRead = () => listing({ instances: [updated] });
+      await act(first === 'detail' ? detailRead : listRead);
+      await waitFor(() => expect(client.isFetching()).toBe(1));
+      await act(first === 'detail' ? listRead : detailRead);
+
+      await waitFor(() => {
+        expect(list).toHaveTextContent('new-name');
+        expect(detailHeading()).toHaveTextContent('new-name');
+        expect(tableOf('Tags').wrapper.findBodyCell(1, 2)?.getElement()).toHaveTextContent('new-name');
+      });
+      expect(flashItem('success')?.getElement()).toBe(flash);
+      expect(flash).toBeVisible();
 
       vi.mocked(api.listInstances).mockResolvedValue({ instances: [updated] });
       await act(() => router.navigate('/aws/ec2/instances'));
-      expect(await screen.findByRole('row', { name: /new-name/ })).toBeVisible();
+      await waitFor(() => expect(PAGE.findTable()?.findRows()[0]?.getElement()).toHaveTextContent('new-name'));
     },
   );
 
@@ -1035,12 +1082,12 @@ describe('instance tags and user data', () => {
       void client.invalidateQueries({ queryKey: EC2_KEYS.instance(initial.id) });
     });
     await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
-    await editName('denied');
+    await editContent('tags', 'denied');
     const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
-    const flash = () => PAGE.findFlashbar()?.getElement();
+    const flash = () => flashItem('error')?.findContent()?.getElement();
     await waitFor(() => expect(flash()).toHaveTextContent(message));
-    const dialog = screen.getByRole('dialog', { name: 'Edit tag' });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
+    const dialog = PAGE.findModal();
+    expect(dialog?.findContent().findAlert()?.getElement()).toHaveTextContent(message);
     await act(async () => {
       finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
       await reread;
@@ -1048,14 +1095,16 @@ describe('instance tags and user data', () => {
     if (found) {
       await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
       expect(tableOf('Tags').rows[0]).toEqual(['NameEdit tagDelete tag', 'web-1']);
-      expect(createWrapper(dialog).findInput()?.findNativeInput().getElement()).toHaveValue('denied');
+      expect(dialog?.findContent().findInput()?.findNativeInput().getElement()).toHaveValue('denied');
     } else {
-      expect(await screen.findByText('Instance not found')).toBeVisible();
+      await waitFor(() =>
+        expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found'),
+      );
       expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
       expect(screen.queryByRole('dialog')).toBeNull();
     }
     expect(flash()).toHaveTextContent(message);
-    expect(screen.queryByText('Tag updated.')).toBeNull();
+    expect(flashItem('success')).toBeUndefined();
   });
 
   it('keeps the success result after the refreshed detail disappears before the list read finishes', async () => {
@@ -1076,15 +1125,97 @@ describe('instance tags and user data', () => {
         }),
     );
     vi.mocked(api.getInstance).mockResolvedValueOnce({ found: false });
-    await editName('new-name');
-    expect(await screen.findByText('Instance not found')).toBeVisible();
-    expect(screen.getByText('Tag updated.')).toBeVisible();
+    await editContent('tags', 'new-name');
+    await waitFor(() =>
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found'),
+    );
+    expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
     expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit user data' })).toBeNull();
-    expect(list).toHaveTextContent('web-1');
     await act(() => finishList({ instances: [] }));
     await waitFor(() => expect(list).toBeEmptyDOMElement());
-    expect(screen.getByText('Tag updated.')).toBeVisible();
+    expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it.each([
+    ['tags', 'success'],
+    ['tags', 'error'],
+    ['user-data', 'success'],
+    ['user-data', 'error'],
+  ] as const)('delivers a pending %s write’s %s after detail removes the dialog', async (editor, outcome) => {
+    const id = 'i-0full';
+    const client = new QueryClient();
+    const write = held<void>();
+    const detail = held<api.InstanceRead>();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
+    vi.mocked(changeInstanceContent).mockReturnValueOnce(write.promise);
+    open(pathOf(id), false, client);
+    await loaded();
+    vi.mocked(api.getInstance).mockReturnValueOnce(detail.promise);
+    act(() => {
+      void client.invalidateQueries({ queryKey: EC2_KEYS.instance(id) });
+    });
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    await editContent(editor, 'replacement');
+    const signal = vi.mocked(changeInstanceContent).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(undefined);
+    await act(() => detail.resolve({ found: false }));
+    await waitFor(() => {
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found');
+      expect(PAGE.findModal()).toBeNull();
+    });
+    expect(signal?.aborted).toBe(false);
+
+    const reason = 'The service denied the submitted change.';
+    const operation = editor === 'tags' ? 'CreateTags' : 'ModifyInstanceAttribute';
+    await act(() => {
+      if (outcome === 'success') write.resolve();
+      else
+        write.reject(
+          new RequestError(
+            requestFailure(operation, {
+              Code: 'AccessDeniedException',
+              message: reason,
+              $fault: 'client',
+              $metadata: { httpStatusCode: 403 },
+            }),
+          ),
+        );
+    });
+    const message =
+      outcome === 'error'
+        ? `AccessDeniedException: ${reason}`
+        : editor === 'tags'
+          ? 'Tag updated.'
+          : 'User data updated.';
+    await waitFor(() => expect(flashItem(outcome)?.findContent()?.getElement()).toHaveTextContent(message));
+    if (outcome === 'error') expect(flashItem(outcome)?.getElement()).toHaveAttribute('role', 'alert');
+  });
+
+  it.each(['route', 'target'] as const)('cancels a pending content write on %s departure', async (departure) => {
+    const write = held<void>();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
+    vi.mocked(changeInstanceContent).mockReturnValueOnce(write.promise);
+    const router = open(pathOf('i-0full'));
+    await loaded();
+    await editContent(departure === 'route' ? 'tags' : 'user-data', 'replacement');
+    const signal = vi.mocked(changeInstanceContent).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+    if (departure === 'route') {
+      holding(full({ id: 'i-next', tags: [] }));
+      await act(() => router.navigate(pathOf('i-next')));
+      await waitFor(() => expect(detailHeading()).toHaveTextContent('i-next'));
+    } else {
+      await act(() => connection.changeTarget());
+    }
+    expect(signal?.aborted).toBe(true);
+    await act(() => write.resolve());
+    expect(flashItem('success')).toBeUndefined();
+    expect(flashItem('error')).toBeUndefined();
   });
 });

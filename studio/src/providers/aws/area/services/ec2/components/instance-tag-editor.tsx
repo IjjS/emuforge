@@ -15,7 +15,7 @@ import { ValueText } from '../../../components/value-text';
 import type { Tag } from '../../../lib/ec2-client';
 import { NONE } from '../format';
 import { CREATE_TAGS, DELETE_TAGS, type InstanceContentChange } from '../instance-content-api';
-import { useInstanceContentChange } from '../instance-content-queries';
+import { useInstanceContentEditor, type InstanceContentWrites } from '../instance-content-queries';
 
 type TagAction = { kind: 'add' } | { kind: 'edit'; tag: Tag } | { kind: 'delete'; tag: Tag };
 
@@ -86,13 +86,20 @@ function TagFields({
   );
 }
 
-export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Tag[]; endpoint: string | undefined }) {
+export function InstanceTagEditor({
+  tags,
+  endpoint,
+  writes,
+}: {
+  tags: Tag[];
+  endpoint: string | undefined;
+  writes: InstanceContentWrites;
+}) {
   const [action, setAction] = useState<TagAction>();
-  const [unsupported, setUnsupported] = useState<string[]>([]);
-  const { pending, refusal, save, canDismiss, clearRefusal } = useInstanceContentChange(endpoint, id);
+  const { pending, refusal, submit, canDismiss, clearRefusal } = useInstanceContentEditor(writes, 'tags');
 
   const reason = (operation: string) =>
-    unsupported.includes(operation) ? `Not implemented by the emulator (${operation}).` : undefined;
+    writes.unsupported[operation] !== undefined ? `Not implemented by the emulator (${operation}).` : undefined;
   const createReason = reason(CREATE_TAGS);
   const deleteReason = reason(DELETE_TAGS);
   const handleCancel = () => {
@@ -103,15 +110,10 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
   };
   const handleSave = (change: InstanceContentChange) => {
     if (action === undefined) return;
-    void save(change, {
+    submit(change, {
       label: LABELS[action.kind],
       result: RESULTS[action.kind],
-      onSettled: (failure) => {
-        if (failure?.kind === 'not-implemented') {
-          setUnsupported((operations) => [...operations, failure.operation]);
-        }
-        setAction(undefined);
-      },
+      onSettled: () => setAction(undefined),
     });
   };
 
@@ -128,7 +130,7 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
             <Button
               variant="inline-link"
               ariaLabel={`${LABELS.edit} ${tag.key}`}
-              disabled={endpoint === undefined || createReason !== undefined}
+              disabled={pending || endpoint === undefined || createReason !== undefined}
               disabledReason={createReason}
               onClick={() => setAction({ kind: 'edit', tag })}
             >
@@ -137,7 +139,7 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
             <Button
               variant="inline-link"
               ariaLabel={`${LABELS.delete} ${tag.key}`}
-              disabled={endpoint === undefined || deleteReason !== undefined}
+              disabled={pending || endpoint === undefined || deleteReason !== undefined}
               disabledReason={deleteReason}
               onClick={() => setAction({ kind: 'delete', tag })}
             >
@@ -159,7 +161,7 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
             variant="h2"
             actions={
               <Button
-                disabled={endpoint === undefined || createReason !== undefined}
+                disabled={pending || endpoint === undefined || createReason !== undefined}
                 disabledReason={createReason}
                 onClick={() => setAction({ kind: 'add' })}
               >

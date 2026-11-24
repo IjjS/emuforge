@@ -8,7 +8,9 @@ import { expect, it, vi } from 'vitest';
 import { RequestError, requestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
+import { usePageSignal } from '../../../components/use-token-listing';
 import { CREATE_TAGS, DELETE_TAGS, changeInstanceContent } from '../instance-content-api';
+import { useInstanceContentChange } from '../instance-content-queries';
 import { InstanceTagEditor } from './instance-tag-editor';
 
 vi.mock('../instance-content-api', async (original) => ({
@@ -20,6 +22,13 @@ const ENGINE = 'http://127.0.0.1:8362';
 const ID = 'i-tags';
 const TAG = { key: 'Name', value: 'dev' };
 const TAGS = [TAG, { key: 'env', value: 'test' }];
+
+const PAGE = createWrapper(document.body);
+
+function Editor() {
+  const writes = useInstanceContentChange(ENGINE, ID, usePageSignal());
+  return <InstanceTagEditor endpoint={ENGINE} tags={TAGS} writes={writes} />;
+}
 
 function showTags() {
   vi.resetAllMocks();
@@ -41,7 +50,7 @@ function showTags() {
         >
           <div ref={root}>
             <Flashbar items={flash ?? []} />
-            <InstanceTagEditor id={ID} endpoint={ENGINE} tags={TAGS} />
+            <Editor />
           </div>
         </PageFlashContext.Provider>
       </AreaRootContext.Provider>
@@ -56,20 +65,30 @@ function showTags() {
 }
 
 function action(name: string) {
-  if (name === 'Add tag') return screen.getByRole('button', { name });
-  return screen.getByRole('button', { name: `${name} ${TAG.key}` });
+  const table = PAGE.findTable();
+  const button =
+    name === 'Add tag'
+      ? table?.findHeaderSlot()?.findButton()
+      : table?.findBodyCell(1, 1)?.findAllButtons()[name === 'Edit tag' ? 0 : 1];
+  if (button == null) throw new Error(`Missing tag action ${name}`);
+  expect(button.getElement()).toHaveAccessibleName(name === 'Add tag' ? name : `${name} ${TAG.key}`);
+  return button.getElement();
 }
 
 async function open(name: string) {
   fireEvent.click(action(name));
-  return screen.findByRole('dialog', { name });
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    expect(modal?.findHeader().getElement()).toHaveTextContent(name);
+    if (modal === null) throw new Error('Missing tag dialog');
+    return modal.getElement();
+  });
 }
 
 function field(dialog: HTMLElement, label: string) {
   const input = createWrapper(dialog)
     .findAllFormFields()
-    .find((field) => field.findLabel()?.getElement().textContent === label)
-    ?.findControl()
+    [label === 'Key' ? 0 : 1]?.findControl()
     ?.findInput()
     ?.findNativeInput()
     .getElement();
@@ -105,7 +124,7 @@ function deny(operation: string, code: string, message: string, status: number) 
 it('saves the empty value for just the existing key', async () => {
   const show = showTags();
   const dialog = await open('Edit tag');
-  expect(within(dialog).getByText(TAG.key)).toBeVisible();
+  expect(PAGE.findModal()?.findContent().getElement()).toHaveTextContent(TAG.key);
   expect(save(dialog)).toBeDisabled();
   enter(dialog, 'Value', 'changed');
   expect(save(dialog)).toBeEnabled();
@@ -126,10 +145,11 @@ it('saves the empty value for just the existing key', async () => {
 it('cancels a deletion and leaves the key and value in the table', async () => {
   showTags();
   const dialog = await open('Delete tag');
-  expect(within(dialog).getByText(TAG.key)).toBeVisible();
+  expect(PAGE.findModal()?.findContent().getElement()).toHaveTextContent(TAG.key);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(screen.getByRole('row', { name: /^Name .* dev$/ })).toBeVisible();
+  expect(PAGE.findTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent(TAG.key);
+  expect(PAGE.findTable()?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(TAG.value);
   expect(changeInstanceContent).not.toHaveBeenCalled();
 });
 
@@ -150,7 +170,7 @@ it.each([
   expect(show).toHaveBeenCalledWith([
     expect.objectContaining({ type: 'error', content: expect.stringContaining(`${code}: ${message}`) }),
   ]);
-  expect(screen.queryByText(/Tag (updated|deleted)\./)).toBeNull();
+  expect(PAGE.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
 });
 
 it.each([
@@ -164,10 +184,13 @@ it.each([
   if (name === 'Add tag') enter(dialog, 'Key', 'new-key');
   if (name === 'Edit tag') enter(dialog, 'Value', 'updated draft');
   submit(dialog, name);
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(
-    screen.getByText(`${name}. The emulator answered 501 Not Implemented for ${operation}. Tag operation unavailable.`),
-  ).toBeVisible();
+  await waitFor(() => {
+    const flash = PAGE.findFlashbar()?.findItemsByType('info')[0];
+    expect(flash?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(flash?.findContent()?.getElement()).toHaveTextContent(
+      `${name}. The emulator answered 501 Not Implemented for ${operation}. Tag operation unavailable.`,
+    );
+  });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(action(name)).toBeVisible();
   expect(action(name)).toHaveAttribute('aria-disabled', 'true');
@@ -179,9 +202,9 @@ it('keeps an existing key out of Add and preserves the draft while the key is co
   const show = showTags();
   const dialog = await open('Add tag');
   enter(dialog, 'Key', TAG.key);
-  expect(
-    within(dialog).getByText('This key already exists. Use Edit tag in its row to change the value.'),
-  ).toBeVisible();
+  expect(createWrapper(dialog).findFormField()?.findError()?.getElement()).toHaveTextContent(
+    'This key already exists. Use Edit tag in its row to change the value.',
+  );
   expect(save(dialog)).toBeDisabled();
   fireEvent.click(save(dialog));
   expect(changeInstanceContent).not.toHaveBeenCalled();
