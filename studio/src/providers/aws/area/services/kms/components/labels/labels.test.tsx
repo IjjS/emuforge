@@ -7,8 +7,9 @@ import {
   UntagResourceCommand,
   UpdateAliasCommand,
 } from '@aws-sdk/client-kms';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -26,6 +27,7 @@ vi.mock('../../../../../../../lib/aws/client-factory', () => ({ createAwsClient:
 const keyId = 'test-key-1';
 const targetId = 'test-key-2';
 const alias = 'alias/events';
+const page = createWrapper(document.body);
 const endpoint = 'http://127.0.0.1:8308';
 const connection = {
   engineOrigin: endpoint,
@@ -60,9 +62,51 @@ function aliasPage(name: string, target = keyId) {
   return { Aliases: [{ AliasName: name, TargetKeyId: target }] };
 }
 
-function aliasCell(name: string) {
-  return (_text: string, element: Element | null) =>
-    element?.matches('td, th') === true && element.textContent === name;
+function labelsTable(heading: 'Aliases' | 'Tags') {
+  const table = page
+    .findAllTables()
+    .find(
+      (candidate) => candidate.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === heading,
+    );
+  if (!table) throw new Error(`Missing ${heading} table`);
+  return table;
+}
+
+function labelRow(heading: 'Aliases' | 'Tags', name: string) {
+  const table = labelsTable(heading);
+  const rows = table.findRows();
+  const index = rows.findIndex((_, index) => table.findBodyCell(index + 1, 1)?.getElement().textContent === name);
+  const row = rows[index];
+  if (!row) throw new Error(`Missing ${name} row in ${heading}`);
+  return { element: row.getElement(), cell: (column: number) => table.findBodyCell(index + 1, column)?.getElement() };
+}
+
+function expectTag(name: string, value: string, column = 2) {
+  const cell = labelRow('Tags', name).cell(column);
+  expect(cell).toBeVisible();
+  expect(cell?.textContent).toBe(value);
+}
+
+function expectEmpty(heading: 'Aliases' | 'Tags', message: string) {
+  const empty = labelsTable(heading).findEmptySlot()?.getElement();
+  expect(empty).toBeVisible();
+  expect(empty?.textContent).toBe(message);
+}
+
+function expectFlash(type: 'success' | 'error', message: string | RegExp) {
+  const content = page.findFlashbar()?.findItemsByType(type)[0]?.findContent()?.getElement();
+  expect(content).toBeVisible();
+  expect(content).toHaveTextContent(message);
+}
+
+async function openTargetPicker() {
+  const row = await waitFor(() => labelRow('Aliases', alias));
+  fireEvent.click(within(row.element).getByRole('button', { name: `Reassign alias ${alias}` }));
+  const modal = await screen.findByRole('dialog', { name: 'Reassign alias' });
+  const select = createWrapper(modal).findSelect();
+  if (!select) throw new Error('Missing target key Select');
+  select.openDropdown();
+  return { modal, select };
 }
 
 function tagPage(name: string, value: string) {
@@ -92,8 +136,8 @@ describe('key labels', () => {
     send.mockResolvedValue({});
     open();
 
-    expect(await screen.findByText('No aliases')).toBeVisible();
-    expect(await screen.findByText('No tags')).toBeVisible();
+    await waitFor(() => expectEmpty('Aliases', 'No aliases'));
+    await waitFor(() => expectEmpty('Tags', 'No tags'));
     clickButton('Create alias');
     const create = within(await screen.findByRole('dialog', { name: 'Create alias' }));
     expect(create.getByRole('textbox', { name: 'Alias name' })).toBeEnabled();
@@ -122,14 +166,15 @@ describe('key labels', () => {
     });
     open();
 
-    expect(await screen.findByText(aliasCell(alias))).toBeVisible();
-    expect(await screen.findByText('development')).toBeVisible();
-    const aliases = within(screen.getByRole('list', { name: 'Alias pages' }));
-    const tags = within(screen.getByRole('list', { name: 'Tag pages' }));
-    fireEvent.click(aliases.getByRole('button', { name: 'Next page' }));
-    fireEvent.click(tags.getByRole('button', { name: 'Next page' }));
-    expect(await screen.findByText(aliasCell('alias/invoices'))).toBeVisible();
-    expect(await screen.findByText('billing team')).toBeVisible();
+    await waitFor(() => expect(labelRow('Aliases', alias).cell(1)).toBeVisible());
+    await waitFor(() => expectTag('environment', 'development'));
+    const aliasesNext = labelsTable('Aliases').findPagination()?.findNextPageButton().getElement();
+    const tagsNext = labelsTable('Tags').findPagination()?.findNextPageButton().getElement();
+    if (!aliasesNext || !tagsNext) throw new Error('Missing label pagination');
+    fireEvent.click(aliasesNext);
+    fireEvent.click(tagsNext);
+    await waitFor(() => expect(labelRow('Aliases', 'alias/invoices').cell(1)).toBeVisible());
+    await waitFor(() => expectTag('owner', 'billing team'));
   });
 
   it('keeps reassignment success when the original key’s alias read finishes before the target list', async () => {
@@ -153,19 +198,16 @@ describe('key labels', () => {
     });
     open();
 
-    await screen.findByText(aliasCell(alias));
-    clickButton(`Reassign alias ${alias}`);
-    const dialog = within(await screen.findByRole('dialog', { name: 'Reassign alias' }));
-    const user = userEvent.setup();
-    await user.click(dialog.getByRole('button', { name: /Target key/ }));
-    await user.click(await dialog.findByRole('option', { name: targetId }));
-    fireEvent.click(dialog.getByRole('button', { name: 'Reassign alias' }));
+    const { modal, select } = await openTargetPicker();
+    await waitFor(() => expect(select.findDropdown().findOptionByValue(targetId)?.getElement()).toBeVisible());
+    select.selectOptionByValue(targetId);
+    fireEvent.click(within(modal).getByRole('button', { name: 'Reassign alias' }));
 
-    expect(await screen.findByText('No aliases')).toBeVisible();
-    expect(screen.getByText('Alias reassigned.')).toBeVisible();
+    await waitFor(() => expectEmpty('Aliases', 'No aliases'));
+    expectFlash('success', /^Alias reassigned\.$/);
     expect(send.mock.calls.filter(([command]) => command instanceof ListKeysCommand)).toHaveLength(2);
     await act(async () => targetList.resolve(keys));
-    expect(screen.getByText('Alias reassigned.')).toBeVisible();
+    expectFlash('success', /^Alias reassigned\.$/);
   });
 
   it('retains a duplicate alias’s input and refusal without overwriting the existing alias', async () => {
@@ -184,7 +226,7 @@ describe('key labels', () => {
     });
     open();
 
-    await screen.findByText(aliasCell(alias));
+    await waitFor(() => expect(labelRow('Aliases', alias).cell(1)).toBeVisible());
     clickButton('Create alias');
     const dialog = within(await screen.findByRole('dialog', { name: 'Create alias' }));
     const name = dialog.getByRole('textbox', { name: 'Alias name' });
@@ -193,7 +235,7 @@ describe('key labels', () => {
 
     expect(await dialog.findByText(/This alias already exists/)).toBeVisible();
     expect(name).toHaveValue('events');
-    expect(screen.getByText(aliasCell(alias))).toBeVisible();
+    expect(labelRow('Aliases', alias).cell(1)).toBeVisible();
     expect(send.mock.calls.filter(([command]) => command instanceof UpdateAliasCommand)).toHaveLength(0);
   });
 
@@ -213,14 +255,14 @@ describe('key labels', () => {
     });
     open();
 
-    await screen.findByText('development');
-    clickButton('Remove tag environment');
+    const tag = await waitFor(() => labelRow('Tags', 'environment'));
+    fireEvent.click(within(tag.element).getByRole('button', { name: 'Remove tag environment' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Remove tag' }));
     fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'remove' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Remove tag' }));
 
-    expect(await screen.findByText(/This key is pending deletion/)).toBeVisible();
-    expect(screen.getByRole('cell', { name: 'development' })).toBeVisible();
+    await waitFor(() => expectFlash('error', /This key is pending deletion/));
+    expectTag('environment', 'development');
   });
 
   it('keeps submit focused while saving, then focuses the refusal and lets Escape return to the opener', async () => {
@@ -229,7 +271,7 @@ describe('key labels', () => {
     const user = userEvent.setup();
     open();
 
-    await screen.findByText('No aliases');
+    await waitFor(() => expectEmpty('Aliases', 'No aliases'));
     const opener = screen.getByRole('button', { name: 'Create alias' });
     await user.click(opener);
     const modal = await screen.findByRole('dialog', { name: 'Create alias' });
@@ -281,23 +323,24 @@ describe('key labels', () => {
       );
       open();
 
-      const value = await screen.findByRole('cell', { name: 'local development' });
+      const row = await waitFor(() => labelRow('Tags', 'environment'));
       const table = screen.getByRole('table', { name: /^Tags/ });
+      const wrapper = labelsTable('Tags');
       const hint = 'Scroll sideways to see more of the table.';
       expect(table).toHaveAccessibleName(overflows ? `Tags. ${hint}` : 'Tags');
+      const description = wrapper.findHeaderSlot()?.findHeader()?.findDescription()?.getElement();
       if (overflows) {
-        expect(screen.getByText(hint)).toBeVisible();
+        expect(description).toBeVisible();
+        expect(description?.textContent).toBe(hint);
       } else {
-        expect(screen.queryByText(hint)).not.toBeInTheDocument();
+        expect(description ?? null).not.toBeInTheDocument();
       }
-      expect(
-        within(table)
-          .getAllByRole('columnheader')
-          .map((header) => header.textContent),
-      ).toEqual(compact ? ['Tag name', 'Actions', 'Value'] : ['Tag name', 'Value', 'Actions']);
-      expect(value).toHaveTextContent(/^local development$/);
+      expect(wrapper.findColumnHeaders().map((header) => header.getElement().textContent)).toEqual(
+        compact ? ['Tag name', 'Actions', 'Value'] : ['Tag name', 'Value', 'Actions'],
+      );
+      expectTag('environment', 'local development', compact ? 3 : 2);
 
-      const edit = within(table).getByRole('button', { name: 'Edit tag environment' });
+      const edit = within(row.element).getByRole('button', { name: 'Edit tag environment' });
       edit.focus();
       await userEvent.keyboard('{Enter}');
       const dialog = within(await screen.findByRole('dialog', { name: 'Edit tag' }));
@@ -323,14 +366,15 @@ describe('key labels', () => {
       }
       return {};
     });
-    const user = userEvent.setup();
     open();
 
-    await user.click(await screen.findByRole('button', { name: `Reassign alias ${alias}` }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Reassign alias' }));
-    await user.click(dialog.getByRole('button', { name: /Target key/ }));
-    const target = within(await dialog.findByRole('option', { name: new RegExp(targetId) }));
-    expect(target.getByText('alias/billing')).toBeVisible();
-    expect(target.getByText('alias/invoices')).toBeVisible();
+    const { select } = await openTargetPicker();
+    const tags = await waitFor(() => {
+      const option = select.findDropdown().findOptionByValue(targetId);
+      const tags = option?.findTags()?.map((tag) => tag.getElement());
+      expect(tags?.map((tag) => tag.textContent)).toEqual(['alias/billing', 'alias/invoices']);
+      return tags ?? [];
+    });
+    for (const tag of tags) expect(tag).toBeVisible();
   });
 });
