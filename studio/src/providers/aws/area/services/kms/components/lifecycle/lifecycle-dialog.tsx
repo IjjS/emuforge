@@ -2,6 +2,7 @@ import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../../components/area-modal';
@@ -13,6 +14,7 @@ export function LifecycleDialog({
   dismissLabel = 'Cancel',
   pending,
   disabled,
+  blockedReason,
   failure,
   onDismiss,
   onSubmit,
@@ -23,6 +25,7 @@ export function LifecycleDialog({
   dismissLabel?: string;
   pending: boolean;
   disabled: boolean;
+  blockedReason: string | undefined;
   failure: FlashItem | undefined;
   onDismiss: () => void;
   onSubmit: () => void;
@@ -37,8 +40,9 @@ export function LifecycleDialog({
     if (!pending) onDismiss();
   };
   const handleSubmit = () => {
-    if (!pending && !disabled) onSubmit();
+    if (!pending && !disabled && blockedReason === undefined) onSubmit();
   };
+  const notice = pending ? undefined : blockedReason;
 
   return (
     <AreaModal
@@ -52,7 +56,13 @@ export function LifecycleDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               {dismissLabel}
             </Button>
-            <Button variant="primary" disabled={!pending && disabled} loading={pending} onClick={handleSubmit}>
+            <Button
+              variant="primary"
+              disabled={!pending && (disabled || notice !== undefined)}
+              {...(notice === undefined ? {} : { disabledReason: notice })}
+              loading={pending}
+              onClick={handleSubmit}
+            >
               {submitLabel}
             </Button>
           </SpaceBetween>
@@ -69,6 +79,13 @@ export function LifecycleDialog({
           </div>
         )}
       </SpaceBetween>
+      <div role="status" aria-atomic="true">
+        {notice !== undefined && (
+          <Box margin={{ top: 'm' }}>
+            <StatusIndicator type="warning">{notice}</StatusIndicator>
+          </Box>
+        )}
+      </div>
     </AreaModal>
   );
 }
