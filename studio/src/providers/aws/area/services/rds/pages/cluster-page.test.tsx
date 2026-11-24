@@ -804,6 +804,7 @@ describe('Aurora cluster operations', () => {
     }
   });
 
+  // Bound: Allow the real three-second poll and the separately settled cluster and member responses.
   it.each([
     ['stop', 'available', 'stopping', 'stopped', 'Stopping'],
     ['start', 'stopped', 'starting', 'available', 'Starting'],
@@ -958,6 +959,7 @@ describe('Aurora cluster operations', () => {
     expect(clusterApi.operateCluster).not.toHaveBeenCalled();
   });
 
+  // Bound: Allow the reader dialog, the real three-second poll, and the ordered cluster and member responses.
   it('sends the second reader as the failover target and polls until the new roles and statuses are visible', async () => {
     answer(found({ members: ROLES }), rowsAt());
     open(PATH);
