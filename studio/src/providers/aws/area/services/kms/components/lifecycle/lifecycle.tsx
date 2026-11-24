@@ -92,6 +92,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const unavailableReason = (operation: LifecycleOperation) =>
     action.isUnavailable(operation) ? `Not implemented by the emulator (${operation})` : undefined;
 
+  const blockedReason = (operation: KeyOperation, task: string, stateReason: string) =>
+    unavailableReason(operation) ??
+    (action.disabled(operation) ? `Reconnect to the emulator to ${task}.` : undefined) ??
+    (allowedByState[operation] ? undefined : stateReason);
+
   const control = (operation: KeyOperation, label: string, onClick: () => void, stateReason?: string) => {
     const reason = unavailableReason(operation) ?? stateReason;
     const loading = dialog === undefined && action.pending === operation;
@@ -118,6 +123,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
 
   const scheduledDays = waitingDays(days);
   const pendingDeletionReason = pendingDeletion ? 'Cancel key deletion to use this action.' : undefined;
+  const disableReason = blockedReason(
+    LIFECYCLE_OPERATIONS.disable,
+    'disable this key',
+    state === 'Disabled' ? 'This key is already Disabled.' : 'You can disable this key only while it is Enabled.',
+  );
 
   return (
     <>
@@ -138,7 +148,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Edit description"
           submitLabel="Save"
           pending={action.pending !== undefined}
-          disabled={!canStart(LIFECYCLE_OPERATIONS.describe) || description === (metadata.Description ?? '')}
+          disabled={description === (metadata.Description ?? '')}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.describe,
+            'save the key description',
+            'You can edit the description only while the key is Enabled or Disabled.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -165,7 +180,8 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Disable key"
           submitLabel="Disable key"
           pending={action.pending !== undefined}
-          disabled={!canStart(LIFECYCLE_OPERATIONS.disable)}
+          disabled={false}
+          blockedReason={disableReason}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -180,7 +196,9 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           <Box variant="p">
             Disable key <KeyName keyId={keyId} />?
           </Box>
-          <Box variant="p">The key's state becomes Disabled in your local emulator. You can enable it again.</Box>
+          {disableReason === undefined && (
+            <Box variant="p">The key's state becomes Disabled in your local emulator. You can enable it again.</Box>
+          )}
         </LifecycleDialog>
       )}
 
@@ -189,7 +207,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Schedule key deletion"
           submitLabel="Schedule deletion"
           pending={action.pending !== undefined}
-          disabled={!canStart(LIFECYCLE_OPERATIONS.schedule) || scheduledDays === undefined}
+          disabled={scheduledDays === undefined}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.schedule,
+            'schedule key deletion',
+            'You can schedule key deletion only while the key is Enabled or Disabled.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() => {
@@ -231,7 +254,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           submitLabel="Cancel deletion"
           dismissLabel="Keep scheduled"
           pending={action.pending !== undefined}
-          disabled={!canStart(LIFECYCLE_OPERATIONS.cancel)}
+          disabled={false}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.cancel,
+            'cancel key deletion',
+            'You can cancel key deletion only while the key is PendingDeletion.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>

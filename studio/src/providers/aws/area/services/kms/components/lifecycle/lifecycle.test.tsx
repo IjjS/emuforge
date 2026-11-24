@@ -418,18 +418,26 @@ describe('Key lifecycle', () => {
     await opened('Edit description');
     const description = within(dialog().findContent().getElement()).getByRole('textbox');
     fireEvent.change(description, { target: { value: draft } });
-    expect(usable(dialogButton('Save'))).toBe(true);
+    const save = dialogButton('Save');
+    expect(usable(save)).toBe(true);
+    save.focus();
 
     showTarget(KEY_ID, { ...connection, result: outage });
     expect(dialog().findHeader().getElement()).toHaveTextContent('Edit description');
     expect(description).toHaveValue(draft);
-    expect(dialogButton('Save')).toBeDisabled();
+    expect(save).toHaveFocus();
+    expect(save).toHaveAttribute('aria-disabled', 'true');
+    expect(save).toHaveAccessibleDescription('Reconnect to the emulator to save the key description.');
+    const notice = within(dialog().findContent().getElement()).getByRole('status');
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent('Reconnect to the emulator to save the key description.');
     confirm('Save');
     expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(0);
 
     showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 2 } });
     expect(description).toHaveValue(draft);
     expect(usable(dialogButton('Save'))).toBe(true);
+    expect(notice).toBeEmptyDOMElement();
     confirm('Save');
     await waitFor(() => expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1));
     const options = sent(UpdateKeyDescriptionCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
@@ -438,6 +446,8 @@ describe('Key lifecycle', () => {
     expect(description).toHaveValue(draft);
     expect(dialogButton('Save')).toHaveAttribute('aria-disabled', 'true');
     expect(dialogButton('Save')).not.toBeDisabled();
+    expect(save).toHaveFocus();
+    expect(notice).toBeEmptyDOMElement();
     confirm('Save');
     expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1);
     expect(options?.abortSignal.aborted).toBe(false);
@@ -457,13 +467,21 @@ describe('Key lifecycle', () => {
     open(false, client);
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
     await opened('Disable key');
-    expect(usable(dialogButton('Disable key'))).toBe(true);
+    const submit = dialogButton('Disable key');
+    expect(usable(submit)).toBe(true);
+    submit.focus();
 
     emulator.metadata = key('Disabled');
     await act(async () => client.invalidateQueries({ queryKey: KMS_KEYS.detail(KEY_ID) }));
     await expectStatus('Disabled');
     expect(dialog().findContent().getElement()).toHaveTextContent(KEY_ID);
-    expect(dialogButton('Disable key')).toBeDisabled();
+    expect(submit).toHaveFocus();
+    expect(submit).toHaveAttribute('aria-disabled', 'true');
+    expect(submit).toHaveAccessibleDescription('This key is already Disabled.');
+    const notice = within(dialog().findContent().getElement()).getByRole('status');
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent('This key is already Disabled.');
+    expect(dialog().findContent().getElement()).not.toHaveTextContent("The key's state becomes Disabled");
     confirm('Disable key');
     expect(sent(DisableKeyCommand)).toHaveLength(0);
 
