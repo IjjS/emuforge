@@ -20,6 +20,7 @@ import { AreaFlash } from '../../../../components/area-flash';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useAreaFlash } from '../../../../components/use-area-flash';
+import { KeyPage } from '../../pages/key';
 import { Labels } from './labels';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -201,6 +202,77 @@ describe('key labels', () => {
     await waitFor(() => expect(labelRow('Aliases', 'alias/invoices').cell(1)).toBeVisible());
     await waitFor(() => expectTag('owner', 'billing team'));
   });
+
+  it.each([
+    {
+      heading: 'Aliases',
+      commandType: ListAliasesCommand,
+      operation: 'ListAliases',
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+      rowName: alias,
+    },
+    {
+      heading: 'Tags',
+      commandType: ListResourceTagsCommand,
+      operation: 'ListResourceTags',
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: `Not answering at ${connection.result.emulator.endpoint}`,
+      rowName: 'environment',
+    },
+  ] as const)(
+    'offers panel-only recovery when $operation fails with a connected frame',
+    async ({ heading, commandType, operation, failure, status, rowName }) => {
+      let panelFails = true;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: keyId, KeyState: 'Enabled' } };
+        if (panelFails && command instanceof commandType) throw failure;
+        if (command instanceof ListAliasesCommand) return aliasPage(alias);
+        if (command instanceof ListResourceTagsCommand) return tagPage('environment', 'development');
+        throw new Error('Unexpected KMS request');
+      });
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter initialEntries={[`/aws/kms/keys/${keyId}`]}>
+            <KeyPage connection={connection} params={{ keyid: keyId }} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+      await userEvent.click(screen.getByRole('tab', { name: 'Labels' }));
+      const recovery = await waitFor(() => {
+        const empty = labelsTable(heading).findEmptySlot();
+        const indicator = empty?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        if (!empty) throw new Error(`Missing ${heading} recovery`);
+        return within(empty.getElement());
+      });
+      expect(recovery.getByText(`The ${heading.toLowerCase()} (${operation}) could not be read.`)).toBeVisible();
+      const link = recovery.getByRole('link', { name: 'Connection status' });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute('href', '/');
+      const retry = recovery.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
+      const other = heading === 'Aliases' ? 'Tags' : 'Aliases';
+      const otherName = heading === 'Aliases' ? 'environment' : alias;
+      await waitFor(() => expect(labelRow(other, otherName).cell(1)).toBeVisible());
+
+      panelFails = false;
+      fireEvent.click(retry);
+      await waitFor(() => expect(labelRow(heading, rowName).cell(1)).toBeVisible());
+      if (heading === 'Tags') expectTag('environment', 'development');
+      expect(retry).not.toBeInTheDocument();
+      expect(send.mock.calls.filter(([command]) => command instanceof commandType)).toHaveLength(2);
+      expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
+    },
+  );
 
   it('keeps reassignment success when the original key’s alias read finishes before the target list', async () => {
     let moved = false;
