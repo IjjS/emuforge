@@ -395,17 +395,36 @@ describe('Parameter Store values and versions', () => {
     const current = await currentRegion();
     click('Show value', current);
     expect(await within(current).findByText(/Cannot reveal this value/)).toBeVisible();
+    expect(namedButton('Retry', current)).toBeEnabled();
     click('Retry', current);
     expect(
       await within(current).findByText('The emulator answered 501 Not Implemented for GetParameter.'),
     ).toBeVisible();
+    expect(createWrapper(current).findStatusIndicator()?.getElement()).toHaveTextContent(
+      'Not implemented by the emulator',
+    );
+    const retry = namedButton('Retry', current);
+    expect(retry).toBeVisible();
+    expect(retry).toBeDisabled();
     expect(namedButton('Show value', current)).toBeDisabled();
+    await act(async () => {
+      click('Retry', current);
+      click('Show value', current);
+    });
 
     await openHistory();
-    const version = await selectVersion();
-    expect(namedButton('Show value', version)).toBeDisabled();
+    await waitFor(() => expectLabels(1, 'stable'));
+    for (const version of [1, 2]) {
+      const region = await selectVersion(version);
+      expect(namedButton('Show value', region)).toBeDisabled();
+      await act(async () => click('Show value', region));
+    }
     expect(getHistory).toHaveBeenCalledOnce();
-    expect(getParameter).toHaveBeenCalledTimes(2);
+    expect(getHistory).toHaveBeenCalledWith({ Name: NAME, MaxResults: 50, WithDecryption: false });
+    expect(getParameter.mock.calls).toEqual([
+      [{ Name: NAME, WithDecryption: true }],
+      [{ Name: NAME, WithDecryption: true }],
+    ]);
   });
 
   it('V5 reads pages by token with decryption off and keeps history values out of the view and cache', async () => {

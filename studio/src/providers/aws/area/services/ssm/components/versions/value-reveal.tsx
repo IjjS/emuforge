@@ -14,9 +14,9 @@ import { GET_PARAMETER, getParameterValue } from '../../version-api';
 
 type Reveal =
   | { kind: 'hidden' }
-  | { kind: 'loading' }
+  | { kind: 'loading'; showRetry: boolean }
   | { kind: 'shown'; value: string | undefined }
-  | { kind: 'failed'; failure: RequestFailure };
+  | { kind: 'failed'; failure: RequestFailure; showRetry: boolean };
 
 export function ValueReveal({
   connection,
@@ -43,8 +43,9 @@ export function ValueReveal({
     if (endpoint === undefined || unsupported || request.current) return;
 
     const controller = new AbortController();
+    const retrying = reveal.kind === 'failed';
     request.current = controller;
-    setReveal({ kind: 'loading' });
+    setReveal({ kind: 'loading', showRetry: retrying });
     try {
       const value = await getParameterValue(endpoint, name, secure, controller.signal);
       if (!controller.signal.aborted) setReveal({ kind: 'shown', value });
@@ -52,7 +53,7 @@ export function ValueReveal({
       if (controller.signal.aborted) return;
       const failure = failureOf(error, GET_PARAMETER);
       if (failure.kind === 'not-implemented') markUnsupported(failure);
-      setReveal({ kind: 'failed', failure });
+      setReveal({ kind: 'failed', failure, showRetry: retrying || failure.kind !== 'not-implemented' });
     } finally {
       if (request.current === controller) request.current = undefined;
     }
@@ -60,6 +61,7 @@ export function ValueReveal({
 
   const visible = !unsupported && (reveal.kind === 'shown' || reveal.kind === 'loading');
   const failure = unsupported && actionFailureItem(unsupported, 'Showing the value', connection.engineOrigin);
+  const showRetry = (reveal.kind === 'loading' || reveal.kind === 'failed') && reveal.showRetry;
   return (
     <SpaceBetween size="xs">
       <Button
@@ -72,6 +74,7 @@ export function ValueReveal({
         <div role="status">
           <StatusIndicator type="info">{failure.header}</StatusIndicator>
           <Box variant="p">{failure.content}</Box>
+          {showRetry && <Button disabled>Retry</Button>}
         </div>
       ) : reveal.kind === 'loading' ? (
         <StatusIndicator type="loading">Loading value…</StatusIndicator>
