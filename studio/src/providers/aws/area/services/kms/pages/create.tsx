@@ -1,0 +1,139 @@
+import Button from '@cloudscape-design/components/button';
+import Container from '@cloudscape-design/components/container';
+import Form from '@cloudscape-design/components/form';
+import FormField from '@cloudscape-design/components/form-field';
+import Header from '@cloudscape-design/components/header';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import Textarea from '@cloudscape-design/components/textarea';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router';
+
+import { DiscardDialog } from '../../../components/discard-dialog';
+import { actionFailureItem } from '../../../components/failure-states';
+import { usePageFlash } from '../../../components/page-flash';
+import { useShowsResources } from '../../../components/page-resources';
+import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { ValueText } from '../../../components/value-text';
+import type { ScreenPageProps } from '../../../screens';
+import { createKey, LIFECYCLE_OPERATIONS } from '../lifecycle-api';
+import { keyPath, KEYS_PATH } from '../paths';
+import { KMS_KEYS } from '../queries';
+
+export const KEY_CREATE_PATH = `${KEYS_PATH}/keys/create`;
+export const KEY_CREATE_TITLE = 'Create key';
+
+const OPERATION = LIFECYCLE_OPERATIONS.create;
+
+export function CreateKeyPage({ connection }: ScreenPageProps) {
+  useShowsResources('keys');
+  const navigate = useNavigate();
+  const flash = usePageFlash();
+  const queryClient = useQueryClient();
+  const signalForPage = usePageSignal();
+  const inFlight = useRef(false);
+  const [description, setDescription] = useState('');
+  const [pending, setPending] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [failureFocus, setFailureFocus] = useState<{ element: HTMLElement }>();
+  const endpoint = connection.engineOrigin;
+  const connected = connection.result === undefined || connection.result.kind === 'connected';
+
+  useLayoutEffect(() => {
+    const element = failureFocus?.element;
+    if (element !== undefined && element.ownerDocument.activeElement === element) {
+      element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [failureFocus]);
+
+  const handleCancel = () => {
+    if (description !== '') setAsking(true);
+    else void navigate(KEYS_PATH);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (endpoint === undefined || !connected || unavailable || inFlight.current) return;
+    const form = event.currentTarget;
+    const active = form.ownerDocument.activeElement;
+    const initiatingFocus = active instanceof HTMLElement && form.contains(active) ? active : undefined;
+    const signal = signalForPage();
+    inFlight.current = true;
+    setPending(true);
+    let keyId: string;
+    try {
+      keyId = await createKey(endpoint, description, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      const reason = failureOf(error, OPERATION);
+      if (reason.kind === 'not-implemented') setUnavailable(true);
+      flash.show([actionFailureItem(reason, 'Key creation', endpoint)]);
+      if (initiatingFocus !== undefined && form.ownerDocument.activeElement === initiatingFocus) {
+        setFailureFocus({ element: initiatingFocus });
+      }
+      return;
+    } finally {
+      inFlight.current = false;
+      if (!signal.aborted) setPending(false);
+    }
+    if (signal.aborted) return;
+    void queryClient.invalidateQueries({ queryKey: KMS_KEYS.list });
+    flash.handOver(keyPath(keyId), [{ type: 'success', content: 'Key created.' }]);
+  };
+
+  return (
+    <SpaceBetween size="l">
+      <Header variant="h1">{KEY_CREATE_TITLE}</Header>
+      <form onSubmit={(event) => void handleSubmit(event)}>
+        <Form
+          actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" formAction="none" disabled={pending} onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={pending}
+                disabled={endpoint === undefined || !connected || unavailable}
+                {...(unavailable ? { disabledReason: `Not implemented by the emulator (${OPERATION})` } : {})}
+              >
+                Create key
+              </Button>
+            </SpaceBetween>
+          }
+        >
+          <SpaceBetween size="l">
+            <Container header={<Header variant="h2">Key configuration</Header>}>
+              <KeyValuePairs
+                columns={3}
+                items={[
+                  { label: 'Key type', value: 'Symmetric, single-Region' },
+                  { label: 'Key usage', value: <ValueText kind="fixed" value="ENCRYPT_DECRYPT" /> },
+                  { label: 'Key material origin', value: 'Generated by KMS' },
+                ]}
+              />
+            </Container>
+            <Container>
+              <FormField label="Description" constraintText="Optional">
+                <Textarea
+                  value={description}
+                  disabled={pending}
+                  onChange={({ detail }) => setDescription(detail.value)}
+                />
+              </FormField>
+            </Container>
+          </SpaceBetween>
+        </Form>
+      </form>
+      <DiscardDialog
+        visible={asking}
+        onAnswer={(answer) => {
+          setAsking(false);
+          if (answer === 'discard') void navigate(KEYS_PATH);
+        }}
+      />
+    </SpaceBetween>
+  );
+}
