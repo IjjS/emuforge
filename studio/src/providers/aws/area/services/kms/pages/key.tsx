@@ -106,6 +106,13 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const metadata = read.key === undefined ? lastKey : read.key;
   const failure = !canRead || (offline !== undefined && refreshing) ? offline : read.failure;
   const retainedMetadataFailed = failure !== undefined && metadata !== undefined && metadata !== null;
+  // A later connection check can replace the visible diagnosis for the same failed read.
+  const initialMetadataFailed = metadata === undefined && read.failure !== undefined;
+  const metadataAnnouncement = retainedMetadataFailed
+    ? 'Key metadata could not be refreshed. Showing the last successful read.'
+    : initialMetadataFailed
+      ? 'Key metadata could not be loaded. Choose Retry to try again.'
+      : '';
   const showPanels = openedPanels && metadata !== null;
   const writesEnabled = offline === undefined && metadata !== undefined && metadata !== null;
   useLayoutEffect(() => {
@@ -160,9 +167,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
       }
     >
       <div className="aws-area-announcer" role="status" aria-atomic="true">
-        {retainedMetadataFailed && !refreshing
-          ? 'Key metadata could not be refreshed. Showing the last successful read.'
-          : ''}
+        {refreshing ? '' : metadataAnnouncement}
       </div>
       <SpaceBetween size="l">
         {failure !== undefined && (
