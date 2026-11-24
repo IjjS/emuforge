@@ -572,6 +572,92 @@ describe('Parameter Store values and versions', () => {
     expect(await screen.findByText(CURRENT)).toBeVisible();
   });
 
+  it('retains the selected history page and its actions after a successful label write refresh returns 501', async () => {
+    const refresh = deferredResponse();
+    getHistory
+      .mockReturnValueOnce(history([second], 'page-two'))
+      .mockReturnValueOnce(history([first], 'page-three'))
+      .mockReturnValueOnce(refresh.response);
+    const { navigate, connect } = open();
+    await openHistory();
+    await waitFor(() => expectLabels(2, 'latest'));
+    changePage('next');
+    await selectVersion();
+    expectLabels(1, 'stable');
+
+    const add = await labelDialog('Add labels');
+    fireEvent.change(labelInput(add), { target: { value: 'release' } });
+    submitLabels(add, 'Add labels');
+    await waitFor(() => {
+      expect(flashContent('success')).toHaveTextContent(`Added labels for ${NAME}, version 1: release.`);
+      expect(getHistory).toHaveBeenCalledTimes(3);
+    });
+    const refreshOrder = getHistory.mock.invocationCallOrder[2];
+    assert(refreshOrder !== undefined);
+    expect(addLabels.mock.invocationCallOrder[0]).toBeLessThan(refreshOrder);
+    await refresh.finish(notImplemented());
+
+    const refusal = 'The emulator answered 501 Not Implemented for GetParameterHistory.';
+    expect(await screen.findByText(refusal)).toBeVisible();
+    expectLabels(1, 'stable');
+    expect(versionTable()?.findRows()).toHaveLength(1);
+    const selection = versionTable()?.findRowSelectionArea(versionRow(1))?.getElement();
+    assert(selection);
+    expect(within(selection).getByRole('radio', { name: 'Version 1' })).toBeChecked();
+
+    const retry = namedButton('Retry', document.body);
+    expect(retry).toBeDisabled();
+    expect(pagination()?.findPreviousPageButton().getElement()).toHaveAttribute('aria-disabled', 'true');
+    expect(pagination()?.findNextPageButton().getElement()).toHaveAttribute('aria-disabled', 'true');
+    click('Retry', document.body);
+    changePage('previous');
+    changePage('next');
+
+    expect(getParameter).not.toHaveBeenCalled();
+    expect(screen.queryByText(HISTORY_VALUE)).not.toBeInTheDocument();
+    const version = versionRegion(1);
+    click('Show value', version);
+    expect(await within(version).findByText(OLDER)).toBeVisible();
+    expect(getParameter.mock.calls).toEqual([[{ Name: `${NAME}:1`, WithDecryption: true }]]);
+    click('Hide value', version);
+    expect(screen.queryByText(OLDER)).not.toBeInTheDocument();
+
+    const addAgain = await labelDialog('Add labels');
+    fireEvent.change(labelInput(addAgain), { target: { value: 'candidate' } });
+    submitLabels(addAgain, 'Add labels');
+    await waitFor(() =>
+      expect(flashContent('success')).toHaveTextContent(`Added labels for ${NAME}, version 1: candidate.`),
+    );
+    expect(addLabels.mock.calls).toEqual([
+      [{ Name: NAME, ParameterVersion: 1, Labels: ['release'] }],
+      [{ Name: NAME, ParameterVersion: 1, Labels: ['candidate'] }],
+    ]);
+    expect(getHistory.mock.calls).toEqual([
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50 }],
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50, NextToken: 'page-two' }],
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50, NextToken: 'page-two' }],
+    ]);
+
+    await navigate(parameterPath(OTHER));
+    await openHistory();
+    expect(await screen.findByText(refusal)).toBeVisible();
+    expect(versionTable()?.findRows()).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: 'Version 1 actions' })).not.toBeInTheDocument();
+    expect(getHistory).toHaveBeenCalledTimes(3);
+
+    getHistory.mockReturnValueOnce(history([{ ...second, Labels: ['alternate'] }]));
+    await navigate(parameterPath(NAME));
+    connect({ ...connected, target: 'alternate', checkedAt: 2 });
+    await openHistory();
+    await waitFor(() => expectLabels(2, 'alternate'));
+    expect(screen.queryByText(refusal)).not.toBeInTheDocument();
+    expect(versionTable()?.findRows()).toHaveLength(1);
+    expect(versionRow(1)).toBe(0);
+    expect(screen.queryByRole('region', { name: 'Version 1 actions' })).not.toBeInTheDocument();
+    expect(getHistory).toHaveBeenCalledTimes(4);
+    expect(getHistory).toHaveBeenLastCalledWith({ Name: NAME, WithDecryption: false, MaxResults: 50 });
+  });
+
   it('V10 retains the label input after a refusal and allows a corrected submission', async () => {
     addLabels.mockReturnValueOnce(denied('Cannot attach that label.'));
     getHistory

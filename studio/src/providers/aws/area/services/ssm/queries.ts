@@ -199,9 +199,11 @@ export function useRefreshParameterLabels(connection: AreaConnection) {
   const client = useQueryClient();
   const refresh = useRefreshParameterReads(connection);
   return (name: string) => {
-    const history = { queryKey: [...targetKey(connection), 'history', name] };
+    const key = targetKey(connection);
+    const history = { queryKey: [...key, 'history', name] };
     void client.cancelQueries(history);
-    void client.invalidateQueries(history);
+    const blockedRead = client.getQueryData([...key, 'unsupported', GET_PARAMETER_HISTORY]);
+    void client.invalidateQueries({ ...history, refetchType: blockedRead === undefined ? 'active' : 'none' });
     refresh([name]);
   };
 }
