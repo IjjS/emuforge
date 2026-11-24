@@ -97,7 +97,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
         disabled={!allowed || action.disabled(operation) || (action.pending !== undefined && !loading)}
         {...(reason === undefined ? {} : { disabledReason: reason })}
         loading={loading}
-        loadingText={operation === LIFECYCLE_OPERATIONS.enable ? 'Enabling key' : undefined}
+        {...(operation === LIFECYCLE_OPERATIONS.enable ? { loadingText: 'Enabling key' } : {})}
         nativeButtonAttributes={{ 'data-lifecycle-operation': operation }}
         onClick={onClick}
       >
