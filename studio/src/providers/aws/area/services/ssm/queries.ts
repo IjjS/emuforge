@@ -81,11 +81,12 @@ export function useUnsupportedOperation(connection: AreaConnection, operation: s
 
 export function useParameterListing(connection: AreaConnection) {
   const scope = useReadScope(connection);
+  const [readReset, setReadReset] = useState(0);
   const unsupported = useUnsupportedOperation(connection, DESCRIBE_PARAMETERS);
   const key = [...targetKey(connection), 'list'];
   const { data: revision = 0 } = useQuery<number>({ queryKey: [...key, 'revision'], queryFn: skipToken });
   const listing = useTokenListing<ParameterMetadata>({
-    key: [...key, 'page', PAGE_SIZE, scope.generation, revision],
+    key: [...key, 'page', PAGE_SIZE, scope.generation, readReset, revision],
     endpoint: connection.engineOrigin,
     enabled: scope.failure === undefined && unsupported.failure === undefined,
     operation: DESCRIBE_PARAMETERS,
@@ -106,9 +107,11 @@ export function useParameterListing(connection: AreaConnection) {
     rememberFailure: unsupported.markUnsupported,
     disconnected: scope.disconnected,
     generation: scope.generation,
-    selectionKey: JSON.stringify([scope.generation, revision, listing.currentPage]),
+    selectionKey: JSON.stringify([scope.generation, readReset, revision, listing.currentPage]),
     refresh: () => {
-      if (failure?.kind !== 'not-implemented') scope.retry();
+      if (failure?.kind === 'not-implemented') return;
+      if (scope.disconnected) scope.retry();
+      else setReadReset((reset) => reset + 1);
     },
   };
 }
