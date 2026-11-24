@@ -1,4 +1,3 @@
-import Alert from '@cloudscape-design/components/alert';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
@@ -11,7 +10,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
-import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { DiscardDialog } from '../../../components/discard-dialog';
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash } from '../../../components/page-flash';
@@ -37,7 +35,6 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
   const inFlight = useRef(false);
   const [description, setDescription] = useState('');
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
   const [unavailable, setUnavailable] = useState(false);
   const [asking, setAsking] = useState(false);
   const endpoint = connection.engineOrigin;
@@ -54,7 +51,6 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
     const signal = signalForPage();
     inFlight.current = true;
     setPending(true);
-    setFailure(undefined);
     let keyId: string;
     try {
       keyId = await createKey(endpoint, description, signal);
@@ -62,7 +58,7 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
       if (signal.aborted) return;
       const reason = failureOf(error, OPERATION);
       if (reason.kind === 'not-implemented') setUnavailable(true);
-      setFailure(reason);
+      flash.show([actionFailureItem(reason, 'Key creation', endpoint)]);
       return;
     } finally {
       inFlight.current = false;
@@ -72,8 +68,6 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
     void queryClient.invalidateQueries({ queryKey: KMS_KEYS.list });
     flash.handOver(keyPath(keyId), [{ type: 'success', content: 'Key created.' }]);
   };
-
-  const notice = failure === undefined ? undefined : actionFailureItem(failure, 'Key creation', endpoint);
 
   return (
     <SpaceBetween size="l">
@@ -116,13 +110,6 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
                 />
               </FormField>
             </Container>
-            {notice !== undefined && (
-              <div role="alert">
-                <Alert type={notice.type} header={notice.header}>
-                  {notice.content}
-                </Alert>
-              </div>
-            )}
           </SpaceBetween>
         </Form>
       </form>

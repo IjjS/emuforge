@@ -1,6 +1,7 @@
 import { DescribeKeyCommand, type KeyMetadata } from '@aws-sdk/client-kms';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +16,7 @@ vi.mock('../../../../../../lib/aws/client-factory', () => ({ createAwsClient: ()
 const endpoint = 'http://127.0.0.1:8311';
 const emulator = { port: 9311, endpoint: 'https://127.0.0.1:9311' };
 const online = { engineOrigin: endpoint, result: { kind: 'connected', checkedAt: 0, emulator } } as const;
+const page = createWrapper(document.body);
 const metadata = {
   KeyId: '12345678-1234-1234-1234-123456789012',
   Arn: 'arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012',
@@ -48,9 +50,19 @@ function open(keyId: string, connection: AreaConnection = online) {
   return (current: AreaConnection) => view.rerender(at(current));
 }
 
-function expectField(label: string, value: string) {
-  const term = screen.getByText(label).closest('dt');
-  expect(term?.nextElementSibling).toHaveTextContent(value);
+function metadataHeading() {
+  return page
+    .findAllHeaders()
+    .map((header) => header.findHeadingText().getElement())
+    .find((heading) => heading.textContent === 'Key metadata');
+}
+
+function expectField(label: string, value: string | RegExp) {
+  const item = page
+    .findAllKeyValuePairs()
+    .flatMap((pairs) => pairs.findItems())
+    .find((pair) => pair.findLabel()?.getElement().textContent === label);
+  expect(item?.findValue()?.getElement()).toHaveTextContent(value);
 }
 
 beforeEach(() => {
@@ -62,7 +74,7 @@ describe('key details', () => {
     send.mockResolvedValue({ KeyMetadata: metadata });
     open(metadata.KeyId);
 
-    await screen.findByRole('heading', { name: 'Key metadata' });
+    await waitFor(() => expect(metadataHeading()).toBeVisible());
     expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toEqual([
       [expect.objectContaining({ input: { KeyId: metadata.KeyId } }), { abortSignal: expect.any(AbortSignal) }],
     ]);
@@ -77,9 +89,7 @@ describe('key details', () => {
       metadata.CreationDate,
     );
     expectField('Created', date);
-    expect(screen.getByText('Created').closest('dt')?.nextElementSibling).toHaveTextContent(
-      /\d{2}:\d{2}:56 \(UTC[+-]\d{2}:\d{2}\)/,
-    );
+    expectField('Created', /\d{2}:\d{2}:56 \(UTC[+-]\d{2}:\d{2}\)/);
   });
 
   it('offers a way back to the list when the key does not exist', async () => {
@@ -121,6 +131,6 @@ describe('key details', () => {
 
     send.mockResolvedValue({ KeyMetadata: metadata });
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+    await waitFor(() => expect(metadataHeading()).toBeVisible());
   });
 });

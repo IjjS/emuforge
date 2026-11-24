@@ -1,6 +1,7 @@
 import { DescribeKeyCommand, ListAliasesCommand, ListKeysCommand } from '@aws-sdk/client-kms';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,7 @@ vi.mock('../../../../../../lib/aws/client-factory', () => ({
 }));
 
 const endpoint = 'http://127.0.0.1:8311';
+const page = createWrapper(document.body);
 
 function open() {
   render(
@@ -56,12 +58,19 @@ function pendingAnswer() {
 }
 
 async function expectRow(id: string) {
-  const link = await screen.findByRole('link', { name: id });
-  expect(link).toHaveAttribute('href', `/aws/kms/keys/${id}`);
-  const row = link.closest('tr');
-  expect(row).toHaveTextContent(`alias/${id}`);
-  expect(row).not.toHaveTextContent('alias/other-target');
-  return row;
+  return waitFor(() => {
+    for (const row of page.findTable()?.findRows() ?? []) {
+      const element = row.getElement();
+      const link = within(element).queryByRole('link', { name: id });
+      if (link === null) continue;
+
+      expect(link).toHaveAttribute('href', `/aws/kms/keys/${id}`);
+      expect(element).toHaveTextContent(`alias/${id}`);
+      expect(element).not.toHaveTextContent('alias/other-target');
+      return element;
+    }
+    throw new Error(`Expected a table row for key ${id}`);
+  });
 }
 
 function click(name: string) {
@@ -78,7 +87,9 @@ describe('customer managed keys', () => {
     send.mockReturnValue(pending.promise);
     open();
 
-    expect(screen.getByText('Loading keys…')).toBeVisible();
+    const loading = page.findTable()?.findLoadingText()?.getElement();
+    expect(loading).toBeVisible();
+    expect(loading).toHaveTextContent('Loading keys…');
     await act(() => pending.answer({ Keys: [] }));
     expect(await screen.findByText('No customer managed keys')).toBeVisible();
   });
