@@ -107,6 +107,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const failure = !canRead || (offline !== undefined && refreshing) ? offline : read.failure;
   const retainedMetadataFailed = failure !== undefined && metadata !== undefined && metadata !== null;
   const showPanels = openedPanels && metadata !== null;
+  const writesEnabled = offline === undefined && metadata !== undefined && metadata !== null;
   useLayoutEffect(() => {
     if (failure !== undefined || read.key === undefined || !retryHadFocus.current) return;
     retryHadFocus.current = false;
@@ -212,19 +213,26 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
                 id: 'labels',
                 label: 'Labels',
                 contentRenderStrategy: 'eager',
-                content: <Labels connection={connection} keyId={keyId} />,
+                content: <Labels connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
               },
               {
                 id: 'access',
                 label: 'Access',
                 contentRenderStrategy: 'lazy',
-                content: <Access connection={connection} keyId={keyId} />,
+                content: <Access connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
               },
               {
                 id: 'rotation',
                 label: 'Rotation',
                 contentRenderStrategy: 'lazy',
-                content: <Rotation connection={connection} keyId={keyId} keySpec={metadata?.KeySpec} />,
+                content: (
+                  <Rotation
+                    connection={connection}
+                    keyId={keyId}
+                    keySpec={metadata?.KeySpec}
+                    writesEnabled={writesEnabled}
+                  />
+                ),
               },
             ]}
           />

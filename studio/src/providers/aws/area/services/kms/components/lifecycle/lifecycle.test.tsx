@@ -199,31 +199,44 @@ describe('Key detail panel lifetime', () => {
     fireEvent.click(tab.getElement());
   }
 
-  function rotateButton() {
+  function panelButton(name: string) {
     const panel = PAGE.findTabs()?.findTabContent();
     if (!panel) throw new Error('Missing active key panel');
-    return within(panel.getElement()).getByRole('button', { name: 'Rotate now' });
+    return within(panel.getElement()).getByRole('button', { name });
   }
 
-  it('keeps a rotation started before the first metadata read fails', async () => {
+  const rotateButton = () => panelButton('Rotate now');
+
+  it('blocks new panel writes before initial metadata succeeds and unlocks them after Retry', async () => {
     const metadata = deferred<unknown>();
-    const write = deferred<unknown>();
-    let firstRead = true;
+    const retry = deferred<unknown>();
+    let reads = 0;
     emulate(key('Enabled'), (command) => {
-      if (command instanceof DescribeKeyCommand && firstRead) {
-        firstRead = false;
-        return metadata.promise;
-      }
-      if (command instanceof RotateKeyOnDemandCommand) return write.promise;
+      if (command instanceof DescribeKeyCommand) return ++reads === 1 ? metadata.promise : retry.promise;
       return undefined;
     });
+    const actions = [
+      ['labels', ['Create alias', 'Add tag']],
+      ['access', ['Create grant']],
+      ['rotation', ['Rotate now']],
+    ] as const;
+    function expectBlockedWrites() {
+      for (const [tab, buttons] of actions) {
+        selectTab(tab);
+        for (const name of buttons) {
+          const button = panelButton(name);
+          expect(usable(button)).toBe(false);
+          fireEvent.click(button);
+        }
+        expect(PAGE.findModal()).toBeNull();
+      }
+      expect(sent(RotateKeyOnDemandCommand)).toHaveLength(0);
+    }
+
     open();
     await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(1));
     expect(field('Status')).toBeUndefined();
-    selectTab('rotation');
-    fireEvent.click(rotateButton());
-    await waitFor(() => expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1));
-    const options = sent(RotateKeyOnDemandCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    expectBlockedWrites();
 
     await act(async () => {
       metadata.reject({
@@ -234,16 +247,23 @@ describe('Key detail panel lifetime', () => {
       });
     });
     expect(await screen.findByText(/Initial DescribeKey failed/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
-    expect(rotateButton()).toHaveAttribute('aria-disabled', 'true');
-    expect(options?.abortSignal.aborted).toBe(false);
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeVisible();
+    expectBlockedWrites();
 
-    await act(async () => write.resolve({}));
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    expectBlockedWrites();
+    await act(async () => retry.resolve({ KeyMetadata: key('Enabled') }));
+    await waitFor(() => expect(usable(rotateButton())).toBe(true));
+    expect(screen.queryByText(/Initial DescribeKey failed/)).toBeNull();
+    for (const [tab, buttons] of actions) {
+      selectTab(tab);
+      for (const name of buttons) expect(usable(panelButton(name))).toBe(true);
+    }
+    fireEvent.click(rotateButton());
     await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
-    expect(usable(rotateButton())).toBe(true);
     expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Initial DescribeKey failed/)).toBeNull());
     selectTab('details');
     await expectStatus('Enabled');
   });
