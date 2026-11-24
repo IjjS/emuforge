@@ -11,10 +11,12 @@ import {
   getCluster,
   listClusters,
   listMembers,
+  operateCluster,
   type ClusterRead,
   type DbCluster,
   type NewMember,
 } from './cluster-api';
+import type { ClusterOperation } from './cluster-operations';
 import { RDS_KEYS, useRdsRead, type RdsRead } from './queries';
 import { isInProgress, READ_AGAIN_MS } from './status';
 
@@ -28,7 +30,7 @@ let mounts = 0;
 
 /**
  * S4: the DB clusters, a page of `DescribeDBClusters` at a time on the API's markers. While a row is in one of the
- * six statuses in progress the page is read again every 3 seconds with the same marker.
+ * statuses in progress the page is read again every 3 seconds with the same marker.
  */
 export function useClusterListing(endpoint: string | undefined): TokenListing<DbCluster> {
   return useTokenListing({
@@ -96,7 +98,7 @@ async function readRound(endpoint: string, id: string, signal: AbortSignal): Pro
 /**
  * S6: the DB cluster `id` and its members, both asked at once and shown together. A failed read of the cluster fails
  * the page; a failed read of the members only their section. Read again every 3 seconds while the cluster or a member
- * is in one of the six statuses in progress, and after a change that reads the cluster again (its key names this read).
+ * is in in progress, and after a change that reads the cluster again (its key names this read).
  */
 export function useClusterRound(endpoint: string | undefined, id: string): ClusterReading {
   const [mount] = useState(() => (mounts += 1));
@@ -180,5 +182,25 @@ export function useAddInstance(
       return id;
     },
     [endpoint, client],
+  );
+}
+
+/** Re-read the cluster and its instances after the emulator accepts a change. */
+export function useClusterOperation(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useCallback(
+    async (id: string, action: ClusterOperation, signal: AbortSignal) => {
+      if (endpoint === undefined) {
+        noEndpoint();
+      }
+      await operateCluster(endpoint, id, action, signal);
+      const detail = { queryKey: RDS_KEYS.cluster(id) };
+      // A read already in flight may have started before the operation was accepted.
+      await client.cancelQueries(detail);
+      for (const queryKey of [detail.queryKey, RDS_KEYS.clusters(), RDS_KEYS.instances()]) {
+        void client.invalidateQueries({ queryKey });
+      }
+    },
+    [client, endpoint],
   );
 }

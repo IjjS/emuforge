@@ -382,6 +382,22 @@ describe('a DB instance', () => {
     expect(screen.getByRole('link', { name: 'aur-1' })).toHaveAttribute('href', '/aws/rds/clusters/cluster/aur-1');
   });
 
+  it('links from the Aurora lifecycle guidance to the member’s cluster', async () => {
+    vi.mocked(api.getInstance).mockResolvedValue(found({ clusterId: 'aur-1', engine: 'aurora-postgresql' }));
+    const router = open(PATH);
+    await loaded();
+
+    const link = screen.getByRole('link', { name: 'Open DB cluster' });
+    expect(link.closest('a')?.parentElement).toHaveTextContent(
+      'An Aurora DB instance starts and stops only with its DB cluster.',
+    );
+    expect(link).toHaveAttribute('href', '/aws/rds/clusters/cluster/aur-1');
+    fireEvent.click(link);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/rds/clusters/cluster/aur-1');
+    });
+  });
+
   it('a member without its own master user name and database name → its cluster\'s, each copyable, "From DB cluster {id}" to its page', async () => {
     const member = { ...FULL, clusterId: 'aur-1', engine: 'aurora-postgresql' } as Partial<api.DbInstance>;
     delete member.masterUsername;

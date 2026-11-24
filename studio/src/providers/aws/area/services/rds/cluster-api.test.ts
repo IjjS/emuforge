@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError } from '../../../../../lib/aws/request';
-import { addInstance, deleteCluster, getCluster, listClusters, listMembers } from './cluster-api';
+import type { ClusterOperation } from './cluster-operations';
+import { addInstance, deleteCluster, getCluster, listClusters, listMembers, operateCluster } from './cluster-api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and each request as it leaves the browser,
 // answered in RDS's query protocol (form in, XML out) as the emulator answers.
@@ -117,6 +118,7 @@ const FULL = `<DBCluster>
     <DBClusterMember><DBInstanceIdentifier>app-aur-2</DBInstanceIdentifier><IsClusterWriter>false</IsClusterWriter></DBClusterMember>
   </DBClusterMembers>
   <DeletionProtection>true</DeletionProtection>
+  <BackupRetentionPeriod>7</BackupRetentionPeriod>
   <TagList><Tag><Key>env</Key><Value>dev</Value></Tag></TagList>
 </DBCluster>`;
 
@@ -188,6 +190,7 @@ describe('one cluster', () => {
           { id: 'app-aur-2', writer: false },
         ],
         deletionProtection: true,
+        backupRetentionPeriod: 7,
         tags: [{ key: 'env', value: 'dev' }],
       },
     });
@@ -331,4 +334,29 @@ describe('every call', () => {
       await expect(pending).rejects.toBe(reason);
     });
   }
+});
+
+describe('cluster operations', () => {
+  const cases: [string, ClusterOperation, Record<string, string>][] = [
+    ['StopDBCluster', { kind: 'stop' }, {}],
+    ['StartDBCluster', { kind: 'start' }, {}],
+    [
+      'ModifyDBCluster',
+      { kind: 'modify', changes: { deletionProtection: false } },
+      { ApplyImmediately: 'true', DeletionProtection: 'false' },
+    ],
+    [
+      'ModifyDBCluster',
+      { kind: 'modify', changes: { backupRetentionPeriod: 35 } },
+      { ApplyImmediately: 'true', BackupRetentionPeriod: '35' },
+    ],
+    ['FailoverDBCluster', { kind: 'failover', target: 'app-aur-3' }, { TargetDBInstanceIdentifier: 'app-aur-3' }],
+  ];
+
+  it.each(cases)('sends %s with only the selected fields', async (operation, action, fields) => {
+    await operateCluster(endpoint, 'app-aur', action, signal());
+    expect(engine.sent.map((request) => Object.fromEntries(request.params))).toEqual([
+      { Action: operation, Version: '2014-10-31', DBClusterIdentifier: 'app-aur', ...fields },
+    ]);
+  });
 });

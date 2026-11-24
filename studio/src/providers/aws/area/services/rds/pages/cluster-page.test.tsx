@@ -12,6 +12,7 @@ import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
+import type { ClusterAction } from '../cluster-operations';
 
 // S6 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -30,6 +31,7 @@ vi.mock('../cluster-api', async (importOriginal) => {
     listMembers: vi.fn(),
     deleteCluster: vi.fn(),
     addInstance: vi.fn(),
+    operateCluster: vi.fn(),
   };
 });
 
@@ -144,6 +146,7 @@ const FULL: clusterApi.DbCluster = {
   parameterGroup: 'default.aurora-postgresql16',
   members: [],
   deletionProtection: false,
+  backupRetentionPeriod: 7,
   tags: [{ key: 'env', value: 'dev' }],
 };
 
@@ -286,6 +289,7 @@ describe('a DB cluster', () => {
       'Security groups': 'sg-1sg-2',
       'Cluster parameter group': 'default.aurora-postgresql16',
       'Deletion protection': 'Off',
+      'Backup retention period (days)': '7',
     });
     // The ARN and the resource ID in a group of their own, as wide as the section.
     const identifiers = PAGE.findAllKeyValuePairs().find((pairs) =>
@@ -697,5 +701,341 @@ describe('a DB cluster', () => {
     answer(found());
     open(PATH);
     expect(await screen.findByText('These DB clusters are in your local emulator')).toBeInTheDocument();
+  });
+});
+
+function openActions() {
+  fireEvent.click(control('Actions'));
+  const menu = PAGE.findButtonDropdown();
+  if (menu === null) throw new Error('Missing cluster Actions dropdown.');
+  return menu;
+}
+
+function chooseAction(action: ClusterAction) {
+  const item = openActions().findItemById(action, { disabled: false });
+  expect(item).not.toBeNull();
+  if (item === null) throw new Error(`Unavailable cluster action: ${action}`);
+  fireEvent.click(item.getElement());
+}
+
+async function editCluster() {
+  chooseAction('modify');
+  return within(await screen.findByRole('dialog', { name: 'Modify DB cluster' }));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
+function holdRound() {
+  const cluster = deferred<clusterApi.ClusterRead>();
+  const members = deferred<api.DbInstance[]>();
+  vi.mocked(clusterApi.getCluster).mockReturnValueOnce(cluster.promise);
+  vi.mocked(clusterApi.listMembers).mockReturnValueOnce(members.promise);
+  return { cluster, members };
+}
+
+const ROLES = [
+  { id: 'app-aur-1', writer: true },
+  { id: 'app-aur-2', writer: false },
+  { id: 'app-aur-3', writer: false },
+];
+
+function rowsAt(status = 'available') {
+  return ROLES.map(({ id }) => member(id, { status }));
+}
+
+async function selectReader(target: string) {
+  chooseAction('failover');
+  const dialog = await screen.findByRole('dialog', { name: 'Fail over DB cluster' });
+  const picker = createWrapper(dialog).findSelect();
+  if (picker === null) throw new Error('Missing failover reader picker.');
+  picker.openDropdown();
+  await waitFor(() => {
+    const options = picker.findDropdown().findOptions();
+    expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['app-aur-2', 'app-aur-3']);
+  });
+  picker.selectOptionByValue(target);
+  return within(dialog).getByRole('button', { name: 'Fail over' });
+}
+
+function rejectOperation(operation: string, message: string) {
+  vi.mocked(clusterApi.operateCluster).mockRejectedValueOnce(
+    new RequestError({ kind: 'other', operation, code: 'InvalidDBClusterStateFault', message }),
+  );
+}
+
+async function expectRefusal(message: string) {
+  await waitFor(() => {
+    expect(flashes('error')[0]).toContain('app-aur');
+    expect(flashes('error')[0]).toContain('InvalidDBClusterStateFault');
+    expect(flashes('error')[0]).toContain(message);
+  });
+  expect(flashes('success')).toEqual([]);
+}
+
+describe('Aurora cluster operations', () => {
+  beforeEach(() => {
+    vi.mocked(clusterApi.operateCluster).mockReset().mockResolvedValue(undefined);
+  });
+
+  it('offers Stop when available, Start when stopped and neither during a transition', async () => {
+    answer(found());
+    open(PATH);
+    await loaded();
+    for (const [status, stopDisabled, startDisabled] of [
+      ['available', false, true],
+      ['stopped', true, false],
+      ['stopping', true, true],
+    ] as const) {
+      if (status !== 'available') {
+        answer(found({ status }));
+        fireEvent.click(control('Refresh'));
+        await loaded();
+      }
+      const menu = openActions();
+      expect(menu.findItemById('stop', { disabled: stopDisabled })).not.toBeNull();
+      expect(menu.findItemById('start', { disabled: startDisabled })).not.toBeNull();
+      fireEvent.click(control('Actions'));
+    }
+  });
+
+  // Bound: Allow the real three-second poll and the separately settled cluster and member responses.
+  it.each([
+    ['stop', 'available', 'stopping', 'stopped', 'Stopping'],
+    ['start', 'stopped', 'starting', 'available', 'Starting'],
+  ] as const)(
+    'polls the cluster and members together after %s is accepted',
+    async (action, before, moving, final, verb) => {
+      answer(found({ status: before, members: ROLES }), rowsAt(before));
+      open(PATH);
+      await loaded();
+
+      answer(found({ status: moving, members: ROLES }), rowsAt(moving));
+      chooseAction(action);
+      await screen.findByText(`${verb} DB cluster app-aur`);
+      await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe(moving));
+      expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+        ENGINE,
+        'app-aur',
+        { kind: action },
+        expect.any(AbortSignal),
+      );
+
+      const next = holdRound();
+      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+      await act(async () => next.cluster.resolve(found({ status: final, members: ROLES })));
+      expect(pairsOf('DB cluster details')['Status']).toBe(moving);
+      await act(async () => next.members.resolve(rowsAt(final)));
+      await waitFor(() => {
+        expect(pairsOf('DB cluster details')['Status']).toBe(final);
+        expect(memberRows().map((row) => row.slice(0, 3))).toEqual(
+          ROLES.map(({ id, writer }) => [id, writer ? 'Writer' : 'Reader', final]),
+        );
+      });
+      expect(flashes('success')).toEqual([`${verb} DB cluster app-aur`]);
+    },
+    8_000,
+  );
+
+  it.each([
+    ['stop', 'available', 'StopDBCluster'],
+    ['start', 'stopped', 'StartDBCluster'],
+  ] as const)('shows the service error when %s is refused after a state change', async (action, status, operation) => {
+    answer(found({ status }));
+    rejectOperation(operation, 'The DB cluster changed state.');
+    open(PATH);
+    await loaded();
+    chooseAction(action);
+    await expectRefusal('The DB cluster changed state.');
+  });
+
+  it('prefills Modify, sends only changed protection, and retains the result after both reads', async () => {
+    answer(found({ deletionProtection: true, members: ROLES }), rowsAt());
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    const protection = dialog.getByRole('checkbox', { name: 'Deletion protection' });
+    expect(protection).toBeChecked();
+    expect(dialog.getByRole('textbox', { name: 'Backup retention period (days)' })).toHaveValue('7');
+
+    const next = holdRound();
+    fireEvent.click(protection);
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    await screen.findByText('DB cluster app-aur updated');
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { deletionProtection: false } },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(2));
+    await act(async () => next.cluster.resolve(found({ members: ROLES })));
+    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
+    await act(async () => next.members.resolve(rowsAt()));
+    await waitFor(() => {
+      expect(pairsOf('DB cluster details')['Deletion protection']).toBe('Off');
+      expect(memberRows().map(([id]) => id)).toEqual(ROLES.map(({ id }) => id));
+    });
+    expect(reasonOf(control('Delete'))).toBe("Delete the cluster's DB instances first, each from its own page.");
+    expect(flashes('success')).toEqual(['DB cluster app-aur updated']);
+  });
+
+  it('sends only the new retention period and displays the value returned by the read', async () => {
+    answer(found({ deletionProtection: true }));
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    answer(found({ deletionProtection: true, backupRetentionPeriod: 35 }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Backup retention period (days)' }), {
+      target: { value: '35' },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { backupRetentionPeriod: 35 } },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(pairsOf('DB cluster details')['Backup retention period (days)']).toBe('35'));
+    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
+  });
+
+  it('blocks empty, fractional and out-of-range retention periods and accepts 1 and 35', async () => {
+    answer(found());
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    const retention = dialog.getByRole('textbox', { name: 'Backup retention period (days)' });
+    const save = dialog.getByRole('button', { name: 'Save changes' });
+    for (const value of ['', '1.5', '0', '36']) {
+      fireEvent.change(retention, { target: { value } });
+      expect(dialog.getByText('Enter a whole number from 1 to 35.')).toBeVisible();
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+    }
+    expect(clusterApi.operateCluster).not.toHaveBeenCalled();
+
+    for (const value of ['1', '35']) {
+      fireEvent.change(retention, { target: { value } });
+      expect(dialog.queryByText('Enter a whole number from 1 to 35.')).toBeNull();
+      expect(save).toBeEnabled();
+    }
+  });
+
+  it('shows a refused Modify without changing the displayed protection or retention period', async () => {
+    answer(found({ deletionProtection: true }));
+    rejectOperation('ModifyDBCluster', 'The cluster cannot be modified now.');
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    await expectRefusal('The cluster cannot be modified now.');
+    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
+    expect(pairsOf('DB cluster details')['Backup retention period (days)']).toBe('7');
+  });
+
+  it('explains why a cluster without a reader cannot fail over', async () => {
+    answer(found({ members: ROLES.filter(({ writer }) => writer) }), [member('app-aur-1')]);
+    open(PATH);
+    await loaded();
+    const menu = openActions();
+    const failover = menu.findItemById('failover', { disabled: true });
+    if (failover === null) throw new Error('Missing disabled Fail over action.');
+    fireEvent.mouseEnter(failover.getElement());
+    await waitFor(() => {
+      expect(menu.findDisabledReason()?.getElement()).toHaveTextContent(
+        'Failover requires a reader DB instance in this cluster.',
+      );
+    });
+    fireEvent.click(failover.getElement());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(clusterApi.operateCluster).not.toHaveBeenCalled();
+  });
+
+  // Bound: Allow the reader dialog, the real three-second poll, and the ordered cluster and member responses.
+  it('sends the second reader as the failover target and polls until the new roles and statuses are visible', async () => {
+    answer(found({ members: ROLES }), rowsAt());
+    open(PATH);
+    await loaded();
+    const submit = await selectReader('app-aur-3');
+    answer(found({ status: 'failing-over', members: ROLES }), rowsAt());
+    fireEvent.click(submit);
+    await screen.findByText('Failing over DB cluster app-aur');
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'failover', target: 'app-aur-3' },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe('failing-over'));
+
+    const next = holdRound();
+    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+    const promoted = ROLES.map(({ id }) => ({ id, writer: id === 'app-aur-3' }));
+    await act(async () => next.cluster.resolve(found({ members: promoted })));
+    expect(pairsOf('DB cluster details')['Status']).toBe('failing-over');
+    await act(async () => next.members.resolve(rowsAt()));
+    await waitFor(() => {
+      expect(pairsOf('DB cluster details')['Status']).toBe('available');
+      expect(memberRows().map((row) => row.slice(0, 3))).toEqual([
+        ['app-aur-1', 'Reader', 'available'],
+        ['app-aur-2', 'Reader', 'available'],
+        ['app-aur-3', 'Writer', 'available'],
+      ]);
+    });
+    expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']);
+  }, 8_000);
+
+  it('shows the cluster and service error when the selected reader disappears before failover', async () => {
+    answer(found({ members: ROLES }), rowsAt());
+    rejectOperation('FailoverDBCluster', 'The selected DB instance is no longer in this cluster.');
+    open(PATH);
+    await loaded();
+    fireEvent.click(await selectReader('app-aur-3'));
+    await expectRefusal('The selected DB instance is no longer in this cluster.');
+  });
+
+  it('keeps the Multi-AZ detail and Delete without exposing Aurora operations', async () => {
+    answer(found({ engine: 'postgres', engineVersion: '16.4' }));
+    open(PATH);
+    await loaded();
+    expect(pairsOf('DB cluster details')['Engine']).toBe('postgres 16.4');
+    expect(control('Delete')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+  });
+
+  it.each([
+    ['stop', 'available', 'StopDBCluster'],
+    ['start', 'stopped', 'StartDBCluster'],
+    ['modify', 'available', 'ModifyDBCluster'],
+    ['failover', 'available', 'FailoverDBCluster'],
+  ] as const)('keeps %s visible and disabled after a 501 response', async (action, status, operation) => {
+    answer(found({ status, members: ROLES }), rowsAt());
+    vi.mocked(clusterApi.operateCluster).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation }),
+    );
+    open(PATH);
+    await loaded();
+    if (action === 'modify') {
+      const dialog = await editCluster();
+      fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+      fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    } else if (action === 'failover') {
+      fireEvent.click(await selectReader('app-aur-3'));
+    } else {
+      chooseAction(action);
+    }
+
+    await screen.findByText('Not implemented by the emulator');
+    expect(flashes('info')[0]).toContain(operation);
+    expect(openActions().findItemById(action, { disabled: true })).not.toBeNull();
+    expect(clusterApi.operateCluster).toHaveBeenCalledTimes(1);
   });
 });

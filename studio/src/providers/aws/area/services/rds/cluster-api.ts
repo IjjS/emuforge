@@ -2,15 +2,20 @@ import {
   CreateDBInstanceCommand,
   DeleteDBClusterCommand,
   DescribeDBClustersCommand,
+  FailoverDBClusterCommand,
+  ModifyDBClusterCommand,
+  StartDBClusterCommand,
+  StopDBClusterCommand,
   type DBCluster as SdkCluster,
 } from '@aws-sdk/client-rds';
 
 import { dateOf, describeInstances, isCode, sendRds, tagsOf, text, withValues, type DbInstance } from './api';
+import { CLUSTER_ACTIONS, type ClusterOperation } from './cluster-operations';
 import type { Tag } from './format';
 
 // The calls of RDS's DB cluster screens (issue 573, design task 4), sent through `sendRds` of `api.ts` and mapped to
 // plain typed results: the clusters page, one cluster, its members, the delete of a cluster and the add of a DB
-// instance to it. Every value is the emulator's, as it came.
+// instance to it and cluster operations. Every value is the emulator's, as it came.
 
 /** The operations of the DB cluster screens, as a failure names them. */
 export const CLUSTER_OPERATIONS = {
@@ -57,6 +62,7 @@ export interface DbCluster {
   /** The cluster's `DBClusterMembers`, in the answer's order. */
   members: ClusterMember[];
   deletionProtection: boolean;
+  backupRetentionPeriod?: number;
   tags: Tag[];
 }
 
@@ -89,6 +95,7 @@ export function clusterOf(raw: SdkCluster): DbCluster | undefined {
       engine: text(raw.Engine),
       engineVersion: text(raw.EngineVersion),
       port: portOf(raw.Port),
+      backupRetentionPeriod: portOf(raw.BackupRetentionPeriod),
       createdAt: dateOf(raw.ClusterCreateTime),
       endpoint: text(raw.Endpoint),
       readerEndpoint: text(raw.ReaderEndpoint),
@@ -216,4 +223,49 @@ export async function addInstance(endpoint: string, member: NewMember, signal: A
     signal,
   );
   return text(output.DBInstance?.DBInstanceIdentifier) ?? member.id.toLowerCase();
+}
+
+/** Submit a cluster operation. The detail and members are read separately after acceptance. */
+export async function operateCluster(
+  endpoint: string,
+  id: string,
+  action: ClusterOperation,
+  signal: AbortSignal,
+): Promise<void> {
+  const input = { DBClusterIdentifier: id };
+  await sendRds(
+    endpoint,
+    CLUSTER_ACTIONS[action.kind].operation,
+    async (client, abortSignal): Promise<void> => {
+      const options = { abortSignal };
+      switch (action.kind) {
+        case 'stop':
+          await client.send(new StopDBClusterCommand(input), options);
+          break;
+        case 'start':
+          await client.send(new StartDBClusterCommand(input), options);
+          break;
+        case 'modify': {
+          const { deletionProtection, backupRetentionPeriod } = action.changes;
+          await client.send(
+            new ModifyDBClusterCommand({
+              ...input,
+              ApplyImmediately: true,
+              ...(deletionProtection === undefined ? {} : { DeletionProtection: deletionProtection }),
+              ...(backupRetentionPeriod === undefined ? {} : { BackupRetentionPeriod: backupRetentionPeriod }),
+            }),
+            options,
+          );
+          break;
+        }
+        case 'failover':
+          await client.send(
+            new FailoverDBClusterCommand({ ...input, TargetDBInstanceIdentifier: action.target }),
+            options,
+          );
+          break;
+      }
+    },
+    signal,
+  );
 }
