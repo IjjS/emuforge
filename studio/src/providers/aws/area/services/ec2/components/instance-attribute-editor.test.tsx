@@ -86,11 +86,19 @@ async function edit(label: string) {
   const action = await screen.findByRole('button', { name: label });
   await waitFor(() => expect(isDisabled(action)).toBe(false));
   fireEvent.click(action);
-  return screen.findByRole('dialog', { name: label });
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error('Missing instance attribute modal');
+    expect(modal.findHeader().getElement()).toHaveTextContent(label);
+    return modal;
+  });
 }
 
-function saveButton(dialog: HTMLElement) {
-  return within(dialog).getByRole('button', { name: 'Save changes' });
+function saveButton(modal: Awaited<ReturnType<typeof edit>>) {
+  const button = modal.findFooter()?.findAllButtons()[1]?.getElement();
+  if (button === undefined) throw new Error('Missing instance attribute save button');
+  expect(button).toHaveAccessibleName('Save changes');
+  return button;
 }
 
 function pairValue(label: string) {
@@ -110,6 +118,16 @@ function groupField() {
   const field = PAGE.findMultiselect();
   if (field === null || field === undefined) throw new Error('Missing security group selector');
   return field;
+}
+
+async function loadMore(field: ReturnType<typeof typeField> | ReturnType<typeof groupField>) {
+  const more = await waitFor(() => {
+    const button = field.findDropdownFooter()?.findButton();
+    if (button === undefined || button === null) throw new Error('Missing dropdown pagination button');
+    expect(button.getElement()).toHaveAccessibleName('Load more');
+    return button;
+  });
+  more.click();
 }
 
 function tokens() {
@@ -135,7 +153,7 @@ async function enterDraft(label: string) {
   const dialog = await edit(label);
   if (label === TYPE) await selectLarge();
   else if (label === GROUPS) await selectBeta();
-  else PAGE.findToggle()?.findNativeInput().click();
+  else dialog.findContent().findToggle()?.findNativeInput().click();
   expect(isDisabled(saveButton(dialog))).toBe(false);
   return dialog;
 }
@@ -165,15 +183,17 @@ describe('instance attribute editor', () => {
       .mockResolvedValueOnce({ choices: [LARGE] });
     renderEditor();
     const dialog = await edit(TYPE);
-    expect(createWrapper(dialog).findFormField()?.findDescription()?.getElement()).toHaveTextContent('t3.micro');
+    expect(dialog.findContent().findFormField()?.findDescription()?.getElement()).toHaveTextContent('t3.micro');
     typeField().openDropdown();
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+    await loadMore(typeField());
     await waitFor(() => expect(typeField().findDropdown().findOptionByValue(LARGE.type)).not.toBeNull());
     expect(listInstanceTypeChoices).toHaveBeenLastCalledWith(ENDPOINT, '', 'next-type', expect.any(AbortSignal));
     typeField().selectOptionByValue(LARGE.type);
     expect(isDisabled(saveButton(dialog))).toBe(false);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: TYPE })).toBeNull());
+    const cancel = dialog.findFooter()?.findAllButtons()[0];
+    expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
+    cancel?.click();
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
     expect(pairValue('Type')?.getElement()).toHaveTextContent('t3.micro');
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
   });
@@ -184,7 +204,7 @@ describe('instance attribute editor', () => {
     vi.mocked(instanceApi.getInstance).mockResolvedValue({ found: true, instance: { ...CORE, state: 'pending' } });
     await act(() => client.invalidateQueries({ queryKey: EC2_KEYS.instance(CORE.id) }));
     await waitFor(() => expect(isDisabled(saveButton(dialog))).toBe(true));
-    expect(createWrapper(dialog).findAlert()?.findContent().getElement()).toHaveTextContent(
+    expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
       'Stop the instance to change its type.',
     );
     expect(typeField().findTrigger().getElement()).toHaveTextContent(LARGE.type);
@@ -217,7 +237,7 @@ describe('instance attribute editor', () => {
     });
     expect(signal?.aborted).toBe(true);
     await act(() => finishWrite());
-    expect(screen.queryByRole('dialog', { name: TYPE })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(PAGE.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
   });
 
@@ -234,7 +254,7 @@ describe('instance attribute editor', () => {
     expect(isDisabled(saveButton(dialog))).toBe(true);
     await selectBeta();
     groupField().openDropdown();
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+    await loadMore(groupField());
     await waitFor(() => expect(groupField().findDropdown().findOptionByValue('sg-c')).not.toBeNull());
     expect(listGroupChoices).toHaveBeenLastCalledWith(
       ENDPOINT,
@@ -268,7 +288,7 @@ describe('instance attribute editor', () => {
     const action = await screen.findByRole('button', { name: GROUPS });
     expect(isDisabled(action)).toBe(true);
     fireEvent.click(action);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(listGroupChoices).not.toHaveBeenCalled();
   });
 
@@ -303,7 +323,7 @@ describe('instance attribute editor', () => {
       sdkRefusal(MODIFY_INSTANCE_ATTRIBUTE, code, message, label === PROTECTION ? 403 : 400),
     );
     fireEvent.click(saveButton(dialog));
-    const alert = await within(dialog).findByRole('alert');
+    const alert = await within(dialog.findContent().getElement()).findByRole('alert');
     expect(alert).toBeVisible();
     expect(alert).toHaveTextContent(`${code}: ${message}`);
     const flash = PAGE.findFlashbar();
@@ -317,12 +337,16 @@ describe('instance attribute editor', () => {
     const originalDraft = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[2];
     if (label === GROUPS) {
       expect(tokens()).toEqual(['alpha', 'charlie', 'beta']);
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove beta' }));
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove alpha' }));
+      const removeBeta = groupField().findToken(3)?.findDismiss();
+      expect(removeBeta?.getElement()).toHaveAccessibleName('Remove beta');
+      removeBeta?.click();
+      const removeAlpha = groupField().findToken(1)?.findDismiss();
+      expect(removeAlpha?.getElement()).toHaveAccessibleName('Remove alpha');
+      removeAlpha?.click();
     }
     vi.mocked(modifyInstanceAttribute).mockResolvedValueOnce(undefined);
     fireEvent.click(saveButton(dialog));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: label })).toBeNull());
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
     expect(modifyInstanceAttribute).toHaveBeenCalledTimes(2);
     expect(modifyInstanceAttribute).toHaveBeenLastCalledWith(
       ENDPOINT,
@@ -360,7 +384,7 @@ describe('instance attribute editor', () => {
       expect(result?.getElement()).toHaveTextContent('Unavailable in this emulator build.');
       expect(isDisabled(action)).toBe(true);
     });
-    expect(screen.queryByRole('dialog', { name: label })).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
   });
 
@@ -380,7 +404,7 @@ describe('instance attribute editor', () => {
         expect(item?.findContent()?.getElement()).toHaveTextContent('This attribute cannot be changed here.');
       });
       expect(isDisabled(screen.getByRole('button', { name: label }))).toBe(true);
-      expect(screen.queryByRole('dialog', { name: label })).toBeNull();
+      expect(PAGE.findModal()).toBeNull();
     },
   );
 });
