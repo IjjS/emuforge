@@ -90,5 +90,7 @@ export function readFailureState(failure: RequestFailure, connection: AreaConnec
       thing,
     );
   }
-  return areaReadFailureState(failure, connection, thing);
+  const state = areaReadFailureState(failure, connection, thing);
+  // Before the first health result, only the engine's request diagnostic can name the emulator.
+  return failure.kind === 'emulator-did-not-answer' && result === undefined ? { ...state, recovery: true } : state;
 }

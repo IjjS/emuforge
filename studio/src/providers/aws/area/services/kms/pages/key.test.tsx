@@ -170,51 +170,82 @@ describe('key details', () => {
   });
 
   // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
-  it('recovers a failed direct key read while the first frame health response is pending', async () => {
-    const engine = new FakeEngine();
-    engine.configPort = 8311;
-    engine.healthAnswers = [{ hang: true }];
-    vi.stubGlobal('fetch', engine.fetch);
-    vi.stubGlobal('matchMedia', () => ({
-      matches: false,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    }));
-    send.mockRejectedValue(new TypeError('Failed to fetch'));
-    await AWS_PROVIDER.loadArea();
-    renderApp(keyPath(metadata.KeyId));
+  it.each([
+    {
+      cause: 'an engine network rejection',
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+    },
+    {
+      cause: 'EmulatorTimeout',
+      failure: {
+        name: 'EmulatorTimeout',
+        message: `the emulator at ${emulator.endpoint} did not answer within 30 s`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: 'The emulator did not answer',
+    },
+    {
+      cause: 'EmulatorUnavailable',
+      failure: {
+        name: 'EmulatorUnavailable',
+        message: `the emulator at ${emulator.endpoint} is not reachable (not_started): start the emulator on port ${emulator.port}`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 },
+      },
+      status: 'The emulator did not answer',
+    },
+  ])(
+    'recovers a direct key read from $cause while first health is pending',
+    async ({ failure, status }) => {
+      const engine = new FakeEngine();
+      engine.configPort = 8311;
+      engine.healthAnswers = [{ hang: true }];
+      vi.stubGlobal('fetch', engine.fetch);
+      vi.stubGlobal('matchMedia', () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      send.mockRejectedValue(failure);
+      await AWS_PROVIDER.loadArea();
+      renderApp(keyPath(metadata.KeyId));
 
-    const frame = createWrapper(
-      await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
-    );
-    const expectChecking = () => {
-      const indicator = frame.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent('Checking');
-    };
-    const recovery = await waitFor(() => {
-      const content = metadataRecovery();
-      const indicator = content.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
-      return within(content.getElement());
-    });
-    expectChecking();
-    const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
-    expect(connectionStatus).toBeVisible();
-    expect(connectionStatus).toHaveAttribute('href', '/');
-    const retry = recovery.getByRole('button', { name: 'Retry' });
-    expect(retry).toBeVisible();
+      const frame = createWrapper(
+        await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
+      );
+      const expectChecking = () => {
+        const indicator = frame.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent('Checking');
+      };
+      const recovery = await waitFor(() => {
+        const content = metadataRecovery();
+        const indicator = content.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        return within(content.getElement());
+      });
+      expectChecking();
+      if (!(failure instanceof TypeError)) expect(recovery.getByText(failure.message)).toBeVisible();
+      const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
+      expect(connectionStatus).toBeVisible();
+      expect(connectionStatus).toHaveAttribute('href', '/');
+      const retry = recovery.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
 
-    send.mockResolvedValue({ KeyMetadata: metadata });
-    fireEvent.click(retry);
-    await waitFor(() => expect(metadataHeading()).toBeVisible());
-    expectField('Key ID', metadata.KeyId);
-    expectField('Description', metadata.Description);
-    expectChecking();
-    expect(engine.healths).toHaveLength(1);
-    expect(engine.healths[0]?.aborted()).toBe(false);
-  }, 15_000);
+      send.mockResolvedValue({ KeyMetadata: metadata });
+      fireEvent.click(retry);
+      await waitFor(() => expect(metadataHeading()).toBeVisible());
+      expectField('Key ID', metadata.KeyId);
+      expectField('Description', metadata.Description);
+      expectChecking();
+      expect(engine.healths).toHaveLength(1);
+      expect(engine.healths[0]?.aborted()).toBe(false);
+    },
+    15_000,
+  );
 
   it('shows distinct engine and emulator recovery states and retries the key read', async () => {
     const showConnection = open(metadata.KeyId, {
