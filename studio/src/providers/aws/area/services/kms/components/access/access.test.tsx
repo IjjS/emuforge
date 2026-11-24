@@ -624,9 +624,9 @@ describe('KMS key access', () => {
     fireEvent.change(grantee, { target: { value: GRANTEE } });
     const operations = dialog.body.findMultiselect();
     if (operations === null) throw new Error('Expected the allowed operations field.');
-    operations.openDropdown();
+    act(() => operations.openDropdown());
     await waitFor(() => expect(operations.findDropdown().findOptionByValue('Encrypt')).not.toBeNull());
-    operations.selectOptionByValue('Encrypt');
+    act(() => operations.selectOptionByValue('Encrypt'));
     fireEvent.click(dialog.footer.getByRole('button', { name: 'Create grant' }));
 
     await expectOpenRefusal(dialog, 'CreateGrant', published);
