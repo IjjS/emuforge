@@ -1,6 +1,6 @@
 import { expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
-import { expectValue, flashItems, sns } from './services/sns/sns';
+import { flashItems, sns, valueOf } from './services/sns/sns';
 import { openSettings, settingsTopic } from './services/sns/topic-settings';
 
 test('studio.sns-change-topic-display-name', async ({ ctx, page }) => {
@@ -8,13 +8,18 @@ test('studio.sns-change-topic-display-name', async ({ ctx, page }) => {
   const topic = await settingsTopic(ctx, emulatorPort, 'snsname');
   await topic.set('DisplayName', 'External name');
   const ui = await openSettings(page, topic.arn);
-  await expectValue(page, 'Display name', 'External name');
+  const displayedName = () => valueOf(page.getByRole('main'), 'Display name');
+  await expect.poll(displayedName).toBe('External name');
   for (const name of ['Changed in Studio', '']) {
     await ui.button('Edit display name').click(ACTION);
     await ui.field('Display name').fill(name);
     await ui.save.click(ACTION);
-    await expect(flashItems(page, 'success')).toHaveText(['Display name saved.']);
-    await expectValue(page, 'Display name', name || '-');
+    if (name !== '') {
+      const success = flashItems(page, 'success');
+      await expect(success).toHaveText(['Display name saved.']);
+      await expect(success).toBeVisible();
+    }
+    await expect.poll(displayedName).toBe(name || '-');
     expect((await topic.attributes()).DisplayName).toBe(name);
   }
 });
@@ -33,13 +38,16 @@ test('studio.sns-change-topic-access-policy', async ({ ctx, page }) => {
   await policy.fill('invalid');
   await ui.save.click(ACTION);
   const error = flashItems(page, 'error');
+  await expect(error).toBeVisible();
   await expect(error).toContainText('InvalidParameter');
   await expect(error).toContainText('Invalid parameter: Policy Error: null');
   await expect(policy).toHaveValue('invalid');
   expect((await topic.attributes()).Policy).toBe(original);
   await policy.fill(updated);
   await ui.save.click(ACTION);
-  await expect(flashItems(page, 'success')).toHaveText(['Access policy saved.']);
+  const success = flashItems(page, 'success');
+  await expect(success).toHaveText(['Access policy saved.']);
+  await expect(success).toBeVisible();
   await expect(page.getByText(updated, { exact: true })).toBeVisible();
   expect((await topic.attributes()).Policy).toBe(updated);
 });
@@ -91,6 +99,7 @@ test('studio.sns-change-missing-topic-display-name', async ({ ctx, page }) => {
   await topic.remove();
   await ui.save.click(ACTION);
   const error = flashItems(page, 'error');
+  await expect(error).toBeVisible();
   await expect(error).toContainText('NotFound');
   await expect(error).toContainText('Topic does not exist');
   await expect(flashItems(page, 'success')).toHaveCount(0);

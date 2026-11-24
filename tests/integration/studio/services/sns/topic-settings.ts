@@ -83,7 +83,7 @@ export async function openSettings(page: Page, arn: string) {
       const modal = wrapper.findModal();
       const content = createWrapper(modal.findContent().toSelector());
       await page.locator(content.findInput().findNativeInput().toSelector()).fill('remove');
-      await page.locator(modal.findFooter().toSelector()).getByRole('button', { name: 'Remove' }).click(ACTION);
+      await page.locator(modal.findFooter().findAllButtons().toSelector()).last().click(ACTION);
     },
   };
 }
