@@ -5,13 +5,16 @@ import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { RequestError, requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { nameOf } from '../../../lib/ec2-client';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import { modifyInstanceAttribute } from '../instance-attribute-api';
+import { changeInstanceContent } from '../instance-content-api';
+import { EC2_KEYS, useInstanceListing } from '../queries';
 import { getVolume } from '../volume-api';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
@@ -31,6 +34,11 @@ vi.mock('../api', async (importOriginal) => {
 vi.mock('../instance-attribute-api', async (original) => ({
   ...(await original<typeof import('../instance-attribute-api')>()),
   modifyInstanceAttribute: vi.fn(),
+}));
+
+vi.mock('../instance-content-api', async (original) => ({
+  ...(await original<typeof import('../instance-content-api')>()),
+  changeInstanceContent: vi.fn(),
 }));
 
 vi.mock('../volume-api', async (original) => ({
@@ -109,7 +117,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path: string) {
+function ListingObserver() {
+  const listing = useInstanceListing(ENGINE, { state: '', name: '' });
+  return (
+    <output aria-label="Observed instance list">{listing.items?.map(({ tags }) => nameOf(tags)).join(', ')}</output>
+  );
+}
+
+function open(
+  path: string,
+  observeList = false,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -117,10 +136,10 @@ function open(path: string) {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
+      {observeList && <ListingObserver />}
     </QueryClientProvider>,
   );
   return router;
@@ -374,6 +393,7 @@ describe("an instance's page", () => {
       'Key pair': 'dev-key',
       Architecture: 'x86_64',
       Platform: 'Linux/UNIX',
+      'User data': 'Edit user dataStop the instance to edit user data.',
       'Termination protection': PROTECTED,
       'Availability Zone': 'us-east-1a',
       'Subnet ID': 'subnet-1',
@@ -405,8 +425,8 @@ describe("an instance's page", () => {
       ['/dev/xvdb', 'vol-2', 'No'],
     ]);
     expect(tableOf('Tags').rows).toEqual([
-      ['Name', 'web-1'],
-      ['env', 'dev'],
+      ['Name', 'web-1', 'Edit tagDelete tag'],
+      ['env', 'dev', 'Edit tagDelete tag'],
     ]);
     expect(screen.getByRole('link', { name: 'dev-key' })).toHaveAttribute('href', '/aws/ec2/key-pairs');
     const link = within(groups.element).getByRole('link', { name: 'web-group' });
@@ -667,7 +687,7 @@ describe("an instance's page", () => {
     holding(full({ tags: [{ key: 'note', value: '<b>bold</b><img src=x onerror=alert(1)>' }] }));
     open(pathOf('i-0full'));
     await loaded();
-    expect(tableOf('Tags').rows).toEqual([['note', '<b>bold</b><img src=x onerror=alert(1)>']]);
+    expect(tableOf('Tags').rows).toEqual([['note', '<b>bold</b><img src=x onerror=alert(1)>', 'Edit tagDelete tag']]);
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
 
@@ -827,5 +847,165 @@ describe('instance setting actions', () => {
     fireEvent.click(edit);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
+  });
+});
+
+async function editName(value: string) {
+  const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
+  fireEvent.click(within(row).getByRole('button', { name: 'Edit tag' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Edit tag' });
+  const field = createWrapper(dialog).findInput()?.findNativeInput().getElement();
+  if (!field) throw new Error('Missing tag value input');
+  fireEvent.change(field, { target: { value } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+}
+
+describe('instance tags and user data', () => {
+  it('explains the stopped requirement while keeping tags editable', async () => {
+    holding(full());
+    open(pathOf('i-0full'));
+    await loaded();
+    const userData = screen.getByRole('button', { name: 'Edit user data' });
+    expect(isDisabled(userData)).toBe(true);
+    expect(reasonOf(userData)).toBe('Stop the instance to edit user data.');
+    expect(screen.getByText('Stop the instance to edit user data.')).toBeVisible();
+    expect(isDisabled(screen.getByRole('button', { name: 'Add tag' }))).toBe(false);
+    const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
+    expect(isDisabled(within(row).getByRole('button', { name: 'Edit tag' }))).toBe(false);
+    expect(isDisabled(within(row).getByRole('button', { name: 'Delete tag' }))).toBe(false);
+  });
+
+  it.each(['detail', 'list'] as const)(
+    'updates the Name and keeps the flash when the %s refresh finishes first',
+    async (first) => {
+      const initial = full();
+      const updated = full({
+        tags: [
+          { key: 'Name', value: 'new-name' },
+          { key: 'env', value: 'dev' },
+        ],
+      });
+      holding(initial);
+      vi.mocked(api.listInstances).mockResolvedValue({ instances: [initial] });
+      vi.mocked(changeInstanceContent).mockResolvedValue(undefined);
+      const router = open(pathOf(initial.id), true);
+      await loaded();
+      const list = screen.getByLabelText('Observed instance list');
+      await waitFor(() => expect(list).toHaveTextContent('web-1'));
+
+      let detail: (read: api.InstanceRead) => void = () => undefined;
+      let listing: (read: { instances: api.Instance[] }) => void = () => undefined;
+      vi.mocked(api.getInstance).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            detail = resolve;
+          }),
+      );
+      vi.mocked(api.listInstances).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            listing = resolve;
+          }),
+      );
+      await editName('new-name');
+      expect(await screen.findByText('Tag updated.')).toBeVisible();
+      await waitFor(() => {
+        expect(api.getInstance).toHaveBeenCalledTimes(2);
+        expect(api.listInstances).toHaveBeenCalledTimes(2);
+      });
+      if (first === 'detail') {
+        await act(() => detail({ found: true, instance: updated }));
+        expect(await screen.findByRole('heading', { level: 1, name: 'new-name' })).toBeVisible();
+        expect(list).toHaveTextContent('web-1');
+        await act(() => listing({ instances: [updated] }));
+      } else {
+        await act(() => listing({ instances: [updated] }));
+        await waitFor(() => expect(list).toHaveTextContent('new-name'));
+        expect(screen.getByRole('heading', { level: 1, name: 'web-1' })).toBeVisible();
+        await act(() => detail({ found: true, instance: updated }));
+      }
+      await waitFor(() => expect(list).toHaveTextContent('new-name'));
+      expect(await screen.findByRole('heading', { level: 1, name: 'new-name' })).toBeVisible();
+      expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'new-name']);
+      expect(screen.getByText('Tag updated.')).toBeVisible();
+
+      vi.mocked(api.listInstances).mockResolvedValue({ instances: [updated] });
+      await act(() => router.navigate('/aws/ec2/instances'));
+      expect(await screen.findByRole('row', { name: /new-name/ })).toBeVisible();
+    },
+  );
+
+  it.each([true, false])('preserves the refusal after an in-flight detail read finishes (found=%s)', async (found) => {
+    const initial = full();
+    const client = new QueryClient();
+    holding(initial);
+    vi.mocked(changeInstanceContent).mockRejectedValueOnce(
+      new RequestError(
+        requestFailure('CreateTags', {
+          Code: 'AccessDeniedException',
+          message: 'Editing the Name tag was refused by the service.',
+          $fault: 'client',
+          $metadata: { httpStatusCode: 403 },
+        }),
+      ),
+    );
+    let finish: (read: api.InstanceRead) => void = () => undefined;
+    const reread = new Promise<api.InstanceRead>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(api.getInstance).mockResolvedValueOnce({ found: true, instance: initial }).mockReturnValueOnce(reread);
+    open(pathOf(initial.id), false, client);
+    await loaded();
+    act(() => {
+      void client.invalidateQueries({ queryKey: EC2_KEYS.instance(initial.id) });
+    });
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    await editName('denied');
+    const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
+    expect(await screen.findByText(message, { exact: false })).toBeVisible();
+    await act(async () => {
+      finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
+      await reread;
+    });
+    if (found) {
+      await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+      expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'web-1']);
+    } else {
+      expect(await screen.findByText('Instance not found')).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+    expect(screen.getByText(message, { exact: false })).toBeVisible();
+    expect(screen.queryByText('Tag updated.')).toBeNull();
+  });
+
+  it('keeps the success result after the refreshed detail disappears before the list read finishes', async () => {
+    const initial = full();
+    holding(initial);
+    vi.mocked(api.listInstances).mockResolvedValue({ instances: [initial] });
+    vi.mocked(changeInstanceContent).mockResolvedValue(undefined);
+    open(pathOf(initial.id), true);
+    await loaded();
+    const list = screen.getByLabelText('Observed instance list');
+    await waitFor(() => expect(list).toHaveTextContent('web-1'));
+
+    let finishList: (read: { instances: api.Instance[] }) => void = () => undefined;
+    vi.mocked(api.listInstances).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishList = resolve;
+        }),
+    );
+    vi.mocked(api.getInstance).mockResolvedValueOnce({ found: false });
+    await editName('new-name');
+    expect(await screen.findByText('Instance not found')).toBeVisible();
+    expect(screen.getByText('Tag updated.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit user data' })).toBeNull();
+    expect(list).toHaveTextContent('web-1');
+    await act(() => finishList({ instances: [] }));
+    await waitFor(() => expect(list).toBeEmptyDOMElement());
+    expect(screen.getByText('Tag updated.')).toBeVisible();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

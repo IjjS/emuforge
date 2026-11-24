@@ -19,12 +19,14 @@ import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { nameOf, type Tag } from '../../../lib/ec2-client';
+import { nameOf } from '../../../lib/ec2-client';
 import type { ScreenPageProps } from '../../../screens';
 import type { BlockDevice, Instance, InstanceGroup } from '../api';
 import { InstanceActions } from '../components/instance-actions';
 import { InstanceAttributeEditor } from '../components/instance-attribute-editor';
 import { InstanceStateValue } from '../components/instance-state';
+import { InstanceTagEditor } from '../components/instance-tag-editor';
+import { InstanceUserDataEditor } from '../components/instance-user-data-editor';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 import { volumeHref } from '../volume-format';
@@ -143,6 +145,7 @@ function Details({
           { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
           { label: 'Architecture', value: <ValueText kind="fixed" value={instance.architecture} none={NONE} /> },
           { label: 'Platform', value: <ValueText kind="fixed" value={instance.platform} none={NONE} /> },
+          { label: 'User data', value: <InstanceUserDataEditor instance={instance} connection={connection} /> },
         ]}
       />
     </Container>
@@ -277,24 +280,6 @@ function Volumes({ volumes }: { volumes: BlockDevice[] }) {
   );
 }
 
-function Tags({ tags }: { tags: Tag[] }) {
-  const columns: TableProps.ColumnDefinition<Tag>[] = [
-    { id: 'key', header: 'Key', isRowHeader: true, cell: (tag) => <ValueText kind="name" value={tag.key} /> },
-    { id: 'value', header: 'Value', cell: (tag) => <ValueText kind="text" value={tag.value} none={NONE} /> },
-  ];
-  return (
-    <Table<Tag>
-      variant="container"
-      header={<Header variant="h2">Tags</Header>}
-      items={tags}
-      trackBy="key"
-      columnDefinitions={columns}
-      wrapLines
-      empty={<Empty>No tags</Empty>}
-    />
-  );
-}
-
 /** "Instance not found", with Cloudscape's empty-state pattern, in the place of the sections. */
 function NotFound() {
   const handleFollow = useFollow();
@@ -386,7 +371,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
         <Network instance={instance} />
         <Groups instance={instance} connection={connection} />
         <Volumes volumes={instance.volumes} />
-        <Tags tags={instance.tags} />
+        <InstanceTagEditor id={instance.id} tags={instance.tags} endpoint={connection.engineOrigin} />
       </SpaceBetween>
     );
   }
