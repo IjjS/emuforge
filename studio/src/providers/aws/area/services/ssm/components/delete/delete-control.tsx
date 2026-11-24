@@ -12,7 +12,7 @@ import { usePageFlash, type FlashItem } from '../../../../components/page-flash'
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { DELETE_PARAMETER, DELETE_PARAMETERS, deleteParameter, deleteParameters } from '../../api';
-import { useRefreshParameterReads, useUnsupportedOperation } from '../../queries';
+import { useEvictDeletedParameterResources, useRefreshParameterReads, useUnsupportedOperation } from '../../queries';
 
 const MAX_DELETE_BATCH = 10;
 
@@ -23,7 +23,12 @@ interface DeleteResult {
   failure?: RequestFailure;
 }
 
-async function removeParameters(endpoint: string, names: string[], signal: AbortSignal): Promise<DeleteResult> {
+async function removeParameters(
+  endpoint: string,
+  names: string[],
+  signal: AbortSignal,
+  evict: (names: readonly string[]) => void,
+): Promise<DeleteResult> {
   const deleted: string[] = [];
   const rejected: string[] = [];
   const unconfirmed: string[] = [];
@@ -31,11 +36,13 @@ async function removeParameters(endpoint: string, names: string[], signal: Abort
     const batch = names.slice(offset, offset + MAX_DELETE_BATCH);
     try {
       const result = await deleteParameters(endpoint, batch, signal);
+      const previousCount = deleted.length;
       for (const name of batch) {
         if (result.DeletedParameters?.includes(name)) deleted.push(name);
         else if (result.InvalidParameters?.includes(name)) rejected.push(name);
         else unconfirmed.push(name);
       }
+      evict(deleted.slice(previousCount));
     } catch (error) {
       signal.throwIfAborted();
       return {
@@ -72,6 +79,7 @@ interface DeleteControlProps {
 export function DeleteControl({ connection, names, disabled, onDeleted, onSettled }: DeleteControlProps) {
   const endpoint = connection.engineOrigin;
   const flash = usePageFlash();
+  const evict = useEvictDeletedParameterResources(connection);
   const refresh = useRefreshParameterReads(connection);
   const single = useUnsupportedOperation(connection, DELETE_PARAMETER);
   const bulk = useUnsupportedOperation(connection, DELETE_PARAMETERS);
@@ -98,6 +106,7 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
       if (name !== undefined) {
         await deleteParameter(endpoint, name, signal);
         signal.throwIfAborted();
+        evict([name]);
         const result: FlashItem = {
           type: 'success',
           content: (
@@ -109,7 +118,7 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
         if (onDeleted === undefined) flash.show([result]);
         else onDeleted(name, result);
       } else {
-        const { deleted, rejected, unconfirmed, failure } = await removeParameters(endpoint, targets, signal);
+        const { deleted, rejected, unconfirmed, failure } = await removeParameters(endpoint, targets, signal, evict);
         signal.throwIfAborted();
         const items: FlashItem[] = [];
         if (deleted.length)

@@ -210,6 +210,25 @@ const policyKey = (arn: string) => ['resource-policies', arn] as const;
 type ResourceKey = ReturnType<typeof tagKey> | ReturnType<typeof policyKey>;
 const resourceReadOperation = { tags: LIST_TAGS, 'resource-policies': GET_RESOURCE_POLICIES } as const;
 
+export function useEvictDeletedParameterResources(connection: AreaConnection) {
+  const client = useQueryClient();
+  const key = targetKey(connection);
+  return (names: readonly string[]) => {
+    if (names.length === 0) return;
+    for (const name of names) {
+      client.removeQueries({ queryKey: [...key, ...tagKey(name)], exact: true });
+    }
+    const resources = new Set(names.map((name) => `parameter/${name.replace(/^\//, '')}`));
+    client.removeQueries({
+      queryKey: [...key, 'resource-policies'],
+      predicate: ({ queryKey }) => {
+        const arn = queryKey[key.length + 1];
+        return typeof arn === 'string' && resources.has(arn.split(':', 6)[5] ?? '');
+      },
+    });
+  };
+}
+
 function useResourceRead<T>(
   connection: AreaConnection,
   key: ResourceKey,
