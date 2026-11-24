@@ -5,16 +5,16 @@ import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { actionFailureItem, Code, ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { actionFailureItem, Code, ReadFailure } from '../../../../components/failure-states';
 import { creationDateText, NO_DATE } from '../../../../components/format-date';
 import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, noEndpoint, usePageSignal, useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
-import { connectionFailure } from '../../queries';
+import { connectionFailure, readFailureState } from '../../queries';
 import {
   changeKeyRotation,
   getKeyRotationStatus,
@@ -48,6 +48,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const [revision, setRevision] = useState(0);
   const [statusRetry, setStatusRetry] = useState(false);
   const [historyRetry, setHistoryRetry] = useState(false);
+  const [lastEnabled, setLastEnabled] = useState<boolean>();
   const [unavailable, setUnavailable] = useState<Partial<Record<RotationAction, true>>>({});
   const [pending, setPending] = useState<RotationAction>();
   const inFlight = useRef(false);
@@ -57,8 +58,6 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     queryKey: ['kms', 'rotation-status', engineOrigin, keyId, visit, revision],
     queryFn: ({ signal }) => getKeyRotationStatus(engineOrigin ?? noEndpoint(), keyId, signal),
     enabled: engineOrigin !== undefined && (statusOffline === undefined || statusRetry),
-    // Keep the toggle and its learned reason tied to the last answer while a refresh is pending.
-    placeholderData: keepPreviousData,
     retry: false,
     gcTime: 0,
   });
@@ -76,9 +75,11 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
       : statusOffline;
   const historyFailure = history.failure ?? (historyRetry ? undefined : historyOffline);
   const enabled = status.data?.KeyRotationEnabled;
+  // A failed refresh changes the read state, while the disabled toggle keeps its last confirmed action.
+  if (status.isSuccess && enabled !== undefined && lastEnabled !== enabled) setLastEnabled(enabled);
   const period = status.data?.RotationPeriodInDays;
   const nextDate = creationDateText(status.data?.NextRotationDate);
-  const toggleAction = enabled === true ? 'disable' : 'enable';
+  const toggleAction = (enabled ?? lastEnabled) === true ? 'disable' : 'enable';
   const writeBlocked = !writesEnabled || engineOrigin === undefined || statusOffline !== undefined;
   const toggleReason = unavailable[toggleAction] ? `${reasonId}-automatic` : undefined;
   const rotateReason = unavailable.rotate ? `${reasonId}-on-demand` : undefined;
@@ -166,7 +167,6 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
                     (writeBlocked ||
                       pending !== undefined ||
                       enabled === undefined ||
-                      status.isPlaceholderData ||
                       statusFailure !== undefined ||
                       toggleReason !== undefined)
                   }
@@ -174,7 +174,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
                   loading={pending === toggleAction}
                   onClick={() => void handleAction(toggleAction)}
                 >
-                  {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
+                  {toggleAction === 'disable' ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
                   disabled={
@@ -195,13 +195,13 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
       >
         {statusFailure !== undefined ? (
           <ReadFailure
-            state={readFailureState(statusFailure, connection, 'rotation settings')}
+            state={readFailureState(statusFailure, connection, `rotation settings (${statusFailure.operation})`)}
             onRetry={() => {
               setStatusRetry(true);
               void status.refetch();
             }}
           />
-        ) : status.data === undefined || status.isPlaceholderData ? (
+        ) : status.data === undefined ? (
           <StatusIndicator type="loading">Loading rotation settings…</StatusIndicator>
         ) : (
           <KeyValuePairs
