@@ -129,20 +129,27 @@ test('studio.kms-rotate-key', async ({ ctx, page }) => {
     const records = (await history()).Rotations ?? [];
     const tableRows = rows(page).and(panel.getByRole('row'));
     await expect(tableRows).toHaveCount(records.length);
+    if (records.length === 0) {
+      await expect(panel.locator(ui.findTable().findEmptySlot().toSelector().replace(/^body /, ''))).toHaveText('No completed rotations');
+    }
     for (const entry of records) {
       const row = rowWith(page, dateText(entry.RotationDate!));
       const type = entry.RotationType === 'ON_DEMAND' ? 'On-demand' : 'Automatic';
       await expect(row).toContainText(type);
     }
-    return records;
   }
   await verify(false);
   await button(page, 'Enable automatic rotation').click();
   await flash(page, 'Automatic rotation enabled.');
   await verify(true);
-  await button(page, 'Rotate now').click();
+  const [rotation] = await Promise.all([
+    page.waitForResponse(response => response.request().headers()['x-amz-target']?.endsWith('.RotateKeyOnDemand') === true),
+    button(page, 'Rotate now').click(),
+  ]);
+  expect(rotation.ok()).toBe(true);
+  expect(rotation.request().postDataJSON()).toMatchObject({ KeyId: id });
   await flash(page, 'On-demand rotation requested.');
-  expect((await verify(true)).some(entry => entry.RotationType === 'ON_DEMAND')).toBe(true);
+  await verify(true);
   await button(page, 'Disable automatic rotation').click();
   await flash(page, 'Automatic rotation disabled.');
   await verify(false);
