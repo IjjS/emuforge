@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|sns.topic|change-a-topic
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sns-change-topic-display-name, studio.sns-change-topic-access-policy, studio.sns-change-topic-tags, studio.sns-change-missing-topic-display-name
 Issue-Commit: 4d83a34569047383fcc3eae64d15771490d949b3
 
 # Change an SNS topic: display name, access policy, tags
