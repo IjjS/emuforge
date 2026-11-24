@@ -7,7 +7,7 @@ import {
 import {
   addInstancePath, button, cancelDialog, clusterDirect, clusterPath, CLUSTERS_PATH, confirmWith, countActions, dialogOf,
   emptyOf, expectCell, expectFlash, expectNoRow, expectValueIs, field, open, parseXml, rds, reportsNoCluster,
-  rowOf, selectRow, tableOf,
+  rowOf, rowsOf, selectRow, tableOf,
 } from './services/rds/rds';
 
 test('studio.rds-take-a-cluster-snapshot', async ({ ctx, page }) => {
@@ -100,9 +100,10 @@ test('studio.rds-delete-a-cluster-snapshot', async ({ ctx, page }) => {
   await button(main, 'Delete').click(ACTION);
   await confirmWith(page, 'delete', 'Delete');
   await expectFlash(page, 'success', 'DB cluster snapshot ' + id + ' deleted');
-  await rowOf(table, SNAPSHOT_ID, retained);
-  await expectNoRow(table, SNAPSHOT_ID, id);
-  await rowOf(table, SNAPSHOT_ID, retained);
+  await expect.poll(async () => {
+    const ids = (await rowsOf(table)).map(row => row[SNAPSHOT_ID]);
+    return { retained: ids.includes(retained), deleted: ids.includes(id) };
+  }).toEqual({ retained: true, deleted: false });
   expect(await snapshotDirect(ctx, port, id)).toBeNull();
 });
 
