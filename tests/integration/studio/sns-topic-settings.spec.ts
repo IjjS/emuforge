@@ -13,7 +13,7 @@ test('studio.sns-change-topic-display-name', async ({ ctx, page }) => {
     await ui.button('Edit display name').click(ACTION);
     await ui.field('Display name').fill(name);
     await ui.save.click(ACTION);
-    await expect(flashItems(page, 'success')).toContainText('Display name saved.');
+    await expect(flashItems(page, 'success')).toHaveText(['Display name saved.']);
     await expectValue(page, 'Display name', name || '-');
     expect((await topic.attributes()).DisplayName).toBe(name);
   }
@@ -39,7 +39,7 @@ test('studio.sns-change-topic-access-policy', async ({ ctx, page }) => {
   expect((await topic.attributes()).Policy).toBe(original);
   await policy.fill(updated);
   await ui.save.click(ACTION);
-  await expect(flashItems(page, 'success')).toContainText('Access policy saved.');
+  await expect(flashItems(page, 'success')).toHaveText(['Access policy saved.']);
   await expect(page.getByText(updated, { exact: true })).toBeVisible();
   expect((await topic.attributes()).Policy).toBe(updated);
 });
@@ -56,7 +56,7 @@ test('studio.sns-change-topic-tags', async ({ ctx, page }) => {
   await ui.field('Value').fill('dev');
   await ui.save.click(ACTION);
   const added = { ...initial, stage: 'dev' };
-  await expect(flashItems(page, 'success')).toContainText('Tag saved.');
+  await expect(flashItems(page, 'success')).toHaveText(['Tag saved.']);
   await ui.expectTags(added);
   expect(await topic.tags()).toEqual(added);
 
@@ -64,13 +64,13 @@ test('studio.sns-change-topic-tags', async ({ ctx, page }) => {
   await ui.field('Value').fill('blue');
   await ui.save.click(ACTION);
   const edited = { ...added, color: 'blue' };
-  await expect(flashItems(page, 'success')).toContainText('Tag saved.');
+  await expect(flashItems(page, 'success')).toHaveText(['Tag saved.']);
   await ui.expectTags(edited);
   expect(await topic.tags()).toEqual(edited);
 
   await ui.button('Remove tag stage').click(ACTION);
   await ui.confirmRemoval();
-  await expect(flashItems(page, 'success')).toContainText('Tag removed.');
+  await expect(flashItems(page, 'success')).toHaveText(['Tag removed.']);
   const remaining = { keep: 'first', color: 'blue' };
   await ui.expectTags(remaining);
   expect(await topic.tags()).toEqual(remaining);
