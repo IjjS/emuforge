@@ -5,7 +5,7 @@ import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea from '@cloudscape-design/components/textarea';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ValueText } from '../../../../components/value-text';
 import {
@@ -48,8 +48,25 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const [dialog, setDialog] = useState<Dialog>();
   const [description, setDescription] = useState('');
   const [days, setDays] = useState(String(DELETION_WINDOW.max));
+  const [restoreTo, setRestoreTo] = useState<LifecycleOperation>();
+  const controls = useRef<HTMLDivElement>(null);
   const usable = state === 'Enabled' || state === 'Disabled';
   const pendingDeletion = state === 'PendingDeletion';
+
+  useEffect(() => {
+    if (restoreTo === undefined) return;
+    // Wait for the modal's focus lock to release and the opener's disabled reason to be committed.
+    const frame = requestAnimationFrame(() => {
+      const group = controls.current;
+      const opener = group?.querySelector<HTMLButtonElement>(
+        `button[data-lifecycle-operation="${restoreTo}"]:not(:disabled)`,
+      );
+      const sibling = group?.querySelector<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])');
+      (opener ?? sibling ?? group)?.focus();
+      setRestoreTo(undefined);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [restoreTo]);
 
   const open = (next: Dialog) => {
     action.clearFailure();
@@ -57,9 +74,10 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     if (next === 'schedule') setDays(String(DELETION_WINDOW.max));
     setDialog(next);
   };
-  const close = () => {
+  const close = (unavailableOperation?: LifecycleOperation) => {
     action.clearFailure();
     setDialog(undefined);
+    if (unavailableOperation !== undefined) setRestoreTo(unavailableOperation);
   };
 
   const unavailableReason = (operation: LifecycleOperation) =>
@@ -73,11 +91,14 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     stateReason?: string,
   ) => {
     const reason = unavailableReason(operation) ?? stateReason;
+    const loading = dialog === undefined && action.pending === operation;
     return (
       <Button
-        disabled={!allowed || action.disabled(operation)}
+        disabled={!allowed || action.disabled(operation) || (action.pending !== undefined && !loading)}
         {...(reason === undefined ? {} : { disabledReason: reason })}
-        loading={dialog === undefined && action.pending === operation}
+        loading={loading}
+        loadingText={operation === LIFECYCLE_OPERATIONS.enable ? 'Enabling key' : undefined}
+        nativeButtonAttributes={{ 'data-lifecycle-operation': operation }}
         onClick={onClick}
       >
         {label}
@@ -97,7 +118,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
 
   return (
     <>
-      <div role="group" aria-label="Key lifecycle">
+      <div ref={controls} role="group" aria-label="Key lifecycle" tabIndex={-1}>
         <SpaceBetween direction="horizontal" size="xs">
           {control(
             LIFECYCLE_OPERATIONS.describe,
