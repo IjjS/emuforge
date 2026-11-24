@@ -1,7 +1,7 @@
 import type { DescribeParametersCommandInput } from '@aws-sdk/client-ssm';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -73,7 +73,9 @@ function open(waitForList?: () => Promise<unknown>) {
   function Frame() {
     const { pathname } = useLocation();
     const [result, setResult] = useState<CheckResult>(connected);
-    controls.connect = setResult;
+    useEffect(() => {
+      controls.connect = setResult;
+    }, []);
     return (
       <AwsArea
         connection={{ engineOrigin, result }}
@@ -168,7 +170,7 @@ describe('Parameter Store detail', () => {
     ).toBeVisible();
     expect(screen.getByRole('link', { name: 'Back to Parameter Store' })).toHaveAttribute('href', PARAMETER_STORE_PATH);
 
-    connect({ kind: 'engine-unreachable', checkedAt: 2 });
+    connect({ kind: 'engine-unreachable', checkedAt: 2, lastEmulatorPort: emulator.port });
     expect(screen.getAllByText(/is not answering/).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Connection status' })[0]).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();

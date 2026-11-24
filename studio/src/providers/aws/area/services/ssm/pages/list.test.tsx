@@ -1,7 +1,7 @@
 import type { DescribeParametersCommandInput } from '@aws-sdk/client-ssm';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -84,7 +84,9 @@ function open(observeMetadata = false) {
   const controls: { connect?: (result: CheckResult) => void } = {};
   function Frame() {
     const [result, setResult] = useState<CheckResult>(connected);
-    controls.connect = setResult;
+    useEffect(() => {
+      controls.connect = setResult;
+    }, []);
     const connection = { engineOrigin, result };
     return (
       <>
@@ -113,6 +115,12 @@ function open(observeMetadata = false) {
 
 const button = (name: string) => screen.getByRole('button', { name });
 const row = (name: string) => screen.findByRole('link', { name });
+function tableRow(link: HTMLElement) {
+  const element = link.closest('tr');
+  if (element === null) throw new Error('Expected a parameter table row');
+  return within(element);
+}
+
 const select = (name: string) => fireEvent.click(screen.getByRole('checkbox', { name: `Select ${name}` }));
 
 async function deleteDialog(names: string[]) {
@@ -148,7 +156,7 @@ describe('Parameter Store list', () => {
     const { router } = open();
     const link = await row(FIRST);
     expect(link).toHaveAttribute('href', parameterPath(FIRST));
-    const entry = within(link.closest('tr')!);
+    const entry = tableRow(link);
     expect(entry.getByText('String')).toBeVisible();
     expect(entry.getByText('1')).toBeVisible();
     expect(entry.getByRole('cell', { name: creationDateText(new Date(modified * 1000)) })).toBeVisible();
@@ -156,12 +164,12 @@ describe('Parameter Store list', () => {
     await act(() => router.navigate('/aws'));
     version = 2;
     await act(() => router.navigate(PARAMETER_STORE_PATH));
-    expect(within((await row(FIRST)).closest('tr')!).getByText('2')).toBeVisible();
+    expect(tableRow(await row(FIRST)).getByText('2')).toBeVisible();
     fireEvent.click(button('Next page'));
     await row(SECOND);
     version = 3;
     fireEvent.click(button('Refresh'));
-    expect(within((await row(FIRST)).closest('tr')!).getByText('3')).toBeVisible();
+    expect(tableRow(await row(FIRST)).getByText('3')).toBeVisible();
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, undefined, 'next', undefined]);
   });
 
@@ -259,10 +267,12 @@ describe('Parameter Store list', () => {
   });
 
   it('L8 preserves completed batches and disables only bulk delete after a 501', async () => {
-    const names = Array.from({ length: 12 }, (_, index) => `/batch/item-${String(index)}`);
-    read.mockReturnValueOnce(page(names)).mockImplementation(() => page(names.slice(10)));
+    const firstBatch = Array.from({ length: 10 }, (_, index) => `/batch/item-${String(index)}`);
+    const remaining = ['/batch/item-10', '/batch/item-11'];
+    const names = [...firstBatch, ...remaining];
+    read.mockReturnValueOnce(page(names)).mockImplementation(() => page(remaining));
     remove
-      .mockReturnValueOnce(answer({ DeletedParameters: names.slice(0, 10) }))
+      .mockReturnValueOnce(answer({ DeletedParameters: firstBatch }))
       .mockReturnValueOnce(answer({ __type: 'NotImplemented' }, 501));
     open();
     const dialog = await deleteDialog(names);
@@ -271,15 +281,15 @@ describe('Parameter Store list', () => {
     expect(screen.getByText('Deleted parameters')).toBeVisible();
     expect(screen.getByText('The emulator answered 501 Not Implemented for DeleteParameters.')).toBeVisible();
     expect(remove.mock.calls).toEqual([
-      [{ Names: names.slice(0, 10) }, 'DeleteParameters'],
-      [{ Names: names.slice(10) }, 'DeleteParameters'],
+      [{ Names: firstBatch }, 'DeleteParameters'],
+      [{ Names: remaining }, 'DeleteParameters'],
     ]);
     const results = within(screen.getByRole('list', { name: /notifications/i }));
     for (const name of names) expect(results.getByText(name)).toBeVisible();
-    await row(names[10]!);
-    select(names[10]!);
+    await row('/batch/item-10');
+    select('/batch/item-10');
     expect(button('Delete')).toBeEnabled();
-    select(names[11]!);
+    select('/batch/item-11');
     expect(button('Delete')).toBeDisabled();
   });
 
@@ -314,13 +324,13 @@ describe('Parameter Store list', () => {
     open();
     await row(FIRST);
     fireEvent.click(button('Next page'));
-    expect(within((await row(SECOND)).closest('tr')!).getByText('2')).toBeVisible();
+    expect(tableRow(await row(SECOND)).getByText('2')).toBeVisible();
     fireEvent.click(button('Previous page'));
     confirm(await deleteDialog([FIRST]), FIRST);
     await row('/app/remaining');
     expect(remove).toHaveBeenCalledWith({ Name: FIRST }, 'DeleteParameter');
     fireEvent.click(button('Next page'));
-    expect(within((await row(SECOND)).closest('tr')!).getByText('3')).toBeVisible();
+    expect(tableRow(await row(SECOND)).getByText('3')).toBeVisible();
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([
       undefined,
       'old-next',
