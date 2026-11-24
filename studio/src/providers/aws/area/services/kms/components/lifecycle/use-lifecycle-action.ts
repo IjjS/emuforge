@@ -48,7 +48,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string, re
     operation: LifecycleOperation,
     request: (endpoint: string, signal: AbortSignal) => Promise<unknown>,
     success: string,
-    close?: (unavailableOperation?: LifecycleOperation) => void,
+    close?: (operation: LifecycleOperation) => void,
   ) => {
     if (endpoint === undefined || disabled(operation) || inFlight.current || awaitingReadback.current) return;
     const signal = signalForPage();
@@ -83,7 +83,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string, re
       setConfirmingState(true);
     }
     flash.show([{ type: 'success', content: success }]);
-    close?.();
+    close?.(operation);
     if (changedState) refreshState();
     else void queryClient.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
     void queryClient.invalidateQueries({ queryKey: KMS_KEYS.list });

@@ -31,7 +31,24 @@ import { connectionFailure, KMS_KEYS, readFailureState, useKmsKey } from '../que
 
 type ReadKey = KeyMetadata & { KeyId: string };
 
-function KeyDetails({ action, metadata }: { action: LifecycleAction; metadata: ReadKey }) {
+function revealBelowStickyBreadcrumbs(target: HTMLElement) {
+  const layout = target.closest('main');
+  let row = layout?.querySelector<HTMLElement>('nav[aria-label="Breadcrumbs"]') ?? null;
+  while (row !== null && row !== layout && getComputedStyle(row).position !== 'sticky') row = row.parentElement;
+  if (row !== null && row !== layout && target.getBoundingClientRect().top < row.getBoundingClientRect().bottom) {
+    target.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  }
+}
+
+function KeyDetails({
+  action,
+  metadata,
+  statusNote,
+}: {
+  action: LifecycleAction;
+  metadata: ReadKey;
+  statusNote: string | undefined;
+}) {
   const deletion =
     metadata.DeletionDate === undefined
       ? []
@@ -57,7 +74,15 @@ function KeyDetails({ action, metadata }: { action: LifecycleAction; metadata: R
           columns={3}
           minColumnWidth={220}
           items={[
-            { label: 'Status', value: <KeyState state={metadata.KeyState} /> },
+            {
+              label: 'Status',
+              value: (
+                <SpaceBetween size="xxxs">
+                  <KeyState state={metadata.KeyState} />
+                  {statusNote !== undefined && <Box variant="small">{statusNote}</Box>}
+                </SpaceBetween>
+              ),
+            },
             { label: 'Key spec', value: <ValueText kind="fixed" value={metadata.KeySpec} none="–" /> },
             { label: 'Key usage', value: <ValueText kind="fixed" value={metadata.KeyUsage} none="–" /> },
             { label: 'Origin', value: <ValueText kind="fixed" value={metadata.Origin} none="–" /> },
@@ -110,6 +135,11 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   if (read.key !== undefined && read.key !== lastKey) setLastKey(read.key);
   const metadata = read.key === undefined ? lastKey : read.key;
   const failure = !canRead || (offline !== undefined && refreshing) ? offline : read.failure;
+  const statusNote = action.confirmingState
+    ? failure === undefined || refreshing
+      ? 'Last known. Confirming current state…'
+      : 'Last known. Studio could not confirm the current state.'
+    : undefined;
   const retainedMetadataFailed = failure !== undefined && metadata !== undefined && metadata !== null;
   // A later connection check can replace the visible diagnosis for the same failed read.
   const initialMetadataFailed = metadata === undefined && read.failure !== undefined;
@@ -123,7 +153,10 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   useLayoutEffect(() => {
     if (failure !== undefined || read.key === undefined || !retryHadFocus.current) return;
     retryHadFocus.current = false;
-    if (document.activeElement === document.body) refreshButton.current?.focus();
+    if (document.activeElement !== document.body) return;
+    refreshButton.current?.focus();
+    const focused = document.activeElement;
+    if (focused instanceof HTMLButtonElement) revealBelowStickyBreadcrumbs(focused);
   }, [failure, read.key]);
 
   const handleRefresh = () => {
@@ -220,7 +253,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
                 contentRenderStrategy: 'lazy',
                 content:
                   metadata !== undefined && metadata !== null ? (
-                    <KeyDetails action={action} metadata={metadata as ReadKey} />
+                    <KeyDetails action={action} metadata={metadata as ReadKey} statusNote={statusNote} />
                   ) : null,
               },
               {
