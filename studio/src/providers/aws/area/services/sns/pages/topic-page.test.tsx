@@ -20,10 +20,12 @@ import { useTopicListing } from '../queries';
 
 function hold<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((complete, fail) => {
     resolve = complete;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 vi.mock('../api', async (importOriginal) => {
@@ -573,7 +575,11 @@ describe('Settings on a topic page', () => {
     },
   );
 
-  const saveChanges = () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  const saveChanges = () => {
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    save.focus();
+    fireEvent.click(save);
+  };
   const editAttribute = (label: string, value: string) => {
     fireEvent.click(screen.getByRole('button', { name: `Edit ${label.toLowerCase()}` }));
     fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
@@ -587,13 +593,16 @@ describe('Settings on a topic page', () => {
   const removeTag = async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove tag color' }));
     const dialog = within(await screen.findByRole('dialog'));
-    fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'remove' } });
+    const confirmation = dialog.getByRole('textbox');
+    confirmation.focus();
+    fireEvent.change(confirmation, { target: { value: 'remove' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Remove' }));
   };
 
   const writeCases = [
     {
       operation: 'SetTopicAttributes',
+      heading: 'Display name',
       write: api.setTopicSetting,
       attempt: () => editAttribute('Display name', 'Rejected name'),
       disabledActions: ['Edit display name', 'Edit access policy'],
@@ -603,6 +612,7 @@ describe('Settings on a topic page', () => {
     },
     {
       operation: 'TagResource',
+      heading: 'Tags',
       write: api.tagTopic,
       attempt: saveTag,
       disabledActions: ['Add tag', 'Edit tag color'],
@@ -612,6 +622,7 @@ describe('Settings on a topic page', () => {
     },
     {
       operation: 'UntagResource',
+      heading: 'Tags',
       write: api.untagTopic,
       attempt: removeTag,
       disabledActions: ['Remove tag color'],
@@ -623,12 +634,13 @@ describe('Settings on a topic page', () => {
 
   it.each(writeCases)(
     'retains $operation unavailability after a header refresh and Settings remount',
-    async ({ operation, write, attempt, disabledActions, supportedAction, useSupported, success }) => {
+    async ({ operation, heading, write, attempt, disabledActions, supportedAction, useSupported, success }) => {
       vi.mocked(write).mockRejectedValueOnce(unavailable(operation));
       open(settingsPath);
       await screen.findByRole('row', { name: /color/ });
       await attempt();
       await expectUnavailable(operation, true);
+      expect(screen.getByRole('heading', { name: heading }).contains(document.activeElement)).toBe(true);
       const flash = PAGE.findFlashbar()?.findItemsByType('info') ?? [];
       expect(flash).toHaveLength(1);
       expect(flash[0]?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
@@ -658,6 +670,54 @@ describe('Settings on a topic page', () => {
       expect(write).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each(writeCases)('leaves focus elsewhere when $operation returns 501', async ({ operation, write, attempt }) => {
+    const response = hold<undefined>();
+    vi.mocked(write).mockReturnValueOnce(response.promise);
+    open(settingsPath);
+    await screen.findByRole('row', { name: /color/ });
+    const refresh = refreshButton();
+    await attempt();
+    refresh.focus();
+    expect(refresh).toHaveFocus();
+    await act(async () => {
+      response.reject(unavailable(operation));
+    });
+    await expectUnavailable(operation, true);
+    expect(refresh).toHaveFocus();
+  });
+
+  it('announces the first rejected write once in a mounted live region and keeps the draft and reason', async () => {
+    const message = 'Invalid parameter: Policy Error: null';
+    vi.mocked(api.setTopicSetting).mockRejectedValueOnce(
+      new RequestError({
+        kind: 'other',
+        operation: 'SetTopicAttributes',
+        code: 'InvalidParameter',
+        message,
+      }),
+    );
+    open(settingsPath);
+    await screen.findByRole('row', { name: /color/ });
+    expect(PAGE.findFlashbar()).toBeNull();
+    const mountedStatuses = screen.getAllByRole('status');
+
+    editAttribute('Access policy', 'invalid');
+    const panel = within(screen.getByRole('tabpanel', { name: 'Settings' }));
+    expect(await panel.findByText('InvalidParameter')).toBeVisible();
+    expect(panel.getByText(/Policy Error: null/)).toBeVisible();
+    expect(panel.getByRole('textbox', { name: 'Access policy' })).toHaveValue('invalid');
+    expect(panel.getByRole('button', { name: 'Save changes' })).toHaveFocus();
+
+    const alerts = PAGE.findFlashbar()?.findItemsByType('error') ?? [];
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.getElement()).not.toHaveAttribute('role', 'alert');
+    expect(alerts[0]?.getElement()).toHaveTextContent(message);
+    const matches = screen.getAllByRole('status').filter((element) => element.textContent.includes(message));
+    expect(matches).toHaveLength(1);
+    expect(mountedStatuses).toContain(matches[0]);
+    expect(matches[0]).toHaveTextContent('Error. Save access policy failed InvalidParameter:');
+  });
 
   const attributeCases = [
     {

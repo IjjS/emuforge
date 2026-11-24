@@ -10,7 +10,7 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import Textarea from '@cloudscape-design/components/textarea';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -53,7 +53,39 @@ function WriteError({ error }: { error: FlashItem | undefined }) {
   );
 }
 
+interface SectionFocusProps {
+  unavailable: boolean;
+  source: RefObject<HTMLElement | null>;
+  heading: RefObject<HTMLElement | null>;
+  dialog?: boolean;
+  children: ReactNode;
+}
+
+// Snapshot the active control before React removes the editor or portaled confirmation.
+class SectionFocus extends Component<SectionFocusProps> {
+  getSnapshotBeforeUpdate(previous: SectionFocusProps) {
+    const { dialog, source, unavailable } = this.props;
+    if (previous.unavailable || !unavailable) {
+      return false;
+    }
+    const anchor = source.current;
+    const container = dialog ? anchor?.closest('[role="dialog"]') : anchor;
+    return container?.contains(container.ownerDocument.activeElement) ?? false;
+  }
+
+  componentDidUpdate(_previous: SectionFocusProps, _state: unknown, hadFocus: boolean) {
+    if (hadFocus) {
+      this.props.heading.current?.focus();
+    }
+  }
+
+  render() {
+    return this.props.children;
+  }
+}
+
 function EditForm({
+  formRef,
   children,
   error,
   pending,
@@ -61,6 +93,7 @@ function EditForm({
   onSave,
   onCancel,
 }: {
+  formRef: RefObject<HTMLFormElement | null>;
   children: ReactNode;
   error: FlashItem | undefined;
   pending: boolean;
@@ -70,6 +103,7 @@ function EditForm({
 }) {
   return (
     <form
+      ref={formRef}
       onSubmit={(event) => {
         event.preventDefault();
         if (!pending && !disabled) {
@@ -117,6 +151,8 @@ function AttributeSetting({
   const [error, setError] = useState<FlashItem>();
   const editing = draft !== undefined && !unavailable;
   const editButton = useRef<ButtonProps.Ref>(null);
+  const heading = useRef<HTMLSpanElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const returnFocus = useRef(false);
   useLayoutEffect(() => {
     if (!editing && !pending && returnFocus.current) {
@@ -159,13 +195,16 @@ function AttributeSetting({
     <Container
       header={
         <Header variant="h2" actions={editing ? undefined : edit}>
-          {label}
+          <span ref={heading} tabIndex={-1}>
+            {label}
+          </span>
         </Header>
       }
     >
-      <SpaceBetween size="m">
+      <SectionFocus unavailable={unavailable} source={formRef} heading={heading}>
         {editing ? (
           <EditForm
+            formRef={formRef}
             error={error}
             pending={pending}
             onSave={() => {
@@ -210,7 +249,7 @@ function AttributeSetting({
         ) : (
           <ValueText kind="text" value={value} none={NONE} />
         )}
-      </SpaceBetween>
+      </SectionFocus>
     </Container>
   );
 }
@@ -237,6 +276,8 @@ function TopicTags({
   const canSave = editable && !saveUnavailable && !saving;
   const canRemove = editable && !removeUnavailable && !removing;
   const tagHeading = useRef<HTMLSpanElement>(null);
+  const tagForm = useRef<HTMLFormElement>(null);
+  const confirmBody = useRef<HTMLSpanElement>(null);
   const addTagButton = useRef<ButtonProps.Ref>(null);
   const editTagButtons = useRef(new Map<string, ButtonProps.Ref>());
   const returnFocus = useRef<{ key: string | undefined } | undefined>(undefined);
@@ -291,6 +332,7 @@ function TopicTags({
   const tagEditor =
     draft !== undefined && editable && !saveUnavailable ? (
       <EditForm
+        formRef={tagForm}
         error={saveError}
         pending={saving}
         disabled={draft.key === ''}
@@ -421,27 +463,33 @@ function TopicTags({
       {saveUnavailable && <TopicOperationUnavailable operation={OPERATIONS.tagResource} />}
       {removeUnavailable && <TopicOperationUnavailable operation={OPERATIONS.untagResource} />}
       <WriteError error={removeError} />
-      {tagEditor !== undefined && (
-        <Container header={<Header variant="h3">{editingKey ? 'Add tag' : 'Edit tag'}</Header>}>{tagEditor}</Container>
-      )}
-      <ConfirmDialog
-        visible={removeKey !== undefined && editable && !removeUnavailable}
-        header="Remove tag"
-        body={
-          <>
-            Remove <ValueText kind="name" value={removeKey} /> from this topic?
-          </>
-        }
-        word="remove"
-        action="Remove"
-        pending={removing}
-        onConfirm={() => {
-          void handleRemove();
-        }}
-        onDismiss={() => {
-          setRemoveKey(undefined);
-        }}
-      />
+      <SectionFocus unavailable={saveUnavailable} source={tagForm} heading={tagHeading}>
+        {tagEditor !== undefined && (
+          <Container header={<Header variant="h3">{editingKey ? 'Add tag' : 'Edit tag'}</Header>}>
+            {tagEditor}
+          </Container>
+        )}
+      </SectionFocus>
+      <SectionFocus unavailable={removeUnavailable} source={confirmBody} heading={tagHeading} dialog>
+        <ConfirmDialog
+          visible={removeKey !== undefined && editable && !removeUnavailable}
+          header="Remove tag"
+          body={
+            <span ref={confirmBody}>
+              Remove <ValueText kind="name" value={removeKey} /> from this topic?
+            </span>
+          }
+          word="remove"
+          action="Remove"
+          pending={removing}
+          onConfirm={() => {
+            void handleRemove();
+          }}
+          onDismiss={() => {
+            setRemoveKey(undefined);
+          }}
+        />
+      </SectionFocus>
     </SpaceBetween>
   );
 }
