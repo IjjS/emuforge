@@ -3,8 +3,10 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FakeEngine, renderApp } from '../../../../../../test/home-test-kit';
+import { AWS_PROVIDER } from '../../../../provider';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { patternParams } from '../../../screen-paths';
 import { KEY_PATH, keyPath, KEYS_PATH } from '../paths';
@@ -72,6 +74,10 @@ function expectField(label: string, value: string) {
 
 beforeEach(() => {
   send.mockReset();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('key details', () => {
@@ -157,6 +163,47 @@ describe('key details', () => {
     fireEvent.click(retry);
     await waitFor(() => expect(metadataHeading()).toBeVisible());
   });
+
+  // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
+  it('recovers a failed direct key read while the first frame health response is pending', async () => {
+    const engine = new FakeEngine();
+    engine.configPort = 8311;
+    engine.healthAnswers = [{ hang: true }];
+    vi.stubGlobal('fetch', engine.fetch);
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    send.mockRejectedValue(new TypeError('Failed to fetch'));
+    await AWS_PROVIDER.loadArea();
+    renderApp(keyPath(metadata.KeyId));
+
+    const frame = await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 });
+    const recovery = await waitFor(() => {
+      const content = page.findContentLayout()?.findContent().findContainer()?.findContent();
+      if (!content) throw new Error('Expected metadata read recovery');
+      const indicator = content.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
+      return within(content.getElement());
+    });
+    expect(within(frame).getByText('Checking')).toBeVisible();
+    const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
+    expect(connectionStatus).toBeVisible();
+    expect(connectionStatus).toHaveAttribute('href', '/');
+    const retry = recovery.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
+
+    send.mockResolvedValue({ KeyMetadata: metadata });
+    fireEvent.click(retry);
+    await waitFor(() => expect(metadataHeading()).toBeVisible());
+    expectField('Key ID', metadata.KeyId);
+    expectField('Description', metadata.Description);
+    expect(within(frame).getByText('Checking')).toBeVisible();
+    expect(engine.healths).toHaveLength(1);
+    expect(engine.healths[0]?.aborted()).toBe(false);
+  }, 15_000);
 
   it('shows distinct engine and emulator recovery states and retries the key read', async () => {
     const showConnection = open(metadata.KeyId, {
