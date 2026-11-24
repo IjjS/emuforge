@@ -11,10 +11,10 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { DiscardDialog } from '../../../../components/discard-dialog';
 import { DocumentField } from '../../../../components/document-field';
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import { failureOf, noEndpoint } from '../../../../components/use-token-listing';
 import { ACCESS_OPERATIONS, getDefaultPolicy, hasDefaultPolicy, putDefaultPolicy } from '../../access-api';
-import { connectionFailure } from '../../queries';
+import { connectionFailure, readFailureState } from '../../queries';
 import { AccessDialog } from './access-dialog';
 import { ActionNotice } from './action-notice';
 import type { AccessProps } from './access';
@@ -154,13 +154,7 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessPro
         )}
         {policy.failure !== undefined ? (
           <ReadFailure
-            state={readFailureState(
-              policy.failure,
-              connection,
-              policy.failure.kind === 'other'
-                ? `default key policy (${policy.failure.operation})`
-                : 'default key policy',
-            )}
+            state={readFailureState(policy.failure, connection, `default key policy (${policy.failure.operation})`)}
             onRetry={policy.retry}
           />
         ) : policy.loading ? (

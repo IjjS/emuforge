@@ -17,6 +17,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
+import { EmulatorLine } from '../../../../components/emulator-line';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useKmsKey } from '../../queries';
 import { Access, type AccessProps } from './access';
@@ -43,7 +44,7 @@ function KeyDetails() {
   return key ? <h1>{key.Description}</h1> : null;
 }
 
-function open(initial: Partial<AccessProps> = {}) {
+function open({ showConnection = false, ...initial }: Partial<AccessProps> & { showConnection?: boolean } = {}) {
   const client = new QueryClient();
 
   function Page(props: AccessProps) {
@@ -54,6 +55,7 @@ function open(initial: Partial<AccessProps> = {}) {
         <AreaRootContext.Provider value={rootRef}>
           <PageFlashContext.Provider value={{ show: (result) => setItems([...result]), handOver: vi.fn() }}>
             <Flashbar items={items} />
+            {showConnection && <EmulatorLine connection={props.connection} />}
             <KeyDetails />
             <Access {...props} />
           </PageFlashContext.Provider>
@@ -146,6 +148,77 @@ beforeEach(() => {
 });
 
 describe('KMS key access', () => {
+  describe.each([
+    { panel: 'default key policy', operation: 'GetKeyPolicy', ReadCommand: GetKeyPolicyCommand },
+    { panel: 'grants', operation: 'ListGrants', ReadCommand: ListGrantsCommand },
+  ])('$panel read recovery', ({ panel, operation, ReadCommand }) => {
+    it.each([
+      {
+        kind: 'engine rejection',
+        error: new TypeError('Failed to fetch'),
+        status: `The EmuForge engine at ${online.engineOrigin} is not answering`,
+      },
+      {
+        kind: 'emulator timeout',
+        error: {
+          name: 'EmulatorTimeout',
+          message: 'The emulator did not answer in time.',
+          $fault: 'server',
+          $metadata: { httpStatusCode: 504 },
+        },
+        status: `Not answering at ${online.result.emulator.endpoint}`,
+      },
+    ])('diagnoses and retries a panel-only $kind with a connected frame', async ({ error, status }) => {
+      const firstResponse = deferred<undefined>();
+      let readCount = 0;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ReadCommand) {
+          readCount += 1;
+          if (readCount === 1) {
+            await firstResponse.promise;
+            throw error;
+          }
+          if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+        }
+        return fallback(command);
+      });
+      open({ showConnection: true });
+      const metadata = await screen.findByRole('heading', { name: 'Key details' });
+      const frame = screen.getByRole('group', { name: 'Local emulator, not AWS' });
+      expect(frame).toHaveTextContent(`Connected at ${online.result.emulator.endpoint}`);
+      await act(async () => firstResponse.resolve(undefined));
+
+      const recovery = await waitFor(() => {
+        const section =
+          ReadCommand === GetKeyPolicyCommand
+            ? createWrapper().findContainer()?.findContent()
+            : grantsTable().findEmptySlot();
+        const indicator = section?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        if (!section) throw new Error(`Expected the recovery for ${operation}.`);
+        return within(section.getElement());
+      });
+      expect(metadata).toBeVisible();
+      expect(frame).toHaveTextContent(`Connected at ${online.result.emulator.endpoint}`);
+      expect(recovery.getByText(`The ${panel} (${operation}) could not be read.`)).toBeVisible();
+      const link = recovery.getByRole('link', { name: 'Connection status' });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute('href', '/');
+      fireEvent.click(recovery.getByRole('button', { name: 'Retry' }));
+
+      if (ReadCommand === GetKeyPolicyCommand) {
+        expect(await screen.findByText(OLD_POLICY)).toBeVisible();
+      } else {
+        await waitFor(() => expect(grantRow(grant.GrantId)).toBeVisible());
+      }
+      expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+      expect(metadata).toBeVisible();
+      expect(readCount).toBe(2);
+      expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
+    });
+  });
+
   it('reads the default policy and keeps the edited document and refusal when a save fails', async () => {
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof PutKeyPolicyCommand) throw refusal();
