@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
@@ -19,7 +20,7 @@ import { AreaModal } from '../../../components/area-modal';
 import { useChoiceField } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
 import { ValueText } from '../../../components/value-text';
 import type { Instance } from '../api';
@@ -242,6 +243,7 @@ function AttributeDialog({
   const active = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => active.current?.abort(), []);
   const [pending, setPending] = useState(false);
+  const [refusal, setRefusal] = useState<FlashItem>();
 
   const handleClose = () => {
     if (active.current === undefined) onClose();
@@ -260,9 +262,10 @@ function AttributeDialog({
     } catch (error) {
       if (controller.signal.aborted) return;
       const failure = requestFailure(MODIFY_INSTANCE_ATTRIBUTE, error);
-      flash.show([refusalItem(failure, LABELS[kind], endpoint)]);
+      const item = refusalItem(failure, LABELS[kind], endpoint);
+      flash.show([item]);
       if (failure.kind === 'not-implemented') onUnsupported(failure);
-      else onClose();
+      else setRefusal(item);
     } finally {
       if (!controller.signal.aborted) {
         active.current = undefined;
@@ -297,7 +300,14 @@ function AttributeDialog({
         </Box>
       }
     >
-      {field}
+      <SpaceBetween size="m">
+        {refusal !== undefined && (
+          <Alert type={refusal.type} header={refusal.header}>
+            {refusal.content}
+          </Alert>
+        )}
+        {field}
+      </SpaceBetween>
     </AreaModal>
   );
 

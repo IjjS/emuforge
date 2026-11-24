@@ -237,18 +237,37 @@ describe('instance attribute editor', () => {
     { label: TYPE, code: 'IncorrectInstanceState', message: 'The instance started while the editor was open.' },
     { label: GROUPS, code: 'InvalidGroup.NotFound', message: 'The selected group was deleted.' },
     { label: PROTECTION, code: 'AccessDeniedException', message: 'This instance is protected by the local policy.' },
-  ])('reports $code and its message in the area flash', async ({ label, code, message }) => {
+  ])('reports $code in the dialog and area flash while keeping the draft', async ({ label, code, message }) => {
     renderEditor();
     const dialog = await enterDraft(label);
     vi.mocked(modifyInstanceAttribute).mockRejectedValueOnce(
       sdkRefusal(MODIFY_INSTANCE_ATTRIBUTE, code, message, label === PROTECTION ? 403 : 400),
     );
     fireEvent.click(saveButton(dialog));
-    const flash = await screen.findByText(message);
-    expect(PAGE.findFlashbar()?.getElement()).toContainElement(flash);
-    expect(PAGE.findFlashbar()?.getElement()).toHaveTextContent(code);
-    expect(PAGE.findFlashbar()?.getElement()).not.toHaveTextContent(/updated\./);
+    expect(await within(dialog).findByText(message)).toBeVisible();
+    expect(createWrapper(dialog).findAlert()?.getElement()).toHaveTextContent(`${code}: ${message}`);
+    const flash = PAGE.findFlashbar()?.getElement();
+    expect(flash).toHaveTextContent(`${code}: ${message}`);
+    expect(flash).not.toHaveTextContent(/updated\./);
+    expect(isDisabled(saveButton(dialog))).toBe(false);
     if (label === PROTECTION) expect(screen.getByText('Off')).toBeVisible();
+
+    const originalDraft = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[2];
+    if (label === GROUPS) {
+      expect(tokens()).toEqual(['alpha', 'charlie', 'beta']);
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove beta' }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove alpha' }));
+    }
+    vi.mocked(modifyInstanceAttribute).mockResolvedValueOnce(undefined);
+    fireEvent.click(saveButton(dialog));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: label })).toBeNull());
+    expect(modifyInstanceAttribute).toHaveBeenCalledTimes(2);
+    expect(modifyInstanceAttribute).toHaveBeenLastCalledWith(
+      ENDPOINT,
+      CORE.id,
+      label === GROUPS ? { kind: 'groups', groupIds: [CHARLIE.id] } : originalDraft,
+      expect.any(AbortSignal),
+    );
   });
 
   it.each([
