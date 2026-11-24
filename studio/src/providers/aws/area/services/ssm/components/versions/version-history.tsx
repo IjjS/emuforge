@@ -29,9 +29,16 @@ interface HistoryProps {
 
 type LabelMode = 'add' | 'remove';
 
+interface ConfirmedPage {
+  read: HistoryVersion[];
+  items: HistoryVersion[];
+  currentPage: number;
+  pagesCount: number;
+  openEnd: boolean;
+}
+
 export function VersionHistory(props: HistoryProps) {
   const [expanded, setExpanded] = useState(false);
-  const unsupported = useUnsupportedOperation(props.connection, GET_PARAMETER_HISTORY);
   return (
     <ExpandableSection
       variant="container"
@@ -39,36 +46,39 @@ export function VersionHistory(props: HistoryProps) {
       expanded={expanded}
       onChange={({ detail }) => setExpanded(detail.expanded)}
     >
-      {(expanded || unsupported.failure !== undefined) && (
-        <HistoryTable {...props} expanded={expanded} unsupported={unsupported} />
-      )}
+      <HistoryTable {...props} expanded={expanded} />
     </ExpandableSection>
   );
 }
 
-function HistoryTable({
-  connection,
-  name,
-  secure,
-  expanded,
-  unsupported,
-}: HistoryProps & { expanded: boolean; unsupported: ReturnType<typeof useUnsupportedOperation> }) {
-  const { failure: refusalFailure, markUnsupported } = unsupported;
-  const listing = useParameterHistory(connection, name, refusalFailure === undefined);
+function HistoryTable({ connection, name, secure, expanded }: HistoryProps & { expanded: boolean }) {
+  const { failure: refusalFailure, markUnsupported } = useUnsupportedOperation(connection, GET_PARAMETER_HISTORY);
+  // Keep observing an in-flight read when the section closes.
+  const listing = useParameterHistory(connection, name, expanded && refusalFailure === undefined);
   const failure = refusalFailure ?? listing.failure;
   useEffect(() => {
     if (failure?.kind === 'not-implemented') markUnsupported(failure);
   }, [failure, markUnsupported]);
   const [selectedVersion, setSelectedVersion] = useState<number>();
-  const [confirmedPage, setConfirmedPage] = useState<{ read: HistoryVersion[]; items: HistoryVersion[] }>();
+  const [confirmedPage, setConfirmedPage] = useState<ConfirmedPage>();
   // A new read replaces the snapshot. Acknowledged writes revise its rows until that read arrives.
   if (listing.items !== undefined && listing.items !== confirmedPage?.read) {
-    setConfirmedPage({ read: listing.items, items: listing.items });
+    setConfirmedPage({
+      read: listing.items,
+      items: listing.items,
+      currentPage: listing.currentPage,
+      pagesCount: listing.pagesCount,
+      openEnd: listing.openEnd,
+    });
+    if (confirmedPage !== undefined && confirmedPage.currentPage !== listing.currentPage) {
+      setSelectedVersion(undefined);
+    }
   }
   if (!expanded) return null;
 
   const unavailable = failure?.kind === 'not-implemented';
-  const items = (unavailable ? confirmedPage?.items : listing.items) ?? [];
+  const page = unavailable && confirmedPage !== undefined ? confirmedPage : listing;
+  const items = page.items ?? [];
   const version = items.find(({ Version }) => Version === selectedVersion);
   const feedback = unavailable && actionFailureItem(failure, 'Loading version history', connection.engineOrigin);
   const refusal = feedback && (
@@ -125,11 +135,11 @@ function HistoryTable({
         loading={!failure && listing.loading}
         loadingText="Loading version history…"
         pagination={
-          (listing.openEnd || listing.pagesCount > 1) && (
+          (page.openEnd || page.pagesCount > 1) && (
             <Pagination
-              currentPageIndex={listing.currentPage}
-              pagesCount={listing.pagesCount}
-              openEnd={listing.openEnd}
+              currentPageIndex={page.currentPage}
+              pagesCount={page.pagesCount}
+              openEnd={page.openEnd}
               disabled={unavailable || listing.loading}
               ariaLabels={{
                 previousPageLabel: 'Previous page',
@@ -138,8 +148,6 @@ function HistoryTable({
               }}
               onChange={({ detail }) => {
                 if (unavailable || listing.loading) return;
-                setSelectedVersion(undefined);
-                setConfirmedPage(undefined);
                 listing.goToPage(detail.currentPageIndex);
               }}
             />
@@ -150,7 +158,7 @@ function HistoryTable({
           (failure ? (
             <ReadFailure state={readFailureState(failure, connection, 'version history')} onRetry={listing.refresh} />
           ) : (
-            <Box textAlign="center">{listing.openEnd ? 'No versions on this page' : 'No versions'}</Box>
+            <Box textAlign="center">{page.openEnd ? 'No versions on this page' : 'No versions'}</Box>
           ))
         }
       />
