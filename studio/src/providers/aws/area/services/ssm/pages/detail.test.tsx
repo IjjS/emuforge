@@ -273,23 +273,22 @@ const RESOURCE_SECTIONS = [
     operation: 'ListTagsForResource',
     refresh: 'Refresh tags',
     create: 'Add tag',
-    row: 'previous tag value',
-    actions: ['Edit tag previous', 'Remove tag previous'],
   },
   {
     name: 'Resource policies',
     operation: 'GetResourcePolicies',
     refresh: 'Refresh resource policies',
     create: 'Create resource policy',
-    row: 'previous-policy',
-    actions: ['Edit resource policy previous-policy', 'Delete resource policy previous-policy'],
   },
 ];
 
+const TAG = { Key: 'previous', Value: 'previous tag value' };
+const POLICY_ID = 'previous-policy';
+
 function seedResourceReads() {
-  listTags.mockImplementation(() => answer({ TagList: [{ Key: 'previous', Value: 'previous tag value' }] }));
+  listTags.mockImplementation(() => answer({ TagList: [TAG] }));
   getPolicies.mockImplementation(() =>
-    answer({ Policies: [{ PolicyId: 'previous-policy', PolicyHash: 'previous-hash', Policy: '{"Statement":[]}' }] }),
+    answer({ Policies: [{ PolicyId: POLICY_ID, PolicyHash: 'previous-hash', Policy: '{"Statement":[]}' }] }),
   );
 }
 
@@ -300,21 +299,75 @@ async function expandResourceSections() {
   }
 }
 
+function resourceContent(name: string) {
+  return required(resourceSection(name)?.findContent(), `${name} content`);
+}
+
 function resourcePanel(name: string) {
-  return within(required(resourceSection(name)?.findContent(), `${name} content`).getElement());
+  return within(resourceContent(name).getElement());
 }
 
 function expectResourceRows(present: boolean) {
-  for (const { name, row, actions } of RESOURCE_SECTIONS) {
-    const panel = resourcePanel(name);
-    if (present) {
-      expect(panel.getByText(row, { exact: true })).toBeVisible();
-      for (const action of actions) expect(panel.getByRole('button', { name: action })).toBeEnabled();
-    } else {
-      expect(panel.queryByText(row, { exact: true })).not.toBeInTheDocument();
-      for (const action of actions) expect(panel.queryByRole('button', { name: action })).not.toBeInTheDocument();
+  const table = required(resourceContent('Tags').findTable(), 'tag table');
+  const rows = table.findRows().map((row, index) => ({
+    row,
+    key: table.findBodyCell(index + 1, 1)?.getElement(),
+    value: table.findBodyCell(index + 1, 2)?.getElement(),
+    actions: table.findBodyCell(index + 1, 3),
+  }));
+  const tag = rows.find(({ key }) => key?.textContent === TAG.Key);
+  const tagActions = [`Edit tag ${TAG.Key}`, `Remove tag ${TAG.Key}`];
+  const cards = resourceContent('Resource policies')
+    .findAllContainers()
+    .map((card) => ({
+      card,
+      header: card.findHeader()?.findHeader(),
+    }));
+  const policy = cards.find(({ header }) => header?.findHeadingText().getElement().textContent === POLICY_ID);
+  const policyActions = [`Edit resource policy ${POLICY_ID}`, `Delete resource policy ${POLICY_ID}`];
+
+  if (present) {
+    expect(tag?.row.getElement()).toBeVisible();
+    expect(tag?.key).toBeVisible();
+    expect(tag?.key?.textContent).toBe(TAG.Key);
+    expect(tag?.value).toBeVisible();
+    expect(tag?.value?.textContent).toBe(TAG.Value);
+    for (const action of tagActions) {
+      expect(tag?.actions?.findButton(`[aria-label="${action}"]`)?.getElement()).toBeEnabled();
+    }
+    expect(policy?.card.getElement()).toBeVisible();
+    expect(policy?.header?.findHeadingText().getElement()).toBeVisible();
+    for (const action of policyActions) {
+      expect(policy?.header?.findActions()?.findButton(`[aria-label="${action}"]`)?.getElement()).toBeEnabled();
+    }
+    return;
+  }
+
+  expect(tag).toBeUndefined();
+  expect(policy).toBeUndefined();
+  for (const { value, actions } of rows) {
+    expect(value?.textContent).not.toBe(TAG.Value);
+    for (const action of tagActions) {
+      expect(actions?.findButton(`[aria-label="${action}"]`)?.getElement()).not.toBeInTheDocument();
     }
   }
+  for (const { header } of cards) {
+    for (const action of policyActions) {
+      expect(header?.findActions()?.findButton(`[aria-label="${action}"]`)?.getElement()).not.toBeInTheDocument();
+    }
+  }
+}
+
+function parameterListRow(name: string) {
+  const table = required(ui.findTable(), 'parameter list');
+  const nameColumn = table
+    .findColumnHeaders()
+    .findIndex((header) => header.getElement().textContent?.trim() === 'Name');
+  expect(nameColumn).toBeGreaterThanOrEqual(0);
+  const rowIndex = table
+    .findRows()
+    .findIndex((_, index) => table.findBodyCell(index + 1, nameColumn + 1)?.getElement().textContent === name);
+  return { table, rowIndex };
 }
 
 function expectBlockedResourceReads() {
@@ -540,14 +593,30 @@ describe('Parameter Store detail', () => {
 
     const selected = [deletedName, rejected, unconfirmed];
     for (const name of selected) {
-      fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+      const checkbox = await waitFor(() => {
+        const { table, rowIndex } = parameterListRow(name);
+        expect(rowIndex).toBeGreaterThanOrEqual(0);
+        const input = table
+          .findRowSelectionArea(rowIndex + 1)
+          ?.find('input[type="checkbox"]')
+          ?.getElement();
+        expect(input).toHaveAccessibleName(`Select ${name}`);
+        return required(input, `selection for ${name}`);
+      });
+      fireEvent.click(checkbox);
     }
     const listActions = ui.findTable()?.findHeaderSlot()?.findHeader()?.findActions();
-    fireEvent.click(within(required(listActions, 'list actions').getElement()).getByRole('button', { name: 'Delete' }));
+    const bulkDelete = required(
+      listActions?.findAllButtons().find((button) => button.getElement().textContent?.trim() === 'Delete'),
+      'bulk Delete button',
+    ).getElement();
+    expect(bulkDelete).toHaveAccessibleName('Delete');
+    fireEvent.click(bulkDelete);
     confirm(await deleteDialog('Delete parameters'), 'delete');
     await waitFor(() => {
       expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(deletedName);
-      expect(screen.queryByRole('link', { name: deletedName })).not.toBeInTheDocument();
+      expect(parameterListRow(sibling).rowIndex).toBeGreaterThanOrEqual(0);
+      expect(parameterListRow(deletedName).rowIndex).toBe(-1);
     });
     expect(deleteParameters.mock.calls).toEqual([[{ Names: selected }]]);
 
