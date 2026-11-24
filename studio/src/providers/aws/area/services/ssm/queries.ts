@@ -1,5 +1,5 @@
 import type { GetResourcePoliciesResponseEntry, ParameterMetadata, Tag } from '@aws-sdk/client-ssm';
-import { skipToken, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient, type QueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { bindAwsMutationAuthorization, type RequestFailure } from '../../../../../lib/aws/request';
@@ -210,6 +210,24 @@ const policyKey = (arn: string) => ['resource-policies', arn] as const;
 type ResourceKey = ReturnType<typeof tagKey> | ReturnType<typeof policyKey>;
 const resourceReadOperation = { tags: LIST_TAGS, 'resource-policies': GET_RESOURCE_POLICIES } as const;
 
+type ResourceRows<T> = { items: T | undefined; acknowledgedItems?: T };
+
+function reconcileResourceRows<T>(
+  client: QueryClient,
+  queryKey: readonly unknown[],
+  reconcile: (items: T | undefined) => T | undefined,
+  showWhileRefreshing = false,
+) {
+  client.setQueryData<ResourceRows<T>>(queryKey, (current) => {
+    const acknowledgedItems = reconcile(current?.acknowledgedItems ?? current?.items);
+    if (acknowledgedItems === undefined) return current;
+    return {
+      items: showWhileRefreshing ? reconcile(current?.items) : current?.items,
+      acknowledgedItems,
+    };
+  });
+}
+
 export function useEvictDeletedParameterResources(connection: AreaConnection) {
   const client = useQueryClient();
   const key = targetKey(connection);
@@ -237,9 +255,10 @@ function useResourceRead<T>(
   const endpoint = connection.engineOrigin;
   const operation = resourceReadOperation[key[0]];
   const unsupported = useUnsupportedOperation(connection, operation);
-  const query = useQuery({
+  const query = useQuery<ResourceRows<T>>({
     queryKey: [...targetKey(connection), ...key],
-    queryFn: endpoint === undefined ? skipToken : ({ signal }) => read(endpoint, key[1], signal),
+    queryFn:
+      endpoint === undefined ? skipToken : async ({ signal }) => ({ items: await read(endpoint, key[1], signal) }),
     enabled: endpoint !== undefined && unsupported.failure === undefined,
     retry: false,
     // A refused read cannot restore confirmed rows after the observer unmounts.
@@ -253,10 +272,13 @@ function useResourceRead<T>(
     if (failure?.kind === 'not-implemented') markUnsupported(failure);
   }, [failure, markUnsupported]);
   return {
+    // A successful read replaces the entire snapshot. A refusal leaves acknowledged writes available.
     items:
-      failure?.kind === 'not-implemented' || (failure === undefined && query.isFetchedAfterMount)
-        ? query.data
-        : undefined,
+      failure?.kind === 'not-implemented'
+        ? (query.data?.acknowledgedItems ?? query.data?.items)
+        : failure === undefined && query.isFetchedAfterMount
+          ? query.data?.items
+          : undefined,
     failure,
     loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
     retry: () => {
@@ -285,9 +307,8 @@ export function useParameterTagWrite(connection: AreaConnection, name: string, o
         (endpoint, signal) => addParameterTag(endpoint, name, tag, signal),
         message,
         onClose,
-        (_, readBlocked) => {
-          if (!readBlocked) return;
-          client.setQueryData<Tag[]>(queryKey, (tags = []) =>
+        () => {
+          reconcileResourceRows<Tag[]>(client, queryKey, (tags = []) =>
             tags.some(({ Key }) => Key === tag.Key)
               ? tags.map((existing) => (existing.Key === tag.Key ? tag : existing))
               : [...tags, tag],
@@ -299,9 +320,8 @@ export function useParameterTagWrite(connection: AreaConnection, name: string, o
         (endpoint, signal) => removeParameterTag(endpoint, name, keyToRemove, signal),
         message,
         onClose,
-        (_, readBlocked) => {
-          if (!readBlocked) return;
-          client.setQueryData<Tag[]>(queryKey, (tags) => tags?.filter(({ Key }) => Key !== keyToRemove));
+        () => {
+          reconcileResourceRows<Tag[]>(client, queryKey, (tags) => tags?.filter(({ Key }) => Key !== keyToRemove));
         },
       ),
   };
@@ -319,9 +339,9 @@ export function useParameterPolicyWrite(connection: AreaConnection, name: string
         (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
         `Resource policy created for ${name}.`,
         onClose,
-        ({ PolicyId, PolicyHash }, readBlocked) => {
-          if (!readBlocked || !PolicyId || !PolicyHash) return;
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies = []) => [
+        ({ PolicyId, PolicyHash }) => {
+          if (!PolicyId || !PolicyHash) return;
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(client, queryKey, (policies = []) => [
             ...policies.filter((policy) => policy.PolicyId !== PolicyId),
             { PolicyId, PolicyHash, Policy: document },
           ]);
@@ -334,12 +354,16 @@ export function useParameterPolicyWrite(connection: AreaConnection, name: string
         onClose,
         ({ PolicyId, PolicyHash }) => {
           if (!PolicyId || !PolicyHash) return;
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies) =>
-            policies?.map((policy) =>
-              policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
-                ? { PolicyId, PolicyHash, Policy: document }
-                : policy,
-            ),
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(
+            client,
+            queryKey,
+            (policies) =>
+              policies?.map((policy) =>
+                policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
+                  ? { PolicyId, PolicyHash, Policy: document }
+                  : policy,
+              ),
+            true,
           );
         },
       ),
@@ -349,10 +373,14 @@ export function useParameterPolicyWrite(connection: AreaConnection, name: string
         `Resource policy ${revision.PolicyId} deleted from ${name}.`,
         onClose,
         () => {
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies) =>
-            policies?.filter(
-              (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
-            ),
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(
+            client,
+            queryKey,
+            (policies) =>
+              policies?.filter(
+                (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
+              ),
+            true,
           );
         },
       ),
@@ -381,7 +409,7 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
     write: (endpoint: string, signal: AbortSignal) => Promise<T>,
     message: string,
     onClose: () => void,
-    onSuccess?: (result: T, readBlocked: boolean) => void,
+    onSuccess?: (result: T) => void,
   ) {
     if (disabled || request.current) return;
     const controller = new AbortController();
@@ -396,7 +424,7 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
       void client.cancelQueries(resource);
       const readBlocked =
         client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]) !== undefined;
-      onSuccess?.(result, readBlocked);
+      onSuccess?.(result);
       void client.invalidateQueries({ ...resource, refetchType: readBlocked ? 'none' : 'active' });
       flash.show([{ type: 'success', content: message }]);
       refresh([name]);

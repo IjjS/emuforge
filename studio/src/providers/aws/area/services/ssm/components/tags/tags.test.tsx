@@ -215,8 +215,8 @@ const saved = `Tag ${KEY} saved for ${NAME}.`;
 const updated = `Tag ${KEY} updated for ${NAME}.`;
 const removed = `Tag ${KEY} removed from ${NAME}.`;
 
-async function tagDialog(name: string, title = name) {
-  fireEvent.click(button(name));
+async function tagDialog(trigger: string | HTMLElement, title = typeof trigger === 'string' ? trigger : '') {
+  fireEvent.click(typeof trigger === 'string' ? button(trigger) : trigger);
   return waitFor(() => {
     const dialog = page.findModal();
     assert(dialog);
@@ -388,6 +388,64 @@ describe('Parameter tags', () => {
     expectTag(TAG.Value);
     expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
   });
+
+  it.each(['add', 'replace', 'remove'] as const)(
+    'retains an acknowledged tag %s when its refresh first refuses',
+    async (action) => {
+      const ops = openDetail();
+      const sibling = { Key: 'owner', Value: 'database' };
+      const initialTags = action === 'add' ? [sibling] : [sibling, TAG];
+      const refresh = deferredResponse();
+      ops.ListTagsForResource.mockImplementationOnce(() => list(...initialTags)).mockReturnValueOnce(refresh.response);
+      await expand();
+
+      function expectRows(tags: (typeof TAG)[]) {
+        const table = tagTable();
+        assert(table);
+        expect(table.findRows()).toHaveLength(tags.length);
+        tags.forEach(({ Key, Value }, index) => {
+          const row = index + 1;
+          expect(table.findBodyCell(row, 1)?.getElement().textContent).toBe(Key);
+          expect(table.findBodyCell(row, 2)?.getElement().textContent).toBe(Value);
+          expect(table.findBodyCell(row, 3)?.findButton(`[aria-label="Edit tag ${Key}"]`)?.getElement()).toBeEnabled();
+          expect(
+            table.findBodyCell(row, 3)?.findButton(`[aria-label="Remove tag ${Key}"]`)?.getElement(),
+          ).toBeEnabled();
+        });
+      }
+
+      await waitFor(() => expectRows(initialTags));
+      expect(panelButton('Refresh tags')).toBeEnabled();
+      const actionButton =
+        action === 'add'
+          ? panelButton('Add tag')
+          : tagTable()
+              ?.findBodyCell(2, 3)
+              ?.findButton(`[aria-label="${action === 'replace' ? editName : removeName}"]`)
+              ?.getElement();
+      assert(actionButton);
+      const title = action === 'add' ? 'Add tag' : action === 'replace' ? 'Edit tag' : 'Remove tag';
+      const dialog = await tagDialog(actionButton, title);
+      if (action === 'add') change(dialog, 'Key', KEY);
+      if (action !== 'remove') change(dialog, 'Value', REPLACEMENT.Value);
+      fireEvent.click(button(action === 'replace' ? 'Save tag' : title, dialog));
+      await waitFor(() =>
+        expect(flash(action === 'add' ? saved : action === 'replace' ? updated : removed)).toBeVisible(),
+      );
+      await waitFor(() => expect(ops.ListTagsForResource).toHaveBeenCalledTimes(2));
+      expect(sectionContent()?.findAllAlerts()).toHaveLength(0);
+      await refresh.finish(notImplemented());
+      await expectReadUnavailable();
+      expectRows(action === 'remove' ? [sibling] : [sibling, REPLACEMENT]);
+      expect(panelButton('Add tag')).toBeEnabled();
+      if (action === 'remove') {
+        expect(ops.RemoveTagsFromResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, TagKeys: [KEY] });
+      } else {
+        expect(ops.AddTagsToResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, Tags: [REPLACEMENT] });
+      }
+      expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
+    },
+  );
 
   it('T3 keeps confirmed tags and independent writes after reopening and revisiting a refused read', async () => {
     const ops = openDetail();
