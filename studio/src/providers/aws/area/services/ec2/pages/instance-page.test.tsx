@@ -994,6 +994,45 @@ describe('instance tags and user data', () => {
     expect(isDisabled(tagButton('delete'))).toBe(false);
   });
 
+  it('keeps the user-data draft and explains why Save is disabled after a running state refresh', async () => {
+    const id = 'i-0full';
+    const client = new QueryClient();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'original' });
+    open(pathOf(id), false, client);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit user data' }));
+    const textarea = await waitFor(() => {
+      const field = PAGE.findModal()?.findContent().findTextarea()?.findNativeTextarea();
+      if (field === undefined) throw new Error('Missing user data field');
+      return field.getElement();
+    });
+    const draft = 'changed\nuser data';
+    fireEvent.change(textarea, { target: { value: draft } });
+    const save = PAGE.findModal()?.findFooter()?.findAllButtons()[1]?.getElement();
+    expect(save).toBeEnabled();
+
+    const queryKey = EC2_KEYS.instance(id, ENGINE);
+    holding(full({ state: 'running' }));
+    await act(() => client.invalidateQueries({ queryKey }));
+    await waitFor(() => {
+      expect(PAGE.findModal()?.findContent().findAlert()?.getElement()).toHaveTextContent(
+        'Stop the instance to edit user data.',
+      );
+      expect(save).toBeDisabled();
+    });
+    expect(textarea).toHaveValue(draft);
+    if (save === undefined) throw new Error('Missing Save button');
+    fireEvent.click(save);
+    expect(changeInstanceContent).not.toHaveBeenCalled();
+
+    holding(full({ state: 'stopped' }));
+    await act(() => client.invalidateQueries({ queryKey }));
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(PAGE.findModal()?.findContent().findAlert()).toBeNull();
+    expect(PAGE.findModal()?.findContent().findTextarea()?.findNativeTextarea().getElement()).toHaveValue(draft);
+  });
+
   it.each(['detail', 'list'] as const)(
     'updates the Name and keeps the flash when the %s refresh finishes first',
     async (first) => {

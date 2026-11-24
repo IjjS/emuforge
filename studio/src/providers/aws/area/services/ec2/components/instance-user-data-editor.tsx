@@ -53,6 +53,7 @@ function UserDataDialog({
   onUnsupported: (failure: RequestFailure) => void;
 }) {
   const endpoint = connection.engineOrigin;
+  const requiresStop = instance.state !== 'stopped';
   const { value, failure, refresh } = useInstanceUserData(endpoint, instance.id);
   const { pending, refusal, submit, canDismiss } = useInstanceContentEditor(writes, 'user-data');
   useEffect(() => {
@@ -132,10 +133,10 @@ function UserDataDialog({
             </Button>
             <Button
               variant="primary"
-              disabled={text === undefined || endpoint === undefined || instance.state !== 'stopped'}
+              disabled={text === undefined || endpoint === undefined || requiresStop}
               loading={pending}
               onClick={() => {
-                if (text === undefined) return;
+                if (text === undefined || endpoint === undefined || pending || requiresStop) return;
                 submit(
                   { kind: 'user-data', text },
                   {
@@ -160,6 +161,7 @@ function UserDataDialog({
             </Alert>
           </div>
         )}
+        {requiresStop && <Alert type="info">{STOP_REASON}</Alert>}
         {field}
       </SpaceBetween>
     </AreaModal>
