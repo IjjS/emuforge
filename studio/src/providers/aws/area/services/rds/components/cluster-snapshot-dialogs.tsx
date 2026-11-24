@@ -114,9 +114,11 @@ export function TakeSnapshotAction({
     inFlight.current = true;
     setPending(true);
     try {
-      await create(target, id, signal);
+      const createdId = await create(target, id, signal);
       if (!signal.aborted) {
-        flash.handOver(CLUSTER_SNAPSHOTS_PATH, [{ type: 'success', content: `Creating DB cluster snapshot ${id}` }]);
+        flash.handOver(CLUSTER_SNAPSHOTS_PATH, [
+          { type: 'success', content: `Creating DB cluster snapshot ${createdId}` },
+        ]);
       }
     } catch (error) {
       if (signal.aborted) return;

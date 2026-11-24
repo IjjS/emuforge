@@ -40,6 +40,12 @@ beforeEach(() => {
         </DBClusterSnapshot></DBClusterSnapshots>${marker}`,
       );
     }
+    if (action === 'CreateDBClusterSnapshot') {
+      return xmlResult(
+        action,
+        '<DBClusterSnapshot><DBClusterSnapshotIdentifier>new-snap</DBClusterSnapshotIdentifier></DBClusterSnapshot>',
+      );
+    }
     if (action === 'RestoreDBClusterFromSnapshot') {
       return xmlResult(action, '<DBCluster><DBClusterIdentifier>restored-db</DBClusterIdentifier></DBCluster>');
     }
@@ -75,7 +81,7 @@ describe('RDS cluster snapshot requests', () => {
 
   it('sends the selected identifiers for creation, restoration and deletion', async () => {
     const signal = new AbortController().signal;
-    await createClusterSnapshot(ENDPOINT, 'source-db', 'new-snap', signal);
+    expect(await createClusterSnapshot(ENDPOINT, 'source-db', 'New-Snap', signal)).toBe('new-snap');
     expect(await restoreClusterSnapshot(ENDPOINT, 'new-snap', 'aurora-postgresql', 'Restored-DB', signal)).toBe(
       'restored-db',
     );
@@ -86,7 +92,7 @@ describe('RDS cluster snapshot requests', () => {
         Action: 'CreateDBClusterSnapshot',
         Version: '2014-10-31',
         DBClusterIdentifier: 'source-db',
-        DBClusterSnapshotIdentifier: 'new-snap',
+        DBClusterSnapshotIdentifier: 'New-Snap',
       },
       {
         Action: 'RestoreDBClusterFromSnapshot',

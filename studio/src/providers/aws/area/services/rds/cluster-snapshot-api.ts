@@ -47,7 +47,7 @@ export async function listClusterSnapshots(endpoint: string, marker: string | un
 }
 
 export async function createClusterSnapshot(endpoint: string, sourceId: string, id: string, signal: AbortSignal) {
-  await sendRds(
+  const output = await sendRds(
     endpoint,
     SNAPSHOT_OPERATIONS.create,
     (client, abortSignal) =>
@@ -59,6 +59,7 @@ export async function createClusterSnapshot(endpoint: string, sourceId: string, 
       ),
     signal,
   );
+  return text(output.DBClusterSnapshot?.DBClusterSnapshotIdentifier) ?? id;
 }
 
 export async function restoreClusterSnapshot(

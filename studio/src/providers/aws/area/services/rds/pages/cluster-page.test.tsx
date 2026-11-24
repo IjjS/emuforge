@@ -1048,7 +1048,7 @@ describe('Aurora cluster operations', () => {
 
 describe('taking a DB cluster snapshot', () => {
   beforeEach(() => {
-    vi.mocked(snapshots.createClusterSnapshot).mockReset().mockResolvedValue(undefined);
+    vi.mocked(snapshots.createClusterSnapshot).mockReset().mockResolvedValue('app-snap');
     vi.mocked(snapshots.listClusterSnapshots).mockReset().mockResolvedValue({ items: [] });
   });
 
@@ -1070,12 +1070,12 @@ describe('taking a DB cluster snapshot', () => {
       .mockResolvedValue({ items: [{ ...item, status: 'available' }] });
     answer(found());
     const router = open(PATH);
-    await takeSnapshot('app-snap');
+    await takeSnapshot('App-Snap');
 
     expect(snapshots.createClusterSnapshot).toHaveBeenCalledWith(
       ENGINE,
       'app-aur',
-      'app-snap',
+      'App-Snap',
       expect.any(AbortSignal),
     );
     expect(await screen.findByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();

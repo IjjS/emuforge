@@ -34,8 +34,9 @@ export function useClusterSnapshotActions(endpoint: string | undefined) {
 
   return {
     async create(sourceId: string, id: string, signal: AbortSignal) {
-      await createClusterSnapshot(endpoint ?? noEndpoint(), sourceId, id, signal);
+      const createdId = await createClusterSnapshot(endpoint ?? noEndpoint(), sourceId, id, signal);
       await refreshSnapshots();
+      return createdId;
     },
     async restore(snapshotId: string, engine: string, clusterId: string, signal: AbortSignal) {
       const id = await restoreClusterSnapshot(endpoint ?? noEndpoint(), snapshotId, engine, clusterId, signal);

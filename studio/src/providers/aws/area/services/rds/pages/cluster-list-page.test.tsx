@@ -512,7 +512,7 @@ describe('finding and taking DB cluster snapshots from the cluster list', () => 
 
   it('takes a snapshot of the selected Aurora cluster', async () => {
     vi.mocked(clusterApi.listClusters).mockResolvedValue({ clusters: [cluster('app-aur', 'available')] });
-    vi.mocked(snapshots.createClusterSnapshot).mockResolvedValue(undefined);
+    vi.mocked(snapshots.createClusterSnapshot).mockResolvedValue('new-snap');
     vi.mocked(snapshots.listClusterSnapshots).mockResolvedValue({ items: [] });
     open('/aws/rds/clusters');
     await screen.findByRole('radio', { name: 'app-aur' });
