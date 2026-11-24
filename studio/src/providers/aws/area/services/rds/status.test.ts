@@ -33,6 +33,11 @@ describe('a status', () => {
     }
   });
 
+  it('recognizes a cluster failover as in progress', () => {
+    expect(statusKind('failing-over')).toBe('in-progress');
+    expect(isInProgress('failing-over')).toBe(true);
+  });
+
   it('the six ask for the next read, after 3 seconds; available, stopped and an unknown status do not', () => {
     expect(READ_AGAIN_MS).toBe(3_000);
     for (const status of SIX) {

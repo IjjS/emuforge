@@ -28,7 +28,15 @@ import { TagsTable } from '../components/tags-table';
 import { clusterHref, engineText, instanceHref, INSTANCES_PATH, INSTANCES_WORD, NONE } from '../format';
 import { MODIFY_INSTANCE, type InstanceChanges } from '../modify-api';
 import { useClusterSignIn, useInstance, useInstanceAction, useModifyInstance } from '../queries';
-import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type InstanceAction } from '../status';
+import {
+  ACTION_LABELS,
+  ACTION_RESULTS,
+  actionTarget,
+  isAurora,
+  REASONS,
+  type ActionTarget,
+  type InstanceAction,
+} from '../status';
 
 // A DB instance's page, S3 (issue 573, design tasks 1 and 3): read by `DBInstanceIdentifier`, so an identifier the
 // emulator does not hold is "DB instance not found". "Connection" comes first: what a client is given. The header
@@ -303,6 +311,7 @@ function NotFound() {
 export function InstancePage({ connection, params }: ScreenPageProps) {
   useShowsResources(INSTANCES_WORD);
   const id = params['id'] ?? '';
+  const handleFollow = useFollow();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const act = useInstanceAction(connection.engineOrigin);
@@ -480,6 +489,16 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
         header={
           <Header
             variant="h1"
+            description={
+              instance?.clusterId !== undefined && isAurora(instance.engine) ? (
+                <>
+                  {REASONS.aurora}{' '}
+                  <Link href={clusterHref(instance.clusterId)} onFollow={handleFollow}>
+                    Open DB cluster
+                  </Link>
+                </>
+              ) : undefined
+            }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
