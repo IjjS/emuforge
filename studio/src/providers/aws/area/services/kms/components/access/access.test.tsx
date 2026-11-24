@@ -404,10 +404,24 @@ describe('KMS key access', () => {
     });
     const update = open({ writesEnabled: false });
     expect(await screen.findByText(OLD_POLICY)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
-    const revoke = await screen.findByRole('button', { name: `Revoke grant ${grant.GrantId}` });
-    expect(revoke).toBeDisabled();
+    const controls = [
+      screen.getByRole('button', { name: 'Edit key policy' }),
+      screen.getByRole('button', { name: 'Create grant' }),
+      await screen.findByRole('button', { name: `Revoke grant ${grant.GrantId}` }),
+    ];
+    for (const control of controls) {
+      expect(control).toBeDisabled();
+      fireEvent.click(control);
+    }
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(
+      send.mock.calls.some(
+        ([command]) =>
+          command instanceof PutKeyPolicyCommand ||
+          command instanceof CreateGrantCommand ||
+          command instanceof RevokeGrantCommand,
+      ),
+    ).toBe(false);
 
     update({ writesEnabled: true });
     const dialog = await openRevocation();
