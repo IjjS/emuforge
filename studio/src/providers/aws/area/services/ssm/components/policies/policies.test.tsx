@@ -7,6 +7,7 @@ import type {
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createContext, useContext } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +25,7 @@ const connected = {
   target: 'local',
   emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' },
 } as const;
+const TargetContext = createContext<string>(connected.target);
 let nextPort = 8800;
 
 function answer(body: object = {}, status = 200) {
@@ -78,29 +80,36 @@ function openDetail() {
     return handler(await request.json());
   });
 
-  const router = createMemoryRouter(
-    [
-      {
-        path: '/aws/*',
-        element: (
-          <AwsArea
-            connection={{ engineOrigin, result: connected }}
-            headerSelector="#top-bar"
-            routeChanges={0}
-            onPageTitle={() => undefined}
-            onContentTarget={() => undefined}
-          />
-        ),
-      },
-    ],
-    { initialEntries: [parameterPath(NAME)] },
+  function TestArea() {
+    const target = useContext(TargetContext);
+    return (
+      <AwsArea
+        connection={{ engineOrigin, result: { ...connected, target } }}
+        headerSelector="#top-bar"
+        routeChanges={0}
+        onPageTitle={() => undefined}
+        onContentTarget={() => undefined}
+      />
+    );
+  }
+
+  const router = createMemoryRouter([{ path: '/aws/*', element: <TestArea /> }], {
+    initialEntries: [parameterPath(NAME)],
+  });
+  const client = new QueryClient();
+  const app = (target: string) => (
+    <QueryClientProvider client={client}>
+      <TargetContext.Provider value={target}>
+        <RouterProvider router={router} />
+      </TargetContext.Provider>
+    </QueryClientProvider>
   );
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
-  return operations;
+  const view = render(app(connected.target));
+  return {
+    ...operations,
+    navigateTo: (name: string) => act(async () => router.navigate(parameterPath(name))),
+    switchTarget: (target: string) => view.rerender(app(target)),
+  };
 }
 
 const page = createWrapper(document.body);
@@ -434,6 +443,83 @@ describe('Parameter resource policies', () => {
     await expand();
     await expectReadUnavailable();
     expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
+  });
+
+  it('P5 keeps existing policy writes available with the latest read revision after Refresh returns 501', async () => {
+    const ops = openDetail();
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]))
+      .mockImplementationOnce(() => list([UPDATED_POLICY]))
+      .mockImplementationOnce(notImplemented);
+    await expand();
+    expect(await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    fireEvent.click(panelButton('Refresh resource policies'));
+    expect(await policies().findByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+
+    fireEvent.click(panelButton('Refresh resource policies'));
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+    const row = sectionContent()?.findContainer()?.findHeader();
+    expect(row?.findButton('[aria-label="Edit resource policy policy-1"]')?.getElement()).toBeEnabled();
+    expect(row?.findButton('[aria-label="Delete resource policy policy-1"]')?.getElement()).toBeEnabled();
+
+    const edit = await policyDialog(editName, 'Edit resource policy');
+    expect(policyInput(edit, 'Policy document')).toHaveValue(UPDATED);
+    change(edit, 'Policy document', DOCUMENT);
+    fireEvent.click(button('Save resource policy', edit));
+    await waitFor(() => expect(flash(updated)).toBeVisible());
+    const revision = { ResourceArn: ARN, PolicyId: UPDATED_POLICY.PolicyId, PolicyHash: UPDATED_POLICY.PolicyHash };
+    expect(ops.PutResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ...revision, Policy: DOCUMENT });
+
+    const remove = await policyDialog(deleteName, 'Delete resource policy');
+    change(remove, 'Confirmation', 'delete');
+    fireEvent.click(button('Delete resource policy', remove));
+    await waitFor(() => expect(flash(deleted)).toBeVisible());
+    expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith(revision);
+    expect(ops.GetResourcePolicies.mock.calls).toEqual([
+      [{ ResourceArn: ARN }],
+      [{ ResourceArn: ARN }],
+      [{ ResourceArn: ARN }],
+    ]);
+  });
+
+  it.each(['resource', 'target'] as const)('P5 isolates retained policies when switching %s', async (scope) => {
+    const ops = openDetail();
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY])).mockImplementationOnce(notImplemented);
+    await expand();
+    expect(await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    fireEvent.click(panelButton('Refresh resource policies'));
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+
+    if (scope === 'resource') {
+      const name = '/app/database/port';
+      const arn = 'arn:aws:ssm:us-east-1:000000000000:parameter/app/database/port';
+      ops.DescribeParameters.mockImplementationOnce(() =>
+        answer({ Parameters: [{ Name: name, ARN: arn, Type: 'String', Tier: 'Advanced' }] }),
+      );
+      await ops.navigateTo(name);
+      await expand();
+      await expectReadUnavailable();
+      expect(sectionContent()?.findAllContainers()).toHaveLength(0);
+      expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
+    } else {
+      const pending = deferredResponse();
+      ops.GetResourcePolicies.mockReturnValueOnce(pending.response);
+      ops.switchTarget('another-target');
+      await expand();
+      await waitFor(() => expect(ops.GetResourcePolicies).toHaveBeenCalledTimes(3));
+      expect(sectionContent()?.findAllContainers()).toHaveLength(0);
+      await pending.finish(list([UPDATED_POLICY]));
+      expect(await policies().findByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+      expect(policies().queryByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeNull();
+      expect(sectionContent()?.findAllAlerts()).toHaveLength(0);
+      expect(panelButton('Refresh resource policies')).toBeEnabled();
+      expect(ops.GetResourcePolicies.mock.calls).toEqual([
+        [{ ResourceArn: ARN }],
+        [{ ResourceArn: ARN }],
+        [{ ResourceArn: ARN }],
+      ]);
+    }
   });
 
   it.each([

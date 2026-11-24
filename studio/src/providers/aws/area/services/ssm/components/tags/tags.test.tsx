@@ -7,6 +7,7 @@ import type {
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createContext, useContext } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,7 @@ const connected = {
   target: 'local',
   emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' },
 } as const;
+const TargetContext = createContext<string>(connected.target);
 let nextPort = 8780;
 
 function answer(body: object = {}, status = 200) {
@@ -79,29 +81,36 @@ function openDetail() {
     return handler(await request.json());
   });
 
-  const router = createMemoryRouter(
-    [
-      {
-        path: '/aws/*',
-        element: (
-          <AwsArea
-            connection={{ engineOrigin, result: connected }}
-            headerSelector="#top-bar"
-            routeChanges={0}
-            onPageTitle={() => undefined}
-            onContentTarget={() => undefined}
-          />
-        ),
-      },
-    ],
-    { initialEntries: [parameterPath(NAME)] },
+  function TestArea() {
+    const target = useContext(TargetContext);
+    return (
+      <AwsArea
+        connection={{ engineOrigin, result: { ...connected, target } }}
+        headerSelector="#top-bar"
+        routeChanges={0}
+        onPageTitle={() => undefined}
+        onContentTarget={() => undefined}
+      />
+    );
+  }
+
+  const router = createMemoryRouter([{ path: '/aws/*', element: <TestArea /> }], {
+    initialEntries: [parameterPath(NAME)],
+  });
+  const client = new QueryClient();
+  const app = (target: string) => (
+    <QueryClientProvider client={client}>
+      <TargetContext.Provider value={target}>
+        <RouterProvider router={router} />
+      </TargetContext.Provider>
+    </QueryClientProvider>
   );
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
-  return operations;
+  const view = render(app(connected.target));
+  return {
+    ...operations,
+    navigateTo: (name: string) => act(async () => router.navigate(parameterPath(name))),
+    switchTarget: (target: string) => view.rerender(app(target)),
+  };
 }
 
 const page = createWrapper(document.body);
@@ -376,6 +385,65 @@ describe('Parameter tags', () => {
     await expand();
     await expectReadUnavailable();
     expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
+  });
+
+  it('T3 keeps existing tag writes available after Refresh returns 501', async () => {
+    const ops = openDetail();
+    ops.ListTagsForResource.mockImplementationOnce(() => list(TAG)).mockImplementationOnce(notImplemented);
+    await expand();
+    await waitFor(() => expectTag(TAG.Value));
+
+    fireEvent.click(panelButton('Refresh tags'));
+    await expectReadUnavailable();
+    expectTag(TAG.Value);
+    const actions = tagTable()?.findBodyCell(1, 3);
+    expect(actions?.findButton('[aria-label="Edit tag stage"]')?.getElement()).toBeEnabled();
+    expect(actions?.findButton('[aria-label="Remove tag stage"]')?.getElement()).toBeEnabled();
+
+    const edit = await tagDialog(editName, 'Edit tag');
+    expect(tagInput(edit, 'Value')).toHaveValue(TAG.Value);
+    change(edit, 'Value', REPLACEMENT.Value);
+    fireEvent.click(button('Save tag', edit));
+    await waitFor(() => expect(flash(updated)).toBeVisible());
+    expect(ops.AddTagsToResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, Tags: [REPLACEMENT] });
+
+    const remove = await tagDialog(removeName, 'Remove tag');
+    fireEvent.click(button('Remove tag', remove));
+    await waitFor(() => expect(flash(removed)).toBeVisible());
+    expect(ops.RemoveTagsFromResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, TagKeys: [KEY] });
+    expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
+  });
+
+  it.each(['resource', 'target'] as const)('T3 isolates retained tags when switching %s', async (scope) => {
+    const ops = openDetail();
+    ops.ListTagsForResource.mockImplementationOnce(() => list(TAG)).mockImplementationOnce(notImplemented);
+    await expand();
+    await waitFor(() => expectTag(TAG.Value));
+    fireEvent.click(panelButton('Refresh tags'));
+    await expectReadUnavailable();
+    expectTag(TAG.Value);
+
+    if (scope === 'resource') {
+      const name = '/app/database/port';
+      ops.DescribeParameters.mockImplementationOnce(() => answer({ Parameters: [{ Name: name, Type: 'String' }] }));
+      await ops.navigateTo(name);
+      await expand();
+      await expectReadUnavailable();
+      expect(tagTable()?.findRows()).toHaveLength(0);
+      expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
+    } else {
+      const pending = deferredResponse();
+      ops.ListTagsForResource.mockReturnValueOnce(pending.response);
+      ops.switchTarget('another-target');
+      await expand();
+      await waitFor(() => expect(ops.ListTagsForResource).toHaveBeenCalledTimes(3));
+      expect(tagTable()?.findRows()).toHaveLength(0);
+      await pending.finish(list(REPLACEMENT));
+      await waitFor(() => expectTag(REPLACEMENT.Value));
+      expect(sectionContent()?.findAllAlerts()).toHaveLength(0);
+      expect(panelButton('Refresh tags')).toBeEnabled();
+      expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE], [TAG_RESOURCE]]);
+    }
   });
 
   it.each([
