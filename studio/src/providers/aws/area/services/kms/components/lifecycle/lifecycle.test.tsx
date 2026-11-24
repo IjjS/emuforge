@@ -280,7 +280,10 @@ describe('Key detail panel lifetime', () => {
 
     await act(async () => write.resolve({}));
     await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
-    expect(onFlash).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: 'On-demand rotation requested.' }]);
+    expect(onFlash).toHaveBeenCalledTimes(1);
+    const notices = PAGE.findFlashbar()?.findItemsByType('success');
+    expect(notices).toHaveLength(1);
+    expect(notices?.[0]?.findContent()?.getElement()).toHaveTextContent('On-demand rotation requested.');
     expect(signal.aborted).toBe(false);
     expect(screen.getByText('Key not found')).toBeVisible();
     expect(rotate).toBeDisabled();
