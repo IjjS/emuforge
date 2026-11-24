@@ -18,6 +18,7 @@ import { readFailureState, ReadFailure, useAnnouncer } from '../../../components
 import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { nameOf } from '../../../lib/ec2-client';
 import type { ScreenPageProps } from '../../../screens';
@@ -28,6 +29,7 @@ import { InstanceStateValue } from '../components/instance-state';
 import { InstanceTagEditor } from '../components/instance-tag-editor';
 import { InstanceUserDataEditor } from '../components/instance-user-data-editor';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
+import { useInstanceAttributeWrites, type InstanceAttributeWrites } from '../instance-attribute-queries';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 import { volumeHref } from '../volume-format';
 
@@ -96,10 +98,12 @@ function Details({
   instance,
   protection,
   connection,
+  attributeWrites,
 }: {
   instance: Instance;
   protection: Ec2Read<boolean>;
   connection: AreaConnection;
+  attributeWrites: InstanceAttributeWrites;
 }) {
   return (
     <Container header={<Header variant="h2">Instance details</Header>}>
@@ -125,6 +129,7 @@ function Details({
                   kind="protection"
                   instance={instance}
                   connection={connection}
+                  writes={attributeWrites}
                   value={protection.value}
                   readFailure={protection.failure}
                 />
@@ -136,7 +141,12 @@ function Details({
             value: (
               <SpaceBetween size="xxs">
                 <ValueText kind="fixed" value={instance.type} none={NONE} />
-                <InstanceAttributeEditor kind="type" instance={instance} connection={connection} />
+                <InstanceAttributeEditor
+                  kind="type"
+                  instance={instance}
+                  connection={connection}
+                  writes={attributeWrites}
+                />
               </SpaceBetween>
             ),
           },
@@ -187,7 +197,15 @@ function Empty({ children }: { children: string }) {
   );
 }
 
-function Groups({ instance, connection }: { instance: Instance; connection: AreaConnection }) {
+function Groups({
+  instance,
+  connection,
+  attributeWrites,
+}: {
+  instance: Instance;
+  connection: AreaConnection;
+  attributeWrites: InstanceAttributeWrites;
+}) {
   const handleFollow = useFollow();
   const columns: TableProps.ColumnDefinition<InstanceGroup>[] = [
     {
@@ -208,7 +226,14 @@ function Groups({ instance, connection }: { instance: Instance; connection: Area
       header={
         <Header
           variant="h2"
-          actions={<InstanceAttributeEditor kind="groups" instance={instance} connection={connection} />}
+          actions={
+            <InstanceAttributeEditor
+              kind="groups"
+              instance={instance}
+              connection={connection}
+              writes={attributeWrites}
+            />
+          }
         >
           Security groups
         </Header>
@@ -310,6 +335,13 @@ function NotFound() {
 export function InstancePage({ connection, params }: ScreenPageProps) {
   useShowsResources(INSTANCES_WORD);
   const id = params['id'] ?? '';
+  return <InstanceVisit key={JSON.stringify([id, connection.engineOrigin])} connection={connection} id={id} />;
+}
+
+function InstanceVisit({ connection, id }: { connection: AreaConnection; id: string }) {
+  // The area also remounts this visit when the emulator target changes.
+  const pageSignal = usePageSignal();
+  const attributeWrites = useInstanceAttributeWrites(connection.engineOrigin, id, pageSignal);
   const [announcement, announce] = useAnnouncer();
   const reading = useInstance(connection.engineOrigin, id);
   const protection = useTerminationProtection(connection.engineOrigin, id);
@@ -367,9 +399,14 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   } else {
     content = (
       <SpaceBetween size="l" key={instance.id}>
-        <Details instance={instance} protection={protection} connection={connection} />
+        <Details
+          instance={instance}
+          protection={protection}
+          connection={connection}
+          attributeWrites={attributeWrites}
+        />
         <Network instance={instance} />
-        <Groups instance={instance} connection={connection} />
+        <Groups instance={instance} connection={connection} attributeWrites={attributeWrites} />
         <Volumes volumes={instance.volumes} />
         <InstanceTagEditor id={instance.id} tags={instance.tags} endpoint={connection.engineOrigin} />
       </SpaceBetween>

@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,7 @@ import AwsArea from '../../../index';
 import * as instanceApi from '../api';
 import { listGroupChoices, listInstanceTypeChoices } from '../choices-api';
 import { MODIFY_INSTANCE_ATTRIBUTE, modifyInstanceAttribute } from '../instance-attribute-api';
+import { EC2_KEYS } from '../queries';
 
 vi.mock('../api', async (original) => ({
   ...(await original<typeof import('../api')>()),
@@ -52,19 +53,23 @@ const PAGE = createWrapper(document.body);
 
 function renderEditor(instance = { ...CORE, vpcId: 'vpc-1' } as instanceApi.Instance) {
   vi.mocked(instanceApi.getInstance).mockResolvedValue({ found: true, instance });
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const client = new QueryClient();
+  const tree = (connection: AreaConnection, targetGeneration: number) => (
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/aws/ec2/instances/instance/i-561']}>
         <AwsArea
-          connection={CONNECTION}
+          connection={connection}
           routeChanges={0}
+          targetGeneration={targetGeneration}
           headerSelector="#top-bar"
           onPageTitle={() => undefined}
           onContentTarget={() => undefined}
         />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree(CONNECTION, 0));
+  return { client, switchTarget: (connection: AreaConnection) => rerender(tree(connection, 1)) };
 }
 
 function sdkRefusal(operation: string, code: string, message: string, status: number) {
@@ -86,6 +91,13 @@ async function edit(label: string) {
 
 function saveButton(dialog: HTMLElement) {
   return within(dialog).getByRole('button', { name: 'Save changes' });
+}
+
+function pairValue(label: string) {
+  return PAGE.findAllKeyValuePairs()
+    .flatMap((pairs) => pairs.findItems())
+    .find((item) => item.findLabel()?.getElement().textContent === label)
+    ?.findValue();
 }
 
 function typeField() {
@@ -153,7 +165,7 @@ describe('instance attribute editor', () => {
       .mockResolvedValueOnce({ choices: [LARGE] });
     renderEditor();
     const dialog = await edit(TYPE);
-    expect(within(dialog).getByText('t3.micro')).toBeVisible();
+    expect(createWrapper(dialog).findFormField()?.findDescription()?.getElement()).toHaveTextContent('t3.micro');
     typeField().openDropdown();
     fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(typeField().findDropdown().findOptionByValue(LARGE.type)).not.toBeNull());
@@ -162,8 +174,51 @@ describe('instance attribute editor', () => {
     expect(isDisabled(saveButton(dialog))).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: TYPE })).toBeNull());
-    expect(screen.getByText('t3.micro')).toBeVisible();
+    expect(pairValue('Type')?.getElement()).toHaveTextContent('t3.micro');
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
+  });
+
+  it('blocks an open type editor when a newer read says the instance is starting', async () => {
+    const { client } = renderEditor();
+    const dialog = await enterDraft(TYPE);
+    vi.mocked(instanceApi.getInstance).mockResolvedValue({ found: true, instance: { ...CORE, state: 'pending' } });
+    await act(() => client.invalidateQueries({ queryKey: EC2_KEYS.instance(CORE.id) }));
+    await waitFor(() => expect(isDisabled(saveButton(dialog))).toBe(true));
+    expect(createWrapper(dialog).findAlert()?.findContent().getElement()).toHaveTextContent(
+      'Stop the instance to change its type.',
+    );
+    expect(typeField().findTrigger().getElement()).toHaveTextContent(LARGE.type);
+    fireEvent.click(saveButton(dialog));
+    expect(modifyInstanceAttribute).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending type save when the area changes targets', async () => {
+    let finishWrite: () => void = () => undefined;
+    vi.mocked(modifyInstanceAttribute).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWrite = resolve;
+        }),
+    );
+    const { switchTarget } = renderEditor();
+    const dialog = await enterDraft(TYPE);
+    fireEvent.click(saveButton(dialog));
+    const signal = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    switchTarget({
+      engineOrigin: ENDPOINT,
+      result: {
+        kind: 'connected',
+        checkedAt: 1,
+        target: 'next-target',
+        emulator: { port: 9397, endpoint: 'https://127.0.0.1:9397' },
+      },
+    });
+    expect(signal?.aborted).toBe(true);
+    await act(() => finishWrite());
+    expect(screen.queryByRole('dialog', { name: TYPE })).toBeNull();
+    expect(PAGE.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
   });
 
   it('shows current groups from different pages, requires at least one, and keeps the draft while paging', async () => {
@@ -224,7 +279,11 @@ describe('instance attribute editor', () => {
     renderEditor();
     const dialog = await edit(TYPE);
     typeField().openDropdown();
-    expect(await screen.findByText(/InternalError: Could not load the instance types/)).toBeVisible();
+    await waitFor(() => {
+      expect(typeField().findStatusIndicator()?.getElement()).toHaveTextContent(
+        'InternalError: Could not load the instance types',
+      );
+    });
     expect(isDisabled(saveButton(dialog))).toBe(true);
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
     typeField().findErrorRecoveryButton()?.click();
@@ -247,12 +306,13 @@ describe('instance attribute editor', () => {
     const alert = await within(dialog).findByRole('alert');
     expect(alert).toBeVisible();
     expect(alert).toHaveTextContent(`${code}: ${message}`);
-    const flash = PAGE.findFlashbar()?.getElement();
-    expect(flash).toHaveTextContent(`${code}: ${message}`);
-    expect(flash?.querySelector('[role="alert"]')).toBeNull();
-    expect(flash).not.toHaveTextContent(/updated\./);
+    const flash = PAGE.findFlashbar();
+    const refusal = flash?.findItemsByType('error')[0];
+    expect(refusal?.findContent()?.getElement()).toHaveTextContent(`${code}: ${message}`);
+    expect(refusal?.getElement()).not.toHaveAttribute('role', 'alert');
+    expect(flash?.findItemsByType('success')).toHaveLength(0);
     expect(isDisabled(saveButton(dialog))).toBe(false);
-    if (label === PROTECTION) expect(screen.getByText('Off')).toBeVisible();
+    if (label === PROTECTION) expect(pairValue('Termination protection')?.getElement()).toHaveTextContent(/^Off/);
 
     const originalDraft = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[2];
     if (label === GROUPS) {
@@ -287,10 +347,19 @@ describe('instance attribute editor', () => {
       if (label === TYPE) typeField().openDropdown();
       else groupField().openDropdown();
     }
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(new RegExp(`501 Not Implemented for ${operation}`))).toBeVisible();
-    expect(screen.getByText('Unavailable in this emulator build.')).toBeVisible();
-    expect(isDisabled(screen.getByRole('button', { name: label }))).toBe(true);
+    const action = await screen.findByRole('button', { name: label });
+    const result =
+      label === PROTECTION
+        ? pairValue('Termination protection')
+        : PAGE.findAll('[data-testid="instance-attribute-action"]').find((wrapper) =>
+            wrapper.getElement().contains(action),
+          );
+    await waitFor(() => {
+      expect(result?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(result?.getElement()).toHaveTextContent(`501 Not Implemented for ${operation}`);
+      expect(result?.getElement()).toHaveTextContent('Unavailable in this emulator build.');
+      expect(isDisabled(action)).toBe(true);
+    });
     expect(screen.queryByRole('dialog', { name: label })).toBeNull();
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
   });
@@ -304,10 +373,12 @@ describe('instance attribute editor', () => {
         sdkRefusal(MODIFY_INSTANCE_ATTRIBUTE, 'NotImplemented', 'This attribute cannot be changed here.', 501),
       );
       fireEvent.click(saveButton(dialog));
-      const status = await screen.findByText('Not implemented by the emulator');
-      expect(PAGE.findFlashbar()?.getElement()).toContainElement(status);
-      expect(PAGE.findFlashbar()?.getElement()).toHaveTextContent(/501 Not Implemented for ModifyInstanceAttribute/);
-      expect(PAGE.findFlashbar()?.getElement()).toHaveTextContent('This attribute cannot be changed here.');
+      await waitFor(() => {
+        const item = PAGE.findFlashbar()?.findItemsByType('info')[0];
+        expect(item?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+        expect(item?.findContent()?.getElement()).toHaveTextContent('501 Not Implemented for ModifyInstanceAttribute');
+        expect(item?.findContent()?.getElement()).toHaveTextContent('This attribute cannot be changed here.');
+      });
       expect(isDisabled(screen.getByRole('button', { name: label }))).toBe(true);
       expect(screen.queryByRole('dialog', { name: label })).toBeNull();
     },

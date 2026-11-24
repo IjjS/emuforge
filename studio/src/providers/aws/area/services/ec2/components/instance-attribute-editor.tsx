@@ -7,13 +7,12 @@ import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Toggle from '@cloudscape-design/components/toggle';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   reportedNotImplementedMessage,
   reportedServiceCode,
   refusalMessage,
-  requestFailure,
   type RequestFailure,
 } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -27,7 +26,7 @@ import type { Instance } from '../api';
 import type { GroupChoice, InstanceTypeChoice } from '../choices-api';
 import { groupChoices, instanceTypeChoices } from '../choices-queries';
 import { MODIFY_INSTANCE_ATTRIBUTE, type InstanceAttributeChange } from '../instance-attribute-api';
-import { useInstanceAttributeChange } from '../instance-attribute-queries';
+import type { InstanceAttributeWrites } from '../instance-attribute-queries';
 
 const LABELS = {
   type: 'Change instance type',
@@ -41,7 +40,9 @@ const RESULTS = {
   protection: 'Termination protection updated.',
 };
 
-type EditorProps = { instance: Instance; connection: AreaConnection } & (
+const STOP_TO_CHANGE_TYPE = 'Stop the instance to change its type.';
+
+type EditorProps = { instance: Instance; connection: AreaConnection; writes: InstanceAttributeWrites } & (
   | { kind: 'type' | 'groups' }
   | { kind: 'protection'; value: boolean | undefined; readFailure: RequestFailure | undefined }
 );
@@ -236,47 +237,42 @@ function AttributeDialog({
   onClose: () => void;
   onUnsupported: (failure: RequestFailure) => void;
 }) {
-  const { kind, instance, connection } = editor;
+  const { kind, instance, connection, writes } = editor;
   const endpoint = connection.engineOrigin;
   const flash = usePageFlash();
-  const save = useInstanceAttributeChange(endpoint, instance.id);
-  const active = useRef<AbortController | undefined>(undefined);
-  useEffect(() => () => active.current?.abort(), []);
-  const [pending, setPending] = useState(false);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const pending = writes.pending.has(kind);
+  const requiresStop = kind === 'type' && instance.state !== 'stopped';
   const [refusal, setRefusal] = useState<FlashItem>();
 
   const handleClose = () => {
-    if (active.current === undefined) onClose();
+    if (!pending) onClose();
   };
 
-  const handleSave = async (change: InstanceAttributeChange) => {
-    if (active.current !== undefined || endpoint === undefined) return;
-    const controller = new AbortController();
-    active.current = controller;
+  const handleSave = (change: InstanceAttributeChange) => {
+    if (pending || requiresStop || endpoint === undefined) return;
     setRefusal(undefined);
-    setPending(true);
-    try {
-      await save(change, controller.signal);
-      if (controller.signal.aborted) return;
-      flash.show([{ type: 'success', content: RESULTS[kind] }]);
-      onClose();
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      const failure = requestFailure(MODIFY_INSTANCE_ATTRIBUTE, error);
+    void writes.submit(change, (failure) => {
+      if (failure === undefined) {
+        flash.show([{ type: 'success', content: RESULTS[kind] }]);
+        if (mounted.current) onClose();
+        return;
+      }
       const item = refusalItem(failure, LABELS[kind], endpoint);
-      if (failure.kind === 'not-implemented') {
-        flash.show([item]);
-        onUnsupported(failure);
-      } else {
+      if (failure.kind !== 'not-implemented' && mounted.current) {
         setRefusal(item);
         flash.show([{ ...item, announcedInDialog: true }]);
+      } else {
+        flash.show([item]);
+        if (mounted.current) onClose();
       }
-    } finally {
-      if (!controller.signal.aborted) {
-        active.current = undefined;
-        setPending(false);
-      }
-    }
+    });
   };
 
   const renderDialog = (change: InstanceAttributeChange | undefined, field: ReactNode) => (
@@ -294,7 +290,7 @@ function AttributeDialog({
             <Button
               variant="primary"
               loading={pending}
-              disabled={change === undefined || endpoint === undefined}
+              disabled={change === undefined || endpoint === undefined || requiresStop}
               onClick={() => {
                 if (change !== undefined) void handleSave(change);
               }}
@@ -313,6 +309,7 @@ function AttributeDialog({
             </Alert>
           </div>
         )}
+        {requiresStop && <Alert type="info">{STOP_TO_CHANGE_TYPE}</Alert>}
         {field}
       </SpaceBetween>
     </AreaModal>
@@ -347,7 +344,7 @@ function AttributeDialog({
 function unavailableReason(editor: EditorProps): string | undefined {
   switch (editor.kind) {
     case 'type':
-      return editor.instance.state === 'stopped' ? undefined : 'Stop the instance to change its type.';
+      return editor.instance.state === 'stopped' ? undefined : STOP_TO_CHANGE_TYPE;
     case 'groups':
       return editor.instance.vpcId ? undefined : "The instance's VPC is unavailable.";
     case 'protection':
@@ -361,7 +358,9 @@ function unavailableReason(editor: EditorProps): string | undefined {
 /** One detail-page action and its draft, mounted only while its dialog is open. */
 export function InstanceAttributeEditor(editor: EditorProps) {
   const [open, setOpen] = useState(false);
-  const [unsupported, setUnsupported] = useState<RequestFailure>();
+  const [readUnsupported, setReadUnsupported] = useState<RequestFailure>();
+  const unsupported = editor.writes.unsupported[editor.kind] ?? readUnsupported;
+  const pending = editor.writes.pending.has(editor.kind);
   const reasonId = useId();
   const reason = unavailableReason(editor);
   const unavailable =
@@ -381,7 +380,7 @@ export function InstanceAttributeEditor(editor: EditorProps) {
     <SpaceBetween size="xxs" data-testid="instance-attribute-action">
       <Button
         variant={editor.kind === 'groups' ? 'normal' : 'inline-link'}
-        disabled={reason !== undefined || unavailable !== undefined}
+        disabled={reason !== undefined || unavailable !== undefined || pending}
         disabledReason={showStopReason ? undefined : (unavailable ?? reason)}
         {...(showStopReason ? { ariaDescribedby: reasonId } : {})}
         onClick={() => setOpen(true)}
@@ -405,7 +404,7 @@ export function InstanceAttributeEditor(editor: EditorProps) {
           editor={editor}
           onClose={() => setOpen(false)}
           onUnsupported={(failure) => {
-            setUnsupported(failure);
+            setReadUnsupported(failure);
             setOpen(false);
           }}
         />
