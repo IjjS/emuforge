@@ -7,6 +7,7 @@ import { targetOf } from '../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../components/emulator-line';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
+import { GET_PARAMETER_HISTORY, getParameterHistory } from './version-api';
 
 const SERVICE_KEY = ['aws', 'ssm'] as const;
 const PAGE_SIZE = 50;
@@ -157,6 +158,37 @@ export function useRefreshParameterSave(connection: AreaConnection) {
       void client.cancelQueries(history);
       void client.invalidateQueries(history);
     }
+    refresh([name]);
+  };
+}
+
+export function useParameterHistory(connection: AreaConnection, name: string) {
+  const unsupported = useUnsupportedOperation(connection, GET_PARAMETER_HISTORY);
+  const listing = useTokenListing({
+    key: [...targetKey(connection), 'history', name],
+    endpoint: connection.engineOrigin,
+    enabled: unsupported.failure === undefined,
+    operation: GET_PARAMETER_HISTORY,
+    read: async (endpoint, token, signal) => {
+      const page = await getParameterHistory(endpoint, name, token, signal);
+      signal.throwIfAborted();
+      return page;
+    },
+  });
+  return {
+    ...listing,
+    failure: unsupported.failure ?? listing.failure,
+    rememberFailure: unsupported.markUnsupported,
+  };
+}
+
+export function useRefreshParameterLabels(connection: AreaConnection) {
+  const client = useQueryClient();
+  const refresh = useRefreshParameterReads(connection);
+  return (name: string) => {
+    const history = { queryKey: [...targetKey(connection), 'history', name] };
+    void client.cancelQueries(history);
+    void client.invalidateQueries(history);
     refresh([name]);
   };
 }

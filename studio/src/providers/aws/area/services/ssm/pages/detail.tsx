@@ -10,6 +10,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 
+import { targetOf } from '../../../../../../lib/engine/engine-client';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
@@ -19,10 +20,12 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { DeleteControl } from '../components/delete/delete-control';
+import { ValueReveal } from '../components/versions/value-reveal';
+import { VersionHistory } from '../components/versions/version-history';
 import { PARAMETER_STORE_PATH, parameterEditPath, parameterName } from '../paths';
 import { useParameterMetadata } from '../queries';
 
-function Metadata({ parameter }: { parameter: ParameterMetadata }) {
+function Metadata({ parameter, children }: { parameter: ParameterMetadata; children: React.ReactNode }) {
   const metadata = [
     { label: 'ARN', value: <CopyValue label="ARN" value={parameter.ARN} none="-" /> },
     { label: 'Type', value: parameter.Type ?? '-' },
@@ -52,6 +55,7 @@ function Metadata({ parameter }: { parameter: ParameterMetadata }) {
     <Container header={<Header variant="h2">Parameter details</Header>}>
       <SpaceBetween size="m">
         <KeyValuePairs columns={2} items={metadata} />
+        {children}
         {(parameter.Policies?.length ?? 0) > 0 && (
           <>
             <Box variant="h3">Parameter policies</Box>
@@ -80,6 +84,11 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
   }, [failure, rememberFailure]);
   const state = failure === undefined ? undefined : readFailureState(failure, connection, 'parameter');
   const parameter = metadata ?? undefined;
+  const valuesKey = JSON.stringify([
+    connection.engineOrigin,
+    connection.result && targetOf(connection.result),
+    connection.result?.kind === 'connected' ? connection.result.emulator.endpoint : undefined,
+  ]);
 
   return (
     <SpaceBetween size="l">
@@ -117,7 +126,31 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
           )}
         </Container>
       ) : parameter !== undefined ? (
-        <Metadata parameter={parameter} />
+        <>
+          <Metadata parameter={parameter}>
+            {!disconnected && (
+              <section aria-label="Current value">
+                <SpaceBetween size="xs">
+                  <Box variant="h3">Current value</Box>
+                  <ValueReveal
+                    key={valuesKey}
+                    connection={connection}
+                    name={name}
+                    secure={parameter.Type === 'SecureString'}
+                  />
+                </SpaceBetween>
+              </section>
+            )}
+          </Metadata>
+          {!disconnected && (
+            <VersionHistory
+              key={valuesKey}
+              connection={connection}
+              name={name}
+              secure={parameter.Type === 'SecureString'}
+            />
+          )}
+        </>
       ) : loading ? (
         <StatusIndicator type="loading">Loading parameter…</StatusIndicator>
       ) : (
