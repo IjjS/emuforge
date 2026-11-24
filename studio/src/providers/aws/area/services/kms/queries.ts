@@ -62,27 +62,33 @@ export function connectionFailure(connection: AreaConnection, operation: string)
 /** A failed request can observe a connection problem before the frame's next poll. */
 export function readFailureState(failure: RequestFailure, connection: AreaConnection, thing: string) {
   const { result } = connection;
-  if (result?.kind === 'connected') {
-    if (failure.kind === 'engine-did-not-answer') {
-      return areaReadFailureState(
-        failure,
-        {
-          ...connection,
-          result: { kind: 'engine-unreachable', checkedAt: result.checkedAt, lastEmulatorPort: result.emulator.port },
+  if (
+    failure.kind === 'engine-did-not-answer' &&
+    connection.engineOrigin !== undefined &&
+    (result === undefined || result.kind === 'connected')
+  ) {
+    return areaReadFailureState(
+      failure,
+      {
+        ...connection,
+        result: {
+          kind: 'engine-unreachable',
+          checkedAt: result?.checkedAt ?? Date.now(),
+          lastEmulatorPort: result?.emulator.port,
         },
-        thing,
-      );
-    }
-    if (failure.kind === 'emulator-did-not-answer') {
-      return areaReadFailureState(
-        failure,
-        {
-          ...connection,
-          result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message },
-        },
-        thing,
-      );
-    }
+      },
+      thing,
+    );
+  }
+  if (failure.kind === 'emulator-did-not-answer' && result?.kind === 'connected') {
+    return areaReadFailureState(
+      failure,
+      {
+        ...connection,
+        result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message },
+      },
+      thing,
+    );
   }
   return areaReadFailureState(failure, connection, thing);
 }
