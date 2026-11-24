@@ -18,6 +18,7 @@ BIN = PM / "bin"
 RUN.mkdir(parents=True, exist_ok=True)
 
 PANES = RUN / "panes.json"            # live registry: list of pane dicts
+PANE_ADMISSION = RUN / "pane-admission"  # lock shared by pane starts and closes
 PANES_HISTORY = RUN / "panes-history.jsonl"  # every pane ever started (for pm-cost)
 WORKTREES = RUN / "worktrees.json"    # list of worktree dicts
 PORTS = RUN / "ports.json"            # {port: worktree path}
@@ -25,10 +26,8 @@ PMINFO = RUN / "pm.json"              # {"pm_pane":..., "pm_name":..., "workspac
 EVENTS = RUN / "events.log"
 
 MODEL_IDS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
-# worker panes per side (a unit's first letter), the same for every side, and live panes in all (plan, rev and crit
-# included), set so that every side can reach its limit; memory, swap and the token rate still gate every new pane.
-LIMITS = {"studio_worker": 8, "engine_worker": 8, "tests_worker": 8, "harness_worker": 8, "total": 24,
-          "mem_gb": 22.5}
+# Worker panes share one limit across all sides. All roles count toward the total.
+LIMITS = {"worker": 16, "total": 24, "mem_gb": 22.5}
 SIDES = {"s": "studio", "e": "engine", "t": "tests", "h": "harness"}  # first letter of a unit name: s1, e2, t1, h1
 
 
@@ -546,8 +545,8 @@ def machine_room(given=None):
     return thermal_room(given["thermal"] if given else thermal_state())
 
 
-def room(role, side, issue, alive=None, tokens=True, given=None):
-    """Why a new pane of this role and side may not start now, or None when there is room. The one judgement of the
+def room(role, issue, alive, tokens=True, given=None):
+    """Why a new pane of this role may not start now, or None when there is room. The one judgement of the
     machine's limits that pm-pane (its QUEUE answer) and pm-watchd (EVENT room) share."""
     from _pmquota import start_allowed
     why = start_allowed(issue)
@@ -561,14 +560,13 @@ def room(role, side, issue, alive=None, tokens=True, given=None):
         rate, tgt, over = token_status()
         if over:
             return f"token rate {fmt(tgt, rate)} is over today's target {fmt(tgt, tgt['per_hour'])}"
-    alive = [r for r in load(PANES, []) if not r.get("gone")] if alive is None else alive
     if len(alive) >= LIMITS["total"]:
         return f"{len(alive)} live panes >= {LIMITS['total']}"
     if role == "worker":
-        n = sum(1 for r in alive if r.get("role") == "worker" and r.get("side") == side)
-        cap = LIMITS.get(f"{side}_worker", LIMITS["engine_worker"])
+        n = sum(1 for r in alive if r.get("role") == "worker")
+        cap = LIMITS["worker"]
         if n >= cap:
-            return f"{n} {side} worker panes >= {cap}"
+            return f"{n} worker panes >= {cap}"
     return None
 
 
