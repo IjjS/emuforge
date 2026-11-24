@@ -2,10 +2,11 @@ import type { DescribeParametersCommandInput, PutParameterCommandInput } from '@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import AwsArea from '../../../index';
 import { PARAMETER_CREATE_PATH, PARAMETER_STORE_PATH, parameterEditPath, parameterPath } from '../paths';
 import { useParameterListing } from '../queries';
@@ -37,6 +38,10 @@ const CONNECTED = {
   target: 'local',
   emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' },
 } as const;
+const DISCONNECTED = [
+  { kind: 'engine-unreachable', checkedAt: 2, lastEmulatorPort: CONNECTED.emulator.port },
+  { ...CONNECTED, kind: 'emulator-unreachable', checkedAt: 2, reason: 'not_started', message: '' },
+] as const satisfies readonly CheckResult[];
 
 const describeParameters = vi.fn<(input: DescribeParametersCommandInput) => Response | Promise<Response>>();
 const putParameter = vi.fn<(input: PutParameterCommandInput) => Response | Promise<Response>>();
@@ -87,28 +92,33 @@ afterEach(() => vi.unstubAllGlobals());
 
 function open(path: string, observeListing = false) {
   const client = new QueryClient();
-  const connection = { engineOrigin, result: CONNECTED };
-  function Listing() {
+  const controls: { connect?: (result: CheckResult) => void } = {};
+  function Listing({ result }: { result: CheckResult }) {
+    const connection = { engineOrigin, result };
     const { items } = useParameterListing(connection);
     return <output aria-label="Observed listing">{items?.[0]?.Version ?? 'Pending'}</output>;
   }
   function Frame() {
     const { pathname } = useLocation();
+    const [result, setResult] = useState<CheckResult>(CONNECTED);
     const visit = useRef({ pathname, count: 0 });
     const count = visit.current.count + Number(visit.current.pathname !== pathname);
     useLayoutEffect(() => {
       visit.current = { pathname, count };
     }, [pathname, count]);
+    useLayoutEffect(() => {
+      controls.connect = setResult;
+    }, []);
     return (
       <>
         <AwsArea
-          connection={connection}
+          connection={{ engineOrigin, result }}
           headerSelector="#top-bar"
           routeChanges={count}
           onPageTitle={() => undefined}
           onContentTarget={() => undefined}
         />
-        {observeListing && <Listing />}
+        {observeListing && <Listing result={result} />}
       </>
     );
   }
@@ -118,31 +128,71 @@ function open(path: string, observeListing = false) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { where: () => router.state.location.pathname + router.state.location.search };
+  return {
+    where: () => router.state.location.pathname + router.state.location.search,
+    connect: (result: CheckResult) => act(() => controls.connect?.(result)),
+  };
 }
 
-const field = (name: string) => screen.getByLabelText(name, { exact: true });
+const ui = createWrapper();
+
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Expected ${label}`);
+  return value;
+}
+
+const formField = (name: string) =>
+  ui.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === name);
+const field = (name: string) => {
+  const control = formField(name)?.findControl();
+  return required(
+    control?.findInput()?.findNativeInput().getElement() ?? control?.findTextarea()?.findNativeTextarea().getElement(),
+    `input for ${name}`,
+  );
+};
 const change = (name: string, value: string) => fireEvent.change(field(name), { target: { value } });
-const button = (name: string) => screen.getByRole('button', { name });
-const create = () => button('Create parameter');
-const save = () => button('Save changes');
-const notifications = () => screen.queryByRole('list', { name: 'Notifications' });
+const fieldError = (name: string) => formField(name)?.findError()?.getElement();
+const formButton = (name: string) =>
+  within(required(ui.findForm()?.findActions()?.getElement(), 'form actions')).getByRole('button', { name });
+const create = () => formButton('Create parameter');
+const save = () => formButton('Save changes');
+const notifications = () => ui.findFlashbar()?.findItems() ?? [];
+const success = () => ui.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
+const heading = (name: string) =>
+  ui
+    .findAllHeaders()
+    .map((header) => header.findHeadingText().getElement())
+    .find((element) => element.textContent === name);
+const visibleHeading = (name: string) => waitFor(() => expect(heading(name)).toBeVisible());
+const detailValue = (label: string) =>
+  ui
+    .findAllKeyValuePairs()
+    .flatMap((pairs) => pairs.findItems())
+    .find((pair) => pair.findLabel()?.getElement().textContent === label)
+    ?.findValue()
+    ?.getElement();
+const alertContent = () => ui.findForm()?.findContent()?.findAlert()?.findContent().getElement();
 const isMissing = (_: string, element: Element | null) =>
   element?.tagName === 'P' && element.textContent === `Parameter ${NAME} was not found.`;
 
 function select(label: string, value: string) {
-  const control = createWrapper()
-    .findAllFormFields()
-    .find((candidate) => candidate.findLabel()?.getElement().textContent === label);
-  const dropdown = control?.findControl()?.findSelect();
-  if (!dropdown) throw new Error(`Missing select field ${label}`);
+  const dropdown = required(formField(label)?.findControl()?.findSelect(), `select field ${label}`);
   act(() => dropdown.openDropdown());
   act(() => dropdown.selectOptionByValue(value));
 }
 
+async function discardButton(name: string) {
+  return waitFor(() => {
+    const dialog = required(ui.findModal(), 'discard dialog');
+    expect(dialog.isVisible()).toBe(true);
+    expect(dialog.findHeader().getElement()).toHaveTextContent(/^Discard what you entered\?$/);
+    return within(required(dialog.findFooter()?.getElement(), 'discard actions')).getByRole('button', { name });
+  });
+}
+
 async function openEdit() {
   const page = open(parameterEditPath(NAME));
-  await screen.findByLabelText('New value');
+  await waitFor(() => expect(field('New value')).toBeVisible());
   return page;
 }
 
@@ -157,26 +207,28 @@ describe('Parameter Store forms', () => {
     const entry = await screen.findByRole('link', { name: 'Create parameter' });
     expect(entry).toHaveAttribute('href', PARAMETER_CREATE_PATH);
     fireEvent.click(entry);
-    expect(await screen.findByRole('heading', { name: 'Create parameter' })).toBeVisible();
+    await visibleHeading('Create parameter');
     expect(where()).toBe(PARAMETER_CREATE_PATH);
-    const crumbs = () => within(screen.getByRole('navigation', { name: 'Breadcrumbs' }));
-    for (const label of ['EmuForge', 'AWS', 'Systems Manager', 'Parameter Store']) {
-      expect(crumbs().getByRole('link', { name: label })).toBeVisible();
+    const crumb = (index: number) => ui.findBreadcrumbGroup()?.findBreadcrumbLink(index)?.getElement();
+    for (const [index, label] of ['EmuForge', 'AWS', 'Systems Manager', 'Parameter Store'].entries()) {
+      expect(crumb(index + 1)).toHaveTextContent(label);
+      expect(crumb(index + 1)).toBeVisible();
     }
-    expect(crumbs().getAllByText('Create parameter')[0]).toBeVisible();
-    fireEvent.click(button('Cancel'));
+    expect(crumb(5)).toHaveTextContent('Create parameter');
+    fireEvent.click(formButton('Cancel'));
     fireEvent.click(await screen.findByRole('link', { name: NAME }));
-    expect(await screen.findByRole('heading', { name: 'Parameter details' })).toBeVisible();
+    await visibleHeading('Parameter details');
     const edit = screen.getByRole('link', { name: 'Edit parameter' });
     expect(edit).toHaveAttribute('href', parameterEditPath(NAME));
     fireEvent.click(edit);
-    expect(await screen.findByLabelText('New value')).toHaveValue('');
+    await waitFor(() => expect(field('New value')).toHaveValue(''));
     expect(field('New value')).toHaveAccessibleDescription(
       /Enter a new value for every save\. Saving creates a new version\./,
     );
     expect(where()).toBe(parameterEditPath(NAME));
-    expect(crumbs().getByRole('link', { name: NAME })).toHaveAttribute('href', parameterPath(NAME));
-    expect(crumbs().getAllByText('Edit parameter')[0]).toBeVisible();
+    expect(crumb(5)).toHaveTextContent(NAME);
+    expect(crumb(5)).toHaveAttribute('href', parameterPath(NAME));
+    expect(crumb(6)).toHaveTextContent('Edit parameter');
     expect(describeParameters).toHaveBeenLastCalledWith({ ParameterFilters: FILTERS });
     expect(field('Description')).toHaveValue(PARAMETER.Description);
     expect(requests.every((operation) => operation === 'DescribeParameters')).toBe(true);
@@ -214,7 +266,7 @@ describe('Parameter Store forms', () => {
         ? { KeyId: key, Description: 'Service setting', AllowedPattern: '.*', Policies: JSON.stringify([POLICY]) }
         : {}),
     });
-    expect(await screen.findByRole('heading', { name: 'Parameter details' })).toBeVisible();
+    await visibleHeading('Parameter details');
   });
 
   it('F3 reveals the first invalid create input and preserves the draft without sending it', () => {
@@ -222,19 +274,21 @@ describe('Parameter Store forms', () => {
     const revealName = vi.fn();
     Object.defineProperty(field('Name'), 'scrollIntoView', { value: revealName });
     fireEvent.click(create());
-    expect(screen.getByText('Enter a parameter name.')).toBeVisible();
-    expect(screen.getByText('Enter a parameter value.')).toBeVisible();
+    expect(fieldError('Name')).toHaveTextContent('Enter a parameter name.');
+    expect(fieldError('Value')).toHaveTextContent('Enter a parameter value.');
     expect(revealName).toHaveBeenCalledWith({ block: 'center' });
     expect(field('Name')).toHaveFocus();
     expect(field('Name')).toHaveAccessibleDescription(/Enter a parameter name\./);
     expect(putParameter).not.toHaveBeenCalled();
     fillCreate();
-    expect(screen.getByText('Choose Advanced to configure parameter policies.')).toBeVisible();
+    expect(formField('Tier')?.findDescription()?.getElement()).toHaveTextContent(
+      'Choose Advanced to configure parameter policies.',
+    );
     select('Tier', 'Advanced');
     for (const text of ['[', '{}', '"policy"', '["policy"]']) {
       change('Parameter policies', text);
       fireEvent.click(create());
-      expect(screen.getByText('Enter a JSON array of policy objects.')).toBeVisible();
+      expect(fieldError('Parameter policies')).toHaveTextContent('Enter a JSON array of policy objects.');
       expect(field('Parameter policies')).toHaveFocus();
       expect(field('Parameter policies')).toHaveAccessibleDescription(/Enter a JSON array of policy objects\./);
       expect(field('Parameter policies')).toHaveValue(text);
@@ -254,6 +308,7 @@ describe('Parameter Store forms', () => {
     fireEvent.click(save());
     expect(revealValue).toHaveBeenCalledWith({ block: 'center' });
     expect(value).toHaveFocus();
+    expect(fieldError('New value')).toHaveTextContent('Enter a parameter value.');
     expect(value).toHaveAccessibleDescription(/Enter a parameter value\./);
     expect(field('Description')).toHaveValue('Edited description');
     expect(field('Parameter policies')).toHaveValue('[');
@@ -263,20 +318,18 @@ describe('Parameter Store forms', () => {
   it('F4 keeps or discards edits and returns immediately from an unchanged form', async () => {
     const { where } = await openEdit();
     change('Description', 'Edited description');
-    fireEvent.click(button('Cancel'));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Discard what you entered?' }));
-    fireEvent.click(dialog.getByRole('button', { name: 'Keep editing' }));
+    fireEvent.click(formButton('Cancel'));
+    fireEvent.click(await discardButton('Keep editing'));
     expect(field('Description')).toHaveValue('Edited description');
-    fireEvent.click(button('Cancel'));
-    const reopened = within(await screen.findByRole('dialog', { name: 'Discard what you entered?' }));
-    fireEvent.click(reopened.getByRole('button', { name: 'Discard' }));
-    await screen.findByRole('heading', { name: 'Parameter details' });
+    fireEvent.click(formButton('Cancel'));
+    fireEvent.click(await discardButton('Discard'));
+    await visibleHeading('Parameter details');
     expect(where()).toBe(parameterPath(NAME));
     fireEvent.click(screen.getByRole('link', { name: 'Edit parameter' }));
-    await screen.findByLabelText('New value');
-    fireEvent.click(button('Cancel'));
-    await screen.findByRole('heading', { name: 'Parameter details' });
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(field('New value')).toBeVisible());
+    fireEvent.click(formButton('Cancel'));
+    await visibleHeading('Parameter details');
+    expect(ui.findModal()).toBeNull();
     expect(where()).toBe(parameterPath(NAME));
     expect(putParameter).not.toHaveBeenCalled();
   });
@@ -288,12 +341,12 @@ describe('Parameter Store forms', () => {
     const { where } = open(PARAMETER_CREATE_PATH);
     fillCreate();
     fireEvent.click(create());
-    expect(await screen.findByText(/This parameter name already exists/)).toBeVisible();
+    await waitFor(() => expect(alertContent()).toHaveTextContent('This parameter name already exists.'));
     expect(field('Name')).toHaveValue(NAME);
     expect(field('Value')).toHaveValue('local-fixture');
     expect(putParameter).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ Overwrite: false }));
     expect(where()).toBe(PARAMETER_CREATE_PATH);
-    expect(notifications()).toBeNull();
+    expect(notifications()).toHaveLength(0);
   });
 
   it('F6 saves changed settings and shows the fresh metadata with the next version', async () => {
@@ -320,10 +373,10 @@ describe('Parameter Store forms', () => {
     change('Allowed pattern', '[a-z0-9]+');
     change('Parameter policies', JSON.stringify([NEXT_POLICY], null, 2));
     fireEvent.click(save());
-    await screen.findByRole('heading', { name: 'Parameter details' });
-    expect(screen.getByText(description)).toBeVisible();
-    expect(screen.getByText('2', { exact: true })).toBeVisible();
-    expect(screen.getByText('[a-z0-9]+')).toBeVisible();
+    await visibleHeading('Parameter details');
+    expect(detailValue('Description')).toHaveTextContent(description);
+    expect(detailValue('Version')).toHaveTextContent(/^2$/);
+    expect(detailValue('Allowed pattern')).toHaveTextContent('[a-z0-9]+');
     expect(screen.getByText(JSON.stringify(NEXT_POLICY, null, 2), { normalizer: (text) => text })).toBeVisible();
     expect(where()).toBe(parameterPath(NAME));
     expect(putParameter).toHaveBeenCalledExactlyOnceWith({
@@ -357,15 +410,15 @@ describe('Parameter Store forms', () => {
     if (editing) change('New value', 'replacement');
     else fillCreate();
     fireEvent.click(editing ? save() : create());
-    expect(await screen.findByRole('heading', { name: 'Parameter details' })).toBeVisible();
+    await visibleHeading('Parameter details');
     expect(where()).toBe(parameterPath(NAME));
-    expect(screen.getByText('2', { exact: true })).toBeVisible();
+    expect(detailValue('Version')).toHaveTextContent(/^2$/);
     expect(screen.getByLabelText('Observed listing')).toHaveTextContent('Pending');
     const message = `Parameter ${NAME} ${editing ? 'updated' : 'created'}.`;
-    expect(notifications()).toHaveTextContent(message);
+    expect(success()).toHaveTextContent(message);
     await act(async () => list.resolve(answer({ Parameters: [{ ...PARAMETER, Version: 2 }] })));
     await waitFor(() => expect(screen.getByLabelText('Observed listing')).toHaveTextContent(/^2$/));
-    expect(notifications()).toHaveTextContent(message);
+    expect(success()).toHaveTextContent(message);
     expect(putParameter).toHaveBeenCalledTimes(1);
   });
 
@@ -376,7 +429,7 @@ describe('Parameter Store forms', () => {
       .mockImplementationOnce(() => answer({ __type: 'NotImplemented' }, 501));
     open(PARAMETER_CREATE_PATH);
     fillCreate();
-    const form = field('Name').closest('form');
+    const form = field('Name').form;
     if (!form) throw new Error('Missing parameter form');
     act(() => {
       fireEvent.submit(form);
@@ -387,12 +440,16 @@ describe('Parameter Store forms', () => {
     await act(async () =>
       write.resolve(answer({ __type: 'AccessDeniedException', message: 'Writes are denied.' }, 403)),
     );
-    expect(await screen.findByText(/Writes are denied/)).toBeVisible();
+    await waitFor(() => expect(alertContent()).toHaveTextContent('Writes are denied.'));
     expect(field('Value')).toHaveValue('local-fixture');
     expect(create()).toBeEnabled();
     fireEvent.click(create());
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText('The emulator answered 501 Not Implemented for PutParameter.')).toBeVisible();
+    await waitFor(() =>
+      expect(alertContent()).toHaveTextContent('The emulator answered 501 Not Implemented for PutParameter.'),
+    );
+    expect(ui.findForm()?.findContent()?.findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+      'Not implemented by the emulator',
+    );
     expect(create()).toBeDisabled();
     fireEvent.submit(form);
     expect(putParameter).toHaveBeenCalledTimes(2);
@@ -403,7 +460,7 @@ describe('Parameter Store forms', () => {
     open(parameterEditPath(NAME));
     expect(await screen.findByText(isMissing)).toBeVisible();
     expect(screen.getByRole('link', { name: 'Back to Parameter Store' })).toHaveAttribute('href', PARAMETER_STORE_PATH);
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect(ui.findForm()).toBeNull();
     expect(putParameter).not.toHaveBeenCalled();
   });
 
@@ -423,15 +480,15 @@ describe('Parameter Store forms', () => {
       [{ ParameterFilters: FILTERS, NextToken: 'continue' }],
     ]);
     expect(putParameter).not.toHaveBeenCalled();
-    expect(notifications()).toBeNull();
+    expect(notifications()).toHaveLength(0);
   });
 
   it('F11 preserves both policy objects in order and untouched writable metadata on a value-only edit', async () => {
     await openEdit();
-    expect(JSON.parse((field('Parameter policies') as HTMLTextAreaElement).value)).toEqual([POLICY, OTHER_POLICY]);
+    expect(JSON.parse(field('Parameter policies').value)).toEqual([POLICY, OTHER_POLICY]);
     change('New value', 'replacement');
     fireEvent.click(save());
-    await screen.findByRole('heading', { name: 'Parameter details' });
+    await visibleHeading('Parameter details');
     expect(putParameter).toHaveBeenCalledExactlyOnceWith({
       Name: NAME,
       Type: PARAMETER.Type,
@@ -459,15 +516,15 @@ describe('Parameter Store forms', () => {
     change('New value', 'replacement');
     change('Description', 'Buffered description');
     fireEvent.click(save());
-    expect(await screen.findByText(/Failed to read the next page/)).toBeVisible();
+    await waitFor(() => expect(alertContent()).toHaveTextContent('Failed to read the next page.'));
     expect(field('New value')).toHaveValue('replacement');
     expect(field('Description')).toHaveValue('Buffered description');
     expect(putParameter).not.toHaveBeenCalled();
-    expect(notifications()).toBeNull();
+    expect(notifications()).toHaveLength(0);
     expect(where()).toBe(parameterEditPath(NAME));
 
     fireEvent.click(save());
-    await screen.findByRole('heading', { name: 'Parameter details' });
+    await visibleHeading('Parameter details');
     expect(describeParameters.mock.calls.slice(0, 5)).toEqual([
       [{ ParameterFilters: FILTERS }],
       [{ ParameterFilters: FILTERS }],
@@ -484,5 +541,102 @@ describe('Parameter Store forms', () => {
         Overwrite: true,
       }),
     );
+  });
+
+  it.each(DISCONNECTED)('retains the edit after a failed preflight and $kind', async (disconnected) => {
+    const recovery = pendingResponse();
+    const preflight = pendingResponse();
+    describeParameters
+      .mockImplementationOnce(() => answer({ Parameters: [PARAMETER] }))
+      .mockImplementationOnce(() => answer({ Parameters: [], NextToken: 'failed-token' }))
+      .mockImplementationOnce(() => answer({ __type: 'ValidationException', message: 'Preflight failed.' }, 400))
+      .mockReturnValueOnce(recovery.response)
+      .mockImplementationOnce(() => answer({ Parameters: [], NextToken: 'fresh-token' }))
+      .mockReturnValueOnce(preflight.response);
+    const { connect, where } = await openEdit();
+    change('New value', 'replacement');
+    change('Description', 'Buffered description');
+    change('Allowed pattern', '[a-z0-9]+');
+    change('Parameter policies', JSON.stringify([NEXT_POLICY], null, 2));
+    const expectDraft = () => {
+      expect(field('New value')).toHaveValue('replacement');
+      expect(field('Description')).toHaveValue('Buffered description');
+      expect(field('Allowed pattern')).toHaveValue('[a-z0-9]+');
+      expect(field('Parameter policies')).toHaveValue(JSON.stringify([NEXT_POLICY], null, 2));
+    };
+    fireEvent.click(save());
+    await waitFor(() => expect(alertContent()).toHaveTextContent('Preflight failed.'));
+
+    connect(disconnected);
+    expectDraft();
+    expect(save()).toBeDisabled();
+    fireEvent.submit(required(field('New value').form, 'edit form'));
+    expect(describeParameters).toHaveBeenCalledTimes(3);
+    expect(putParameter).not.toHaveBeenCalled();
+    expect(notifications()).toHaveLength(0);
+    expect(where()).toBe(parameterEditPath(NAME));
+
+    connect({ ...CONNECTED, checkedAt: 3 });
+    await waitFor(() => expect(describeParameters).toHaveBeenCalledTimes(4));
+    expectDraft();
+    expect(save()).toBeDisabled();
+    await act(async () => recovery.resolve(answer({ Parameters: [PARAMETER] })));
+    await waitFor(() => expect(save()).toBeEnabled());
+    expectDraft();
+
+    fireEvent.click(save());
+    await waitFor(() => expect(describeParameters).toHaveBeenCalledTimes(6));
+    expect(describeParameters.mock.calls).toEqual([
+      [{ ParameterFilters: FILTERS }],
+      [{ ParameterFilters: FILTERS }],
+      [{ ParameterFilters: FILTERS, NextToken: 'failed-token' }],
+      [{ ParameterFilters: FILTERS }],
+      [{ ParameterFilters: FILTERS }],
+      [{ ParameterFilters: FILTERS, NextToken: 'fresh-token' }],
+    ]);
+    expect(putParameter).not.toHaveBeenCalled();
+    expect(notifications()).toHaveLength(0);
+    await act(async () => preflight.resolve(answer({ Parameters: [{ ...PARAMETER, KeyId: 'alias/fresh-key' }] })));
+    await visibleHeading('Parameter details');
+    expect(putParameter).toHaveBeenCalledExactlyOnceWith({
+      Name: NAME,
+      Type: PARAMETER.Type,
+      Tier: PARAMETER.Tier,
+      KeyId: 'alias/fresh-key',
+      DataType: PARAMETER.DataType,
+      Overwrite: true,
+      Value: 'replacement',
+      Description: 'Buffered description',
+      AllowedPattern: '[a-z0-9]+',
+      Policies: JSON.stringify([NEXT_POLICY]),
+    });
+    expect(requests.slice(0, 7)).toEqual([...Array<string>(6).fill('DescribeParameters'), 'PutParameter']);
+  });
+
+  it('starts with a blank value and fresh metadata when the same name is on a different target', async () => {
+    const { connect } = await openEdit();
+    change('New value', 'local-replacement');
+    change('Description', 'Local draft');
+    connect(DISCONNECTED[0]);
+    describeParameters.mockImplementation(() =>
+      answer({ Parameters: [{ ...PARAMETER, Description: 'Other target description' }] }),
+    );
+    connect({ ...CONNECTED, checkedAt: 3, target: 'other' });
+    await waitFor(() => expect(field('New value')).toHaveValue(''));
+    expect(field('Description')).toHaveValue('Other target description');
+    expect(requests).toEqual(['DescribeParameters', 'DescribeParameters']);
+  });
+
+  it('shows the missing state when the exact name is gone on reconnect', async () => {
+    const { connect } = await openEdit();
+    change('New value', 'replacement');
+    connect(DISCONNECTED[1]);
+    expect(save()).toBeDisabled();
+    describeParameters.mockImplementation(() => answer({ Parameters: [{ Name: `${NAME}-other` }] }));
+    connect({ ...CONNECTED, checkedAt: 3 });
+    expect(await screen.findByText(isMissing)).toBeVisible();
+    expect(ui.findForm()).toBeNull();
+    expect(screen.getByRole('link', { name: 'Back to Parameter Store' })).toBeVisible();
+    expect(putParameter).not.toHaveBeenCalled();
   });
 });
