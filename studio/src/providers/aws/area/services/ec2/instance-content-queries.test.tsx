@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { expect, it, vi } from 'vitest';
 
@@ -68,16 +68,28 @@ it('shows the latest saved user data on reopening even when an earlier read reso
   );
   const editor = screen.getByRole('button', { name: 'Edit user data' });
   const writer = screen.getByRole('button', { name: 'Save from another editor' });
-  fireEvent.click(editor);
-  let dialog = await screen.findByRole('dialog');
+  const page = createWrapper(document.body);
+  const openEditor = () => {
+    fireEvent.click(editor);
+    return waitFor(() => {
+      const modal = page.findModal();
+      if (modal === null) throw new Error('Missing user data dialog');
+      expect(modal.findHeader().getElement()).toHaveTextContent('Edit user data');
+      return modal;
+    });
+  };
+  const dialog = await openEditor();
   await waitFor(() => expect(getInstanceUserData).toHaveBeenCalledTimes(1));
   fireEvent.click(writer);
   await waitFor(() => expect(saved).toHaveBeenCalledExactlyOnceWith());
   await waitFor(() => expect(getInstanceUserData).toHaveBeenCalledTimes(2));
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  fireEvent.click(editor);
-  dialog = await screen.findByRole('dialog');
-  const field = () => createWrapper(dialog).findTextarea()?.findNativeTextarea().getElement();
+  const cancel = dialog.findFooter()?.findAllButtons()[0];
+  if (cancel === undefined) throw new Error('Missing Cancel button');
+  expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+  cancel.click();
+  await waitFor(() => expect(page.findModal()).toBeNull());
+  const reopened = await openEditor();
+  const field = () => reopened.findContent().findTextarea()?.findNativeTextarea().getElement();
   await act(async () => {
     resolveOld({ kind: 'text', text: 'stale' });
     await old;
