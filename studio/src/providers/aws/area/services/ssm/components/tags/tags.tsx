@@ -14,7 +14,7 @@ import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState } from '../../../../components/failure-states';
 import { ValueText } from '../../../../components/value-text';
 import { useParameterTags, useParameterTagWrite, useUnsupportedOperation } from '../../queries';
-import { ADD_TAGS, addParameterTag, REMOVE_TAGS, removeParameterTag } from '../../resource-api';
+import { ADD_TAGS, addParameterTag, LIST_TAGS, REMOVE_TAGS, removeParameterTag } from '../../resource-api';
 
 interface TagsProps {
   connection: AreaConnection;
@@ -48,7 +48,11 @@ function TagsTable({ connection, name }: TagsProps) {
     <SpaceBetween size="m">
       {failures.map((unsupported) =>
         unsupported ? (
-          <Alert key={unsupported.operation} header="Not implemented by the emulator">
+          <Alert
+            key={unsupported.operation}
+            header="Not implemented by the emulator"
+            action={unsupported.operation === LIST_TAGS ? <Button disabled>Retry</Button> : undefined}
+          >
             The emulator answered 501 Not Implemented for {unsupported.operation}.
           </Alert>
         ) : null,

@@ -164,9 +164,36 @@ function expectUnsupported(operation: string) {
     const alert = sectionContent()
       ?.findAllAlerts()
       .find((item) => item.findContent().getElement().textContent === message);
-    expect(alert?.findContent().getElement()).toBeVisible();
-    expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    assert(alert);
+    expect(alert.findContent().getElement()).toBeVisible();
+    expect(alert.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    return alert;
   });
+}
+
+function panelButton(name: string) {
+  const found = sectionContent()
+    ?.findAllButtons()
+    .find((candidate) => candidate.findTextRegion()?.getElement().textContent === name)
+    ?.getElement();
+  assert(found);
+  expect(found).toHaveAccessibleName(name);
+  return found;
+}
+
+async function expectReadUnavailable() {
+  const alert = await expectUnsupported('ListTagsForResource');
+  const retry = alert.findActionSlot()?.findButton()?.getElement();
+  assert(retry);
+  expect(retry).toHaveAccessibleName('Retry');
+  expect(retry).toBeVisible();
+  expect(retry).toBeDisabled();
+
+  const refresh = panelButton('Refresh tags');
+  expect(refresh).toBeVisible();
+  expect(refresh).toBeDisabled();
+  fireEvent.click(retry);
+  fireEvent.click(refresh);
 }
 
 const KEY = 'stage';
@@ -321,10 +348,34 @@ describe('Parameter tags', () => {
 
     ops.ListTagsForResource.mockImplementationOnce(notImplemented);
     fireEvent.click(button('Refresh tags'));
-    await expectUnsupported('ListTagsForResource');
-    expect(button('Refresh tags')).toBeDisabled();
+    await expectReadUnavailable();
     expect(button('Add tag')).toBeEnabled();
     expect(tagTable()?.findEmptySlot()?.getElement().textContent ?? '').not.toContain('No tags');
+  });
+
+  it('T3 keeps Retry disabled when a tag read retry returns 501 and still saves tags', async () => {
+    const ops = openDetail();
+    ops.ListTagsForResource.mockImplementationOnce(() => denied('Tag read denied')).mockImplementationOnce(
+      notImplemented,
+    );
+    await expand();
+    await waitFor(() => expect(tagEmpty().getByText(/Tag read denied/)).toBeVisible());
+    const retry = panelButton('Retry');
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await expectReadUnavailable();
+
+    const add = await tagDialog('Add tag');
+    change(add, 'Key', KEY);
+    change(add, 'Value', TAG.Value);
+    fireEvent.click(button('Add tag', add));
+    await waitFor(() => expect(flash(saved)).toBeVisible());
+    expect(ops.AddTagsToResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, Tags: [TAG] });
+
+    await expand();
+    await expand();
+    await expectReadUnavailable();
+    expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
   });
 
   it.each([

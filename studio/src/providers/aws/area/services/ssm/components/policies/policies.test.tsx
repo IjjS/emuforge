@@ -165,9 +165,36 @@ function expectUnsupported(operation: string) {
     const alert = sectionContent()
       ?.findAllAlerts()
       .find((item) => item.findContent().getElement().textContent === message);
-    expect(alert?.findContent().getElement()).toBeVisible();
-    expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    assert(alert);
+    expect(alert.findContent().getElement()).toBeVisible();
+    expect(alert.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    return alert;
   });
+}
+
+function panelButton(name: string) {
+  const found = sectionContent()
+    ?.findAllButtons()
+    .find((candidate) => candidate.findTextRegion()?.getElement().textContent === name)
+    ?.getElement();
+  assert(found);
+  expect(found).toHaveAccessibleName(name);
+  return found;
+}
+
+async function expectReadUnavailable() {
+  const alert = await expectUnsupported('GetResourcePolicies');
+  const retry = alert.findActionSlot()?.findButton()?.getElement();
+  assert(retry);
+  expect(retry).toHaveAccessibleName('Retry');
+  expect(retry).toBeVisible();
+  expect(retry).toBeDisabled();
+
+  const refresh = panelButton('Refresh resource policies');
+  expect(refresh).toBeVisible();
+  expect(refresh).toBeDisabled();
+  fireEvent.click(retry);
+  fireEvent.click(refresh);
 }
 
 const DOCUMENT = '{"Statement":[{"Action":"ssm:GetParameter"}]}';
@@ -380,10 +407,33 @@ describe('Parameter resource policies', () => {
     const ops = openDetail();
     ops.GetResourcePolicies.mockImplementationOnce(notImplemented);
     await expand();
-    await expectUnsupported('GetResourcePolicies');
-    expect(button('Refresh resource policies')).toBeDisabled();
+    await expectReadUnavailable();
     expect(button('Create resource policy')).toBeEnabled();
     expect(policies().queryByText('No resource policies')).toBeNull();
+  });
+
+  it('P5 keeps Retry disabled when a policy read retry returns 501 and still creates policies', async () => {
+    const ops = openDetail();
+    ops.GetResourcePolicies.mockImplementationOnce(() => denied('Policy read denied')).mockImplementationOnce(
+      notImplemented,
+    );
+    await expand();
+    expect(await policies().findByText(/Policy read denied/)).toBeVisible();
+    const retry = panelButton('Retry');
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await expectReadUnavailable();
+
+    const dialog = await policyDialog('Create resource policy');
+    change(dialog, 'Policy document', DOCUMENT);
+    fireEvent.click(button('Save resource policy', dialog));
+    await waitFor(() => expect(flash(created)).toBeVisible());
+    expect(ops.PutResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, Policy: DOCUMENT });
+
+    await expand();
+    await expand();
+    await expectReadUnavailable();
+    expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
   });
 
   it.each([

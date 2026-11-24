@@ -21,6 +21,7 @@ import { useParameterPolicyWrite, useParameterResourcePolicies, useUnsupportedOp
 import {
   DELETE_RESOURCE_POLICY,
   deleteResourcePolicy,
+  GET_RESOURCE_POLICIES,
   PUT_RESOURCE_POLICY,
   putResourcePolicy,
 } from '../../resource-api';
@@ -76,7 +77,11 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
       </SpaceBetween>
       {failures.map((unsupported) =>
         unsupported ? (
-          <Alert key={unsupported.operation} header="Not implemented by the emulator">
+          <Alert
+            key={unsupported.operation}
+            header="Not implemented by the emulator"
+            action={unsupported.operation === GET_RESOURCE_POLICIES ? <Button disabled>Retry</Button> : undefined}
+          >
             The emulator answered 501 Not Implemented for {unsupported.operation}.
           </Alert>
         ) : null,

@@ -224,7 +224,9 @@ function useResourceRead<T>(
     items: failure ? undefined : query.data,
     failure,
     loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
-    retry: () => void query.refetch(),
+    retry: () => {
+      if (failure?.kind !== 'not-implemented') void query.refetch();
+    },
   };
 }
 
