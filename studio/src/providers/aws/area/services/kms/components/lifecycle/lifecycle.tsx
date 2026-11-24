@@ -22,6 +22,7 @@ import { LifecycleDialog } from './lifecycle-dialog';
 import type { LifecycleAction } from './use-lifecycle-action';
 
 type Dialog = 'describe' | 'disable' | 'schedule' | 'cancel';
+type KeyOperation = Exclude<LifecycleOperation, typeof LIFECYCLE_OPERATIONS.create>;
 
 const RANGE_TEXT = `From ${String(DELETION_WINDOW.min)} to ${String(DELETION_WINDOW.max)} days.`;
 
@@ -52,6 +53,14 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const controls = useRef<HTMLDivElement>(null);
   const usable = state === 'Enabled' || state === 'Disabled';
   const pendingDeletion = state === 'PendingDeletion';
+  const allowedByState: Record<KeyOperation, boolean> = {
+    [LIFECYCLE_OPERATIONS.describe]: usable,
+    [LIFECYCLE_OPERATIONS.disable]: state === 'Enabled',
+    [LIFECYCLE_OPERATIONS.enable]: state === 'Disabled',
+    [LIFECYCLE_OPERATIONS.schedule]: usable,
+    [LIFECYCLE_OPERATIONS.cancel]: pendingDeletion,
+  };
+  const canStart = (operation: KeyOperation) => allowedByState[operation] && !action.disabled(operation);
 
   useEffect(() => {
     if (restoreTo === undefined) return;
@@ -83,18 +92,17 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const unavailableReason = (operation: LifecycleOperation) =>
     action.isUnavailable(operation) ? `Not implemented by the emulator (${operation})` : undefined;
 
-  const control = (
-    operation: LifecycleOperation,
-    label: string,
-    allowed: boolean,
-    onClick: () => void,
-    stateReason?: string,
-  ) => {
+  const blockedReason = (operation: KeyOperation, task: string, stateReason: string) =>
+    unavailableReason(operation) ??
+    (action.disabled(operation) ? `Reconnect to the emulator to ${task}.` : undefined) ??
+    (allowedByState[operation] ? undefined : stateReason);
+
+  const control = (operation: KeyOperation, label: string, onClick: () => void, stateReason?: string) => {
     const reason = unavailableReason(operation) ?? stateReason;
     const loading = dialog === undefined && action.pending === operation;
     return (
       <Button
-        disabled={!allowed || action.disabled(operation) || (action.pending !== undefined && !loading)}
+        disabled={!canStart(operation) || (action.pending !== undefined && !loading)}
         {...(reason === undefined ? {} : { disabledReason: reason })}
         loading={loading}
         {...(operation === LIFECYCLE_OPERATIONS.enable ? { loadingText: 'Enabling key' } : {})}
@@ -115,30 +123,23 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
 
   const scheduledDays = waitingDays(days);
   const pendingDeletionReason = pendingDeletion ? 'Cancel key deletion to use this action.' : undefined;
+  const disableReason = blockedReason(
+    LIFECYCLE_OPERATIONS.disable,
+    'disable this key',
+    state === 'Disabled' ? 'This key is already Disabled.' : 'You can disable this key only while it is Enabled.',
+  );
 
   return (
     <>
       <div ref={controls} role="group" aria-label="Key lifecycle" tabIndex={-1}>
         <SpaceBetween direction="horizontal" size="xs">
-          {control(
-            LIFECYCLE_OPERATIONS.describe,
-            'Edit description',
-            usable,
-            () => open('describe'),
-            pendingDeletionReason,
-          )}
+          {control(LIFECYCLE_OPERATIONS.describe, 'Edit description', () => open('describe'), pendingDeletionReason)}
           {state === 'Disabled'
-            ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', true, handleEnable)
-            : control(
-                LIFECYCLE_OPERATIONS.disable,
-                'Disable key',
-                state === 'Enabled',
-                () => open('disable'),
-                pendingDeletionReason,
-              )}
+            ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', handleEnable)
+            : control(LIFECYCLE_OPERATIONS.disable, 'Disable key', () => open('disable'), pendingDeletionReason)}
           {pendingDeletion
-            ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', true, () => open('cancel'))
-            : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', usable, () => open('schedule'))}
+            ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', () => open('cancel'))
+            : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', () => open('schedule'))}
         </SpaceBetween>
       </div>
 
@@ -148,6 +149,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           submitLabel="Save"
           pending={action.pending !== undefined}
           disabled={description === (metadata.Description ?? '')}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.describe,
+            'save the key description',
+            'You can edit the description only while the key is Enabled or Disabled.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -175,6 +181,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           submitLabel="Disable key"
           pending={action.pending !== undefined}
           disabled={false}
+          blockedReason={disableReason}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -189,7 +196,9 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           <Box variant="p">
             Disable key <KeyName keyId={keyId} />?
           </Box>
-          <Box variant="p">The key's state becomes Disabled in your local emulator. You can enable it again.</Box>
+          {disableReason === undefined && (
+            <Box variant="p">The key's state becomes Disabled in your local emulator. You can enable it again.</Box>
+          )}
         </LifecycleDialog>
       )}
 
@@ -199,6 +208,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           submitLabel="Schedule deletion"
           pending={action.pending !== undefined}
           disabled={scheduledDays === undefined}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.schedule,
+            'schedule key deletion',
+            'You can schedule key deletion only while the key is Enabled or Disabled.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() => {
@@ -241,6 +255,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           dismissLabel="Keep scheduled"
           pending={action.pending !== undefined}
           disabled={false}
+          blockedReason={blockedReason(
+            LIFECYCLE_OPERATIONS.cancel,
+            'cancel key deletion',
+            'You can cancel key deletion only while the key is PendingDeletion.',
+          )}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>

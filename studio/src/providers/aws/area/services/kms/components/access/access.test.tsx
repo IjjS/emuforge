@@ -17,9 +17,10 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
+import { EmulatorLine } from '../../../../components/emulator-line';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useKmsKey } from '../../queries';
-import { Access } from './access';
+import { Access, type AccessProps } from './access';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../../../../../lib/aws/client-factory', () => ({ createAwsClient: () => ({ send }) }));
@@ -33,16 +34,20 @@ const online = {
   engineOrigin: 'http://127.0.0.1:8309',
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9309, endpoint: 'https://127.0.0.1:9309' } },
 } as const;
+const offline: AccessProps['connection'] = {
+  engineOrigin: online.engineOrigin,
+  result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: online.result.emulator.port },
+};
 
 function KeyDetails() {
   const { key } = useKmsKey(online.engineOrigin, KEY_ID, true);
   return key ? <h1>{key.Description}</h1> : null;
 }
 
-function open() {
+function open({ showConnection = false, ...initial }: Partial<AccessProps> & { showConnection?: boolean } = {}) {
   const client = new QueryClient();
 
-  function Page() {
+  function Page(props: AccessProps) {
     const [items, setItems] = useState<FlashbarProps.MessageDefinition[]>([]);
     const rootRef = useRef<HTMLDivElement>(null);
     return (
@@ -50,21 +55,24 @@ function open() {
         <AreaRootContext.Provider value={rootRef}>
           <PageFlashContext.Provider value={{ show: (result) => setItems([...result]), handOver: vi.fn() }}>
             <Flashbar items={items} />
+            {showConnection && <EmulatorLine connection={props.connection} />}
             <KeyDetails />
-            <Access connection={online} keyId={KEY_ID} />
+            <Access {...props} />
           </PageFlashContext.Provider>
         </AreaRootContext.Provider>
       </div>
     );
   }
 
-  render(
+  const page = (props: Partial<AccessProps>, targetGeneration = 0) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Page />
+        <Page key={targetGeneration} connection={online} keyId={KEY_ID} {...initial} {...props} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(page({}));
+  return (props: Partial<AccessProps>, targetGeneration?: number) => view.rerender(page(props, targetGeneration));
 }
 
 function fallback(command: unknown) {
@@ -140,6 +148,138 @@ beforeEach(() => {
 });
 
 describe('KMS key access', () => {
+  describe.each([
+    { panel: 'default key policy', operation: 'GetKeyPolicy', ReadCommand: GetKeyPolicyCommand },
+    { panel: 'grants', operation: 'ListGrants', ReadCommand: ListGrantsCommand },
+  ])('$panel read recovery', ({ panel, operation, ReadCommand }) => {
+    it.each([
+      {
+        kind: 'engine rejection',
+        error: new TypeError('Failed to fetch'),
+        status: `The EmuForge engine at ${online.engineOrigin} is not answering`,
+      },
+      {
+        kind: 'emulator timeout',
+        error: {
+          name: 'EmulatorTimeout',
+          message: 'The emulator did not answer in time.',
+          $fault: 'server',
+          $metadata: { httpStatusCode: 504 },
+        },
+        status: `Not answering at ${online.result.emulator.endpoint}`,
+      },
+    ])('diagnoses and retries a panel-only $kind with a connected frame', async ({ error, status }) => {
+      const firstResponse = deferred<undefined>();
+      let readCount = 0;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ReadCommand) {
+          readCount += 1;
+          if (readCount === 1) {
+            await firstResponse.promise;
+            throw error;
+          }
+          if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+        }
+        return fallback(command);
+      });
+      open({ showConnection: true });
+      const metadata = await screen.findByRole('heading', { name: 'Key details' });
+      const frame = screen.getByRole('group', { name: 'Local emulator, not AWS' });
+      expect(frame).toHaveTextContent(`Connected at ${online.result.emulator.endpoint}`);
+      await act(async () => firstResponse.resolve(undefined));
+
+      const recovery = await waitFor(() => {
+        const section =
+          ReadCommand === GetKeyPolicyCommand
+            ? createWrapper().findContainer()?.findContent()
+            : grantsTable().findEmptySlot();
+        const indicator = section?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        if (!section) throw new Error(`Expected the recovery for ${operation}.`);
+        return within(section.getElement());
+      });
+      expect(metadata).toBeVisible();
+      expect(frame).toHaveTextContent(`Connected at ${online.result.emulator.endpoint}`);
+      expect(recovery.getByText(`The ${panel} (${operation}) could not be read.`)).toBeVisible();
+      const link = recovery.getByRole('link', { name: 'Connection status' });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute('href', '/');
+      fireEvent.click(recovery.getByRole('button', { name: 'Retry' }));
+
+      if (ReadCommand === GetKeyPolicyCommand) {
+        expect(await screen.findByText(OLD_POLICY)).toBeVisible();
+      } else {
+        await waitFor(() => expect(grantRow(grant.GrantId)).toBeVisible());
+      }
+      expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+      expect(metadata).toBeVisible();
+      expect(readCount).toBe(2);
+      expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
+    });
+
+    it('announces each failed read once while leaving focus and recovery controls in place', async () => {
+      const initialResponse = deferred<undefined>();
+      const retryResponse = deferred<undefined>();
+      const responses = [initialResponse, retryResponse];
+      let readCount = 0;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ReadCommand) {
+          const response = responses[readCount++];
+          if (response !== undefined) {
+            await response.promise;
+            throw new TypeError('Failed to fetch');
+          }
+        }
+        return fallback(command);
+      });
+      const update = open();
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      const policyPanel = ReadCommand === GetKeyPolicyCommand;
+      const scope = policyPanel
+        ? createWrapper().findContainer()?.findContent().getElement()
+        : screen.getByRole('region', { name: 'Grants' });
+      const region = scope?.querySelector('[role="status"][aria-atomic="true"]');
+      if (!region) throw new Error(`Expected the live region for ${operation}.`);
+      expect(region).toBeEmptyDOMElement();
+
+      const updates: string[] = [];
+      const observer = new MutationObserver(() => {
+        if (region.textContent) updates.push(region.textContent);
+      });
+      observer.observe(region, { childList: true, characterData: true, subtree: true });
+      const message = `${policyPanel ? 'Key policy' : 'Grants'}. The EmuForge engine at ${online.engineOrigin} is not answering`;
+      const focused = screen.getByRole('link', { name: 'Jump to grants' });
+      focused.focus();
+
+      try {
+        await act(async () => initialResponse.resolve(undefined));
+        await waitFor(() => expect(updates).toEqual([message]));
+        expect(focused).toHaveFocus();
+        expect(screen.getByText(`The ${panel} (${operation}) could not be read.`)).toBeVisible();
+        expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+        const retry = screen.getByRole('button', { name: 'Retry' });
+        expect(retry).toBeVisible();
+
+        update({ connection: { ...online, result: { ...online.result, checkedAt: 1 } } });
+        fireEvent.click(retry);
+        await waitFor(() => expect(readCount).toBe(2));
+        expect(updates).toEqual([message]);
+
+        await act(async () => retryResponse.resolve(undefined));
+        await waitFor(() => expect(updates).toEqual([message, message]));
+        expect(focused).toHaveFocus();
+        expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(region).toBeEmptyDOMElement());
+        expect(updates).toEqual([message, message]);
+      } finally {
+        observer.disconnect();
+      }
+    });
+  });
+
   it('reads the default policy and keeps the edited document and refusal when a save fails', async () => {
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof PutKeyPolicyCommand) throw refusal();
@@ -357,5 +497,150 @@ describe('KMS key access', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(opener).toHaveFocus();
     expect(screen.getByText(OLD_POLICY)).toBeVisible();
+  });
+
+  it('keeps a pending policy save and announces its result across a same-target disconnect', async () => {
+    const response = deferred<object>();
+    let saveSignal: AbortSignal | undefined;
+    let policy = OLD_POLICY;
+    send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+      if (command instanceof PutKeyPolicyCommand) {
+        saveSignal = options.abortSignal;
+        const result = await response.promise;
+        policy = NEW_POLICY;
+        return result;
+      }
+      if (command instanceof GetKeyPolicyCommand) return { Policy: policy };
+      return fallback(command);
+    });
+    const update = open();
+    const dialog = await editPolicy();
+    await waitFor(() => expect(saveSignal).toBeInstanceOf(AbortSignal));
+
+    update({ connection: offline });
+    expect(saveSignal?.aborted).toBe(false);
+    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
+    expect(dialog.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+    await act(async () => response.resolve({}));
+
+    expect(successFlash('Key policy saved.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    update({ connection: online });
+    expect(await screen.findByText(NEW_POLICY)).toBeVisible();
+    expect(successFlash('Key policy saved.')).toBeVisible();
+  });
+
+  it('gates Access writes before metadata and keeps a same-target grant dialog through connection changes', async () => {
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      return fallback(command);
+    });
+    const update = open({ writesEnabled: false });
+    expect(await screen.findByText(OLD_POLICY)).toBeVisible();
+    const controls = [
+      screen.getByRole('button', { name: 'Edit key policy' }),
+      screen.getByRole('button', { name: 'Create grant' }),
+      await screen.findByRole('button', { name: `Revoke grant ${grant.GrantId}` }),
+    ];
+    for (const control of controls) {
+      expect(control).toBeDisabled();
+      fireEvent.click(control);
+    }
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(
+      send.mock.calls.some(
+        ([command]) =>
+          command instanceof PutKeyPolicyCommand ||
+          command instanceof CreateGrantCommand ||
+          command instanceof RevokeGrantCommand,
+      ),
+    ).toBe(false);
+
+    update({ writesEnabled: true });
+    const dialog = await openRevocation();
+    const confirmation = dialog.getByRole('textbox');
+    fireEvent.change(confirmation, { target: { value: 'revoke' } });
+    expect(dialog.getByRole('button', { name: 'Revoke grant' })).toBeEnabled();
+
+    update({ connection: offline, writesEnabled: true });
+    expect(confirmation).toHaveValue('revoke');
+    const submit = dialog.getByRole('button', { name: 'Revoke grant' });
+    expect(submit).toBeDisabled();
+    fireEvent.keyDown(confirmation, { key: 'Enter', keyCode: 13 });
+    expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
+
+    update({ connection: online, writesEnabled: true });
+    expect(submit).toBeEnabled();
+  });
+
+  it('keeps Enter focus on the protected revoke confirmation and sends a single write', async () => {
+    const response = deferred<undefined>();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      if (command instanceof RevokeGrantCommand) return response.promise;
+      return fallback(command);
+    });
+    open();
+    const user = userEvent.setup();
+    const dialog = await openRevocation();
+    const confirmation = dialog.getByRole('textbox');
+    await user.type(confirmation, 'revoke{Enter}');
+
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAttribute('readonly');
+    expect(confirmation).toBeEnabled();
+    await user.keyboard('x{Enter}{Enter}');
+    expect(confirmation).toHaveValue('revoke');
+    expect(confirmation).toHaveFocus();
+    expect(send.mock.calls.filter(([command]) => command instanceof RevokeGrantCommand)).toHaveLength(1);
+
+    await act(async () => response.resolve(undefined));
+    expect(successFlash('Grant revoked.')).toBeVisible();
+  });
+
+  it('keeps a grant action 501 received while offline and clears it for another key or target', async () => {
+    const response = deferred<undefined>();
+    let revokeSignal: AbortSignal | undefined;
+    send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      if (command instanceof RevokeGrantCommand) {
+        revokeSignal = options.abortSignal;
+        await response.promise;
+        throw { name: 'NotImplemented', $metadata: { httpStatusCode: 501 } };
+      }
+      return fallback(command);
+    });
+    const update = open();
+
+    async function startRevocation() {
+      revokeSignal = undefined;
+      const dialog = await openRevocation();
+      fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Revoke grant' }));
+      await waitFor(() => expect(revokeSignal).toBeInstanceOf(AbortSignal));
+    }
+
+    const revokeName = `Revoke grant ${grant.GrantId}`;
+    const notice = 'The emulator answered 501 Not Implemented for RevokeGrant.';
+    await startRevocation();
+    update({ connection: offline });
+    expect(revokeSignal?.aborted).toBe(false);
+    await act(async () => response.resolve(undefined));
+    expect(grantsTable().findFooterSlot()?.getElement()).toHaveTextContent(notice);
+    update({ connection: online });
+    expect(await screen.findByRole('button', { name: revokeName })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeEnabled();
+
+    const nextKey = 'e89de8d1-a905-432b-adfd-c510da7413aa';
+    update({ keyId: nextKey });
+    expect(await screen.findByRole('button', { name: revokeName })).toBeEnabled();
+    await startRevocation();
+    await waitFor(() => expect(grantsTable().findFooterSlot()?.getElement()).toHaveTextContent(notice));
+    expect(screen.getByRole('button', { name: revokeName })).toBeDisabled();
+
+    // The AWS area's target generation remounts the page even when the engine origin and key ID are unchanged.
+    update({ keyId: nextKey }, 1);
+    expect(await screen.findByRole('button', { name: revokeName })).toBeEnabled();
   });
 });

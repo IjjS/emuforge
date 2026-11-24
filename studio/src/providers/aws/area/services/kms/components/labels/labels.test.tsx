@@ -17,8 +17,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
 import { AreaFlash } from '../../../../components/area-flash';
+import type { AreaConnection } from '../../../../components/emulator-line';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useAreaFlash } from '../../../../components/use-area-flash';
+import { KeyPage } from '../../pages/key';
 import { Labels } from './labels';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -33,29 +35,53 @@ const connection = {
   engineOrigin: endpoint,
   result: { kind: 'connected', checkedAt: 0, emulator: { endpoint: 'https://127.0.0.1:9308', port: 9308 } },
 } as const;
+const offlineConnection: AreaConnection = {
+  engineOrigin: endpoint,
+  result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9308 },
+};
 
-function open() {
-  function Area() {
+interface LabelView {
+  currentConnection?: AreaConnection;
+  currentKey?: string;
+  writesEnabled?: boolean;
+  targetGeneration?: number;
+}
+
+function open(initial: LabelView = {}) {
+  function Area({
+    currentConnection = connection,
+    currentKey = keyId,
+    writesEnabled = true,
+    targetGeneration = 0,
+  }: LabelView) {
     const root = useRef<HTMLDivElement>(null);
-    const flash = useAreaFlash('/aws/kms/keys/test-key-1', 0, true);
+    const flash = useAreaFlash(`/aws/kms/keys/${currentKey}`, 0, true);
     return (
       <AreaRootContext.Provider value={root}>
         <PageFlashContext.Provider value={flash.pageFlash}>
           <div ref={root}>
             {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
-            <Labels connection={connection} keyId={keyId} />
+            <Labels
+              key={targetGeneration}
+              connection={currentConnection}
+              keyId={currentKey}
+              writesEnabled={writesEnabled}
+            />
           </div>
         </PageFlashContext.Provider>
       </AreaRootContext.Provider>
     );
   }
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const client = new QueryClient();
+  const tree = (props: LabelView) => (
+    <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Area />
+        <Area {...props} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree(initial));
+  return (next: LabelView) => rerender(tree(next));
 }
 
 function aliasPage(name: string, target = keyId) {
@@ -93,7 +119,7 @@ function expectEmpty(heading: 'Aliases' | 'Tags', message: string) {
   expect(empty?.textContent).toBe(message);
 }
 
-function expectFlash(type: 'success' | 'error', message: string | RegExp) {
+function expectFlash(type: 'success' | 'error' | 'info', message: string | RegExp) {
   const content = page.findFlashbar()?.findItemsByType(type)[0]?.findContent()?.getElement();
   expect(content).toBeVisible();
   expect(content).toHaveTextContent(message);
@@ -176,6 +202,101 @@ describe('key labels', () => {
     await waitFor(() => expect(labelRow('Aliases', 'alias/invoices').cell(1)).toBeVisible());
     await waitFor(() => expectTag('owner', 'billing team'));
   });
+
+  it.each([
+    {
+      heading: 'Aliases',
+      commandType: ListAliasesCommand,
+      operation: 'ListAliases',
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+      rowName: alias,
+    },
+    {
+      heading: 'Tags',
+      commandType: ListResourceTagsCommand,
+      operation: 'ListResourceTags',
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: `Not answering at ${connection.result.emulator.endpoint}`,
+      rowName: 'environment',
+    },
+  ] as const)(
+    'announces $operation recovery once without stealing focus from the connected Labels panel',
+    async ({ heading, commandType, operation, failure, status, rowName }) => {
+      const pendingRead = deferred<object>();
+      let panelFails = true;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: keyId, KeyState: 'Enabled' } };
+        if (panelFails && command instanceof commandType) return pendingRead.promise;
+        if (command instanceof ListAliasesCommand) return aliasPage(alias);
+        if (command instanceof ListResourceTagsCommand) return tagPage('environment', 'development');
+        throw new Error('Unexpected KMS request');
+      });
+      const client = new QueryClient();
+      const tree = (current: AreaConnection) => (
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={[`/aws/kms/keys/${keyId}`]}>
+            <KeyPage connection={current} params={{ keyid: keyId }} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+      const { rerender } = render(tree(connection));
+
+      expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+      await userEvent.click(screen.getByRole('tab', { name: 'Labels' }));
+      const panel = screen.getByRole('tabpanel', { name: 'Labels' });
+      const regions = [...panel.querySelectorAll('[aria-live="polite"][aria-atomic="true"]')];
+      const focused = within(panel).getByRole('button', { name: heading === 'Aliases' ? 'Create alias' : 'Add tag' });
+      focused.focus();
+      const detail = `The ${heading.toLowerCase()} (${operation}) could not be read.`;
+      const message = `${status}. ${detail}`;
+      expect(regions.some((region) => region.textContent === message)).toBe(false);
+      await act(async () => pendingRead.reject(failure));
+      const announcement = await waitFor(() => {
+        const matches = regions.filter((region) => region.textContent === message);
+        expect(matches).toHaveLength(1);
+        return matches[0]?.firstChild;
+      });
+      expect(announcement).toBeInTheDocument();
+      const region = announcement?.parentElement;
+      expect(focused).toHaveFocus();
+      rerender(tree({ ...connection, result: { ...connection.result, checkedAt: 1 } }));
+      expect(region?.firstChild).toBe(announcement);
+      expect(focused).toHaveFocus();
+
+      const recovery = await waitFor(() => {
+        const empty = labelsTable(heading).findEmptySlot();
+        const indicator = empty?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+        if (!empty) throw new Error(`Missing ${heading} recovery`);
+        return within(empty.getElement());
+      });
+      expect(recovery.getByText(detail)).toBeVisible();
+      const link = recovery.getByRole('link', { name: 'Connection status' });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute('href', '/');
+      const retry = recovery.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
+      const other = heading === 'Aliases' ? 'Tags' : 'Aliases';
+      const otherName = heading === 'Aliases' ? 'environment' : alias;
+      await waitFor(() => expect(labelRow(other, otherName).cell(1)).toBeVisible());
+
+      panelFails = false;
+      fireEvent.click(retry);
+      await waitFor(() => expect(labelRow(heading, rowName).cell(1)).toBeVisible());
+      if (heading === 'Tags') expectTag('environment', 'development');
+      expect(retry).not.toBeInTheDocument();
+      expect(region).toBeEmptyDOMElement();
+      expect(send.mock.calls.filter(([command]) => command instanceof commandType)).toHaveLength(2);
+      expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
+    },
+  );
 
   it('keeps reassignment success when the original key’s alias read finishes before the target list', async () => {
     let moved = false;
@@ -304,6 +425,103 @@ describe('key labels', () => {
     expect(modal).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
   });
+
+  it('waits for the page to enable writes and preserves a pending alias through a same-target disconnect', async () => {
+    const save = deferred<object>();
+    let signal: AbortSignal | undefined;
+    send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+      if (command instanceof CreateAliasCommand) {
+        signal = options.abortSignal;
+        return save.promise;
+      }
+      return {};
+    });
+    const update = open({ writesEnabled: false });
+
+    await waitFor(() => expectEmpty('Aliases', 'No aliases'));
+    const create = screen.getByRole('button', { name: 'Create alias' });
+    const add = screen.getByRole('button', { name: 'Add tag' });
+    expect(create).toBeDisabled();
+    expect(add).toBeDisabled();
+    fireEvent.click(create);
+    expect(screen.queryByRole('dialog', { name: 'Create alias' })).not.toBeInTheDocument();
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(0);
+
+    update({ writesEnabled: true });
+    fireEvent.click(create);
+    const modal = await screen.findByRole('dialog', { name: 'Create alias' });
+    const dialog = within(modal);
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Alias name' }), { target: { value: 'events' } });
+    const submit = dialog.getByRole('button', { name: 'Create alias' });
+    fireEvent.click(submit);
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(1);
+    expect(signal?.aborted).toBe(false);
+
+    update({ currentConnection: offlineConnection });
+    expect(modal).toBeVisible();
+    expect(submit).toHaveAttribute('aria-disabled', 'true');
+    expect(signal?.aborted).toBe(false);
+    expect(add).toBeDisabled();
+    await act(async () => save.resolve({}));
+    expect(modal).not.toBeInTheDocument();
+    expectFlash('success', /^Alias created\.$/);
+    expect(create).toBeDisabled();
+
+    update({});
+    expect(create).toBeEnabled();
+    expectFlash('success', /^Alias created\.$/);
+  });
+
+  it.each([{ currentKey: targetId }, { targetGeneration: 1 }])(
+    'preserves a removal 501 across reconnect and clears it on scope change %o',
+    async (nextScope) => {
+      const remove = deferred<object>();
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ListResourceTagsCommand) return tagPage('environment', 'development');
+        if (command instanceof UntagResourceCommand) return remove.promise;
+        return {};
+      });
+      const update = open();
+
+      const tag = await waitFor(() => labelRow('Tags', 'environment'));
+      fireEvent.click(within(tag.element).getByRole('button', { name: 'Remove tag environment' }));
+      const modal = await screen.findByRole('dialog', { name: 'Remove tag' });
+      const dialog = within(modal);
+      const confirmation = dialog.getByRole('textbox');
+      fireEvent.change(confirmation, { target: { value: 'remove' } });
+      const submit = dialog.getByRole('button', { name: 'Remove tag' });
+      update({ currentConnection: offlineConnection });
+      expect(submit).toBeDisabled();
+      fireEvent.keyDown(confirmation, { key: 'Enter' });
+      expect(send.mock.calls.some(([command]) => command instanceof UntagResourceCommand)).toBe(false);
+
+      update({});
+      fireEvent.click(submit);
+      expect(send.mock.calls.filter(([command]) => command instanceof UntagResourceCommand)).toHaveLength(1);
+      update({ currentConnection: offlineConnection });
+      expect(modal).toBeVisible();
+      await act(async () => {
+        remove.reject({ name: 'NotImplemented', $fault: 'server', $metadata: { httpStatusCode: 501 } });
+      });
+      expect(modal).not.toBeInTheDocument();
+      const notice = 'The emulator answered 501 Not Implemented for UntagResource.';
+      expectFlash('info', notice);
+      const dismiss = page.findFlashbar()?.findItemsByType('info')[0]?.findDismissButton()?.getElement();
+      if (!dismiss) throw new Error('Missing notice dismiss control');
+      fireEvent.click(dismiss);
+
+      update({});
+      expect(screen.getByText(notice)).toBeVisible();
+      const current = within(labelRow('Tags', 'environment').element);
+      expect(current.getByRole('button', { name: 'Remove tag environment' })).toBeDisabled();
+      expect(current.getByRole('button', { name: 'Edit tag environment' })).toBeEnabled();
+
+      update(nextScope);
+      const next = await waitFor(() => labelRow('Tags', 'environment'));
+      expect(within(next.element).getByRole('button', { name: 'Remove tag environment' })).toBeEnabled();
+      expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    },
+  );
 
   it.each([
     { visibleWidth: 348, scrollWidth: 404, compact: true, overflows: true },

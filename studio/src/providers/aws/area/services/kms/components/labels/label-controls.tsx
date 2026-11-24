@@ -5,12 +5,42 @@ import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import type { RequestFailure } from '../../../../../../../lib/aws/request';
 import { AreaModal } from '../../../../components/area-modal';
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure, useAnnouncer } from '../../../../components/failure-states';
 import type { TokenListing } from '../../../../components/use-token-listing';
+import { readFailureState } from '../../queries';
+
+function labelReadFailure(failure: RequestFailure, connection: AreaConnection, name: string) {
+  return readFailureState(failure, connection, `${name} (${failure.operation})`);
+}
+
+export function LabelReadAnnouncement({
+  failure,
+  connection,
+  name,
+}: {
+  failure: RequestFailure | undefined;
+  connection: AreaConnection;
+  name: string;
+}) {
+  const [region, announce] = useAnnouncer();
+  const announced = useRef<typeof failure>(undefined);
+  useEffect(() => {
+    if (announced.current === failure) return;
+    announced.current = failure;
+    if (failure === undefined) {
+      announce('');
+      return;
+    }
+    const state = labelReadFailure(failure, connection, name);
+    announce(typeof state.detail === 'string' ? `${state.firstText}. ${state.detail}` : state.firstText);
+  }, [announce, connection, failure, name]);
+  return region;
+}
 
 export function LabelPagination<T>({ listing, label }: { listing: TokenListing<T>; label: string }) {
   if (listing.pagesCount === 1 && !listing.openEnd) return null;
@@ -43,8 +73,7 @@ export function LabelListEmpty<T>({
   onRetry: () => void;
 }) {
   if (listing.failure !== undefined) {
-    const thing = `${name} (${listing.failure.operation})`;
-    return <ReadFailure state={readFailureState(listing.failure, connection, thing)} onRetry={onRetry} />;
+    return <ReadFailure state={labelReadFailure(listing.failure, connection, name)} onRetry={onRetry} />;
   }
   return (
     <Box textAlign="center" variant="strong">
@@ -76,6 +105,7 @@ export function ConfirmLabelRemoval({
   title,
   body,
   word,
+  disabled,
   pending,
   onConfirm,
   onDismiss,
@@ -83,6 +113,7 @@ export function ConfirmLabelRemoval({
   title: string;
   body: ReactNode;
   word: string;
+  disabled: boolean;
   pending: boolean;
   onConfirm: () => void;
   onDismiss: () => void;
@@ -90,13 +121,13 @@ export function ConfirmLabelRemoval({
   const [typed, setTyped] = useState('');
   const confirmed = typed === word;
   const handleConfirm = () => {
-    if (confirmed && !pending) onConfirm();
+    if (confirmed && !disabled && !pending) onConfirm();
   };
   return (
     <LabelDialog
       title={title}
       submit={title}
-      disabled={!confirmed}
+      disabled={!confirmed || disabled}
       pending={pending}
       onSubmit={handleConfirm}
       onDismiss={onDismiss}

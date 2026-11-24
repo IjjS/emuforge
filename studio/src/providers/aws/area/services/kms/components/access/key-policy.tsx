@@ -5,16 +5,16 @@ import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { TextareaProps } from '@cloudscape-design/components/textarea';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLayoutEffect, useRef, useState } from 'react';
 
 import { DiscardDialog } from '../../../../components/discard-dialog';
 import { DocumentField } from '../../../../components/document-field';
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import { failureOf, noEndpoint } from '../../../../components/use-token-listing';
 import { ACCESS_OPERATIONS, getDefaultPolicy, hasDefaultPolicy, putDefaultPolicy } from '../../access-api';
-import { connectionFailure } from '../../queries';
+import { connectionFailure, readFailureState } from '../../queries';
 import { AccessDialog } from './access-dialog';
 import { ActionNotice } from './action-notice';
 import type { AccessProps } from './access';
@@ -23,19 +23,23 @@ import { useAccessAction } from './use-access-action';
 const { listPolicies, getPolicy, putPolicy } = ACCESS_OPERATIONS;
 
 function useDefaultPolicy(connection: AreaConnection, keyId: string) {
+  const client = useQueryClient();
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const endpoint = connection.engineOrigin;
   const offline = connectionFailure(connection, listPolicies);
+  if (offline === undefined && attemptedRetry) setAttemptedRetry(false);
   const enabled = endpoint !== undefined && (offline === undefined || attemptedRetry);
+  const namesKey = ['kms', 'policy-names', endpoint, keyId];
+  const policyKey = ['kms', 'default-policy', endpoint, keyId];
   const names = useQuery({
-    queryKey: ['kms', 'policy-names', endpoint, keyId],
+    queryKey: namesKey,
     queryFn: ({ signal }) => hasDefaultPolicy(endpoint ?? noEndpoint(), keyId, signal),
     enabled,
     retry: false,
     gcTime: 0,
   });
   const policy = useQuery({
-    queryKey: ['kms', 'default-policy', endpoint, keyId],
+    queryKey: policyKey,
     queryFn: ({ signal }) => getDefaultPolicy(endpoint ?? noEndpoint(), keyId, signal),
     enabled: enabled && names.data === true,
     retry: false,
@@ -51,11 +55,13 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
         : offline;
 
   function refresh() {
-    setAttemptedRetry(true);
-    if (enabled) {
-      void names.refetch();
-      if (names.data === true) void policy.refetch();
-    }
+    void client.invalidateQueries({ queryKey: namesKey, exact: true });
+    void client.invalidateQueries({ queryKey: policyKey, exact: true });
+  }
+
+  function retry() {
+    if (offline !== undefined) setAttemptedRetry(true);
+    refresh();
   }
 
   return {
@@ -63,13 +69,20 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
     fetching: names.isFetching || (names.data === true && policy.isFetching),
     loading: names.data === undefined || (names.data && policy.data === undefined),
     failure,
+    failureCount: names.isError ? names.errorUpdateCount : policy.errorUpdateCount,
     refresh,
+    retry,
   };
 }
 
-export function KeyPolicy({ connection, keyId }: AccessProps) {
+export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessProps) {
   const policy = useDefaultPolicy(connection, keyId);
-  const action = useAccessAction(connection);
+  const failure = policy.failure;
+  const recovery =
+    failure === undefined
+      ? undefined
+      : readFailureState(failure, connection, `default key policy (${failure.operation})`);
+  const action = useAccessAction(connection, writesEnabled);
   const [draft, setDraft] = useState<{ original: string; text: string }>();
   const [syntaxError, setSyntaxError] = useState<{ message: string }>();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -138,6 +151,11 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
         </Header>
       }
     >
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {recovery !== undefined && (
+          <span key={`${failure?.operation}:${policy.failureCount}`}>Key policy. {recovery.firstText}</span>
+        )}
+      </div>
       <SpaceBetween size="m">
         {action.unavailable.has(putPolicy) && draft === undefined && (
           <ActionNotice
@@ -145,17 +163,8 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
             endpoint={connection.engineOrigin}
           />
         )}
-        {policy.failure !== undefined ? (
-          <ReadFailure
-            state={readFailureState(
-              policy.failure,
-              connection,
-              policy.failure.kind === 'other'
-                ? `default key policy (${policy.failure.operation})`
-                : 'default key policy',
-            )}
-            onRetry={policy.refresh}
-          />
+        {recovery !== undefined ? (
+          <ReadFailure state={recovery} onRetry={policy.retry} />
         ) : policy.loading ? (
           <StatusIndicator type="loading">Loading key policy…</StatusIndicator>
         ) : policy.document === undefined ? (

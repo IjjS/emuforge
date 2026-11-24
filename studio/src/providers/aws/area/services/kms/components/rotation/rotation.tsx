@@ -9,12 +9,12 @@ import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { actionFailureItem, Code, ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { actionFailureItem, Code, ReadFailure } from '../../../../components/failure-states';
 import { creationDateText, NO_DATE } from '../../../../components/format-date';
 import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, noEndpoint, usePageSignal, useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
-import { connectionFailure } from '../../queries';
+import { connectionFailure, readFailureState } from '../../queries';
 import {
   changeKeyRotation,
   getKeyRotationStatus,
@@ -23,6 +23,7 @@ import {
   type RotationAction,
 } from '../../rotation-api';
 import { RotationHistory } from './rotation-history';
+import { useRotationRetryFocus } from './use-rotation-retry-focus';
 
 const successMessage = {
   enable: 'Automatic rotation enabled.',
@@ -34,19 +35,22 @@ interface RotationProps {
   connection: AreaConnection;
   keyId: string;
   keySpec?: KeyMetadata['KeySpec'];
+  writesEnabled?: boolean;
 }
 
 let visits = 0;
 
-function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
+function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: RotationProps) {
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const { heading, retryRegion } = useRotationRetryFocus();
   const reasonId = useId();
   const [visit] = useState(() => (visits += 1));
   const [revision, setRevision] = useState(0);
   const [statusRetry, setStatusRetry] = useState(false);
   const [historyRetry, setHistoryRetry] = useState(false);
+  const [lastEnabled, setLastEnabled] = useState<boolean>();
   const [unavailable, setUnavailable] = useState<Partial<Record<RotationAction, true>>>({});
   const [pending, setPending] = useState<RotationAction>();
   const inFlight = useRef(false);
@@ -72,16 +76,22 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
       ? undefined
       : statusOffline;
   const historyFailure = history.failure ?? (historyRetry ? undefined : historyOffline);
+  const statusRecovery =
+    statusFailure === undefined
+      ? undefined
+      : readFailureState(statusFailure, connection, `rotation settings (${statusFailure.operation})`);
   const enabled = status.data?.KeyRotationEnabled;
+  // A failed refresh changes the read state, while the disabled toggle keeps its last confirmed action.
+  if (status.isSuccess && enabled !== undefined && lastEnabled !== enabled) setLastEnabled(enabled);
   const period = status.data?.RotationPeriodInDays;
   const nextDate = creationDateText(status.data?.NextRotationDate);
-  const toggleAction = enabled === true ? 'disable' : 'enable';
-  const offline = engineOrigin === undefined || statusOffline !== undefined;
+  const toggleAction = (enabled ?? lastEnabled) === true ? 'disable' : 'enable';
+  const writeBlocked = !writesEnabled || engineOrigin === undefined || statusOffline !== undefined;
   const toggleReason = unavailable[toggleAction] ? `${reasonId}-automatic` : undefined;
   const rotateReason = unavailable.rotate ? `${reasonId}-on-demand` : undefined;
 
   const handleAction = async (action: RotationAction) => {
-    if (offline || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
+    if (writeBlocked || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
     const initiatingFocus = document.activeElement;
     const showResult = (item: FlashItem) => {
       if (document.activeElement !== initiatingFocus) {
@@ -160,7 +170,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                 <Button
                   disabled={
                     pending !== toggleAction &&
-                    (offline ||
+                    (writeBlocked ||
                       pending !== undefined ||
                       enabled === undefined ||
                       statusFailure !== undefined ||
@@ -170,10 +180,12 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                   loading={pending === toggleAction}
                   onClick={() => void handleAction(toggleAction)}
                 >
-                  {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
+                  {toggleAction === 'disable' ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
-                  disabled={pending !== 'rotate' && (offline || pending !== undefined || rotateReason !== undefined)}
+                  disabled={
+                    pending !== 'rotate' && (writeBlocked || pending !== undefined || rotateReason !== undefined)
+                  }
                   {...(rotateReason === undefined ? {} : { ariaDescribedby: rotateReason })}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
@@ -183,18 +195,25 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
               </SpaceBetween>
             }
           >
-            Key rotation
+            <span ref={heading} tabIndex={-1}>
+              Key rotation
+            </span>
           </Header>
         }
       >
-        {statusFailure !== undefined ? (
-          <ReadFailure
-            state={readFailureState(statusFailure, connection, 'rotation settings')}
-            onRetry={() => {
-              setStatusRetry(true);
-              void status.refetch();
-            }}
-          />
+        <div className="aws-area-announcer" role="status" aria-label="Rotation settings read status" aria-atomic="true">
+          {statusRecovery !== undefined && <span key={status.errorUpdateCount}>{statusRecovery.firstText}.</span>}
+        </div>
+        {statusRecovery !== undefined ? (
+          <div ref={retryRegion}>
+            <ReadFailure
+              state={statusRecovery}
+              onRetry={() => {
+                setStatusRetry(true);
+                void status.refetch();
+              }}
+            />
+          </div>
         ) : status.data === undefined ? (
           <StatusIndicator type="loading">Loading rotation settings…</StatusIndicator>
         ) : (
@@ -237,7 +256,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   );
 }
 
-export function Rotation({ connection, keyId, keySpec }: RotationProps) {
+export function Rotation({ connection, keyId, keySpec, writesEnabled = true }: RotationProps) {
   // The AWS area remounts the page on a target change. A health poll alone must not replace this visit.
   return (
     <RotationVisit
@@ -245,6 +264,7 @@ export function Rotation({ connection, keyId, keySpec }: RotationProps) {
       connection={connection}
       keyId={keyId}
       keySpec={keySpec}
+      writesEnabled={writesEnabled}
     />
   );
 }

@@ -21,6 +21,7 @@ import {
   LabelDialog,
   LabelListEmpty,
   LabelPagination,
+  LabelReadAnnouncement,
   LabelRowActions,
   UnavailableActions,
 } from './label-controls';
@@ -28,7 +29,15 @@ import { useLabelAction } from './use-label-action';
 
 type AliasEdit = { kind: 'create' } | { kind: 'reassign' | 'delete'; alias: string };
 
-export function Aliases({ connection, keyId }: { connection: AreaConnection; keyId: string }) {
+export function Aliases({
+  connection,
+  keyId,
+  writesEnabled,
+}: {
+  connection: AreaConnection;
+  keyId: string;
+  writesEnabled: boolean;
+}) {
   const [edit, setEdit] = useState<AliasEdit>();
   const [name, setName] = useState('');
   const [targetId, setTargetId] = useState<string>();
@@ -44,7 +53,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
   });
   const targets = useCustomerKeys(endpoint, targetsOpened, 0);
 
-  const action = useLabelAction(connection, () => {
+  const action = useLabelAction(connection, writesEnabled, () => {
     setGeneration((current) => current + 1);
     void client.invalidateQueries({ queryKey: KMS_KEYS.list });
     void client.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
@@ -80,19 +89,22 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
         loadingText="Loading aliases…"
         empty={<LabelListEmpty listing={listing} connection={connection} name="aliases" onRetry={listing.refresh} />}
         header={
-          <Header
-            variant="h2"
-            actions={
-              <Button
-                disabled={action.disabled(LABEL_OPERATIONS.createAlias)}
-                onClick={() => handleOpen({ kind: 'create' })}
-              >
-                Create alias
-              </Button>
-            }
-          >
-            Aliases
-          </Header>
+          <>
+            <LabelReadAnnouncement failure={listing.failure} connection={connection} name="aliases" />
+            <Header
+              variant="h2"
+              actions={
+                <Button
+                  disabled={action.disabled(LABEL_OPERATIONS.createAlias)}
+                  onClick={() => handleOpen({ kind: 'create' })}
+                >
+                  Create alias
+                </Button>
+              }
+            >
+              Aliases
+            </Header>
+          </>
         }
         pagination={<LabelPagination listing={listing} label="Alias pages" />}
         columnDefinitions={[
@@ -176,6 +188,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
           <LabelActionError failure={action.failure} />
           <Box>
             Move <ValueText kind="address" value={edit.alias} /> to another customer managed key.
+            <LabelReadAnnouncement failure={targets.failure} connection={connection} name="target keys" />
           </Box>
           <FormField label="Target key" description="Choose the key that should receive this alias.">
             <Select
@@ -204,6 +217,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
             </>
           }
           word="delete"
+          disabled={action.disabled(LABEL_OPERATIONS.deleteAlias)}
           pending={action.pending}
           onDismiss={handleClose}
           onConfirm={() => {

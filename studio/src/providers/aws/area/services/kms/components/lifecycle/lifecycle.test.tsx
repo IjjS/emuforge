@@ -97,8 +97,7 @@ function Page({ observeList, keyId, target }: { observeList: boolean; keyId: str
   );
 }
 
-function open(observeList = false) {
-  const client = new QueryClient();
+function open(observeList = false, client = new QueryClient()) {
   const page = (keyId: string, target: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -199,31 +198,44 @@ describe('Key detail panel lifetime', () => {
     fireEvent.click(tab.getElement());
   }
 
-  function rotateButton() {
+  function panelButton(name: string) {
     const panel = PAGE.findTabs()?.findTabContent();
     if (!panel) throw new Error('Missing active key panel');
-    return within(panel.getElement()).getByRole('button', { name: 'Rotate now' });
+    return within(panel.getElement()).getByRole('button', { name });
   }
 
-  it('keeps a rotation started before the first metadata read fails', async () => {
+  const rotateButton = () => panelButton('Rotate now');
+
+  it('blocks new panel writes before initial metadata succeeds and unlocks them after Retry', async () => {
     const metadata = deferred<unknown>();
-    const write = deferred<unknown>();
-    let firstRead = true;
+    const retry = deferred<unknown>();
+    let reads = 0;
     emulate(key('Enabled'), (command) => {
-      if (command instanceof DescribeKeyCommand && firstRead) {
-        firstRead = false;
-        return metadata.promise;
-      }
-      if (command instanceof RotateKeyOnDemandCommand) return write.promise;
+      if (command instanceof DescribeKeyCommand) return ++reads === 1 ? metadata.promise : retry.promise;
       return undefined;
     });
+    const actions = [
+      ['labels', ['Create alias', 'Add tag']],
+      ['access', ['Create grant']],
+      ['rotation', ['Rotate now']],
+    ] as const;
+    function expectBlockedWrites() {
+      for (const [tab, buttons] of actions) {
+        selectTab(tab);
+        for (const name of buttons) {
+          const button = panelButton(name);
+          expect(usable(button)).toBe(false);
+          fireEvent.click(button);
+        }
+        expect(PAGE.findModal()).toBeNull();
+      }
+      expect(sent(RotateKeyOnDemandCommand)).toHaveLength(0);
+    }
+
     open();
     await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(1));
     expect(field('Status')).toBeUndefined();
-    selectTab('rotation');
-    fireEvent.click(rotateButton());
-    await waitFor(() => expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1));
-    const options = sent(RotateKeyOnDemandCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    expectBlockedWrites();
 
     await act(async () => {
       metadata.reject({
@@ -234,16 +246,23 @@ describe('Key detail panel lifetime', () => {
       });
     });
     expect(await screen.findByText(/Initial DescribeKey failed/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
-    expect(rotateButton()).toHaveAttribute('aria-disabled', 'true');
-    expect(options?.abortSignal.aborted).toBe(false);
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeVisible();
+    expectBlockedWrites();
 
-    await act(async () => write.resolve({}));
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    expectBlockedWrites();
+    await act(async () => retry.resolve({ KeyMetadata: key('Enabled') }));
+    await waitFor(() => expect(usable(rotateButton())).toBe(true));
+    expect(screen.queryByText(/Initial DescribeKey failed/)).toBeNull();
+    for (const [tab, buttons] of actions) {
+      selectTab(tab);
+      for (const name of buttons) expect(usable(panelButton(name))).toBe(true);
+    }
+    fireEvent.click(rotateButton());
     await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
-    expect(usable(rotateButton())).toBe(true);
     expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Initial DescribeKey failed/)).toBeNull());
     selectTab('details');
     await expectStatus('Enabled');
   });
@@ -381,6 +400,97 @@ describe('Key detail panel lifetime', () => {
 });
 
 describe('Key lifecycle', () => {
+  it('keeps an open draft offline, blocks its submission, and preserves a later pending save during an outage', async () => {
+    const write = deferred<unknown>();
+    const emulator = emulate(key('Enabled'), (command) =>
+      command instanceof UpdateKeyDescriptionCommand ? write.promise : undefined,
+    );
+    const showTarget = open();
+    const outage: AreaConnection['result'] = {
+      kind: 'emulator-unreachable',
+      reason: 'timeout',
+      message: '',
+      checkedAt: 1,
+      emulator: connection.result.emulator,
+    };
+    const draft = 'Local invoices';
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    await opened('Edit description');
+    const description = within(dialog().findContent().getElement()).getByRole('textbox');
+    fireEvent.change(description, { target: { value: draft } });
+    const save = dialogButton('Save');
+    expect(usable(save)).toBe(true);
+    save.focus();
+
+    showTarget(KEY_ID, { ...connection, result: outage });
+    expect(dialog().findHeader().getElement()).toHaveTextContent('Edit description');
+    expect(description).toHaveValue(draft);
+    expect(save).toHaveFocus();
+    expect(save).toHaveAttribute('aria-disabled', 'true');
+    expect(save).toHaveAccessibleDescription('Reconnect to the emulator to save the key description.');
+    const notice = within(dialog().findContent().getElement()).getByRole('status');
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent('Reconnect to the emulator to save the key description.');
+    confirm('Save');
+    expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(0);
+
+    showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 2 } });
+    expect(description).toHaveValue(draft);
+    expect(usable(dialogButton('Save'))).toBe(true);
+    expect(notice).toBeEmptyDOMElement();
+    confirm('Save');
+    await waitFor(() => expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1));
+    const options = sent(UpdateKeyDescriptionCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+
+    showTarget(KEY_ID, { ...connection, result: { ...outage, checkedAt: 3 } });
+    expect(description).toHaveValue(draft);
+    expect(dialogButton('Save')).toHaveAttribute('aria-disabled', 'true');
+    expect(dialogButton('Save')).not.toBeDisabled();
+    expect(save).toHaveFocus();
+    expect(notice).toBeEmptyDOMElement();
+    confirm('Save');
+    expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1);
+    expect(options?.abortSignal.aborted).toBe(false);
+
+    emulator.metadata = key('Enabled', { Description: draft });
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+    expect(flashText()).toContain('Key description updated.');
+    expect(options?.abortSignal.aborted).toBe(false);
+    showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 4 } });
+    await waitFor(() => expect(field('Description')).toHaveTextContent(draft));
+  });
+
+  it('blocks submission when refreshed metadata makes an open Disable key dialog ineligible', async () => {
+    const client = new QueryClient();
+    const emulator = emulate(key('Enabled'));
+    open(false, client);
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    await opened('Disable key');
+    const submit = dialogButton('Disable key');
+    expect(usable(submit)).toBe(true);
+    submit.focus();
+
+    emulator.metadata = key('Disabled');
+    await act(async () => client.invalidateQueries({ queryKey: KMS_KEYS.detail(KEY_ID) }));
+    await expectStatus('Disabled');
+    expect(dialog().findContent().getElement()).toHaveTextContent(KEY_ID);
+    expect(submit).toHaveFocus();
+    expect(submit).toHaveAttribute('aria-disabled', 'true');
+    expect(submit).toHaveAccessibleDescription('This key is already Disabled.');
+    const notice = within(dialog().findContent().getElement()).getByRole('status');
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent('This key is already Disabled.');
+    expect(dialog().findContent().getElement()).not.toHaveTextContent("The key's state becomes Disabled");
+    confirm('Disable key');
+    expect(sent(DisableKeyCommand)).toHaveLength(0);
+
+    confirm('Cancel');
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+    expect(field('Status')).toHaveTextContent('Disabled');
+    expect(sent(DisableKeyCommand)).toHaveLength(0);
+  });
+
   it('keeps a held write on the same offline target and gates new writes until reconnect', async () => {
     const write = deferred<unknown>();
     const emulator = emulate(key('Disabled'), (command) => {

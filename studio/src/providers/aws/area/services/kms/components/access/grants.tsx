@@ -1,18 +1,19 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
+import Input from '@cloudscape-design/components/input';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
 import { type RefObject, useEffect, useState } from 'react';
 
-import { ConfirmDialog } from '../../../../components/confirm-dialog';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import { useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { ACCESS_OPERATIONS, createGrant, listGrants, revokeGrant, type KeyGrant } from '../../access-api';
-import { KMS_KEYS, connectionFailure } from '../../queries';
+import { KMS_KEYS, connectionFailure, readFailureState } from '../../queries';
 import { AccessDialog } from './access-dialog';
 import type { AccessProps } from './access';
 import { ActionNotice } from './action-notice';
@@ -21,6 +22,7 @@ import { useAccessAction } from './use-access-action';
 
 const operations = ACCESS_OPERATIONS;
 const COMPACT_BELOW = 720;
+const REVOKE_WORD = 'revoke';
 
 function GrantOperations({ values }: { values: KeyGrant['operations'] }) {
   if (values.length === 0) return '–';
@@ -34,15 +36,17 @@ function GrantOperations({ values }: { values: KeyGrant['operations'] }) {
 export function Grants({
   connection,
   keyId,
+  writesEnabled = true,
   sectionRef,
 }: AccessProps & { sectionRef: RefObject<HTMLDivElement | null> }) {
-  const action = useAccessAction(connection);
+  const action = useAccessAction(connection, writesEnabled);
   const client = useQueryClient();
   const [compact, setCompact] = useState(false);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const [draft, setDraft] = useState<GrantDraft>();
-  const [revoking, setRevoking] = useState<KeyGrant>();
+  const [revoking, setRevoking] = useState<{ grant: KeyGrant; confirmation: string }>();
   const offline = connectionFailure(connection, operations.listGrants);
+  if (offline === undefined && attemptedRetry) setAttemptedRetry(false);
   const listing = useTokenListing({
     key: ['kms', 'grants', keyId],
     endpoint: connection.engineOrigin,
@@ -51,6 +55,8 @@ export function Grants({
     read: (endpoint, marker, signal) => listGrants(endpoint, keyId, marker, signal),
   });
   const failure = listing.failure ?? (attemptedRetry ? undefined : offline);
+  const recovery =
+    failure === undefined ? undefined : readFailureState(failure, connection, `grants (${failure.operation})`);
   const unavailable = [...action.unavailable].filter(
     (operation) => operation !== operations.createGrant || draft === undefined,
   );
@@ -68,7 +74,7 @@ export function Grants({
   }, [sectionRef]);
 
   function handleRetry() {
-    setAttemptedRetry(true);
+    if (offline !== undefined) setAttemptedRetry(true);
     listing.refresh();
   }
 
@@ -92,10 +98,10 @@ export function Grants({
   }
 
   function handleRevoke() {
-    if (revoking === undefined) return;
+    if (revoking?.confirmation !== REVOKE_WORD) return;
     void action.run(
       operations.revokeGrant,
-      (endpoint, signal) => revokeGrant(endpoint, keyId, revoking.id, signal),
+      (endpoint, signal) => revokeGrant(endpoint, keyId, revoking.grant.id, signal),
       'Grant revoked.',
       () => {
         setRevoking(undefined);
@@ -112,7 +118,7 @@ export function Grants({
         ariaLabel={`Revoke grant ${grant.id}`}
         wrapText={false}
         disabled={action.disabled(operations.revokeGrant)}
-        onClick={() => setRevoking(grant)}
+        onClick={() => setRevoking({ grant, confirmation: '' })}
       >
         Revoke
       </Button>
@@ -171,11 +177,14 @@ export function Grants({
 
   return (
     <div ref={sectionRef} id="kms-grants" tabIndex={-1} role="region" aria-label="Grants">
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {recovery !== undefined && !listing.loading && <>Grants. {recovery.firstText}</>}
+      </div>
       <Table
         trackBy="id"
         wrapLines
         ariaLabels={{ tableLabel: 'Grants' }}
-        items={listing.items ?? []}
+        items={failure === undefined ? (listing.items ?? []) : []}
         loading={listing.loading}
         loadingText="Loading grants…"
         header={
@@ -198,15 +207,12 @@ export function Grants({
         }
         columnDefinitions={columns}
         empty={
-          failure === undefined ? (
+          recovery === undefined ? (
             <Box textAlign="center" variant="strong">
               {listing.pastEnd ? 'No more grants' : 'No grants'}
             </Box>
           ) : (
-            <ReadFailure
-              state={readFailureState(failure, connection, `grants (${failure.operation})`)}
-              onRetry={handleRetry}
-            />
+            <ReadFailure state={recovery} onRetry={handleRetry} />
           )
         }
         pagination={
@@ -257,21 +263,30 @@ export function Grants({
         </AccessDialog>
       )}
       {revoking !== undefined && (
-        <ConfirmDialog
-          visible
-          header="Revoke grant"
-          body={
-            <>
-              Revoke grant <ValueText kind="name" value={revoking.id} /> on key <ValueText kind="name" value={keyId} />?
-              The grantee will lose the permissions provided by this grant.
-            </>
-          }
-          word="revoke"
-          action="Revoke grant"
+        <AccessDialog
+          title="Revoke grant"
+          submitLabel="Revoke grant"
           pending={action.pending === operations.revokeGrant}
-          onConfirm={handleRevoke}
+          disabled={action.disabled(operations.revokeGrant) || revoking.confirmation !== REVOKE_WORD}
+          onSubmit={handleRevoke}
           onDismiss={() => setRevoking(undefined)}
-        />
+        >
+          <Box variant="p">
+            Revoke grant <ValueText kind="name" value={revoking.grant.id} /> on key{' '}
+            <ValueText kind="name" value={keyId} />? The grantee will lose the permissions provided by this grant.
+          </Box>
+          <FormField label={`To confirm, type “${REVOKE_WORD}” in the field.`}>
+            <Input
+              value={revoking.confirmation}
+              placeholder={REVOKE_WORD}
+              readOnly={action.pending === operations.revokeGrant}
+              onChange={({ detail }) => setRevoking({ ...revoking, confirmation: detail.value })}
+              onKeyDown={({ detail }) => {
+                if (detail.key === 'Enter') handleRevoke();
+              }}
+            />
+          </FormField>
+        </AccessDialog>
       )}
     </div>
   );
