@@ -6,7 +6,7 @@ import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Toggle from '@cloudscape-design/components/toggle';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import {
   reportedNotImplementedMessage,
@@ -41,7 +41,8 @@ const RESULTS = {
 };
 
 type EditorProps = { instance: Instance; connection: AreaConnection } & (
-  { kind: 'type' | 'groups' } | { kind: 'protection'; value: boolean | undefined }
+  | { kind: 'type' | 'groups' }
+  | { kind: 'protection'; value: boolean | undefined; readFailure: RequestFailure | undefined }
 );
 
 interface FieldProps<T> {
@@ -333,6 +334,9 @@ function unavailableReason(editor: EditorProps): string | undefined {
     case 'groups':
       return editor.instance.vpcId ? undefined : "The instance's VPC is unavailable.";
     case 'protection':
+      if (editor.readFailure?.kind === 'not-implemented') {
+        return `Not implemented by the emulator (${editor.readFailure.operation}).`;
+      }
       return editor.value === undefined ? 'Read the current termination protection before changing it.' : undefined;
   }
 }
@@ -341,9 +345,11 @@ function unavailableReason(editor: EditorProps): string | undefined {
 export function InstanceAttributeEditor(editor: EditorProps) {
   const [open, setOpen] = useState(false);
   const [unsupported, setUnsupported] = useState<RequestFailure>();
+  const reasonId = useId();
   const reason = unavailableReason(editor);
   const unavailable =
     unsupported === undefined ? undefined : `Not implemented by the emulator (${unsupported.operation}).`;
+  const showStopReason = reason !== undefined && editor.kind === 'type' && unavailable === undefined;
   const readUnavailable =
     unsupported !== undefined && unsupported.operation !== MODIFY_INSTANCE_ATTRIBUTE
       ? readFailureState(
@@ -359,13 +365,16 @@ export function InstanceAttributeEditor(editor: EditorProps) {
       <Button
         variant={editor.kind === 'groups' ? 'normal' : 'inline-link'}
         disabled={reason !== undefined || unavailable !== undefined}
-        disabledReason={unavailable ?? reason}
+        disabledReason={showStopReason ? undefined : (unavailable ?? reason)}
+        {...(showStopReason ? { ariaDescribedby: reasonId } : {})}
         onClick={() => setOpen(true)}
       >
         {LABELS[editor.kind]}
       </Button>
-      {reason !== undefined && editor.kind === 'type' && unavailable === undefined && (
-        <Box variant="small">{reason}</Box>
+      {showStopReason && (
+        <Box variant="small" nativeAttributes={{ id: reasonId }}>
+          {reason}
+        </Box>
       )}
       {readUnavailable !== undefined && (
         <>

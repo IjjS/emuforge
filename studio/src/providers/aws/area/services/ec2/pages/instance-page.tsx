@@ -124,6 +124,7 @@ function Details({
                   instance={instance}
                   connection={connection}
                   value={protection.value}
+                  readFailure={protection.failure}
                 />
               </SpaceBetween>
             ),
