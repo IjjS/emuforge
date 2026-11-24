@@ -4,7 +4,7 @@ import { EnvError, expect, startStack, type Ctx } from '../../support';
 import { ACTION } from '../../support/frame';
 import { checkPrefix } from '../../support/service-screens';
 import {
-  button, dialogOf, ec2, Ec2Seeded, field, instanceDirect, instancePath, open, textAt, world,
+  button, dialogOf, ec2, Ec2Seeded, field, instanceDirect, instancePath, open, tableOf, textAt, world,
 } from './ec2';
 
 export const ui = createWrapper();
@@ -48,4 +48,30 @@ export async function userDataField(page: Page) {
   const input = field(dialog, 'User data').getByRole('textbox');
   await expect(input).toBeEditable();
   return input;
+}
+
+/** Read the value and its explanation separately from the adjacent editing action and its instructions. */
+export async function detailValueParts(page: Page, label: string) {
+  const term = page.getByRole('main').locator('dt').filter({ hasText: new RegExp('^' + label + '$') });
+  const definition = term.locator('xpath=following-sibling::dd[1]');
+  return definition.evaluate(element => {
+    const content = element.cloneNode(true) as HTMLElement;
+    content.querySelector('[data-testid="instance-attribute-action"]')?.remove();
+    return [...content.querySelectorAll('*')]
+      .filter(part => part.childElementCount === 0)
+      .map(part => part.textContent?.trim())
+      .filter(Boolean);
+  });
+}
+
+/** Read each tag key and value from the same rendered row, excluding only the key cell's buttons. */
+export async function tagRows(page: Page) {
+  const table = tableOf(page.getByRole('main'), 'Tags');
+  const rowSelector = ui.findTable().findRows().toSelector();
+  const rows = page.locator(rowSelector).and(table.locator('tr'));
+  return rows.evaluateAll(elements => elements.map(row => {
+    const keyCell = row.children[0]!.cloneNode(true) as HTMLElement;
+    keyCell.querySelectorAll('button').forEach(button => button.remove());
+    return { Key: keyCell.textContent?.trim() ?? '', Value: row.children[1]!.textContent?.trim() ?? '' };
+  }));
 }

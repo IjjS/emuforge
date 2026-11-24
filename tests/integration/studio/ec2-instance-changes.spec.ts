@@ -7,7 +7,7 @@ import {
   expectCell, expectFlash, expectRows, field, findBy, INSTANCES_H1, INSTANCES_PATH, multiselectOf,
   open, PROTECTION_IS_ON, rowsOf, TABLE, tableOf, typeInMultiselect, valuePartsOf,
 } from './services/ec2/ec2';
-import { edit, instanceFixture, save, submit, ui, userDataField } from './services/ec2/instance-changes';
+import { edit, instanceFixture, save, submit, tagRows, ui, userDataField } from './services/ec2/instance-changes';
 
 test('studio.ec2-change-instance-type', async ({ ctx, page }) => {
   const f = await instanceFixture(ctx, 'edittype');
@@ -75,7 +75,6 @@ test('studio.ec2-change-instance-tags', async ({ ctx, page }) => {
   } });
   expect((await f.call('DeleteTags', { 'ResourceId.1': f.id, 'Tag.1.Key': 'Name' })).status).toBe(200);
   await f.open(page, f.id);
-  const tags = tableOf(page.getByRole('main'), 'Tags');
 
   for (const [action, name] of [
     ['Add tag', f.prefix + '-first'], ['Edit tag', f.prefix + '-second'], ['Delete tag', ''],
@@ -91,22 +90,9 @@ test('studio.ec2-change-instance-tags', async ({ ctx, page }) => {
     }
     await expect(heading(page, name || f.id)).toBeVisible();
     const expected = name ? { Project: 'retained', Name: name } : { Project: 'retained' };
-    const tagValues = async () => {
-      const visible = await rowsOf(tags);
-      const result: Record<string, string> = {};
-      for (const [index, row] of visible.entries()) {
-        const keyCell = page.locator(ui.findTable().findBodyCell(index + 1, 1).toSelector());
-        const cell = keyCell.and(tags.locator('td, th'));
-        const key = await cell.evaluate(element => {
-          const copy = element.cloneNode(true) as HTMLElement;
-          copy.querySelectorAll('button').forEach(button => button.remove());
-          return copy.textContent?.trim() ?? '';
-        });
-        result[key] = row.Value!;
-      }
-      return result;
-    };
-    await expect.poll(tagValues).toEqual(expected);
+    const expectedRows = Object.entries(expected).map(([Key, Value]) => ({ Key, Value }));
+    await expect.poll(async () => (await tagRows(page)).sort((a, b) => a.Key.localeCompare(b.Key)))
+      .toEqual(expectedRows.sort((a, b) => a.Key.localeCompare(b.Key)));
     expect((await f.direct())?.tags).toEqual(expected);
 
     await open(page, INSTANCES_PATH, INSTANCES_H1);
