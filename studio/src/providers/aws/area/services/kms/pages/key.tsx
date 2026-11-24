@@ -5,7 +5,7 @@ import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
-import Link from '@cloudscape-design/components/link';
+import Link, { type LinkProps } from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs from '@cloudscape-design/components/tabs';
@@ -104,6 +104,9 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const [retriedConnection, setRetriedConnection] = useState<ScreenPageProps['connection']['result']>();
   const [refreshing, setRefreshing] = useState(false);
   const refreshButton = useRef<ButtonProps.Ref>(null);
+  const returnLink = useRef<LinkProps.Ref>(null);
+  const panels = useRef<HTMLDivElement>(null);
+  const hasShownMetadata = useRef(false);
   const retryRequested = useRef(false);
   const retryHadFocus = useRef(false);
   const captureRetryFocus = useCallback((region: HTMLDivElement | null) => {
@@ -134,6 +137,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const [lastKey, setLastKey] = useState<typeof read.key>();
   if (read.key !== undefined && read.key !== lastKey) setLastKey(read.key);
   const metadata = read.key === undefined ? lastKey : read.key;
+  const keyMissing = metadata === null;
   const failure = !canRead || (offline !== undefined && refreshing) ? offline : read.failure;
   const statusNote = action.confirmingState
     ? failure === undefined || refreshing
@@ -148,8 +152,22 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
     : initialMetadataFailed
       ? 'Key metadata could not be loaded. Choose Retry to try again.'
       : '';
-  const showPanels = openedPanels && metadata !== null;
-  const writesEnabled = offline === undefined && metadata !== undefined && metadata !== null;
+  const showPanels = openedPanels && !keyMissing;
+  const writesEnabled = offline === undefined && metadata !== undefined && !keyMissing;
+  useLayoutEffect(() => {
+    if (metadata !== undefined && metadata !== null) hasShownMetadata.current = true;
+    if (!keyMissing || !hasShownMetadata.current) return;
+
+    // Portal cleanup may restore the opener in the now hidden settings.
+    const frame = requestAnimationFrame(() => {
+      const focused = document.activeElement;
+      if (focused !== document.body && !panels.current?.contains(focused)) return;
+      returnLink.current?.focus();
+      const target = document.activeElement;
+      if (target instanceof HTMLAnchorElement) revealBelowStickyBreadcrumbs(target);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [keyMissing, metadata]);
   useLayoutEffect(() => {
     if (failure !== undefined || read.key === undefined || !retryHadFocus.current) return;
     retryHadFocus.current = false;
@@ -227,7 +245,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
             <Box textAlign="center">
               <SpaceBetween size="xs">
                 <Box variant="strong">Key not found</Box>
-                <Link href={KEYS_PATH} onFollow={handleFollow}>
+                <Link ref={returnLink} href={KEYS_PATH} onFollow={handleFollow}>
                   View customer managed keys
                 </Link>
               </SpaceBetween>
@@ -244,7 +262,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
         )}
         {openedPanels && (
           // A missing-key read hides the panels. The visit still owns any pending writes.
-          <div key="key-settings" hidden={!showPanels}>
+          <div key="key-settings" ref={panels} hidden={!showPanels}>
             <Tabs
               ariaLabel="Key settings"
               tabs={[
@@ -261,13 +279,27 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
                   id: 'labels',
                   label: 'Labels',
                   contentRenderStrategy: 'eager',
-                  content: <Labels connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
+                  content: (
+                    <Labels
+                      connection={connection}
+                      keyId={keyId}
+                      writesEnabled={writesEnabled}
+                      keyMissing={keyMissing}
+                    />
+                  ),
                 },
                 {
                   id: 'access',
                   label: 'Access',
                   contentRenderStrategy: 'lazy',
-                  content: <Access connection={connection} keyId={keyId} writesEnabled={writesEnabled} />,
+                  content: (
+                    <Access
+                      connection={connection}
+                      keyId={keyId}
+                      writesEnabled={writesEnabled}
+                      keyMissing={keyMissing}
+                    />
+                  ),
                 },
                 {
                   id: 'rotation',

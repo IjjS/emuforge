@@ -1,28 +1,35 @@
 import {
   CancelKeyDeletionCommand,
+  CreateAliasCommand,
   DescribeKeyCommand,
   DisableKeyCommand,
   EnableKeyCommand,
+  GetKeyPolicyCommand,
+  ListKeyPoliciesCommand,
   ListKeysCommand,
   NotFoundException,
+  PutKeyPolicyCommand,
   RotateKeyOnDemandCommand,
   ScheduleKeyDeletionCommand,
   UpdateKeyDescriptionCommand,
   type KeyMetadata,
 } from '@aws-sdk/client-kms';
-import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useRef, useState } from 'react';
+import userEvent from '@testing-library/user-event';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
+import { AreaFlash, FlashAnnouncer } from '../../../../components/area-flash';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { creationDateText } from '../../../../components/format-date';
 import { PageFlashContext, type FlashResult } from '../../../../components/page-flash';
+import { useAreaFlash } from '../../../../components/use-area-flash';
 import { KeyPage } from '../../pages/key';
+import { keyPath, KEYS_PATH } from '../../paths';
 import { KMS_KEYS, useCustomerKeys } from '../../queries';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -93,7 +100,7 @@ function Page({
   target: AreaConnection;
   onFlash: ((result: FlashResult) => void) | undefined;
 }) {
-  const [flash, setFlash] = useState<FlashResult>();
+  const flash = useAreaFlash(keyPath(keyId), 0, true);
   const root = useRef<HTMLDivElement>(null);
   return (
     <AreaRootContext.Provider value={root}>
@@ -102,12 +109,15 @@ function Page({
           value={{
             show: (result) => {
               onFlash?.(result);
-              setFlash(result);
+              flash.pageFlash.show(result);
             },
-            handOver: () => undefined,
+            handOver: flash.pageFlash.handOver,
           }}
         >
-          <Flashbar items={flash ? [...flash] : []} />
+          <FlashAnnouncer announcement={flash.announcement} />
+          {flash.shown !== null && (
+            <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
+          )}
           {observeList && <ListObserver />}
           <main>
             <KeyPage connection={target} params={{ keyid: keyId }} />
@@ -231,6 +241,102 @@ describe('Key detail panel lifetime', () => {
   }
 
   const rotateButton = () => panelButton('Rotate now');
+
+  it.each([
+    {
+      tab: 'labels',
+      openerName: 'Create alias',
+      fieldName: 'Alias name',
+      draft: 'r9-alias',
+      submitName: 'Create alias',
+      commandType: CreateAliasCommand,
+      refusal: false,
+    },
+    {
+      tab: 'access',
+      openerName: 'Edit key policy',
+      fieldName: 'Policy document',
+      draft: '{"Version":"2012-10-17","Statement":[],"Id":"r9-policy"}',
+      submitName: 'Save policy',
+      commandType: PutKeyPolicyCommand,
+      refusal: true,
+    },
+  ])('releases the $openerName modal on a missing key and announces the late result once', async (scenario) => {
+    const readback = deferred<unknown>();
+    const write = deferred<unknown>();
+    const published = vi.fn<(result: FlashResult) => void>();
+    let reads = 0;
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof DescribeKeyCommand && ++reads > 1) return readback.promise;
+      if (command instanceof ListKeyPoliciesCommand) return { PolicyNames: ['default'] };
+      if (command instanceof GetKeyPolicyCommand) return { Policy: '{"Version":"2012-10-17","Statement":[]}' };
+      if (command instanceof scenario.commandType) return write.promise;
+      return undefined;
+    });
+    open(false, new QueryClient(), connection, published);
+    const user = userEvent.setup();
+    await expectStatus('Enabled');
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    fireEvent.click(refresh);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    selectTab(scenario.tab);
+    const opener = panelButton(scenario.openerName);
+    await waitFor(() => expect(usable(opener)).toBe(true));
+    opener.focus();
+    await user.keyboard('{Enter}');
+    const modal = await screen.findByRole('dialog', { name: scenario.openerName });
+    fireEvent.change(within(modal).getByRole('textbox', { name: scenario.fieldName }), {
+      target: { value: scenario.draft },
+    });
+    const submit = within(modal).getByRole('button', { name: scenario.submitName });
+    submit.focus();
+    await user.keyboard('{Enter}');
+    const writes = () => send.mock.calls.filter(([command]) => command instanceof scenario.commandType);
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    const options = writes()[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    if (!options) throw new Error('Missing panel request signal');
+
+    await act(async () => readback.reject(new NotFoundException({ message: 'Key not found', $metadata: {} })));
+    expect(await screen.findByText('Key not found')).toBeVisible();
+    const back = screen.getByRole('link', { name: 'View customer managed keys' });
+    expect(back).toHaveAttribute('href', KEYS_PATH);
+    await waitFor(() => expect(back).toHaveFocus());
+    expect(PAGE.findModal()).toBeNull();
+    await user.tab({ shift: true });
+    expect(refresh).toHaveFocus();
+    await user.tab();
+    expect(back).toHaveFocus();
+    expect(options.abortSignal.aborted).toBe(false);
+    fireEvent.click(opener);
+    expect(writes()).toHaveLength(1);
+    expect(published).not.toHaveBeenCalled();
+
+    if (scenario.refusal) {
+      await act(async () =>
+        write.reject({
+          name: 'AccessDeniedException',
+          message: 'Policy edit refused.',
+          $fault: 'client',
+          $metadata: { httpStatusCode: 400 },
+        }),
+      );
+      const notice = await screen.findByRole('alert');
+      expect(notice).toHaveTextContent('PutKeyPolicy was refused: Policy edit refused.');
+      expect(screen.getAllByRole('alert')).toEqual([notice]);
+    } else {
+      await act(async () => write.resolve({}));
+      const notice = await screen.findByText('Success Alias created.');
+      expect(notice.parentElement).toHaveAttribute('role', 'status');
+      expect(screen.getAllByText('Success Alias created.')).toEqual([notice]);
+    }
+    expect(published).toHaveBeenCalledTimes(1);
+    expect(options.abortSignal.aborted).toBe(false);
+    expect(back).toHaveFocus();
+    expect(PAGE.findModal()).toBeNull();
+    expect(opener).toBeDisabled();
+    fireEvent.click(opener);
+    expect(writes()).toHaveLength(1);
+  });
 
   async function holdRotationThroughMissingKey() {
     const write = deferred<unknown>();
