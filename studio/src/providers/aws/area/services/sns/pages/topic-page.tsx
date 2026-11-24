@@ -15,7 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -226,6 +226,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   const name = topicName(arn);
   const client = useQueryClient();
   const [announcement, announce] = useAnnouncer();
+  const [writeRejection, setWriteRejection] = useState<{ id: number; item: FlashItem }>();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const [searchParams] = useSearchParams();
@@ -344,6 +345,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
       if (signal.aborted || currentScope.current !== scope) {
         return { saved: false };
       }
+      setWriteRejection(undefined);
       flash.show([{ type: 'success', content: success }]);
       return { saved: true };
     } catch (error) {
@@ -353,7 +355,14 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
       const failure = failureOf(error, operation);
       const item = actionFailureItem(failure, action, endpoint);
       if (currentScope.current === scope) {
-        flash.show([item]);
+        if (item.type === 'error') {
+          // The page announces the result without moving focus into the Flashbar.
+          flash.show([{ ...item, announcedInDialog: true }]);
+          setWriteRejection((previous) => ({ id: (previous?.id ?? 0) + 1, item }));
+        } else {
+          setWriteRejection(undefined);
+          flash.show([item]);
+        }
       }
       if (failure.kind === 'not-implemented') {
         rememberUnavailable(operation);
@@ -568,6 +577,13 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
         }}
       />
       {announcement}
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {writeRejection !== undefined && (
+          <span key={writeRejection.id}>
+            Error. {writeRejection.item.header} {writeRejection.item.content}
+          </span>
+        )}
+      </div>
     </>
   );
 }
