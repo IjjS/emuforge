@@ -121,6 +121,11 @@ function required<T>(value: T | null | undefined, label: string): T {
 
 const ui = createWrapper();
 const table = () => ui.findTable();
+const listHeader = () => table()?.findHeaderSlot()?.findHeader();
+function readFeedback() {
+  const header = table()?.findHeaderSlot();
+  return header?.findStatusIndicator() ? header : table()?.findEmptySlot();
+}
 const actions = () => table()?.findHeaderSlot()?.findHeader()?.findActions()?.getElement();
 function button(name: string) {
   const pagination = table()?.findPagination();
@@ -132,7 +137,12 @@ function button(name: string) {
     case 'Page 1':
       return required(pagination?.findPageNumberByIndex(1), 'page 1').getElement();
     case 'Retry':
-      return within(required(table()?.findEmptySlot(), 'empty table slot').getElement()).getByRole('button', { name });
+      return required(
+        readFeedback()
+          ?.findAllButtons()
+          .find((item) => item.getElement().textContent === name),
+        name,
+      ).getElement();
     default:
       return within(required(actions(), 'list actions')).getByRole('button', { name });
   }
@@ -159,11 +169,15 @@ function selection(name: string) {
 
 const select = (name: string) => fireEvent.click(required(selection(name), `selection for ${name}`));
 
-function firstRowCell(column: string) {
+function rowCell(rowIndex: number, column: string) {
   const listing = required(table(), 'parameter table');
   const index = listing.findColumnHeaders().findIndex((header) => header.getElement().textContent?.trim() === column);
   if (index < 0) throw new Error(`Expected the ${column} column`);
-  return required(listing.findBodyCell(1, index + 1), `${column} cell`).getElement();
+  return required(listing.findBodyCell(rowIndex, index + 1), `${column} cell`).getElement();
+}
+
+function firstRowCell(column: string) {
+  return rowCell(1, column);
 }
 
 function expectFirstRowCell(column: string, value: string) {
@@ -203,12 +217,20 @@ async function deleteDialog(names: string[]) {
     await row(name);
     select(name);
   }
-  fireEvent.click(button('Delete'));
+  return openDeleteDialog(names.length);
+}
+
+async function openDeleteDialog(count: number) {
+  const deleteAction = listHeader()
+    ?.findActions()
+    ?.findAllButtons()
+    .find((item) => item.getElement().textContent?.trim() === 'Delete');
+  fireEvent.click(required(deleteAction, 'Delete button').getElement());
   return waitFor(() => {
     const dialog = ui.findModal();
     if (dialog === null) throw new Error('Expected the delete confirmation dialog');
     expect(dialog.findHeader().getElement()).toHaveTextContent(
-      names.length === 1 ? /^Delete parameter$/ : /^Delete parameters$/,
+      count === 1 ? /^Delete parameter$/ : /^Delete parameters$/,
     );
     return dialog;
   });
@@ -225,6 +247,57 @@ function confirm(dialog: DeleteDialog, text: string) {
   });
   fireEvent.click(dialogButton(dialog, 'Delete'));
 }
+
+function expectSettledRows(parameters: ReturnType<typeof parameter>[]) {
+  expect(table()?.findRows()).toHaveLength(parameters.length);
+  for (const [index, { Name, Type, Version, LastModifiedDate }] of parameters.entries()) {
+    const columns = {
+      Name,
+      Type,
+      Version: String(Version),
+      'Last modified': creationDateText(new Date(LastModifiedDate * 1000)),
+    };
+    for (const [column, value] of Object.entries(columns)) {
+      const cell = rowCell(index + 1, column);
+      expect(cell).toBeVisible();
+      expect(cell.textContent).toBe(value);
+    }
+  }
+}
+
+function rowCheckbox(name: string) {
+  const listing = required(table(), 'parameter table');
+  const index = listing.findRows().findIndex((_, index) => rowCell(index + 1, 'Name').textContent === name);
+  expect(index).toBeGreaterThanOrEqual(0);
+  const input = required(
+    listing.findRowSelectionArea(index + 1)?.find('input[type="checkbox"]'),
+    `selection for ${name}`,
+  ).getElement();
+  expect(input).toHaveAccessibleName(`Select ${name}`);
+  return input;
+}
+
+function expectDescribeRefusal() {
+  const feedback = required(readFeedback(), 'DescribeParameters refusal');
+  expect(feedback.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+  expect(feedback.getElement()).toHaveTextContent(/501 Not Implemented for DescribeParameters/);
+}
+
+async function refuseNext(parameters: ReturnType<typeof parameter>[], names: string[]) {
+  read
+    .mockReturnValueOnce(answer({ Parameters: parameters, NextToken: 'next' }))
+    .mockReturnValueOnce(answer({ __type: 'NotImplemented' }, 501));
+  const view = open();
+  await waitFor(() => expectSettledRows(parameters));
+  for (const name of names) fireEvent.click(rowCheckbox(name));
+  fireEvent.click(button('Next page'));
+  await waitFor(expectDescribeRefusal);
+  expectSettledRows(parameters);
+  for (const name of names) expect(rowCheckbox(name)).toBeChecked();
+  return view;
+}
+
+const refusedNextRequests = [{ MaxResults: 50 }, { MaxResults: 50, NextToken: 'next' }];
 
 describe('Parameter Store list', () => {
   it('L1 shows loading, then the empty title and guidance', async () => {
@@ -308,11 +381,7 @@ describe('Parameter Store list', () => {
     open();
     await row(FIRST);
     fireEvent.click(button('Next page'));
-    await waitFor(() => {
-      const empty = table()?.findEmptySlot();
-      expect(empty?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator');
-      expect(empty?.getElement()).toHaveTextContent(/501 Not Implemented for DescribeParameters/);
-    });
+    await waitFor(expectDescribeRefusal);
     for (const name of ['Refresh', 'Retry']) {
       expect(button(name)).toBeDisabled();
       fireEvent.click(button(name));
@@ -322,6 +391,58 @@ describe('Parameter Store list', () => {
       fireEvent.click(button(name));
     }
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes a selected parameter from the last confirmed page after Next returns 501', async () => {
+    const selected = parameter(FIRST, 2, 'SecureString');
+    const sibling = parameter(SECOND, 4, 'StringList', modified + 3600);
+    const { connect } = await refuseNext([selected, sibling], [FIRST]);
+    confirm(await openDeleteDialog(1), FIRST);
+    await waitFor(() => {
+      expectSettledRows([sibling]);
+      const result = ui.findFlashbar()?.findItemsByType('success')[0];
+      expect(result?.findContent()?.getElement()).toHaveTextContent(`Parameter ${FIRST} deleted.`);
+    });
+    expectDescribeRefusal();
+    expect(remove.mock.calls).toEqual([[{ Name: FIRST }, 'DeleteParameter']]);
+    expect(read.mock.calls.map(([input]) => input)).toEqual(refusedNextRequests);
+
+    const otherPage = deferred();
+    read.mockReturnValueOnce(otherPage.promise);
+    connect({ ...connected, target: 'other', checkedAt: 2 });
+    await waitFor(() => {
+      expect(table()?.findLoadingText()?.getElement()).toBeVisible();
+      expect(table()?.findRows()).toHaveLength(0);
+    });
+    const other = parameter(FIRST, 7, 'String', modified + 7200);
+    otherPage.resolve(answer({ Parameters: [other] }));
+    await waitFor(() => expectSettledRows([other]));
+    expect(rowCheckbox(FIRST)).not.toBeChecked();
+    expect(button('Refresh')).toBeEnabled();
+    expect(read.mock.calls.map(([input]) => input)).toEqual([...refusedNextRequests, { MaxResults: 50 }]);
+  });
+
+  it('reconciles only confirmed bulk deletions on the last confirmed page after Next returns 501', async () => {
+    const deleted = parameter(FIRST, 2, 'SecureString');
+    const rejected = parameter(SECOND, 3, 'StringList', modified + 3600);
+    const unconfirmed = parameter('/app/unconfirmed', 4, 'String', modified + 7200);
+    const sibling = parameter('/app/sibling', 5, 'SecureString', modified + 10800);
+    const names = [deleted.Name, rejected.Name, unconfirmed.Name];
+    remove.mockReturnValueOnce(answer({ DeletedParameters: [deleted.Name], InvalidParameters: [rejected.Name] }));
+    await refuseNext([deleted, rejected, unconfirmed, sibling], [deleted.Name, rejected.Name]);
+    expect(rowCheckbox(unconfirmed.Name)).not.toBeChecked();
+    fireEvent.click(rowCheckbox(unconfirmed.Name));
+    expect(rowCheckbox(unconfirmed.Name)).toBeChecked();
+    confirm(await openDeleteDialog(names.length), 'delete');
+    await waitFor(() => {
+      expectSettledRows([rejected, unconfirmed, sibling]);
+      expectResultNames('Deleted parameters', [deleted.Name]);
+      expectResultNames('Rejected parameters', [rejected.Name]);
+      expectResultNames('Deletion not confirmed', [unconfirmed.Name]);
+    });
+    expectDescribeRefusal();
+    expect(remove.mock.calls).toEqual([[{ Names: names }, 'DeleteParameters']]);
+    expect(read.mock.calls.map(([input]) => input)).toEqual(refusedNextRequests);
   });
 
   it('L6 lists the selected names and requires exact confirmation before sending a delete', async () => {
