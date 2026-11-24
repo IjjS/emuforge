@@ -18,6 +18,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
+import type { AreaConnection } from '../../../../components/emulator-line';
 import { creationDateText } from '../../../../components/format-date';
 import { PageFlashContext, type FlashResult } from '../../../../components/page-flash';
 import { KeyPage } from '../../pages/key';
@@ -80,7 +81,7 @@ function ListObserver() {
   );
 }
 
-function Page({ observeList, keyId }: { observeList: boolean; keyId: string }) {
+function Page({ observeList, keyId, target }: { observeList: boolean; keyId: string; target: AreaConnection }) {
   const [flash, setFlash] = useState<FlashResult>();
   const root = useRef<HTMLDivElement>(null);
   return (
@@ -89,7 +90,7 @@ function Page({ observeList, keyId }: { observeList: boolean; keyId: string }) {
         <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
           <Flashbar items={flash ? [...flash] : []} />
           {observeList && <ListObserver />}
-          <KeyPage connection={connection} params={{ keyid: keyId }} />
+          <KeyPage connection={target} params={{ keyid: keyId }} />
         </PageFlashContext.Provider>
       </div>
     </AreaRootContext.Provider>
@@ -98,15 +99,15 @@ function Page({ observeList, keyId }: { observeList: boolean; keyId: string }) {
 
 function open(observeList = false) {
   const client = new QueryClient();
-  const page = (keyId: string) => (
+  const page = (keyId: string, target: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Page observeList={observeList} keyId={keyId} />
+        <Page observeList={observeList} keyId={keyId} target={target} />
       </MemoryRouter>
     </QueryClientProvider>
   );
-  const view = render(page(KEY_ID));
-  return (keyId: string) => view.rerender(page(keyId));
+  const view = render(page(KEY_ID, connection));
+  return (keyId: string, target: AreaConnection = connection) => view.rerender(page(keyId, target));
 }
 
 function usable(button: HTMLElement) {
@@ -177,10 +178,12 @@ function sent<T>(type: new (...args: never[]) => T) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -201,6 +204,49 @@ describe('Key detail panel lifetime', () => {
     if (!panel) throw new Error('Missing active key panel');
     return within(panel.getElement()).getByRole('button', { name: 'Rotate now' });
   }
+
+  it('keeps a rotation started before the first metadata read fails', async () => {
+    const metadata = deferred<unknown>();
+    const write = deferred<unknown>();
+    let firstRead = true;
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof DescribeKeyCommand && firstRead) {
+        firstRead = false;
+        return metadata.promise;
+      }
+      if (command instanceof RotateKeyOnDemandCommand) return write.promise;
+      return undefined;
+    });
+    open();
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(1));
+    expect(field('Status')).toBeUndefined();
+    selectTab('rotation');
+    fireEvent.click(rotateButton());
+    await waitFor(() => expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1));
+    const options = sent(RotateKeyOnDemandCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+
+    await act(async () => {
+      metadata.reject({
+        name: 'DependencyTimeoutException',
+        message: 'Initial DescribeKey failed.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 500 },
+      });
+    });
+    expect(await screen.findByText(/Initial DescribeKey failed/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    expect(rotateButton()).toHaveAttribute('aria-disabled', 'true');
+    expect(options?.abortSignal.aborted).toBe(false);
+
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
+    expect(usable(rotateButton())).toBe(true);
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/Initial DescribeKey failed/)).toBeNull());
+    selectTab('details');
+    await expectStatus('Enabled');
+  });
 
   it('keeps a pending rotation and its result through tab changes and a failed metadata refresh', async () => {
     const write = deferred<unknown>();
@@ -335,6 +381,51 @@ describe('Key detail panel lifetime', () => {
 });
 
 describe('Key lifecycle', () => {
+  it('keeps a held write on the same offline target and gates new writes until reconnect', async () => {
+    const write = deferred<unknown>();
+    const emulator = emulate(key('Disabled'), (command) => {
+      if (command instanceof EnableKeyCommand) return write.promise;
+      return undefined;
+    });
+    const showTarget = open();
+    await expectActions(['Edit description', 'Enable key', 'Schedule key deletion']);
+    action('Enable key');
+    await waitFor(() => expect(sent(EnableKeyCommand)).toHaveLength(1));
+    const options = sent(EnableKeyCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+
+    showTarget(KEY_ID, {
+      ...connection,
+      result: {
+        kind: 'emulator-unreachable',
+        reason: 'timeout',
+        message: '',
+        checkedAt: 1,
+        emulator: connection.result.emulator,
+      },
+    });
+    const recovery = PAGE.findContentLayout()?.findContent().findContainer()?.findContent().getElement();
+    if (!recovery) throw new Error('Missing metadata recovery');
+    expect(recovery).toHaveTextContent(`Not answering at ${connection.result.emulator.endpoint}`);
+    expect(within(recovery).getByRole('button', { name: 'Retry' })).toBeVisible();
+    expect(field('Status')).toHaveTextContent('Disabled');
+    await expectActions([]);
+    expect(options?.abortSignal.aborted).toBe(false);
+
+    emulator.metadata = key('Enabled');
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(flashText()).toContain('Key enabled.'));
+    await expectActions([]);
+    action('Enable key');
+    expect(sent(EnableKeyCommand)).toHaveLength(1);
+
+    showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 2 } });
+    await expectStatus('Enabled');
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(flashText()).toContain('Key enabled.');
+    expect(options?.abortSignal.aborted).toBe(false);
+  });
+
   it('offers only the actions of an enabled key, then those of the disabled key KMS returns', async () => {
     const emulator = emulate(key('Enabled'));
     open();

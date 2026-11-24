@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
-import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { ReadFailure } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -27,7 +27,7 @@ import { Lifecycle } from '../components/lifecycle/lifecycle';
 import { useLifecycleAction, type LifecycleAction } from '../components/lifecycle/use-lifecycle-action';
 import { Rotation } from '../components/rotation/rotation';
 import { KEYS_PATH } from '../paths';
-import { connectionFailure, KMS_KEYS, useKmsKey } from '../queries';
+import { connectionFailure, KMS_KEYS, readFailureState, useKmsKey } from '../queries';
 
 type ReadKey = KeyMetadata & { KeyId: string };
 
@@ -77,7 +77,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const handleFollow = useFollow();
   const queryClient = useQueryClient();
   const action = useLifecycleAction(connection, keyId);
-  const [attemptedRetry, setAttemptedRetry] = useState(false);
+  const [retriedConnection, setRetriedConnection] = useState<ScreenPageProps['connection']['result']>();
   const [refreshing, setRefreshing] = useState(false);
   const refreshButton = useRef<ButtonProps.Ref>(null);
   const retryRequested = useRef(false);
@@ -94,14 +94,19 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
     };
   }, []);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
-  const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
+  if (retriedConnection !== undefined && retriedConnection !== connection.result) setRetriedConnection(undefined);
+  const attemptedRetry = retriedConnection !== undefined && retriedConnection === connection.result;
+  const canRead = offline === undefined || attemptedRetry;
+  const read = useKmsKey(connection.engineOrigin, keyId, canRead);
+  const [openedPanels, setOpenedPanels] = useState(canRead);
+  if (canRead && !openedPanels) setOpenedPanels(true);
   // A failed reread reports its error above the panels while the current visit keeps its last metadata.
   const [lastKey, setLastKey] = useState<typeof read.key>();
   if (read.key !== undefined && read.key !== lastKey) setLastKey(read.key);
   const metadata = read.key === undefined ? lastKey : read.key;
-  const failure = read.failure ?? (attemptedRetry ? undefined : offline);
-  const retainedMetadataFailed = read.failure !== undefined && metadata !== undefined && metadata !== null;
-  const showPanels = metadata !== null && (failure === undefined || metadata !== undefined || attemptedRetry);
+  const failure = !canRead || (offline !== undefined && refreshing) ? offline : read.failure;
+  const retainedMetadataFailed = failure !== undefined && metadata !== undefined && metadata !== null;
+  const showPanels = openedPanels && metadata !== null;
   useLayoutEffect(() => {
     if (failure !== undefined || read.key === undefined || !retryHadFocus.current) return;
     retryHadFocus.current = false;
@@ -110,7 +115,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
 
   const handleRefresh = () => {
     if (refreshing) return;
-    setAttemptedRetry(true);
+    if (offline !== undefined) setRetriedConnection(connection.result);
     setRefreshing(true);
     const endpoint = connection.engineOrigin;
     // Keep the previous metadata mounted while this visit's query reads again.
@@ -232,8 +237,5 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
 export function KeyPage({ connection, params }: ScreenPageProps) {
   useShowsResources('keys');
   const keyId = params.keyid ?? '';
-  const connected = connection.result === undefined || connection.result.kind === 'connected';
-  return (
-    <KeyVisit key={JSON.stringify([keyId, connection.engineOrigin, connected])} connection={connection} keyId={keyId} />
-  );
+  return <KeyVisit key={JSON.stringify([keyId, connection.engineOrigin])} connection={connection} keyId={keyId} />;
 }
