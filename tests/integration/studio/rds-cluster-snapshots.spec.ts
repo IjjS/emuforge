@@ -5,8 +5,8 @@ import {
   clusterFixture, ownSnapshot, seedSnapshot, SNAPSHOT_ID, SNAPSHOTS, snapshotDirect, xmlField,
 } from './services/rds/cluster-actions';
 import {
-  addInstancePath, button, cancelDialog, clusterDirect, clusterPath, CLUSTERS_PATH, confirmWith, dialogOf,
-  emptyOf, expectCell, expectFlash, expectNoRow, expectValueIs, field, open, rds, reportsNoCluster,
+  addInstancePath, button, cancelDialog, clusterDirect, clusterPath, CLUSTERS_PATH, confirmWith, countActions, dialogOf,
+  emptyOf, expectCell, expectFlash, expectNoRow, expectValueIs, field, open, parseXml, rds, reportsNoCluster,
   rowOf, selectRow, tableOf,
 } from './services/rds/rds';
 
@@ -20,12 +20,24 @@ test('studio.rds-take-a-cluster-snapshot', async ({ ctx, page }) => {
   await open(page, clusterPath(cluster.id), cluster.id);
   const main = page.getByRole('main');
   const dialog = dialogOf(page);
-  for (const id of [existing, created]) {
+  const takeSnapshot = async (id: string) => {
     await button(main, 'Take snapshot').click(ACTION);
     await field(dialog, SNAPSHOT_ID).getByRole('textbox').fill(id, ACTION);
     await button(dialog, 'Take snapshot').click(ACTION);
-    if (id === existing) await expectFlash(page, 'error', existing, 'already exists');
-  }
+  };
+  const [refused] = await Promise.all([
+    page.waitForResponse(response => {
+      const params = new URLSearchParams(response.request().postData() ?? '');
+      return params.get('Action') === 'CreateDBClusterSnapshot' && params.get('DBClusterSnapshotIdentifier') === existing;
+    }),
+    takeSnapshot(existing),
+  ]);
+  const error = parseXml(await refused.text());
+  expect(xmlField(error, 'Error', 'Code')?.text).toBe('DBClusterSnapshotAlreadyExistsFault');
+  const message = xmlField(error, 'Error', 'Message')?.text;
+  if (!message) throw new Error('The duplicate snapshot response has no error message');
+  await expectFlash(page, 'error', existing, message);
+  await takeSnapshot(created);
   await expect(page).toHaveURL(addressOf(SNAPSHOTS));
   await expectFlash(page, 'success', 'Creating DB cluster snapshot ' + created);
   const table = tableOf(main, 'DB cluster snapshots');
@@ -72,18 +84,25 @@ test('studio.rds-delete-a-cluster-snapshot', async ({ ctx, page }) => {
   const { emulatorPort: port } = await startStack(ctx);
   const { prefix, cluster } = await clusterFixture(ctx, port, 'rdsdelete');
   const id = prefix + '-snap';
+  const retained = prefix + '-keep';
+  await seedSnapshot(ctx, port, cluster.id, retained);
   await seedSnapshot(ctx, port, cluster.id, id);
   await open(page, SNAPSHOTS, 'DB cluster snapshots');
   const main = page.getByRole('main');
   const table = tableOf(main, 'DB cluster snapshots');
+  const deletes = countActions(page, 'DeleteDBClusterSnapshot');
   await selectRow(table, SNAPSHOT_ID, id);
   await button(main, 'Delete').click(ACTION);
   await cancelDialog(page);
+  expect(deletes.count()).toBe(0);
+  expect(await snapshotDirect(ctx, port, id)).toMatchObject({ id, status: 'available' });
   await rowOf(table, SNAPSHOT_ID, id);
   await button(main, 'Delete').click(ACTION);
   await confirmWith(page, 'delete', 'Delete');
   await expectFlash(page, 'success', 'DB cluster snapshot ' + id + ' deleted');
+  await rowOf(table, SNAPSHOT_ID, retained);
   await expectNoRow(table, SNAPSHOT_ID, id);
+  await rowOf(table, SNAPSHOT_ID, retained);
   expect(await snapshotDirect(ctx, port, id)).toBeNull();
 });
 
