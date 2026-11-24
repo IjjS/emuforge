@@ -37,59 +37,6 @@ function readJson(text: string): string | undefined {
   return undefined;
 }
 
-function UserDataFields({
-  current,
-  pending,
-  children,
-}: {
-  current: string;
-  pending: boolean;
-  children: (field: ReactNode, text?: string) => ReactNode;
-}) {
-  const [json, setJson] = useState(() => current.startsWith('\uFEFF') || current.includes('\r'));
-  const [draft, setDraft] = useState(() => (json ? asJson(current) : current));
-  const text = json ? readJson(draft) : draft;
-  const error =
-    text === undefined
-      ? 'Enter a valid JSON string with valid Unicode characters.'
-      : validUnicode(text)
-        ? undefined
-        : 'Enter valid Unicode text.';
-  return children(
-    <SpaceBetween size="s">
-      <FormField
-        label="User data"
-        description={
-          json ? (
-            <>
-              Use a JSON string to preserve line endings and leading BOM. Enter {'\\r\\n'} for CRLF, {'\\r'} for CR,{' '}
-              {'\\n'} for LF, and {'\\uFEFF'} for BOM. Clear the field to remove user data.
-            </>
-          ) : (
-            'Clear the field to remove user data.'
-          )
-        }
-        errorText={error}
-      >
-        <Textarea rows={8} value={draft} disabled={pending} onChange={({ detail }) => setDraft(detail.value)} />
-      </FormField>
-      {!json && (
-        <Button
-          variant="inline-link"
-          disabled={pending}
-          onClick={() => {
-            setDraft(asJson(draft));
-            setJson(true);
-          }}
-        >
-          Edit as JSON string
-        </Button>
-      )}
-    </SpaceBetween>,
-    error === undefined ? text : undefined,
-  );
-}
-
 function UserDataDialog({
   instance,
   connection,
@@ -108,10 +55,66 @@ function UserDataDialog({
     if (failure?.kind === 'not-implemented') onUnsupported(failure);
   }, [failure, onUnsupported]);
 
+  const [draft, setDraft] = useState<{ value: string; json: boolean }>();
+  let field: ReactNode;
+  let text: string | undefined;
+  if (failure !== undefined) {
+    field = <ReadFailure state={readFailureState(failure, connection, 'user data')} onRetry={refresh} />;
+  } else if (value === undefined) {
+    field = <StatusIndicator type="loading">Loading user data</StatusIndicator>;
+  } else if (value.kind === 'binary') {
+    field = <StatusIndicator type="warning">The existing user data cannot be edited as UTF-8 text.</StatusIndicator>;
+  } else {
+    const json = draft?.json ?? (value.text.startsWith('\uFEFF') || value.text.includes('\r'));
+    const input = draft?.value ?? (json ? asJson(value.text) : value.text);
+    const decoded = json ? readJson(input) : input;
+    const error =
+      decoded === undefined
+        ? 'Enter a valid JSON string with valid Unicode characters.'
+        : validUnicode(decoded)
+          ? undefined
+          : 'Enter valid Unicode text.';
+    text = error === undefined ? decoded : undefined;
+    field = (
+      <SpaceBetween size="s">
+        <FormField
+          label="User data"
+          description={
+            json ? (
+              <>
+                Use a JSON string to preserve line endings and leading BOM. Enter {'\\r\\n'} for CRLF, {'\\r'} for CR,{' '}
+                {'\\n'} for LF, and {'\\uFEFF'} for BOM. Clear the field to remove user data.
+              </>
+            ) : (
+              'Clear the field to remove user data.'
+            )
+          }
+          errorText={error}
+        >
+          <Textarea
+            rows={8}
+            value={input}
+            disabled={pending}
+            onChange={({ detail }) => setDraft({ value: detail.value, json })}
+          />
+        </FormField>
+        {!json && (
+          <Button
+            variant="inline-link"
+            disabled={pending}
+            onClick={() => setDraft({ value: asJson(input), json: true })}
+          >
+            Edit as JSON string
+          </Button>
+        )}
+      </SpaceBetween>
+    );
+  }
+
   const handleClose = () => {
     if (canDismiss()) onClose();
   };
-  const dialog = (field: ReactNode, text?: string) => (
+  return (
     <AreaModal
       visible
       header={LABEL}
@@ -150,22 +153,6 @@ function UserDataDialog({
     >
       {field}
     </AreaModal>
-  );
-  if (failure !== undefined) {
-    return dialog(<ReadFailure state={readFailureState(failure, connection, 'user data')} onRetry={refresh} />);
-  }
-  if (value === undefined) {
-    return dialog(<StatusIndicator type="loading">Loading user data</StatusIndicator>);
-  }
-  if (value.kind === 'binary') {
-    return dialog(
-      <StatusIndicator type="warning">The existing user data cannot be edited as UTF-8 text.</StatusIndicator>,
-    );
-  }
-  return (
-    <UserDataFields current={value.text} pending={pending}>
-      {dialog}
-    </UserDataFields>
   );
 }
 

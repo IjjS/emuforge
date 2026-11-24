@@ -14,7 +14,7 @@ import AwsArea from '../../../index';
 import * as api from '../api';
 import { modifyInstanceAttribute } from '../instance-attribute-api';
 import { changeInstanceContent } from '../instance-content-api';
-import { useInstanceListing } from '../queries';
+import { EC2_KEYS, useInstanceListing } from '../queries';
 import { getVolume } from '../volume-api';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
@@ -120,11 +120,15 @@ afterEach(() => {
 function ListingObserver() {
   const listing = useInstanceListing(ENGINE, { state: '', name: '' });
   return (
-    <output aria-label="Observed instance list">{listing.items.map(({ tags }) => nameOf(tags)).join(', ')}</output>
+    <output aria-label="Observed instance list">{listing.items?.map(({ tags }) => nameOf(tags)).join(', ')}</output>
   );
 }
 
-function open(path: string, observeList = false) {
+function open(
+  path: string,
+  observeList = false,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -132,7 +136,6 @@ function open(path: string, observeList = false) {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -932,49 +935,49 @@ describe('instance tags and user data', () => {
     },
   );
 
-  it.each([true, false])(
-    'preserves the refusal after an in-flight detail read finishes (found=%s)',
-    async (found) => {
-      const initial = full({ state: 'pending' });
-      holding(initial);
-      vi.mocked(changeInstanceContent).mockRejectedValueOnce(
-        new RequestError(
-          requestFailure('CreateTags', {
-            Code: 'AccessDeniedException',
-            message: 'Editing the Name tag was refused by the service.',
-            $fault: 'client',
-            $metadata: { httpStatusCode: 403 },
-          }),
-        ),
-      );
-      let finish: (read: api.InstanceRead) => void = () => undefined;
-      const reread = new Promise<api.InstanceRead>((resolve) => {
-        finish = resolve;
-      });
-      vi.mocked(api.getInstance).mockResolvedValueOnce({ found: true, instance: initial }).mockReturnValueOnce(reread);
-      open(pathOf(initial.id));
-      await loaded();
-      await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2), { timeout: 4500 });
-      await editName('denied');
-      const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
-      expect(await screen.findByText(message, { exact: false })).toBeVisible();
-      await act(async () => {
-        finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
-        await reread;
-      });
-      if (found) {
-        await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
-        expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'web-1']);
-      } else {
-        expect(await screen.findByText('Instance not found')).toBeVisible();
-        expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
-        expect(screen.queryByRole('dialog')).toBeNull();
-      }
-      expect(screen.getByText(message, { exact: false })).toBeVisible();
-      expect(screen.queryByText('Tag updated.')).toBeNull();
-    },
-    8000,
-  );
+  it.each([true, false])('preserves the refusal after an in-flight detail read finishes (found=%s)', async (found) => {
+    const initial = full();
+    const client = new QueryClient();
+    holding(initial);
+    vi.mocked(changeInstanceContent).mockRejectedValueOnce(
+      new RequestError(
+        requestFailure('CreateTags', {
+          Code: 'AccessDeniedException',
+          message: 'Editing the Name tag was refused by the service.',
+          $fault: 'client',
+          $metadata: { httpStatusCode: 403 },
+        }),
+      ),
+    );
+    let finish: (read: api.InstanceRead) => void = () => undefined;
+    const reread = new Promise<api.InstanceRead>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(api.getInstance).mockResolvedValueOnce({ found: true, instance: initial }).mockReturnValueOnce(reread);
+    open(pathOf(initial.id), false, client);
+    await loaded();
+    act(() => {
+      void client.invalidateQueries({ queryKey: EC2_KEYS.instance(initial.id) });
+    });
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    await editName('denied');
+    const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
+    expect(await screen.findByText(message, { exact: false })).toBeVisible();
+    await act(async () => {
+      finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
+      await reread;
+    });
+    if (found) {
+      await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+      expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'web-1']);
+    } else {
+      expect(await screen.findByText('Instance not found')).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+    expect(screen.getByText(message, { exact: false })).toBeVisible();
+    expect(screen.queryByText('Tag updated.')).toBeNull();
+  });
 
   it('keeps the success result after the refreshed detail disappears before the list read finishes', async () => {
     const initial = full();

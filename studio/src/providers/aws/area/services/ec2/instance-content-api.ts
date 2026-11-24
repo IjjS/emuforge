@@ -88,7 +88,7 @@ export async function changeInstanceContent(
           client.send(
             new ModifyInstanceAttributeCommand({
               InstanceId: id,
-              UserData: { Value: new TextEncoder().encode(change.text) },
+              UserData: { Value: Uint8Array.from(new TextEncoder().encode(change.text)) },
             }),
             { abortSignal },
           ),
