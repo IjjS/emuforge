@@ -4,10 +4,11 @@ import type {
   ListTagsForResourceCommandInput,
   RemoveTagsFromResourceCommandInput,
 } from '@aws-sdk/client-ssm';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
 import AwsArea from '../../../../index';
 import { parameterPath } from '../../paths';
@@ -103,16 +104,69 @@ function openDetail() {
   return operations;
 }
 
-async function expand(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+const page = createWrapper(document.body);
+const section = () =>
+  page.findAllExpandableSections().find((candidate) => candidate.findHeaderText()?.getElement().textContent === 'Tags');
+const sectionContent = () => section()?.findContent();
+const metadataContent = () =>
+  page
+    .findAllContainers()
+    .find(
+      (container) =>
+        container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Parameter details',
+    )
+    ?.findContent();
+const description = () =>
+  metadataContent()
+    ?.findKeyValuePairs()
+    ?.findItems()
+    .find((item) => item.findLabel()?.getElement().textContent === 'Description')
+    ?.findValue()
+    ?.getElement();
+
+const expectDescription = (text: string) =>
+  waitFor(() => {
+    const value = description();
+    expect(value).toBeVisible();
+    expect(value?.textContent).toBe(text);
+  });
+
+async function expand() {
+  const toggle = await waitFor(() => {
+    const button = section()?.findExpandButton().getElement();
+    assert(button);
+    expect(button).toHaveAccessibleName('Tags');
+    return button;
+  });
+  fireEvent.click(toggle);
 }
 
-function button(name: string, dialog?: HTMLElement) {
-  return (dialog ? within(dialog) : screen).getByRole('button', { name });
+type Dialog = NonNullable<ReturnType<typeof page.findModal>>;
+
+function button(name: string, dialog?: Dialog) {
+  if (!dialog) return screen.getByRole('button', { name });
+  const footer = dialog.findFooter();
+  assert(footer);
+  return within(footer.getElement()).getByRole('button', { name });
 }
 
-function change(dialog: HTMLElement, name: string, value: string) {
-  fireEvent.change(within(dialog).getByRole('textbox', { name }), { target: { value } });
+function flash(message: string) {
+  return page
+    .findFlashbar()
+    ?.findItemsByType('success')
+    .map((item) => item.findContent()?.getElement())
+    .find((content) => content?.textContent === message);
+}
+
+function expectUnsupported(operation: string) {
+  return waitFor(() => {
+    const message = `The emulator answered 501 Not Implemented for ${operation}.`;
+    const alert = sectionContent()
+      ?.findAllAlerts()
+      .find((item) => item.findContent().getElement().textContent === message);
+    expect(alert?.findContent().getElement()).toBeVisible();
+    expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+  });
 }
 
 const KEY = 'stage';
@@ -127,20 +181,59 @@ const removed = `Tag ${KEY} removed from ${NAME}.`;
 
 async function tagDialog(name: string, title = name) {
   fireEvent.click(button(name));
-  return screen.findByRole('dialog', { name: title });
+  return waitFor(() => {
+    const dialog = page.findModal();
+    assert(dialog);
+    expect(dialog.findHeader().getElement().textContent).toBe(title);
+    expect(dialog.getElement()).toBeVisible();
+    expect(dialog.getElement()).toHaveAccessibleName(title);
+    return dialog;
+  });
+}
+
+function tagTable() {
+  return sectionContent()?.findTable();
+}
+
+function tagEmpty() {
+  const empty = tagTable()?.findEmptySlot();
+  assert(empty);
+  return within(empty.getElement());
 }
 
 function expectTag(value: string) {
-  const table = within(screen.getByRole('table', { name: 'Parameter tags' }));
-  expect(table.getAllByRole('rowheader', { name: KEY })).toHaveLength(1);
-  expect(table.getByRole('cell', { name: value })).toBeVisible();
+  const table = tagTable();
+  assert(table);
+  expect(table.findRows()).toHaveLength(1);
+  const keyCell = table.findBodyCell(1, 1)?.getElement();
+  const valueCell = table.findBodyCell(1, 2)?.getElement();
+  expect(keyCell).toBeVisible();
+  expect(keyCell?.textContent).toBe(KEY);
+  expect(valueCell).toBeVisible();
+  expect(valueCell?.textContent).toBe(value);
+}
+
+function tagInput(dialog: Dialog, name: string) {
+  const field = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((candidate) => candidate.findLabel()?.getElement().textContent === name);
+  assert(field);
+  const input = createWrapper(field.getElement()).findInput()?.findNativeInput().getElement();
+  assert(input);
+  expect(input).toHaveAccessibleName(name);
+  return input;
+}
+
+function change(dialog: Dialog, name: string, value: string) {
+  fireEvent.change(tagInput(dialog, name), { target: { value } });
 }
 
 describe('Parameter tags', () => {
   it('T1 adds and replaces a key across both refresh response orders', async () => {
     const ops = openDetail();
-    await expand('Tags');
-    expect(await screen.findByText('No tags')).toBeVisible();
+    await expand();
+    await waitFor(() => expect(tagEmpty().getByText('No tags')).toBeVisible());
     expect(ops.ListTagsForResource).toHaveBeenCalledWith(TAG_RESOURCE);
 
     const firstMetadata = deferredResponse();
@@ -150,26 +243,25 @@ describe('Parameter tags', () => {
     change(add, 'Key', KEY);
     change(add, 'Value', TAG.Value);
     fireEvent.click(button('Add tag', add));
-    await screen.findByRole('cell', { name: TAG.Value });
+    await waitFor(() => expectTag(TAG.Value));
     expect(ops.DescribeParameters).toHaveBeenCalledTimes(2);
     await firstMetadata.finish(metadata('Advanced', 'Metadata after add'));
-    await screen.findByText('Metadata after add');
-    expect(screen.getByText(saved)).toBeVisible();
+    await expectDescription('Metadata after add');
+    expect(flash(saved)).toBeVisible();
     expectTag(TAG.Value);
 
     const secondTags = deferredResponse();
     ops.ListTagsForResource.mockReturnValueOnce(secondTags.response);
     ops.DescribeParameters.mockImplementationOnce(() => metadata('Advanced', 'Metadata after replace'));
     const edit = await tagDialog(editName, 'Edit tag');
-    expect(within(edit).getByRole('textbox', { name: 'Key' })).toHaveValue(KEY);
+    expect(tagInput(edit, 'Key')).toHaveValue(KEY);
     change(edit, 'Value', REPLACEMENT.Value);
     fireEvent.click(button('Save tag', edit));
-    await screen.findByText('Metadata after replace');
+    await expectDescription('Metadata after replace');
     expectTag(TAG.Value);
     await secondTags.finish(list(REPLACEMENT));
-    expect(await screen.findByRole('cell', { name: REPLACEMENT.Value })).toBeVisible();
-    expectTag(REPLACEMENT.Value);
-    expect(screen.getByText(updated)).toBeVisible();
+    await waitFor(() => expectTag(REPLACEMENT.Value));
+    expect(flash(updated)).toBeVisible();
     expect(ops.AddTagsToResource.mock.calls).toEqual([
       [{ ...TAG_RESOURCE, Tags: [TAG] }],
       [{ ...TAG_RESOURCE, Tags: [REPLACEMENT] }],
@@ -179,8 +271,8 @@ describe('Parameter tags', () => {
   it('T2 cancels removal and keeps the confirmed result across metadata refresh', async () => {
     const ops = openDetail();
     ops.ListTagsForResource.mockImplementationOnce(() => list(TAG));
-    await expand('Tags');
-    await screen.findByRole('rowheader', { name: KEY });
+    await expand();
+    await waitFor(() => expectTag(TAG.Value));
 
     const canceled = await tagDialog(removeName, 'Remove tag');
     fireEvent.click(button('Cancel', canceled));
@@ -191,44 +283,48 @@ describe('Parameter tags', () => {
     ops.DescribeParameters.mockReturnValueOnce(delayed.response);
     const confirm = await tagDialog(removeName, 'Remove tag');
     fireEvent.click(button('Remove tag', confirm));
-    expect(await screen.findByText('No tags')).toBeVisible();
+    await waitFor(() => expect(tagEmpty().getByText('No tags')).toBeVisible());
     expect(ops.RemoveTagsFromResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, TagKeys: [KEY] });
     await delayed.finish(metadata('Advanced', 'Metadata after remove'));
-    await screen.findByText('Metadata after remove');
-    expect(screen.getByText('No tags')).toBeVisible();
-    expect(screen.queryByRole('rowheader', { name: KEY })).toBeNull();
-    expect(screen.getByText(removed)).toBeVisible();
+    await expectDescription('Metadata after remove');
+    expect(tagEmpty().getByText('No tags')).toBeVisible();
+    expect(tagTable()?.findRows()).toHaveLength(0);
+    expect(flash(removed)).toBeVisible();
   });
 
   it('T3 retries denied reads and writes, retains input, and disables an unsupported read', async () => {
     const ops = openDetail();
     ops.ListTagsForResource.mockImplementationOnce(() => denied('Tag read denied'));
-    await expand('Tags');
-    expect(await screen.findByText(/Tag read denied/)).toBeVisible();
-    expect(screen.queryByText('No tags')).toBeNull();
+    await expand();
+    await waitFor(() => expect(tagEmpty().getByText(/Tag read denied/)).toBeVisible());
+    expect(tagEmpty().queryByText('No tags')).toBeNull();
     fireEvent.click(button('Retry'));
-    await screen.findByText('No tags');
+    await waitFor(() => expect(tagEmpty().getByText('No tags')).toBeVisible());
 
     ops.AddTagsToResource.mockImplementationOnce(() => denied('Tag write denied'));
     const add = await tagDialog('Add tag');
     change(add, 'Key', KEY);
     change(add, 'Value', TAG.Value);
     fireEvent.click(button('Add tag', add));
-    expect(await within(add).findByText(/Tag write denied/)).toBeVisible();
-    expect(within(add).getByRole('textbox', { name: 'Key' })).toHaveValue(KEY);
-    expect(within(add).getByRole('textbox', { name: 'Value' })).toHaveValue(TAG.Value);
+    await waitFor(() => {
+      const reason = add.findContent().findAlert()?.findContent().getElement();
+      expect(reason).toBeVisible();
+      expect(reason).toHaveTextContent(/Tag write denied/);
+    });
+    expect(tagInput(add, 'Key')).toHaveValue(KEY);
+    expect(tagInput(add, 'Value')).toHaveValue(TAG.Value);
     ops.ListTagsForResource.mockImplementationOnce(() => list(TAG));
     fireEvent.click(button('Add tag', add));
-    expect(await screen.findByText(saved)).toBeVisible();
+    await waitFor(() => expect(flash(saved)).toBeVisible());
     expect(ops.AddTagsToResource).toHaveBeenCalledTimes(2);
-    expect(await screen.findByRole('rowheader', { name: KEY })).toBeVisible();
+    await waitFor(() => expectTag(TAG.Value));
 
     ops.ListTagsForResource.mockImplementationOnce(notImplemented);
     fireEvent.click(button('Refresh tags'));
-    expect(await screen.findByText(/501 Not Implemented for ListTagsForResource/)).toBeVisible();
+    await expectUnsupported('ListTagsForResource');
     expect(button('Refresh tags')).toBeDisabled();
     expect(button('Add tag')).toBeEnabled();
-    expect(screen.queryByText('No tags')).toBeNull();
+    expect(tagTable()?.findEmptySlot()?.getElement().textContent ?? '').not.toContain('No tags');
   });
 
   it.each([
@@ -238,13 +334,13 @@ describe('Parameter tags', () => {
     const ops = openDetail();
     ops.ListTagsForResource.mockImplementationOnce(() => list(TAG));
     ops[operation].mockImplementationOnce(notImplemented);
-    await expand('Tags');
-    await screen.findByRole('rowheader', { name: KEY });
+    await expand();
+    await waitFor(() => expectTag(TAG.Value));
 
     const dialog = await tagDialog(action, title);
     fireEvent.click(button(submit, dialog));
-    expect(await screen.findByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: title })).toBeNull());
+    await expectUnsupported(operation);
+    await waitFor(() => expect(page.findModal()).toBeNull());
     expect(button(action)).toBeDisabled();
     expect(button(other)).toBeEnabled();
     expect(button('Refresh tags')).toBeEnabled();
