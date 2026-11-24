@@ -101,6 +101,10 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
 
   const rows = items ?? [];
   const selected = rows.find((row) => row.id === selectedId);
+  // A completed list read can observe the deletion before the page receives the mutation result.
+  if (dialog?.kind === 'delete' && items !== undefined && !items.some((row) => row.id === dialog.id)) {
+    setDialog(undefined);
+  }
   const engine = selected?.engine;
   const reason = restoreReason(selected, unavailable.has('restore'));
   const canRestore = !pending && reason === undefined;

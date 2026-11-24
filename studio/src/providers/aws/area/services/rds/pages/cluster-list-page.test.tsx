@@ -503,8 +503,13 @@ it('links to manual DB cluster snapshots even when there are no clusters', async
   vi.mocked(clusterApi.listClusters).mockResolvedValue({ clusters: [] });
   vi.mocked(snapshots.listClusterSnapshots).mockResolvedValue({ items: [] });
   const router = open('/aws/rds/clusters');
-  await screen.findByText('No DB clusters');
+  await waitFor(() => {
+    expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No DB clusters');
+  });
   fireEvent.click(screen.getByRole('link', { name: 'DB cluster snapshots' }));
-  expect(await screen.findByRole('heading', { name: 'DB cluster snapshots' })).toBeInTheDocument();
+  await waitFor(() => {
+    const heading = table().findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent('DB cluster snapshots');
+  });
   expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
 });
