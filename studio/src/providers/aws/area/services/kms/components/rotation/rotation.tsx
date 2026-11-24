@@ -159,11 +159,12 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
                   disabled={
-                    offline ||
-                    pending === 'rotate' ||
-                    enabled === undefined ||
-                    statusFailure !== undefined ||
-                    toggleReason !== undefined
+                    pending !== toggleAction &&
+                    (offline ||
+                      pending !== undefined ||
+                      enabled === undefined ||
+                      statusFailure !== undefined ||
+                      toggleReason !== undefined)
                   }
                   {...(toggleReason === undefined ? {} : { ariaDescribedby: toggleReason })}
                   loading={pending === toggleAction}
@@ -172,7 +173,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                   {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
-                  disabled={offline || (pending !== undefined && pending !== 'rotate') || rotateReason !== undefined}
+                  disabled={pending !== 'rotate' && (offline || pending !== undefined || rotateReason !== undefined)}
                   {...(rotateReason === undefined ? {} : { ariaDescribedby: rotateReason })}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
@@ -237,10 +238,10 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
 }
 
 export function Rotation({ connection, keyId, keySpec }: RotationProps) {
-  const connected = connection.result === undefined || connection.result.kind === 'connected';
+  // The AWS area remounts the page on a target change. A health poll alone must not replace this visit.
   return (
     <RotationVisit
-      key={JSON.stringify([connection.engineOrigin, keyId, connected])}
+      key={JSON.stringify([connection.engineOrigin, keyId])}
       connection={connection}
       keyId={keyId}
       keySpec={keySpec}
