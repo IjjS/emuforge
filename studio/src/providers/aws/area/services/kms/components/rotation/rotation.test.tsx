@@ -437,6 +437,63 @@ describe('Key rotation', () => {
     },
   );
 
+  it('keeps the learned disable reason when a held rotation completes offline and settings refresh on reconnect', async () => {
+    const rotation = pendingAnswer<undefined>();
+    const settings = pendingAnswer<GetKeyRotationStatusCommandOutput>();
+    const writes = vi.fn<(command: unknown) => void>();
+    const readSettings = vi.fn();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) {
+        readSettings();
+        return readSettings.mock.calls.length === 1 ? enabledSettings : settings.promise;
+      }
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      writes(command);
+      if (command instanceof DisableKeyRotationCommand) throw { $metadata: { httpStatusCode: 501 } };
+      if (command instanceof RotateKeyOnDemandCommand) {
+        await rotation.promise;
+        return {};
+      }
+      throw new Error('Unexpected KMS command');
+    });
+    const update = open();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    const disable = screen.getByRole('button', { name: 'Disable automatic rotation' });
+    const rotate = screen.getByRole('button', { name: 'Rotate now' });
+    const expectDisabledToggle = () => {
+      expect(disable).toHaveAccessibleName('Disable automatic rotation');
+      expect(disable).toBeDisabled();
+      expect(disable).toHaveAccessibleDescription('The emulator does not implement DisableKeyRotation.');
+      expect(screen.getByText('The emulator does not implement DisableKeyRotation.')).toBeVisible();
+    };
+
+    fireEvent.click(disable);
+    await waitFor(expectDisabledToggle);
+    fireEvent.click(rotate);
+    update(offlineConnection);
+    await act(() => rotation.resolve(undefined));
+
+    expectSuccess('On-demand rotation requested.');
+    expectDisabledToggle();
+    expect(rotate).toBeDisabled();
+    expect(readSettings).toHaveBeenCalledTimes(1);
+    fireEvent.click(disable);
+    fireEvent.click(rotate);
+    expect(writes).toHaveBeenCalledTimes(2);
+
+    update(reconnected);
+    await waitFor(() => expect(readSettings).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Loading rotation settings…')).toBeVisible();
+    expectDisabledToggle();
+    fireEvent.click(disable);
+
+    await act(() => settings.resolve({ $metadata: {}, ...enabledSettings }));
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    expectDisabledToggle();
+    expectSuccess('On-demand rotation requested.');
+    expect(writes).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ['key', connection, 'other-key'],
     ['engine origin', { ...connection, engineOrigin: 'http://127.0.0.1:8311' }, keyId],

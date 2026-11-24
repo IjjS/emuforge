@@ -1,5 +1,5 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
@@ -24,11 +24,23 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
   const handleFollow = useFollow();
   const [generation, setGeneration] = useState(0);
   const tableSection = useRef<HTMLDivElement>(null);
+  const recoverySection = useRef<HTMLDivElement>(null);
+  const refreshButton = useRef<ButtonProps.Ref>(null);
   const [overflows, setOverflows] = useState(false);
   const offline = connectionFailure(connection, KMS_OPERATIONS.listKeys);
   const listing = useCustomerKeys(connection.engineOrigin, offline === undefined || generation > 0, generation);
   const failure = listing.failure ?? (generation === 0 ? offline : undefined);
+  const recovery =
+    failure === undefined ? undefined : readFailureState(failure, connection, `key list (${failure.operation})`);
   const handleRefresh = () => setGeneration((current) => current + 1);
+  const handleRetry = () => {
+    const section = recoverySection.current;
+    const focused = section?.ownerDocument.activeElement;
+    // The table removes Retry as soon as the new read starts.
+    if (focused instanceof HTMLButtonElement && section?.contains(focused)) refreshButton.current?.focus();
+    if (offline === undefined) listing.refresh();
+    else handleRefresh();
+  };
   const hasRows = listing.items !== undefined && listing.items.length > 0;
   const showOverflow = hasRows && overflows;
 
@@ -47,6 +59,9 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
 
   return (
     <div ref={tableSection}>
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {listing.loading ? '' : recovery?.firstText}
+      </div>
       <Table<CustomerKey>
         variant="full-page"
         ariaLabels={{ tableLabel: showOverflow ? `${KEYS_TITLE}. ${OVERFLOW_HINT}` : KEYS_TITLE }}
@@ -90,17 +105,16 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
         loading={listing.loading}
         loadingText="Loading keys…"
         empty={
-          failure === undefined ? (
+          recovery === undefined ? (
             <Box textAlign="center" variant="strong">
               {listing.openEnd || listing.pagesCount > 1
                 ? 'No customer managed keys on this page'
                 : 'No customer managed keys'}
             </Box>
           ) : (
-            <ReadFailure
-              state={readFailureState(failure, connection, `key list (${failure.operation})`)}
-              onRetry={offline === undefined ? listing.refresh : handleRefresh}
-            />
+            <div ref={recoverySection}>
+              <ReadFailure state={recovery} onRetry={handleRetry} />
+            </div>
           )
         }
         header={
@@ -109,7 +123,7 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
             description={showOverflow ? OVERFLOW_HINT : undefined}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+                <Button ref={refreshButton} iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
                 <Button variant="primary" href={KEY_CREATE_PATH} onFollow={handleFollow}>
                   Create key
                 </Button>

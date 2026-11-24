@@ -5,7 +5,7 @@ import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
@@ -57,6 +57,8 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
     queryKey: ['kms', 'rotation-status', engineOrigin, keyId, visit, revision],
     queryFn: ({ signal }) => getKeyRotationStatus(engineOrigin ?? noEndpoint(), keyId, signal),
     enabled: engineOrigin !== undefined && (statusOffline === undefined || statusRetry),
+    // Keep the toggle and its learned reason tied to the last answer while a refresh is pending.
+    placeholderData: keepPreviousData,
     retry: false,
     gcTime: 0,
   });
@@ -164,6 +166,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
                     (writeBlocked ||
                       pending !== undefined ||
                       enabled === undefined ||
+                      status.isPlaceholderData ||
                       statusFailure !== undefined ||
                       toggleReason !== undefined)
                   }
@@ -198,7 +201,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
               void status.refetch();
             }}
           />
-        ) : status.data === undefined ? (
+        ) : status.data === undefined || status.isPlaceholderData ? (
           <StatusIndicator type="loading">Loading rotation settings…</StatusIndicator>
         ) : (
           <KeyValuePairs
