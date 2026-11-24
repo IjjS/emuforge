@@ -253,6 +253,7 @@ function AttributeDialog({
     if (active.current !== undefined || endpoint === undefined) return;
     const controller = new AbortController();
     active.current = controller;
+    setRefusal(undefined);
     setPending(true);
     try {
       await save(change, controller.signal);
@@ -263,9 +264,13 @@ function AttributeDialog({
       if (controller.signal.aborted) return;
       const failure = requestFailure(MODIFY_INSTANCE_ATTRIBUTE, error);
       const item = refusalItem(failure, LABELS[kind], endpoint);
-      flash.show([item]);
-      if (failure.kind === 'not-implemented') onUnsupported(failure);
-      else setRefusal(item);
+      if (failure.kind === 'not-implemented') {
+        flash.show([item]);
+        onUnsupported(failure);
+      } else {
+        setRefusal(item);
+        flash.show([{ ...item, announcedInDialog: true }]);
+      }
     } finally {
       if (!controller.signal.aborted) {
         active.current = undefined;
@@ -302,9 +307,11 @@ function AttributeDialog({
     >
       <SpaceBetween size="m">
         {refusal !== undefined && (
-          <Alert type={refusal.type} header={refusal.header}>
-            {refusal.content}
-          </Alert>
+          <div role="alert">
+            <Alert type="error" header={refusal.header} statusIconAriaLabel="Error">
+              {refusal.content}
+            </Alert>
+          </div>
         )}
         {field}
       </SpaceBetween>
