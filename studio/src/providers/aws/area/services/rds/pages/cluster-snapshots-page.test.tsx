@@ -359,7 +359,7 @@ describe('DB cluster snapshots', () => {
   });
 
   it('keeps the deletion result when the refreshed list has already dropped the selected row', async () => {
-    const mutation = deferred<void>();
+    const mutation = deferred<undefined>();
     const list = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
     vi.mocked(snapshots.deleteClusterSnapshot).mockReturnValueOnce(mutation.promise);
     vi.mocked(snapshots.listClusterSnapshots)
@@ -388,7 +388,7 @@ describe('DB cluster snapshots', () => {
     expect(flashOf('success')).toBeUndefined();
 
     await act(async () => {
-      mutation.resolve();
+      mutation.resolve(undefined);
       await mutation.promise;
     });
     await waitFor(() => {
