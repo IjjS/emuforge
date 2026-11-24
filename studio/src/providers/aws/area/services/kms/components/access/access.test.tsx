@@ -4,6 +4,7 @@ import {
   GetKeyPolicyCommand,
   ListGrantsCommand,
   ListKeyPoliciesCommand,
+  NotFoundException,
   PutKeyPolicyCommand,
   RevokeGrantCommand,
 } from '@aws-sdk/client-kms';
@@ -17,8 +18,10 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
+import { AreaFlash, FlashAnnouncer } from '../../../../components/area-flash';
 import { EmulatorLine } from '../../../../components/emulator-line';
-import { PageFlashContext } from '../../../../components/page-flash';
+import { PageFlashContext, type PageFlash } from '../../../../components/page-flash';
+import { useAreaFlash } from '../../../../components/use-area-flash';
 import { useKmsKey } from '../../queries';
 import { Access, type AccessProps } from './access';
 
@@ -73,6 +76,73 @@ function open({ showConnection = false, ...initial }: Partial<AccessProps> & { s
   );
   const view = render(page({}));
   return (props: Partial<AccessProps>, targetGeneration?: number) => view.rerender(page(props, targetGeneration));
+}
+
+function openRefreshableAccess() {
+  const client = new QueryClient();
+  const published = vi.fn<PageFlash['show']>();
+
+  function Page({ keyId }: { keyId: string }) {
+    const root = useRef<HTMLDivElement>(null);
+    const flash = useAreaFlash('/aws/kms/keys', 0, true);
+    const read = useKmsKey(online.engineOrigin, keyId, true);
+    const keyMissing = read.key === null;
+    return (
+      <div ref={root}>
+        <AreaRootContext.Provider value={root}>
+          <PageFlashContext.Provider
+            value={{
+              ...flash.pageFlash,
+              show: (result) => {
+                published(result);
+                flash.pageFlash.show(result);
+              },
+            }}
+          >
+            <FlashAnnouncer announcement={flash.announcement} />
+            {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
+            <button onClick={read.refresh}>Refresh</button>
+            {read.key && <h1>{read.key.Description}</h1>}
+            {keyMissing && <a href="/aws/kms">View customer managed keys</a>}
+            <div hidden={keyMissing}>
+              <Access connection={online} keyId={keyId} keyMissing={keyMissing} />
+            </div>
+          </PageFlashContext.Provider>
+        </AreaRootContext.Provider>
+      </div>
+    );
+  }
+
+  const page = (keyId = KEY_ID, target = 0) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Page key={target} keyId={keyId} />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const view = render(page());
+  return { published, update: (keyId: string, target: number) => view.rerender(page(keyId, target)) };
+}
+
+function holdMissingKeyAndSave(refused = false) {
+  const metadata = deferred<undefined>();
+  const save = deferred<undefined>();
+  let describes = 0;
+  let saveSignal: AbortSignal | undefined;
+  send.mockImplementation(async (command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => {
+    if (command instanceof DescribeKeyCommand && ++describes === 2) {
+      await metadata.promise;
+      throw new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } });
+    }
+    if (command instanceof PutKeyPolicyCommand) {
+      saveSignal = abortSignal;
+      await save.promise;
+      if (refused) throw refusal();
+      return {};
+    }
+    return fallback(command);
+  });
+  return { metadata, save, saveSignal: () => saveSignal };
 }
 
 function fallback(command: unknown) {
@@ -148,6 +218,85 @@ beforeEach(() => {
 });
 
 describe('KMS key access', () => {
+  describe('same-visit missing key', () => {
+    it.each([
+      { outcome: 'success', refused: false },
+      { outcome: 'ordinary refusal', refused: true },
+    ])('closes the pending policy portal and announces its late $outcome once', async ({ refused }) => {
+      const { metadata, save, saveSignal } = holdMissingKeyAndSave(refused);
+      const { published } = openRefreshableAccess();
+      const user = userEvent.setup();
+      const refresh = screen.getByRole('button', { name: 'Refresh' });
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      await user.click(refresh);
+      const dialog = await editPolicy();
+      expect(dialog.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+
+      await act(async () => metadata.resolve(undefined));
+      const returnLink = await screen.findByRole('link', { name: 'View customer managed keys' });
+      expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
+      expect(saveSignal()?.aborted).toBe(false);
+      expect(published).not.toHaveBeenCalled();
+      refresh.focus();
+      await user.tab();
+      expect(returnLink).toHaveFocus();
+
+      await act(async () => save.resolve(undefined));
+      if (refused) {
+        const alert = screen.getByRole('alert');
+        expect(alert).toHaveTextContent('PutKeyPolicy failed');
+        expect(alert).toHaveTextContent(REFUSAL);
+      } else {
+        expect(successFlash('Key policy saved.')).toBeVisible();
+        expect(screen.getByRole('status')).toHaveTextContent('Success Key policy saved.');
+      }
+      expect(published).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
+      expect(returnLink).toHaveFocus();
+    });
+
+    it.each([
+      { change: 'key', keyId: 'e89de8d1-a905-432b-adfd-c510da7413aa', target: 0 },
+      { change: 'target', keyId: KEY_ID, target: 1 },
+    ])('cancels the pending request on a real change of $change', async ({ keyId, target }) => {
+      const { metadata, save, saveSignal } = holdMissingKeyAndSave(true);
+      const { published, update } = openRefreshableAccess();
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await editPolicy();
+      await act(async () => metadata.resolve(undefined));
+      expect(await screen.findByRole('link', { name: 'View customer managed keys' })).toBeVisible();
+      expect(saveSignal()?.aborted).toBe(false);
+
+      update(keyId, target);
+      expect(saveSignal()?.aborted).toBe(true);
+      await act(async () => save.resolve(undefined));
+      expect(published).not.toHaveBeenCalled();
+    });
+
+    it('closes the grant confirmation and blocks new writes even when writesEnabled remains true', async () => {
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+        return fallback(command);
+      });
+      const update = open();
+      const dialog = await openRevocation();
+      fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
+      update({ keyMissing: true, writesEnabled: true });
+      await waitFor(() => expect(screen.queryByRole('dialog', { hidden: true })).toBeNull());
+      for (const name of ['Edit key policy', 'Create grant', `Revoke grant ${grant.GrantId}`]) {
+        const button = screen.getByRole('button', { name });
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
+      expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
+      update({ keyMissing: false });
+      expect(screen.getByRole('button', { name: `Revoke grant ${grant.GrantId}` })).toBeEnabled();
+      expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
+    });
+  });
+
   describe.each([
     { panel: 'default key policy', operation: 'GetKeyPolicy', ReadCommand: GetKeyPolicyCommand },
     { panel: 'grants', operation: 'ListGrants', ReadCommand: ListGrantsCommand },

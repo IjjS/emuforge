@@ -37,14 +37,19 @@ export function Grants({
   connection,
   keyId,
   writesEnabled = true,
+  keyMissing = false,
   sectionRef,
 }: AccessProps & { sectionRef: RefObject<HTMLDivElement | null> }) {
-  const action = useAccessAction(connection, writesEnabled);
+  const action = useAccessAction(connection, writesEnabled, keyMissing);
   const client = useQueryClient();
   const [compact, setCompact] = useState(false);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const [draft, setDraft] = useState<GrantDraft>();
   const [revoking, setRevoking] = useState<{ grant: KeyGrant; confirmation: string }>();
+  if (keyMissing) {
+    if (draft !== undefined) setDraft(undefined);
+    if (revoking !== undefined) setRevoking(undefined);
+  }
   const offline = connectionFailure(connection, operations.listGrants);
   if (offline === undefined && attemptedRetry) setAttemptedRetry(false);
   const listing = useTokenListing({
@@ -245,7 +250,7 @@ export function Grants({
           )
         }
       />
-      {draft !== undefined && (
+      {!keyMissing && draft !== undefined && (
         <AccessDialog
           title="Create grant"
           submitLabel="Create grant"
@@ -262,7 +267,7 @@ export function Grants({
           )}
         </AccessDialog>
       )}
-      {revoking !== undefined && (
+      {!keyMissing && revoking !== undefined && (
         <AccessDialog
           title="Revoke grant"
           submitLabel="Revoke grant"
