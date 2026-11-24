@@ -73,6 +73,12 @@ async function expectRow(id: string) {
   });
 }
 
+function withinEmptySlot() {
+  const slot = page.findTable()?.findEmptySlot();
+  if (!slot) throw new Error('Expected the table empty slot');
+  return within(slot.getElement());
+}
+
 function click(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
 }
@@ -91,7 +97,7 @@ describe('customer managed keys', () => {
     expect(loading).toBeVisible();
     expect(loading).toHaveTextContent('Loading keys…');
     await act(() => pending.answer({ Keys: [] }));
-    expect(await screen.findByText('No customer managed keys')).toBeVisible();
+    await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys')).toBeVisible());
   });
 
   it('shows only customer keys and matches aliases to each key', async () => {
@@ -128,11 +134,11 @@ describe('customer managed keys', () => {
     });
     open();
 
-    expect(await screen.findByText('No customer managed keys on this page')).toBeVisible();
+    await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys on this page')).toBeVisible());
     click('Next page');
     await expectRow('later');
     click('Previous page');
-    expect(await screen.findByText('No customer managed keys on this page')).toBeVisible();
+    await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys on this page')).toBeVisible());
     const inputs = send.mock.calls
       .map(([command]) => command as ListKeysCommand)
       .filter((command) => command instanceof ListKeysCommand)
@@ -177,9 +183,10 @@ describe('customer managed keys', () => {
     });
     open();
 
-    expect(await screen.findByText('Access denied')).toBeVisible();
-    expect(screen.getByText(/ListAliases was refused: Alias listing was refused for this key/)).toBeVisible();
-    expect(screen.queryByText('No customer managed keys')).toBeNull();
+    await waitFor(() => expect(withinEmptySlot().getByText('Access denied')).toBeVisible());
+    const empty = withinEmptySlot();
+    expect(empty.getByText(/ListAliases was refused: Alias listing was refused for this key/)).toBeVisible();
+    expect(empty.queryByText('No customer managed keys')).toBeNull();
     click('Retry');
     await expectRow('owned');
   });
@@ -188,8 +195,9 @@ describe('customer managed keys', () => {
     send.mockRejectedValueOnce({ $metadata: { httpStatusCode: 501 } });
     open();
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/answered 501 Not Implemented for ListKeys/)).toBeVisible();
-    expect(screen.queryByText('No customer managed keys')).toBeNull();
+    await waitFor(() => expect(withinEmptySlot().getByText('Not implemented by the emulator')).toBeVisible());
+    const empty = withinEmptySlot();
+    expect(empty.getByText(/answered 501 Not Implemented for ListKeys/)).toBeVisible();
+    expect(empty.queryByText('No customer managed keys')).toBeNull();
   });
 });

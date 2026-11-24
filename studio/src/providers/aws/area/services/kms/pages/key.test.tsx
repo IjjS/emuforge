@@ -1,4 +1,4 @@
-import { DescribeKeyCommand, type KeyMetadata } from '@aws-sdk/client-kms';
+import { DescribeKeyCommand, ListKeysCommand, NotFoundException, type KeyMetadata } from '@aws-sdk/client-kms';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -9,6 +9,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { patternParams } from '../../../screen-paths';
 import { KEY_PATH, keyPath, KEYS_PATH } from '../paths';
 import { KeyPage } from './key';
+import { KeysPage } from './keys';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../../../../lib/aws/client-factory', () => ({ createAwsClient: () => ({ send }) }));
@@ -30,7 +31,7 @@ const metadata = {
 
 function CurrentKey({ connection }: { connection: AreaConnection }) {
   const { pathname } = useLocation();
-  if (pathname === KEYS_PATH) return <h1>Customer managed keys</h1>;
+  if (pathname === KEYS_PATH) return <KeysPage connection={connection} params={{}} />;
 
   const params = patternParams(KEY_PATH, pathname);
   if (params === undefined) throw new Error(`Expected a key detail path, received ${pathname}`);
@@ -57,12 +58,16 @@ function metadataHeading() {
     .find((heading) => heading.textContent === 'Key metadata');
 }
 
-function expectField(label: string, value: string | RegExp) {
+function fieldValue(label: string) {
   const item = page
     .findAllKeyValuePairs()
     .flatMap((pairs) => pairs.findItems())
     .find((pair) => pair.findLabel()?.getElement().textContent === label);
-  expect(item?.findValue()?.getElement()).toHaveTextContent(value);
+  return item?.findValue()?.getElement();
+}
+
+function expectField(label: string, value: string) {
+  expect(fieldValue(label)).toHaveTextContent(value);
 }
 
 beforeEach(() => {
@@ -88,15 +93,22 @@ describe('key details', () => {
     const date = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(
       metadata.CreationDate,
     );
-    expectField('Created', date);
-    expectField('Created', /\d{2}:\d{2}:56 \(UTC[+-]\d{2}:\d{2}\)/);
+    const [time, offset] = new Intl.DateTimeFormat('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+      timeZoneName: 'longOffset',
+    })
+      .format(metadata.CreationDate)
+      .split(' GMT');
+    expect(fieldValue('Created')?.textContent).toBe(`${date}, ${time} (UTC${offset || '+00:00'})`);
   });
 
   it('offers a way back to the list when the key does not exist', async () => {
-    send.mockRejectedValue({
-      name: 'NotFoundException',
-      $fault: 'client',
-      $metadata: { httpStatusCode: 400 },
+    send.mockImplementation((command: unknown) => {
+      if (command instanceof ListKeysCommand) return Promise.resolve({ Keys: [] });
+      throw new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } });
     });
     open('absent');
 
@@ -104,7 +116,9 @@ describe('key details', () => {
     const back = screen.getByRole('link', { name: 'View customer managed keys' });
     expect(back).toHaveAttribute('href', KEYS_PATH);
     fireEvent.click(back);
-    expect(screen.getByRole('heading', { name: 'Customer managed keys' })).toBeVisible();
+    const heading = page.findTable()?.findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toBeVisible();
+    expect(heading).toHaveTextContent('Customer managed keys');
   });
 
   it('shows distinct engine and emulator recovery states and retries the key read', async () => {
