@@ -7,10 +7,11 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import { creationDateText, NO_DATE } from '../../../../components/format-date';
 import type { TokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
+import { readFailureState } from '../../queries';
 
 function typeLabel(rotationType: RotationsListEntry['RotationType']) {
   switch (rotationType) {
@@ -80,7 +81,10 @@ export function RotationHistory({ connection, history, failure, onRetry }: Rotat
           failure === undefined ? (
             <Box textAlign="center">{history.pastEnd ? 'No more rotations' : 'No completed rotations'}</Box>
           ) : (
-            <ReadFailure state={readFailureState(failure, connection, 'rotation history')} onRetry={onRetry} />
+            <ReadFailure
+              state={readFailureState(failure, connection, `rotation history (${failure.operation})`)}
+              onRetry={onRetry}
+            />
           )
         }
         pagination={
