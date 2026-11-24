@@ -13,7 +13,8 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
 import { ValueText } from '../../../components/value-text';
 import { OPERATIONS, type Instance } from '../api';
-import { useInstanceContentChange, useInstanceUserData } from '../instance-content-queries';
+import { MODIFY_INSTANCE_ATTRIBUTE } from '../instance-attribute-api';
+import { useInstanceContentEditor, useInstanceUserData, type InstanceContentWrites } from '../instance-content-queries';
 
 const LABEL = 'Edit user data';
 const STOP_REASON = 'Stop the instance to edit user data.';
@@ -41,17 +42,19 @@ function readJson(text: string): string | undefined {
 function UserDataDialog({
   instance,
   connection,
+  writes,
   onClose,
   onUnsupported,
 }: {
   instance: Instance;
   connection: AreaConnection;
+  writes: InstanceContentWrites;
   onClose: () => void;
   onUnsupported: (failure: RequestFailure) => void;
 }) {
   const endpoint = connection.engineOrigin;
   const { value, failure, refresh } = useInstanceUserData(endpoint, instance.id);
-  const { pending, refusal, save, canDismiss } = useInstanceContentChange(endpoint, instance.id);
+  const { pending, refusal, submit, canDismiss } = useInstanceContentEditor(writes, 'user-data');
   useEffect(() => {
     if (failure?.kind === 'not-implemented') onUnsupported(failure);
   }, [failure, onUnsupported]);
@@ -133,15 +136,12 @@ function UserDataDialog({
               loading={pending}
               onClick={() => {
                 if (text === undefined) return;
-                void save(
+                submit(
                   { kind: 'user-data', text },
                   {
                     label: LABEL,
                     result: 'User data updated.',
-                    onSettled: (failure) => {
-                      if (failure?.kind === 'not-implemented') onUnsupported(failure);
-                      else onClose();
-                    },
+                    onSettled: onClose,
                   },
                 );
               }}
@@ -166,12 +166,21 @@ function UserDataDialog({
   );
 }
 
-export function InstanceUserDataEditor({ instance, connection }: { instance: Instance; connection: AreaConnection }) {
+export function InstanceUserDataEditor({
+  instance,
+  connection,
+  writes,
+}: {
+  instance: Instance;
+  connection: AreaConnection;
+  writes: InstanceContentWrites;
+}) {
   const [open, setOpen] = useState(false);
-  const [unsupported, setUnsupported] = useState<RequestFailure>();
+  const [readUnsupported, setReadUnsupported] = useState<RequestFailure>();
+  const unsupported = readUnsupported ?? writes.unsupported[MODIFY_INSTANCE_ATTRIBUTE];
   const reasonId = useId();
   const handleUnsupported = useCallback((failure: RequestFailure) => {
-    setUnsupported(failure);
+    setReadUnsupported(failure);
     setOpen(false);
   }, []);
   const showStopReason = instance.state !== 'stopped' && unsupported === undefined;
@@ -186,7 +195,12 @@ export function InstanceUserDataEditor({ instance, connection }: { instance: Ins
     <SpaceBetween size="xxs">
       <Button
         variant="inline-link"
-        disabled={showStopReason || unavailable !== undefined || connection.engineOrigin === undefined}
+        disabled={
+          writes.pending.has('user-data') ||
+          showStopReason ||
+          unavailable !== undefined ||
+          connection.engineOrigin === undefined
+        }
         disabledReason={unavailable}
         {...(showStopReason ? { ariaDescribedby: reasonId } : {})}
         onClick={() => setOpen(true)}
@@ -209,6 +223,7 @@ export function InstanceUserDataEditor({ instance, connection }: { instance: Ins
         <UserDataDialog
           instance={instance}
           connection={connection}
+          writes={writes}
           onClose={() => setOpen(false)}
           onUnsupported={handleUnsupported}
         />

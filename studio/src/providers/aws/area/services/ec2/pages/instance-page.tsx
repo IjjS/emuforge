@@ -30,6 +30,7 @@ import { InstanceTagEditor } from '../components/instance-tag-editor';
 import { InstanceUserDataEditor } from '../components/instance-user-data-editor';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
 import { useInstanceAttributeWrites, type InstanceAttributeWrites } from '../instance-attribute-queries';
+import { useInstanceContentChange, type InstanceContentWrites } from '../instance-content-queries';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 import { volumeHref } from '../volume-format';
 
@@ -99,11 +100,13 @@ function Details({
   protection,
   connection,
   attributeWrites,
+  contentWrites,
 }: {
   instance: Instance;
   protection: Ec2Read<boolean>;
   connection: AreaConnection;
   attributeWrites: InstanceAttributeWrites;
+  contentWrites: InstanceContentWrites;
 }) {
   return (
     <Container header={<Header variant="h2">Instance details</Header>}>
@@ -155,7 +158,10 @@ function Details({
           { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
           { label: 'Architecture', value: <ValueText kind="fixed" value={instance.architecture} none={NONE} /> },
           { label: 'Platform', value: <ValueText kind="fixed" value={instance.platform} none={NONE} /> },
-          { label: 'User data', value: <InstanceUserDataEditor instance={instance} connection={connection} /> },
+          {
+            label: 'User data',
+            value: <InstanceUserDataEditor instance={instance} connection={connection} writes={contentWrites} />,
+          },
         ]}
       />
     </Container>
@@ -342,6 +348,7 @@ function InstanceVisit({ connection, id }: { connection: AreaConnection; id: str
   // The area also remounts this visit when the emulator target changes.
   const pageSignal = usePageSignal();
   const attributeWrites = useInstanceAttributeWrites(connection.engineOrigin, id, pageSignal);
+  const contentWrites = useInstanceContentChange(connection.engineOrigin, id, pageSignal);
   const [announcement, announce] = useAnnouncer();
   const reading = useInstance(connection.engineOrigin, id);
   const protection = useTerminationProtection(connection.engineOrigin, id);
@@ -404,11 +411,12 @@ function InstanceVisit({ connection, id }: { connection: AreaConnection; id: str
           protection={protection}
           connection={connection}
           attributeWrites={attributeWrites}
+          contentWrites={contentWrites}
         />
         <Network instance={instance} />
         <Groups instance={instance} connection={connection} attributeWrites={attributeWrites} />
         <Volumes volumes={instance.volumes} />
-        <InstanceTagEditor id={instance.id} tags={instance.tags} endpoint={connection.engineOrigin} />
+        <InstanceTagEditor tags={instance.tags} endpoint={connection.engineOrigin} writes={contentWrites} />
       </SpaceBetween>
     );
   }

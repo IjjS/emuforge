@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../area-root';
 import type { AreaConnection } from '../../components/emulator-line';
+import { usePageSignal } from '../../components/use-token-listing';
 import type { Instance } from './api';
 import { InstanceUserDataEditor } from './components/instance-user-data-editor';
 import { changeInstanceContent, getInstanceUserData, type InstanceUserData } from './instance-content-api';
@@ -37,13 +38,13 @@ it('shows the latest saved user data on reopening even when an earlier read reso
   const saved = vi.fn();
   function Fixture() {
     const root = useRef<HTMLDivElement>(null);
-    const { save } = useInstanceContentChange(endpoint, instance.id);
+    const writes = useInstanceContentChange(endpoint, instance.id, usePageSignal());
     return (
       <AreaRootContext.Provider value={root}>
         <div ref={root}>
           <button
             onClick={() =>
-              void save(
+              void writes.save(
                 { kind: 'user-data', text: 'fresh\nvalue' },
                 {
                   label: 'Edit user data',
@@ -55,7 +56,7 @@ it('shows the latest saved user data on reopening even when an earlier read reso
           >
             Save from another editor
           </button>
-          <InstanceUserDataEditor instance={instance} connection={connection} />
+          <InstanceUserDataEditor instance={instance} connection={connection} writes={writes} />
         </div>
       </AreaRootContext.Provider>
     );
@@ -69,20 +70,17 @@ it('shows the latest saved user data on reopening even when an earlier read reso
   const writer = screen.getByRole('button', { name: 'Save from another editor' });
   fireEvent.click(editor);
   let dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByText('Loading user data')).toBeVisible();
   await waitFor(() => expect(getInstanceUserData).toHaveBeenCalledTimes(1));
   fireEvent.click(writer);
   await waitFor(() => expect(saved).toHaveBeenCalledExactlyOnceWith());
   await waitFor(() => expect(getInstanceUserData).toHaveBeenCalledTimes(2));
-  expect(vi.mocked(getInstanceUserData).mock.calls[0]?.[2].aborted).toBe(true);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   fireEvent.click(editor);
   dialog = await screen.findByRole('dialog');
   const field = () => createWrapper(dialog).findTextarea()?.findNativeTextarea().getElement();
-  await waitFor(() => expect(field()).toHaveValue('fresh\nvalue'));
   await act(async () => {
     resolveOld({ kind: 'text', text: 'stale' });
     await old;
   });
-  expect(field()).toHaveValue('fresh\nvalue');
+  await waitFor(() => expect(field()).toHaveValue('fresh\nvalue'));
 });

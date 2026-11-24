@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   reportedNotImplementedMessage,
@@ -61,34 +61,36 @@ function contentFailureItem(failure: RequestFailure, label: string, endpoint: st
   return item;
 }
 
-export function useInstanceContentChange(endpoint: string | undefined, id: string) {
+type ContentEditor = 'tags' | 'user-data';
+
+interface ContentResult {
+  label: string;
+  result: string;
+  onSettled: () => void;
+}
+
+export type InstanceContentWrites = ReturnType<typeof useInstanceContentChange>;
+
+/** The visit owns pending writes, even while the detail read removes their editors. */
+export function useInstanceContentChange(endpoint: string | undefined, id: string, pageSignal: () => AbortSignal) {
   const client = useQueryClient();
   const flash = usePageFlash();
-  const active = useRef<AbortController | undefined>(undefined);
-  const [pending, setPending] = useState(false);
-  const [refusal, setRefusal] = useState<FlashItem>();
-  useEffect(() => () => active.current?.abort(), []);
+  const active = useRef(new Set<ContentEditor>());
+  const [pending, setPending] = useState<ReadonlySet<ContentEditor>>(new Set());
+  const [unsupported, setUnsupported] = useState<Partial<Record<string, RequestFailure>>>({});
 
   const save = async (
     change: InstanceContentChange,
-    {
-      label,
-      result,
-      onSettled,
-    }: {
-      label: string;
-      result: string;
-      onSettled: (failure?: RequestFailure) => void;
-    },
+    { label, result, onSettled, onRefusal }: ContentResult & { onRefusal?: (item: FlashItem) => boolean },
   ) => {
-    if (active.current !== undefined || endpoint === undefined) return;
-    const controller = new AbortController();
-    active.current = controller;
-    setRefusal(undefined);
-    setPending(true);
+    const editor = change.kind === 'user-data' ? 'user-data' : 'tags';
+    if (active.current.has(editor) || endpoint === undefined) return;
+    const signal = pageSignal();
+    active.current.add(editor);
+    setPending(new Set(active.current));
     try {
-      await changeInstanceContent(endpoint, id, change, controller.signal);
-      if (controller.signal.aborted) return;
+      await changeInstanceContent(endpoint, id, change, signal);
+      if (signal.aborted) return;
 
       flash.show([{ type: 'success', content: result }]);
       onSettled();
@@ -96,32 +98,62 @@ export function useInstanceContentChange(endpoint: string | undefined, id: strin
       const detail = { queryKey: EC2_KEYS.instance(id) };
       // Cancel even an initial read without cached data before invalidating it.
       await Promise.all([client.cancelQueries(lists), client.cancelQueries(detail)]);
+      if (signal.aborted) return;
       void client.invalidateQueries(lists);
       void client.invalidateQueries(detail);
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (signal.aborted) return;
       const failure = requestFailure(contentOperation(change), error);
       const item = contentFailureItem(failure, label, endpoint);
       if (failure.kind === 'not-implemented') {
+        setUnsupported((previous) => ({ ...previous, [failure.operation]: failure }));
         flash.show([item]);
-        onSettled(failure);
+        onSettled();
       } else {
-        setRefusal(item);
-        flash.show([{ ...item, announcedInDialog: true }]);
+        const announcedInDialog = onRefusal?.(item) === true;
+        flash.show([announcedInDialog ? { ...item, announcedInDialog: true } : item]);
       }
     } finally {
-      if (!controller.signal.aborted) {
-        active.current = undefined;
-        setPending(false);
-      }
+      active.current.delete(editor);
+      if (!signal.aborted) setPending(new Set(active.current));
     }
   };
 
+  return { pending, unsupported, save, isPending: (editor: ContentEditor) => active.current.has(editor) };
+}
+
+/** Only the inline copy of a refusal and closing the dialog depend on the editor still being mounted. */
+export function useInstanceContentEditor(writes: InstanceContentWrites, editor: ContentEditor) {
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const [refusal, setRefusal] = useState<FlashItem>();
+
+  const submit = (change: InstanceContentChange, result: ContentResult) => {
+    if (writes.isPending(editor)) return;
+    setRefusal(undefined);
+    void writes.save(change, {
+      ...result,
+      onSettled: () => {
+        if (mounted.current) result.onSettled();
+      },
+      onRefusal: (item) => {
+        if (!mounted.current) return false;
+        setRefusal(item);
+        return true;
+      },
+    });
+  };
+
   return {
-    pending,
+    pending: writes.pending.has(editor),
     refusal,
-    save,
-    canDismiss: () => active.current === undefined,
+    submit,
+    canDismiss: () => !writes.isPending(editor),
     clearRefusal: () => setRefusal(undefined),
   };
 }
