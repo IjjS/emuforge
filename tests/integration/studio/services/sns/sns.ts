@@ -1060,8 +1060,8 @@ export function subscriptionSettingsScreen(page: Page) {
   const table = wrapper.findTable();
   const field = (id: string) => wrapper.findFormField(`[data-testid="${id}"]`);
   const policy = field('subscription-filter-policy');
-  const scope = field('subscription-filter-policy-scope').findSelect();
-  const raw = field('subscription-raw-message-delivery').findSelect();
+  const scope = field('subscription-filter-policy-scope').findControl().findSelect();
+  const raw = field('subscription-raw-message-delivery').findControl().findSelect();
   const button = (id: string) => locate(wrapper.findButton(`[data-testid="subscription-settings-${id}"]`));
   const footer = locate(wrapper.findModal().findFooter().findAllButtons());
 
@@ -1069,7 +1069,7 @@ export function subscriptionSettingsScreen(page: Page) {
     row: locate(table.findRowSelectionArea(1)),
     open: locate(table.findHeaderSlot().findHeader().findActions().findAllButtons()).first(),
     editor: locate(wrapper.findContainer('[data-testid="subscription-settings"]')),
-    policy: locate(policy.findTextarea().findNativeTextarea()),
+    policy: locate(policy.findControl().findTextarea().findNativeTextarea()),
     policyDescription: locate(policy.findDescription()),
     scope: locate(scope.findTrigger()),
     raw: locate(raw.findTrigger()),
