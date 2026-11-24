@@ -28,7 +28,15 @@ import { useLabelAction } from './use-label-action';
 
 type AliasEdit = { kind: 'create' } | { kind: 'reassign' | 'delete'; alias: string };
 
-export function Aliases({ connection, keyId }: { connection: AreaConnection; keyId: string }) {
+export function Aliases({
+  connection,
+  keyId,
+  writesEnabled,
+}: {
+  connection: AreaConnection;
+  keyId: string;
+  writesEnabled: boolean;
+}) {
   const [edit, setEdit] = useState<AliasEdit>();
   const [name, setName] = useState('');
   const [targetId, setTargetId] = useState<string>();
@@ -44,7 +52,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
   });
   const targets = useCustomerKeys(endpoint, targetsOpened, 0);
 
-  const action = useLabelAction(connection, () => {
+  const action = useLabelAction(connection, writesEnabled, () => {
     setGeneration((current) => current + 1);
     void client.invalidateQueries({ queryKey: KMS_KEYS.list });
     void client.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
@@ -204,6 +212,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
             </>
           }
           word="delete"
+          disabled={action.disabled(LABEL_OPERATIONS.deleteAlias)}
           pending={action.pending}
           onDismiss={handleClose}
           onConfirm={() => {
