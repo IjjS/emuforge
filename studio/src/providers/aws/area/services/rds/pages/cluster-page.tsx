@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
@@ -56,6 +56,18 @@ const NAME_MIN_WIDTH = '28ch';
 const STATUS_MIN_WIDTH = '18ch';
 /** A class as the API names it, up to "db.r6g.16xlarge", on one line. */
 const CLASS_MIN_WIDTH = '17ch';
+
+const NARROW_VIEWPORT = '(width < 688px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia(NARROW_VIEWPORT);
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia(NARROW_VIEWPORT).matches;
+}
 
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
@@ -204,6 +216,7 @@ interface MembersProps {
 function Members({ cluster, members, fetching, connection, onRetry }: MembersProps) {
   const handleFollow = useFollow();
   const addHref = addInstanceHref(cluster.id);
+  const showStatusWithIdentifier = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const columns: TableProps.ColumnDefinition<DbInstance>[] = [
     {
       id: 'id',
@@ -211,9 +224,16 @@ function Members({ cluster, members, fetching, connection, onRetry }: MembersPro
       isRowHeader: true,
       minWidth: NAME_MIN_WIDTH,
       cell: (row) => (
-        <Link href={instanceHref(row.id)} onFollow={handleFollow}>
-          <ValueText kind="name" value={row.id} />
-        </Link>
+        <SpaceBetween size="xxxs">
+          <Link href={instanceHref(row.id)} onFollow={handleFollow}>
+            <ValueText kind="name" value={row.id} />
+          </Link>
+          {showStatusWithIdentifier && (
+            <div aria-hidden="true">
+              <StatusValue status={row.status} />
+            </div>
+          )}
+        </SpaceBetween>
       ),
     },
     { id: 'role', header: 'Role', cell: (row) => <ValueText kind="fixed" value={roleOf(cluster, row.id)} /> },

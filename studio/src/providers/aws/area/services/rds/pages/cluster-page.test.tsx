@@ -395,6 +395,50 @@ describe('a DB cluster', () => {
     });
   });
 
+  it('shows each status with its identifier on a narrow viewport and retains the member columns', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...matchMedia(query),
+      matches: query === '(width < 688px)',
+    }));
+    answer(
+      found({
+        members: [
+          { id: 'app-aur-1', writer: true },
+          { id: 'app-aur-2', writer: false },
+        ],
+      }),
+      [member('app-aur-1'), member('app-aur-2', { status: 'stopped', port: 5433 })],
+    );
+    open(PATH);
+    await loaded();
+
+    const table = tableOf('DB instances');
+    expect(table.findColumnHeaders().map((header) => text(header.getElement()))).toEqual([
+      'DB identifier',
+      'Role',
+      'Status',
+      'Class',
+      'Port',
+    ]);
+    expect(memberRows().map((row) => row.slice(1))).toEqual([
+      ['Writer', 'available', 'db.r6g.large', '5432'],
+      ['Reader', 'stopped', 'db.r6g.large', '5433'],
+    ]);
+    const expected = [
+      ['app-aur-1', 'available'],
+      ['app-aur-2', 'stopped'],
+    ] as const;
+    for (const [index, [id, status]] of expected.entries()) {
+      const cell = table.findBodyCell(index + 1, 1);
+      if (cell === null) throw new Error(`Missing identifier cell for ${id}`);
+      expect(cell.findStatusIndicator()?.getElement()).toHaveTextContent(status);
+      expect(within(cell.getElement()).getByRole('link', { name: id })).toHaveAttribute(
+        'href',
+        `/aws/rds/instances/instance/${id}`,
+      );
+    }
+  });
+
   it('no member → "No DB instances" with "Add DB instance"; the section\'s own "Add DB instance" leads there too', async () => {
     answer(found());
     const router = open(PATH);
