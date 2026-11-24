@@ -11,11 +11,13 @@ test.use({ timezoneId: SEOUL.timeZone });
 
 async function metadata(page: Page, key: KeyMetadata) {
   const box = page.locator(ui.findContainer().toSelector()).filter({ has: button(page, 'Edit description') });
-  const values = ui.findKeyValuePairs().findItems().map(item => item.findValue());
+  const pairs = ui.findKeyValuePairs().findItems();
+  const items = box.locator(pairs.toSelector().replace(/^body /, ''));
+  const valueSlot = pairs.get(1).findValue().toSelector().slice(pairs.get(1).toSelector().length).trim();
   const expected = [key.KeyId!, key.Arn!, key.KeyState!, key.KeySpec!, key.KeyUsage!, key.Origin!, dateText(key.CreationDate!)];
   if (key.DeletionDate) expected.push(dateText(key.DeletionDate));
   expected.push(key.Description!);
-  await expect(box.locator(values.toSelector().replace(/^body /, ''))).toHaveText(expected);
+  await expect(items.locator(valueSlot)).toHaveText(expected);
 }
 
 test('studio.kms-find-external-keys', async ({ ctx, page }) => {
