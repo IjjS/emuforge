@@ -1,12 +1,14 @@
 import type { ParameterMetadata } from '@aws-sdk/client-ssm';
 import { skipToken, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import type { RequestFailure } from '../../../../../lib/aws/request';
+import { bindAwsMutationAuthorization, type RequestFailure } from '../../../../../lib/aws/request';
 import { targetOf } from '../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../components/emulator-line';
+import { usePageFlash } from '../../components/page-flash';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
+import { GET_RESOURCE_POLICIES, LIST_TAGS, listParameterTags, listResourcePolicies } from './resource-api';
 import { GET_PARAMETER_HISTORY, getParameterHistory } from './version-api';
 
 const SERVICE_KEY = ['aws', 'ssm'] as const;
@@ -191,4 +193,112 @@ export function useRefreshParameterLabels(connection: AreaConnection) {
     void client.invalidateQueries(history);
     refresh([name]);
   };
+}
+
+const tagKey = (name: string) => ['tags', name] as const;
+const policyKey = (arn: string) => ['resource-policies', arn] as const;
+type ResourceKey = ReturnType<typeof tagKey> | ReturnType<typeof policyKey>;
+
+function useResourceRead<T>(
+  connection: AreaConnection,
+  key: ResourceKey,
+  operation: string,
+  read: (endpoint: string, id: string, signal: AbortSignal) => Promise<T>,
+) {
+  const endpoint = connection.engineOrigin;
+  const unsupported = useUnsupportedOperation(connection, operation);
+  const query = useQuery({
+    queryKey: [...targetKey(connection), ...key],
+    queryFn: endpoint === undefined ? skipToken : ({ signal }) => read(endpoint, key[1], signal),
+    enabled: endpoint !== undefined && unsupported.failure === undefined,
+    retry: false,
+    gcTime: 0,
+    refetchOnMount: 'always',
+  });
+  const failure = unsupported.failure ?? (query.isError ? failureOf(query.error, operation) : undefined);
+  const { markUnsupported } = unsupported;
+  useEffect(() => {
+    if (failure?.kind === 'not-implemented') markUnsupported(failure);
+  }, [failure, markUnsupported]);
+  return {
+    items: failure ? undefined : query.data,
+    failure,
+    loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
+    retry: () => void query.refetch(),
+  };
+}
+
+export function useParameterTags(connection: AreaConnection, name: string) {
+  return useResourceRead(connection, tagKey(name), LIST_TAGS, listParameterTags);
+}
+
+export function useParameterResourcePolicies(connection: AreaConnection, arn: string) {
+  return useResourceRead(connection, policyKey(arn), GET_RESOURCE_POLICIES, listResourcePolicies);
+}
+
+export function useParameterTagWrite(connection: AreaConnection, name: string, operation: string) {
+  return useParameterResourceWrite(connection, name, tagKey(name), operation);
+}
+
+export function useParameterPolicyWrite(connection: AreaConnection, name: string, arn: string, operation: string) {
+  return useParameterResourceWrite(connection, name, policyKey(arn), operation);
+}
+
+function useParameterResourceWrite(connection: AreaConnection, name: string, key: ResourceKey, operation: string) {
+  const endpoint = connection.engineOrigin;
+  const unsupported = useUnsupportedOperation(connection, operation);
+  const client = useQueryClient();
+  const flash = usePageFlash();
+  const refresh = useRefreshParameterReads(connection);
+  const request = useRef<AbortController | undefined>(undefined);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<RequestFailure>();
+  useLayoutEffect(
+    () => () => {
+      request.current?.abort();
+      request.current = undefined;
+    },
+    [],
+  );
+
+  const disabled = endpoint === undefined || pending || unsupported.failure !== undefined;
+  async function run(
+    write: (endpoint: string, signal: AbortSignal) => Promise<unknown>,
+    message: string,
+    onClose: () => void,
+  ) {
+    if (disabled || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    const release = bindAwsMutationAuthorization(controller, { cancelInFlight: true });
+    setPending(true);
+    setFailure(undefined);
+    try {
+      await write(endpoint, controller.signal);
+      if (controller.signal.aborted) return;
+      flash.show([{ type: 'success', content: message }]);
+      const resource = { queryKey: [...targetKey(connection), ...key] };
+      void client.cancelQueries(resource);
+      void client.invalidateQueries(resource);
+      refresh([name]);
+      onClose();
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const nextFailure = failureOf(error, operation);
+      if (nextFailure.kind === 'not-implemented') {
+        unsupported.markUnsupported(nextFailure);
+        onClose();
+      } else {
+        setFailure(nextFailure);
+      }
+    } finally {
+      release();
+      if (request.current === controller) {
+        request.current = undefined;
+        setPending(false);
+      }
+    }
+  }
+
+  return { pending, disabled, failure, run };
 }
