@@ -752,13 +752,35 @@ describe("an instance's page", () => {
 });
 
 describe('instance setting actions', () => {
+  async function changeProtection() {
+    const action = await screen.findByRole('button', { name: 'Change termination protection' });
+    await waitFor(() => expect(isDisabled(action)).toBe(false));
+    fireEvent.click(action);
+    const dialog = await screen.findByRole('dialog', { name: 'Change termination protection' });
+    createWrapper(dialog).findToggle()?.findNativeInput().click();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+  }
+
+  function holdAttributeWrite() {
+    let resolve: () => void = () => undefined;
+    let reject: (error: Error) => void = () => undefined;
+    vi.mocked(modifyInstanceAttribute).mockImplementationOnce(
+      () =>
+        new Promise<void>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        }),
+    );
+    return { resolve: () => resolve(), reject: (error: Error) => reject(error) };
+  }
+
   it('explains the stopped requirement and makes groups and protection editable on a running instance', async () => {
     holding(full());
     open(pathOf('i-0full'));
     await loaded();
     const type = screen.getByRole('button', { name: 'Change instance type' });
     expect(isDisabled(type)).toBe(true);
-    expect(screen.getByText('Stop the instance to change its type.')).toBeVisible();
+    expect(reasonOf(type)).toBe('Stop the instance to change its type.');
     expect(isDisabled(screen.getByRole('button', { name: 'Change security groups' }))).toBe(false);
     await waitFor(() => {
       expect(isDisabled(screen.getByRole('button', { name: 'Change termination protection' }))).toBe(false);
@@ -767,18 +789,13 @@ describe('instance setting actions', () => {
 
   it.each(['detail', 'protection'] as const)('keeps the result when the %s refresh finishes first', async (first) => {
     const nextProtection = first === 'detail';
+    const client = new QueryClient();
     holding(full(), !nextProtection);
     vi.mocked(modifyInstanceAttribute).mockResolvedValue(undefined);
-    open(pathOf('i-0full'));
+    open(pathOf('i-0full'), false, client);
     await waitFor(() => {
       expect(pairs()['Termination protection']).toBe(nextProtection ? 'Off' : PROTECTED);
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Change termination protection' }));
-    const dialog = await screen.findByRole('dialog');
-    const toggle = createWrapper(dialog).findToggle();
-    expect(toggle).not.toBeNull();
-    toggle?.findNativeInput().click();
-
     let finishDetail: (read: api.InstanceRead) => void = () => undefined;
     let finishProtection: (enabled: boolean) => void = () => undefined;
     vi.mocked(api.getInstance).mockImplementationOnce(
@@ -793,8 +810,12 @@ describe('instance setting actions', () => {
           finishProtection = resolve;
         }),
     );
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    const flash = await screen.findByText('Termination protection updated.');
+    await changeProtection();
+    const flash = await waitFor(() => {
+      const item = PAGE.findFlashbar()?.findItemsByType('success')[0];
+      expect(item?.findContent()?.getElement()).toHaveTextContent('Termination protection updated.');
+      return item?.getElement();
+    });
     expect(vi.mocked(modifyInstanceAttribute)).toHaveBeenCalledWith(
       ENGINE,
       'i-0full',
@@ -808,24 +829,78 @@ describe('instance setting actions', () => {
 
     const detail = () => finishDetail({ found: true, instance: full({ privateIp: '10.0.0.2' }) });
     const protection = () => finishProtection(nextProtection);
-    const expectProtection = () => {
+    await act(first === 'detail' ? detail : protection);
+    await waitFor(() => expect(client.isFetching()).toBe(1));
+    await act(first === 'detail' ? protection : detail);
+    await waitFor(() => {
       expect(pairs()['Termination protection']).toBe(nextProtection ? PROTECTED : 'Off');
       expect(terminate()).toBe(nextProtection ? 'Termination protection is on.' : 'available');
-    };
-    if (first === 'detail') {
-      await act(detail);
-      await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
-      expect(pairs()['Termination protection']).toBe('Off');
-      await act(protection);
-    } else {
-      await act(protection);
-      await waitFor(expectProtection);
-      expect(pairs()['Private IPv4']).toBe('172.31.0.5');
-      await act(detail);
-    }
-    await waitFor(expectProtection);
-    await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+      expect(pairs()['Private IPv4']).toBe('10.0.0.2');
+    });
+    expect(PAGE.findFlashbar()?.findItemsByType('success')[0]?.getElement()).toBe(flash);
     expect(flash).toBeVisible();
+  });
+
+  it.each(['success', 'error'] as const)('publishes a pending write’s %s after detail disappears', async (outcome) => {
+    const client = new QueryClient();
+    holding(full());
+    const write = holdAttributeWrite();
+    open(pathOf('i-0full'), false, client);
+    await changeProtection();
+    const signal = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(undefined);
+    await act(() => client.invalidateQueries({ queryKey: EC2_KEYS.instance('i-0full') }));
+    await waitFor(() => {
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found');
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(signal?.aborted).toBe(false);
+
+    const reason = 'The local policy denied the protection change.';
+    await act(() => {
+      if (outcome === 'success') write.resolve();
+      else {
+        write.reject(
+          new RequestError(
+            requestFailure('ModifyInstanceAttribute', {
+              Code: 'AccessDeniedException',
+              message: reason,
+              $fault: 'client',
+              $metadata: { httpStatusCode: 403 },
+            }),
+          ),
+        );
+      }
+    });
+    await waitFor(() => {
+      const item = PAGE.findFlashbar()?.findItemsByType(outcome)[0];
+      expect(item?.findContent()?.getElement()).toHaveTextContent(
+        outcome === 'success' ? 'Termination protection updated.' : `AccessDeniedException: ${reason}`,
+      );
+      if (outcome === 'error') {
+        expect(item?.getElement()).toHaveAttribute('role', 'alert');
+      }
+    });
+  });
+
+  it('cancels a pending attribute write when visiting another instance', async () => {
+    holding(full());
+    const write = holdAttributeWrite();
+    const router = open(pathOf('i-0full'));
+    await changeProtection();
+    const signal = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(full({ id: 'i-next', tags: [] }));
+    await act(() => router.navigate(pathOf('i-next')));
+    expect(signal?.aborted).toBe(true);
+    await act(write.resolve);
+    expect(PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      'i-next',
+    );
+    expect(PAGE.findFlashbar()).toBeNull();
   });
 
   it('shows a failed protection read without offering an editable Off value', async () => {
@@ -840,7 +915,7 @@ describe('instance setting actions', () => {
     );
     open(pathOf('i-0full'));
     await loaded();
-    expect(await screen.findByText(/Protection read failed/)).toBeVisible();
+    await waitFor(() => expect(pairs()['Termination protection']).toContain('InternalError: Protection read failed'));
     expect(pairs()['Termination protection']).not.toContain('Off');
     const edit = screen.getByRole('button', { name: 'Change termination protection' });
     expect(isDisabled(edit)).toBe(true);
