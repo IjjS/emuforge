@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { failureOf, noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
@@ -70,6 +70,20 @@ export interface ClusterReading extends RdsRead<ClusterRound> {
   fetching: boolean;
   /** Reads the round again, keeping what is shown until it answers. */
   retryMembers: () => void;
+  operate: (id: string, action: ClusterOperation, signal: AbortSignal) => Promise<void>;
+}
+
+type LifecycleStatus = 'available' | 'stopped';
+
+function lifecycleSettled(round: ClusterRound, status: LifecycleStatus): boolean {
+  if (!round.cluster.found) return true;
+  const cluster = round.cluster.cluster;
+  if (cluster.status !== status || round.members?.ok !== true) return false;
+  const instances = round.members.instances;
+  return (
+    instances.every((instance) => instance.status === status) &&
+    cluster.members.every((member) => instances.some((instance) => instance.id === member.id))
+  );
 }
 
 function roundMoves(round: ClusterRound): boolean {
@@ -98,18 +112,32 @@ async function readRound(endpoint: string, id: string, signal: AbortSignal): Pro
 /**
  * S6: the DB cluster `id` and its members, both asked at once and shown together. A failed read of the cluster fails
  * the page; a failed read of the members only their section. Read again every 3 seconds while the cluster or a member
- * is in in progress, and after a change that reads the cluster again (its key names this read).
+ * is in progress or an accepted Stop or Start has yet to converge.
  */
 export function useClusterRound(endpoint: string | undefined, id: string): ClusterReading {
   const [mount] = useState(() => (mounts += 1));
   const [generation, setGeneration] = useState(0);
+  const expectedStatus = useRef<LifecycleStatus | undefined>(undefined);
+  const trackLifecycle = useCallback((status: LifecycleStatus) => {
+    expectedStatus.current = status;
+  }, []);
+  const operate = useClusterOperation(endpoint, trackLifecycle);
   const query = useQuery({
     queryKey: [...RDS_KEYS.cluster(id, 'round'), endpoint, mount, generation],
-    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : readRound(endpoint, id, signal)),
+    queryFn: async ({ signal }) => {
+      if (endpoint === undefined) noEndpoint();
+      const round = await readRound(endpoint, id, signal);
+      const status = expectedStatus.current;
+      if (!signal.aborted && status !== undefined && lifecycleSettled(round, status)) {
+        expectedStatus.current = undefined;
+      }
+      return round;
+    },
     enabled: endpoint !== undefined,
     refetchInterval: (current) => {
       const value = current.state.data;
-      return value === undefined || current.state.status === 'error' || !roundMoves(value) ? false : READ_AGAIN_MS;
+      if (value === undefined || current.state.status === 'error') return false;
+      return expectedStatus.current !== undefined || roundMoves(value) ? READ_AGAIN_MS : false;
     },
     refetchIntervalInBackground: true,
     staleTime: 0,
@@ -132,6 +160,7 @@ export function useClusterRound(endpoint: string | undefined, id: string): Clust
     refresh,
     fetching: query.isFetching,
     retryMembers,
+    operate,
   };
 }
 
@@ -186,7 +215,7 @@ export function useAddInstance(
 }
 
 /** Re-read the cluster and its instances after the emulator accepts a change. */
-export function useClusterOperation(endpoint: string | undefined) {
+function useClusterOperation(endpoint: string | undefined, trackLifecycle: (status: LifecycleStatus) => void) {
   const client = useQueryClient();
   return useCallback(
     async (id: string, action: ClusterOperation, signal: AbortSignal) => {
@@ -197,10 +226,13 @@ export function useClusterOperation(endpoint: string | undefined) {
       const detail = { queryKey: RDS_KEYS.cluster(id) };
       // A read already in flight may have started before the operation was accepted.
       await client.cancelQueries(detail);
+      if (!signal.aborted && (action.kind === 'stop' || action.kind === 'start')) {
+        trackLifecycle(action.kind === 'stop' ? 'stopped' : 'available');
+      }
       for (const queryKey of [detail.queryKey, RDS_KEYS.clusters(), RDS_KEYS.instances()]) {
         void client.invalidateQueries({ queryKey });
       }
     },
-    [client, endpoint],
+    [client, endpoint, trackLifecycle],
   );
 }
