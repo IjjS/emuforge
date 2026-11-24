@@ -930,5 +930,21 @@ describe('Key lifecycle', () => {
     expect(flashText('info')).toContain('EnableKey');
     action('Enable key');
     expect(sent(EnableKeyCommand)).toHaveLength(1);
+
+    await opened('Schedule key deletion');
+    emulator.metadata = key('PendingDeletion', { DeletionDate: deletionDate });
+    confirm('Schedule deletion');
+
+    await expectStatus('PendingDeletion');
+    await expectActions(['Cancel key deletion']);
+    expect(flashText()).toContain('Key deletion scheduled.');
+    expect(flashText('info')).toBe('');
+    const retainedEnable = within(lifecycle()).getByRole('button', { name: 'Enable key' });
+    expect(retainedEnable).toBeVisible();
+    expect(usable(retainedEnable)).toBe(false);
+    expect(retainedEnable).toHaveAccessibleDescription('Not implemented by the emulator (EnableKey)');
+    fireEvent.click(retainedEnable);
+    expect(sent(EnableKeyCommand)).toHaveLength(1);
+    expect(sent(ScheduleKeyDeletionCommand)).toHaveLength(1);
   });
 });

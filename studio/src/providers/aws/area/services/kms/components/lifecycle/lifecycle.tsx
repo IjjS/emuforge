@@ -135,18 +135,27 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     'disable this key',
     state === 'Disabled' ? 'This key is already Disabled.' : 'You can disable this key only while it is Enabled.',
   );
+  const enableControl = control(LIFECYCLE_OPERATIONS.enable, 'Enable key', handleEnable);
+  const disableControl = control(
+    LIFECYCLE_OPERATIONS.disable,
+    'Disable key',
+    () => open('disable'),
+    pendingDeletionReason,
+  );
+  const scheduleControl = control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', () => open('schedule'));
+  const cancelControl = control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', () => open('cancel'));
 
   return (
     <>
       <div ref={controls} role="group" aria-label="Key lifecycle" tabIndex={-1}>
         <SpaceBetween direction="horizontal" size="xs">
           {control(LIFECYCLE_OPERATIONS.describe, 'Edit description', () => open('describe'), pendingDeletionReason)}
-          {state === 'Disabled'
-            ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', handleEnable)
-            : control(LIFECYCLE_OPERATIONS.disable, 'Disable key', () => open('disable'), pendingDeletionReason)}
-          {pendingDeletion
-            ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', () => open('cancel'))
-            : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', () => open('schedule'))}
+          {state === 'Disabled' ? enableControl : disableControl}
+          {pendingDeletion ? cancelControl : scheduleControl}
+          {state !== 'Disabled' && action.isUnavailable(LIFECYCLE_OPERATIONS.enable) && enableControl}
+          {state === 'Disabled' && action.isUnavailable(LIFECYCLE_OPERATIONS.disable) && disableControl}
+          {pendingDeletion && action.isUnavailable(LIFECYCLE_OPERATIONS.schedule) && scheduleControl}
+          {!pendingDeletion && action.isUnavailable(LIFECYCLE_OPERATIONS.cancel) && cancelControl}
         </SpaceBetween>
       </div>
 
