@@ -1,5 +1,5 @@
-import type { GetResourcePoliciesResponseEntry, ParameterMetadata } from '@aws-sdk/client-ssm';
-import { skipToken, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
+import type { GetResourcePoliciesResponseEntry, ParameterMetadata, Tag } from '@aws-sdk/client-ssm';
+import { skipToken, useQuery, useQueryClient, type QueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { bindAwsMutationAuthorization, type RequestFailure } from '../../../../../lib/aws/request';
@@ -9,12 +9,14 @@ import { usePageFlash } from '../../components/page-flash';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
 import {
+  addParameterTag,
   deleteResourcePolicy,
   GET_RESOURCE_POLICIES,
   LIST_TAGS,
   listParameterTags,
   listResourcePolicies,
   putResourcePolicy,
+  removeParameterTag,
   type PolicyRevision,
 } from './resource-api';
 import { GET_PARAMETER_HISTORY, getParameterHistory } from './version-api';
@@ -79,11 +81,12 @@ export function useUnsupportedOperation(connection: AreaConnection, operation: s
 
 export function useParameterListing(connection: AreaConnection) {
   const scope = useReadScope(connection);
+  const [readReset, setReadReset] = useState(0);
   const unsupported = useUnsupportedOperation(connection, DESCRIBE_PARAMETERS);
   const key = [...targetKey(connection), 'list'];
   const { data: revision = 0 } = useQuery<number>({ queryKey: [...key, 'revision'], queryFn: skipToken });
   const listing = useTokenListing<ParameterMetadata>({
-    key: [...key, 'page', PAGE_SIZE, scope.generation, revision],
+    key: [...key, 'page', PAGE_SIZE, scope.generation, readReset, revision],
     endpoint: connection.engineOrigin,
     enabled: scope.failure === undefined && unsupported.failure === undefined,
     operation: DESCRIBE_PARAMETERS,
@@ -104,9 +107,11 @@ export function useParameterListing(connection: AreaConnection) {
     rememberFailure: unsupported.markUnsupported,
     disconnected: scope.disconnected,
     generation: scope.generation,
-    selectionKey: JSON.stringify([scope.generation, revision, listing.currentPage]),
+    selectionKey: JSON.stringify([scope.generation, readReset, revision, listing.currentPage]),
     refresh: () => {
-      if (failure?.kind !== 'not-implemented') scope.retry();
+      if (failure?.kind === 'not-implemented') return;
+      if (scope.disconnected) scope.retry();
+      else setReadReset((reset) => reset + 1);
     },
   };
 }
@@ -176,12 +181,11 @@ export function useRefreshParameterSave(connection: AreaConnection) {
   };
 }
 
-export function useParameterHistory(connection: AreaConnection, name: string) {
-  const unsupported = useUnsupportedOperation(connection, GET_PARAMETER_HISTORY);
-  const listing = useTokenListing({
+export function useParameterHistory(connection: AreaConnection, name: string, enabled: boolean) {
+  return useTokenListing({
     key: [...targetKey(connection), 'history', name],
     endpoint: connection.engineOrigin,
-    enabled: unsupported.failure === undefined,
+    enabled,
     operation: GET_PARAMETER_HISTORY,
     read: async (endpoint, token, signal) => {
       const page = await getParameterHistory(endpoint, name, token, signal);
@@ -189,11 +193,6 @@ export function useParameterHistory(connection: AreaConnection, name: string) {
       return page;
     },
   });
-  return {
-    ...listing,
-    failure: unsupported.failure ?? listing.failure,
-    rememberFailure: unsupported.markUnsupported,
-  };
 }
 
 export function useRefreshParameterLabels(connection: AreaConnection) {
@@ -214,6 +213,43 @@ const policyKey = (arn: string) => ['resource-policies', arn] as const;
 type ResourceKey = ReturnType<typeof tagKey> | ReturnType<typeof policyKey>;
 const resourceReadOperation = { tags: LIST_TAGS, 'resource-policies': GET_RESOURCE_POLICIES } as const;
 
+type ResourceRows<T> = { items: T | undefined; acknowledgedItems?: T };
+
+function reconcileResourceRows<T>(
+  client: QueryClient,
+  queryKey: readonly unknown[],
+  reconcile: (items: T | undefined) => T | undefined,
+  showWhileRefreshing = false,
+) {
+  client.setQueryData<ResourceRows<T>>(queryKey, (current) => {
+    const acknowledgedItems = reconcile(current?.acknowledgedItems ?? current?.items);
+    if (acknowledgedItems === undefined) return current;
+    return {
+      items: showWhileRefreshing ? reconcile(current?.items) : current?.items,
+      acknowledgedItems,
+    };
+  });
+}
+
+export function useEvictDeletedParameterResources(connection: AreaConnection) {
+  const client = useQueryClient();
+  const key = targetKey(connection);
+  return (names: readonly string[]) => {
+    if (names.length === 0) return;
+    for (const name of names) {
+      client.removeQueries({ queryKey: [...key, ...tagKey(name)], exact: true });
+    }
+    const resources = new Set(names.map((name) => `parameter/${name.replace(/^\//, '')}`));
+    client.removeQueries({
+      queryKey: [...key, 'resource-policies'],
+      predicate: ({ queryKey }) => {
+        const arn = queryKey[key.length + 1];
+        return typeof arn === 'string' && resources.has(arn.split(':', 6)[5] ?? '');
+      },
+    });
+  };
+}
+
 function useResourceRead<T>(
   connection: AreaConnection,
   key: ResourceKey,
@@ -222,9 +258,10 @@ function useResourceRead<T>(
   const endpoint = connection.engineOrigin;
   const operation = resourceReadOperation[key[0]];
   const unsupported = useUnsupportedOperation(connection, operation);
-  const query = useQuery({
+  const query = useQuery<ResourceRows<T>>({
     queryKey: [...targetKey(connection), ...key],
-    queryFn: endpoint === undefined ? skipToken : ({ signal }) => read(endpoint, key[1], signal),
+    queryFn:
+      endpoint === undefined ? skipToken : async ({ signal }) => ({ items: await read(endpoint, key[1], signal) }),
     enabled: endpoint !== undefined && unsupported.failure === undefined,
     retry: false,
     // A refused read cannot restore confirmed rows after the observer unmounts.
@@ -238,10 +275,13 @@ function useResourceRead<T>(
     if (failure?.kind === 'not-implemented') markUnsupported(failure);
   }, [failure, markUnsupported]);
   return {
+    // A successful read replaces the entire snapshot. A refusal leaves acknowledged writes available.
     items:
-      failure?.kind === 'not-implemented' || (failure === undefined && query.isFetchedAfterMount)
-        ? query.data
-        : undefined,
+      failure?.kind === 'not-implemented'
+        ? (query.data?.acknowledgedItems ?? query.data?.items)
+        : failure === undefined && query.isFetchedAfterMount
+          ? query.data?.items
+          : undefined,
     failure,
     loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
     retry: () => {
@@ -259,41 +299,91 @@ export function useParameterResourcePolicies(connection: AreaConnection, arn: st
 }
 
 export function useParameterTagWrite(connection: AreaConnection, name: string, operation: string) {
-  return useParameterResourceWrite(connection, name, tagKey(name), operation);
+  const client = useQueryClient();
+  const key = tagKey(name);
+  const queryKey = [...targetKey(connection), ...key];
+  const { run, ...write } = useParameterResourceWrite(connection, name, key, operation);
+  return {
+    ...write,
+    save: (tag: Tag, message: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => addParameterTag(endpoint, name, tag, signal),
+        message,
+        onClose,
+        () => {
+          reconcileResourceRows<Tag[]>(client, queryKey, (tags = []) =>
+            tags.some(({ Key }) => Key === tag.Key)
+              ? tags.map((existing) => (existing.Key === tag.Key ? tag : existing))
+              : [...tags, tag],
+          );
+        },
+      ),
+    remove: (keyToRemove: string, message: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => removeParameterTag(endpoint, name, keyToRemove, signal),
+        message,
+        onClose,
+        () => {
+          reconcileResourceRows<Tag[]>(client, queryKey, (tags) => tags?.filter(({ Key }) => Key !== keyToRemove));
+        },
+      ),
+  };
 }
 
 export function useParameterPolicyWrite(connection: AreaConnection, name: string, arn: string, operation: string) {
   const client = useQueryClient();
   const key = policyKey(arn);
-  const write = useParameterResourceWrite(connection, name, key, operation);
+  const queryKey = [...targetKey(connection), ...key];
+  const { run, ...write } = useParameterResourceWrite(connection, name, key, operation);
   return {
     ...write,
+    create: (document: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
+        `Resource policy created for ${name}.`,
+        onClose,
+        ({ PolicyId, PolicyHash }) => {
+          if (!PolicyId || !PolicyHash) return;
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(client, queryKey, (policies = []) => [
+            ...policies.filter((policy) => policy.PolicyId !== PolicyId),
+            { PolicyId, PolicyHash, Policy: document },
+          ]);
+        },
+      ),
     edit: (document: string, revision: PolicyRevision, onClose: () => void) =>
-      write.run(
+      run(
         (endpoint, signal) => putResourcePolicy(endpoint, arn, document, revision, signal),
         `Resource policy updated for ${name}.`,
         onClose,
         ({ PolicyId, PolicyHash }) => {
           if (!PolicyId || !PolicyHash) return;
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
-            policies?.map((policy) =>
-              policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
-                ? { PolicyId, PolicyHash, Policy: document }
-                : policy,
-            ),
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(
+            client,
+            queryKey,
+            (policies) =>
+              policies?.map((policy) =>
+                policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
+                  ? { PolicyId, PolicyHash, Policy: document }
+                  : policy,
+              ),
+            true,
           );
         },
       ),
     remove: (revision: PolicyRevision, onClose: () => void) =>
-      write.run(
+      run(
         (endpoint, signal) => deleteResourcePolicy(endpoint, arn, revision, signal),
         `Resource policy ${revision.PolicyId} deleted from ${name}.`,
         onClose,
         () => {
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
-            policies?.filter(
-              (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
-            ),
+          reconcileResourceRows<GetResourcePoliciesResponseEntry[]>(
+            client,
+            queryKey,
+            (policies) =>
+              policies?.filter(
+                (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
+              ),
+            true,
           );
         },
       ),
@@ -335,9 +425,10 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
       if (controller.signal.aborted) return;
       const resource = { queryKey: [...targetKey(connection), ...key] };
       void client.cancelQueries(resource);
+      const readBlocked =
+        client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]) !== undefined;
       onSuccess?.(result);
-      const blockedRead = client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]);
-      void client.invalidateQueries({ ...resource, refetchType: blockedRead === undefined ? 'active' : 'none' });
+      void client.invalidateQueries({ ...resource, refetchType: readBlocked ? 'none' : 'active' });
       flash.show([{ type: 'success', content: message }]);
       refresh([name]);
       onClose();

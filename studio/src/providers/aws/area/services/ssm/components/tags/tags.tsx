@@ -14,7 +14,7 @@ import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState } from '../../../../components/failure-states';
 import { ValueText } from '../../../../components/value-text';
 import { useParameterTags, useParameterTagWrite, useUnsupportedOperation } from '../../queries';
-import { ADD_TAGS, addParameterTag, LIST_TAGS, REMOVE_TAGS, removeParameterTag } from '../../resource-api';
+import { ADD_TAGS, LIST_TAGS, REMOVE_TAGS } from '../../resource-api';
 
 interface TagsProps {
   connection: AreaConnection;
@@ -127,6 +127,11 @@ function TagDialog({ connection, name, action, onClose }: TagsProps & { action: 
   const handleDismiss = () => {
     if (!write.pending) onClose();
   };
+  const handleSubmit = () => {
+    const message = `Tag ${key} ${result} ${name}.`;
+    if (removing) void write.remove(key, message, onClose);
+    else void write.save({ Key: key, Value: value }, message, onClose);
+  };
 
   return (
     <AreaModal
@@ -144,16 +149,7 @@ function TagDialog({ connection, name, action, onClose }: TagsProps & { action: 
               variant="primary"
               loading={write.pending}
               disabled={write.disabled || key === ''}
-              onClick={() =>
-                void write.run(
-                  (endpoint, signal) =>
-                    removing
-                      ? removeParameterTag(endpoint, name, key, signal)
-                      : addParameterTag(endpoint, name, { Key: key, Value: value }, signal),
-                  `Tag ${key} ${result} ${name}.`,
-                  onClose,
-                )
-              }
+              onClick={handleSubmit}
             >
               {submit}
             </Button>

@@ -1,5 +1,6 @@
 import type {
   AddTagsToResourceCommandInput,
+  DeleteParametersCommandInput,
   DescribeParametersCommandInput,
   GetParameterCommandInput,
 } from '@aws-sdk/client-ssm';
@@ -41,8 +42,11 @@ const connected = { kind: 'connected', checkedAt: 1, target: 'local', emulator }
 
 const describeParameters = vi.fn<(input: DescribeParametersCommandInput) => Response | Promise<Response>>();
 const deleteParameter = vi.fn<(input: { Name: string }) => Response>();
+const deleteParameters = vi.fn<(input: DeleteParametersCommandInput) => Response>();
 const addTags = vi.fn<(input: AddTagsToResourceCommandInput) => Response>();
 const getParameter = vi.fn<(input: GetParameterCommandInput) => Response>();
+const listTags = vi.fn<() => Response>();
+const getPolicies = vi.fn<() => Response>();
 let nextPort = 8850;
 let engineOrigin: string;
 
@@ -54,8 +58,11 @@ beforeEach(() => {
   engineOrigin = `http://127.0.0.1:${String(nextPort++)}`;
   describeParameters.mockReset().mockImplementation(() => answer({ Parameters: [PARAMETER] }));
   deleteParameter.mockReset().mockImplementation(() => answer({}));
+  deleteParameters.mockReset();
   addTags.mockReset().mockImplementation(() => answer({}));
   getParameter.mockReset().mockImplementation(() => answer({ Parameter: { Value: VALUE } }));
+  listTags.mockReset().mockImplementation(() => answer({ TagList: [] }));
+  getPolicies.mockReset().mockImplementation(() => answer({ Policies: [] }));
   vi.stubGlobal('matchMedia', (media: string) => ({
     media,
     matches: false,
@@ -70,8 +77,12 @@ beforeEach(() => {
         return describeParameters((await request.json()) as DescribeParametersCommandInput);
       case 'DeleteParameter':
         return deleteParameter((await request.json()) as { Name: string });
+      case 'DeleteParameters':
+        return deleteParameters((await request.json()) as DeleteParametersCommandInput);
       case 'ListTagsForResource':
-        return answer({ TagList: [] });
+        return listTags();
+      case 'GetResourcePolicies':
+        return getPolicies();
       case 'AddTagsToResource':
         return addTags((await request.json()) as AddTagsToResourceCommandInput);
       case 'GetParameter':
@@ -83,7 +94,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function open(waitForList?: () => Promise<unknown>) {
+function open(waitForList?: () => Promise<unknown>, initialName = NAME) {
   const controls: { connect?: (result: CheckResult) => void } = {};
   function Frame() {
     const { pathname } = useLocation();
@@ -112,7 +123,7 @@ function open(waitForList?: () => Promise<unknown>) {
           new URL(request.url).pathname === PARAMETER_STORE_PATH && waitForList ? waitForList() : null,
       },
     ],
-    { initialEntries: [parameterPath(NAME)] },
+    { initialEntries: [parameterPath(initialName)] },
   );
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -144,8 +155,9 @@ const detailSection = () =>
       (container) =>
         container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Parameter details',
     );
-const tagsSection = () =>
-  ui.findAllExpandableSections().find((section) => section.findHeaderText()?.getElement().textContent === 'Tags');
+const resourceSection = (name: string) =>
+  ui.findAllExpandableSections().find((section) => section.findHeaderText()?.getElement().textContent === name);
+const tagsSection = () => resourceSection('Tags');
 const details = () =>
   waitFor(() => {
     const heading = detailSection()?.findHeader()?.findHeader()?.findHeadingText().getElement();
@@ -172,15 +184,18 @@ function expectDetailReadFailure(message: string) {
 
 const flash = (type: 'success' | 'info') => ui.findFlashbar()?.findItemsByType(type)[0];
 
+async function deleteDialog(header: string) {
+  return waitFor(() => {
+    const dialog = required(ui.findModal(), 'delete confirmation dialog');
+    expect(dialog.findHeader().getElement().textContent).toBe(header);
+    return dialog;
+  });
+}
+
 async function openDelete() {
   await details();
   fireEvent.click(deleteButton());
-  return waitFor(() => {
-    const dialog = ui.findModal();
-    if (dialog === null) throw new Error('Expected the delete confirmation dialog');
-    expect(dialog.findHeader().getElement()).toHaveTextContent(/^Delete parameter$/);
-    return dialog;
-  });
+  return deleteDialog('Delete parameter');
 }
 
 type DeleteDialog = Awaited<ReturnType<typeof openDelete>>;
@@ -250,6 +265,129 @@ async function refuseMetadataAfterTagWrite() {
     required(describeParameters.mock.invocationCallOrder[1], 'refresh call order'),
   );
   return { ...view, ...refusal };
+}
+
+const RESOURCE_SECTIONS = [
+  {
+    name: 'Tags',
+    operation: 'ListTagsForResource',
+    refresh: 'Refresh tags',
+    create: 'Add tag',
+  },
+  {
+    name: 'Resource policies',
+    operation: 'GetResourcePolicies',
+    refresh: 'Refresh resource policies',
+    create: 'Create resource policy',
+  },
+];
+
+const TAG = { Key: 'previous', Value: 'previous tag value' };
+const POLICY_ID = 'previous-policy';
+
+function seedResourceReads() {
+  listTags.mockImplementation(() => answer({ TagList: [TAG] }));
+  getPolicies.mockImplementation(() =>
+    answer({ Policies: [{ PolicyId: POLICY_ID, PolicyHash: 'previous-hash', Policy: '{"Statement":[]}' }] }),
+  );
+}
+
+async function expandResourceSections() {
+  await details();
+  for (const { name } of RESOURCE_SECTIONS) {
+    fireEvent.click(required(resourceSection(name), name).findExpandButton().getElement());
+  }
+}
+
+function resourceContent(name: string) {
+  return required(resourceSection(name)?.findContent(), `${name} content`);
+}
+
+function resourcePanel(name: string) {
+  return within(resourceContent(name).getElement());
+}
+
+function expectResourceRows(present: boolean) {
+  const table = required(resourceContent('Tags').findTable(), 'tag table');
+  const rows = table.findRows().map((row, index) => ({
+    row,
+    key: table.findBodyCell(index + 1, 1)?.getElement(),
+    value: table.findBodyCell(index + 1, 2)?.getElement(),
+    actions: table.findBodyCell(index + 1, 3),
+  }));
+  const tag = rows.find(({ key }) => key?.textContent === TAG.Key);
+  const tagActions = [`Edit tag ${TAG.Key}`, `Remove tag ${TAG.Key}`];
+  const cards = resourceContent('Resource policies')
+    .findAllContainers()
+    .map((card) => ({
+      card,
+      header: card.findHeader()?.findHeader(),
+    }));
+  const policy = cards.find(({ header }) => header?.findHeadingText().getElement().textContent === POLICY_ID);
+  const policyActions = [`Edit resource policy ${POLICY_ID}`, `Delete resource policy ${POLICY_ID}`];
+
+  if (present) {
+    expect(tag?.row.getElement()).toBeVisible();
+    expect(tag?.key).toBeVisible();
+    expect(tag?.key?.textContent).toBe(TAG.Key);
+    expect(tag?.value).toBeVisible();
+    expect(tag?.value?.textContent).toBe(TAG.Value);
+    for (const action of tagActions) {
+      expect(tag?.actions?.findButton(`[aria-label="${action}"]`)?.getElement()).toBeEnabled();
+    }
+    expect(policy?.card.getElement()).toBeVisible();
+    expect(policy?.header?.findHeadingText().getElement()).toBeVisible();
+    for (const action of policyActions) {
+      expect(policy?.header?.findActions()?.findButton(`[aria-label="${action}"]`)?.getElement()).toBeEnabled();
+    }
+    return;
+  }
+
+  expect(tag).toBeUndefined();
+  expect(policy).toBeUndefined();
+  for (const { value, actions } of rows) {
+    expect(value?.textContent).not.toBe(TAG.Value);
+    for (const action of tagActions) {
+      expect(actions?.findButton(`[aria-label="${action}"]`)?.getElement()).not.toBeInTheDocument();
+    }
+  }
+  for (const { header } of cards) {
+    for (const action of policyActions) {
+      expect(header?.findActions()?.findButton(`[aria-label="${action}"]`)?.getElement()).not.toBeInTheDocument();
+    }
+  }
+}
+
+function parameterListRow(name: string) {
+  const table = required(ui.findTable(), 'parameter list');
+  const nameColumn = table
+    .findColumnHeaders()
+    .findIndex((header) => header.getElement().textContent?.trim() === 'Name');
+  expect(nameColumn).toBeGreaterThanOrEqual(0);
+  const rowIndex = table
+    .findRows()
+    .findIndex((_, index) => table.findBodyCell(index + 1, nameColumn + 1)?.getElement().textContent === name);
+  return { table, rowIndex };
+}
+
+function expectBlockedResourceReads() {
+  for (const { name, operation, refresh, create } of RESOURCE_SECTIONS) {
+    const panel = resourcePanel(name);
+    expect(panel.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
+    expect(panel.getByRole('button', { name: refresh })).toBeDisabled();
+    expect(panel.getByRole('button', { name: 'Retry' })).toBeDisabled();
+    expect(panel.getByRole('button', { name: create })).toBeEnabled();
+  }
+}
+
+async function blockResourceReads() {
+  listTags.mockImplementation(() => answer({ __type: 'NotImplemented' }, 501));
+  getPolicies.mockImplementation(() => answer({ __type: 'NotImplemented' }, 501));
+  for (const { name, refresh } of RESOURCE_SECTIONS) {
+    fireEvent.click(resourcePanel(name).getByRole('button', { name: refresh }));
+  }
+  await waitFor(expectBlockedResourceReads);
+  expectResourceRows(true);
 }
 
 describe('Parameter Store detail', () => {
@@ -381,6 +519,128 @@ describe('Parameter Store detail', () => {
     });
     expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(`Parameter ${NAME} deleted.`);
     expect(deleteParameter.mock.calls).toEqual([[{ Name: NAME }]]);
+  });
+
+  it('evicts the deleted parameter’s tag and policy rows when the same name is recreated under blocked reads', async () => {
+    seedResourceReads();
+    deleteParameter.mockImplementation(() => {
+      describeParameters.mockImplementation(() => answer({ Parameters: [] }));
+      return answer({});
+    });
+    const { router } = open();
+    await expandResourceSections();
+    await waitFor(() => expectResourceRows(true));
+    await blockResourceReads();
+
+    confirm(await openDelete(), NAME);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(PARAMETER_STORE_PATH);
+      expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(`Parameter ${NAME} deleted.`);
+    });
+
+    describeParameters.mockImplementation(() =>
+      answer({ Parameters: [{ ...PARAMETER, Version: 1, Description: 'Recreated parameter' }] }),
+    );
+    await act(() => router.navigate(parameterPath(NAME)));
+    expect(await screen.findByText('Recreated parameter')).toBeVisible();
+    await expandResourceSections();
+    expectBlockedResourceReads();
+    expectResourceRows(false);
+    expect(listTags).toHaveBeenCalledTimes(2);
+    expect(getPolicies).toHaveBeenCalledTimes(2);
+  });
+
+  it('evicts only confirmed bulk deletions on the affected target under blocked reads', async () => {
+    const deletedName = 'database';
+    const rejected = 'rejected';
+    const unconfirmed = 'unconfirmed';
+    const sibling = 'database-sibling';
+    const names = [deletedName, rejected, unconfirmed, sibling];
+    const metadata = names.map((Name) => ({
+      ...PARAMETER,
+      Name,
+      ARN: `arn:aws:ssm:us-east-1:000000000000:parameter/${Name}`,
+    }));
+    let parameters = metadata;
+    describeParameters.mockImplementation(() => answer({ Parameters: parameters }));
+    deleteParameters.mockImplementation(() => {
+      parameters = metadata.filter(({ Name }) => Name !== deletedName);
+      return answer({ DeletedParameters: [deletedName], InvalidParameters: [rejected] });
+    });
+    const { router, connect } = open(undefined, deletedName);
+    const visitDetails = async (name: string) => {
+      await act(() => router.navigate(parameterPath(name)));
+      await expandResourceSections();
+    };
+
+    const otherTarget = { ...connected, checkedAt: 2, target: 'other' };
+    await details();
+    connect(otherTarget);
+    seedResourceReads();
+    await visitDetails(deletedName);
+    await waitFor(() => expectResourceRows(true));
+    await blockResourceReads();
+    await act(() => router.navigate(PARAMETER_STORE_PATH));
+
+    connect({ ...connected, checkedAt: 3 });
+    seedResourceReads();
+    for (const name of names) {
+      await visitDetails(name);
+      await waitFor(() => expectResourceRows(true));
+    }
+    await blockResourceReads();
+    await act(() => router.navigate(PARAMETER_STORE_PATH));
+
+    const selected = [deletedName, rejected, unconfirmed];
+    for (const name of selected) {
+      const checkbox = await waitFor(() => {
+        const { table, rowIndex } = parameterListRow(name);
+        expect(rowIndex).toBeGreaterThanOrEqual(0);
+        const input = table
+          .findRowSelectionArea(rowIndex + 1)
+          ?.find('input[type="checkbox"]')
+          ?.getElement();
+        expect(input).toHaveAccessibleName(`Select ${name}`);
+        return required(input, `selection for ${name}`);
+      });
+      fireEvent.click(checkbox);
+    }
+    const listActions = ui.findTable()?.findHeaderSlot()?.findHeader()?.findActions();
+    const bulkDelete = required(
+      listActions?.findAllButtons().find((button) => button.getElement().textContent?.trim() === 'Delete'),
+      'bulk Delete button',
+    ).getElement();
+    expect(bulkDelete).toHaveAccessibleName('Delete');
+    fireEvent.click(bulkDelete);
+    confirm(await deleteDialog('Delete parameters'), 'delete');
+    await waitFor(() => {
+      expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(deletedName);
+      expect(parameterListRow(sibling).rowIndex).toBeGreaterThanOrEqual(0);
+      expect(parameterListRow(deletedName).rowIndex).toBe(-1);
+    });
+    expect(deleteParameters.mock.calls).toEqual([[{ Names: selected }]]);
+
+    parameters = metadata.map((parameter) =>
+      parameter.Name === deletedName ? { ...parameter, Version: 1, Description: 'Recreated parameter' } : parameter,
+    );
+    const tagReads = listTags.mock.calls.length;
+    const policyReads = getPolicies.mock.calls.length;
+    await visitDetails(deletedName);
+    expect(screen.getByText('Recreated parameter')).toBeVisible();
+    expectBlockedResourceReads();
+    expectResourceRows(false);
+    for (const name of [rejected, unconfirmed, sibling]) {
+      await visitDetails(name);
+      expectBlockedResourceReads();
+      expectResourceRows(true);
+    }
+    await act(() => router.navigate(PARAMETER_STORE_PATH));
+    connect({ ...otherTarget, checkedAt: 4 });
+    await visitDetails(deletedName);
+    expectBlockedResourceReads();
+    expectResourceRows(true);
+    expect(listTags).toHaveBeenCalledTimes(tagReads);
+    expect(getPolicies).toHaveBeenCalledTimes(policyReads);
   });
 
   it('D4 keeps access denial retryable and makes only DeleteParameter unavailable on 501', async () => {

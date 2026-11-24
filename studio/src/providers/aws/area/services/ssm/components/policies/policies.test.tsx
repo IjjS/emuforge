@@ -254,8 +254,8 @@ const updated = `Resource policy updated for ${NAME}.`;
 const deleted = `Resource policy ${POLICY.PolicyId} deleted from ${NAME}.`;
 const list = (Policies: (typeof POLICY)[] = [], NextToken?: string) => answer({ Policies, NextToken });
 
-async function policyDialog(name: string, title = name) {
-  fireEvent.click(button(name));
+async function policyDialog(trigger: string | HTMLElement, title = typeof trigger === 'string' ? trigger : '') {
+  fireEvent.click(typeof trigger === 'string' ? button(trigger) : trigger);
   return waitFor(() => {
     const dialog = page.findModal();
     assert(dialog);
@@ -320,6 +320,7 @@ describe('Parameter resource policies', () => {
 
     const afterCreate = deferredResponse();
     ops.DescribeParameters.mockReturnValueOnce(afterCreate.response);
+    ops.PutResourcePolicy.mockImplementationOnce(() => answer({ PolicyId: POLICY.PolicyId, PolicyHash: 'write-hash' }));
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     const create = await policyDialog('Create resource policy');
     change(create, 'Policy document', DOCUMENT);
@@ -444,6 +445,83 @@ describe('Parameter resource policies', () => {
     await expectReadUnavailable();
     expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
   });
+
+  it.each(['before creation', 'after creation'] as const)(
+    'uses the returned policy revision when reads first refuse %s',
+    async (refusal) => {
+      const ops = openDetail();
+      const createdRevision = { PolicyId: 'created-policy', PolicyHash: 'created-hash' };
+      const refresh = deferredResponse();
+      ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY])).mockReturnValueOnce(refresh.response);
+      ops.PutResourcePolicy.mockImplementationOnce(() => answer(createdRevision));
+      await expand();
+      function card(id: string) {
+        return sectionContent()
+          ?.findAllContainers()
+          .find((row) => row.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === id);
+      }
+      await waitFor(() => {
+        const content = card(POLICY.PolicyId)?.findContent();
+        assert(content);
+        expect(within(content.getElement()).getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+      });
+      const refreshButton = panelButton('Refresh resource policies');
+      expect(refreshButton).toBeEnabled();
+      if (refusal === 'before creation') {
+        fireEvent.click(refreshButton);
+        await refresh.finish(notImplemented());
+        await expectReadUnavailable();
+      }
+
+      const create = await policyDialog('Create resource policy');
+      change(create, 'Policy document', UPDATED);
+      fireEvent.click(button('Save resource policy', create));
+      await waitFor(() => expect(flash(created)).toBeVisible());
+      expect(ops.PutResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, Policy: UPDATED });
+      if (refusal === 'after creation') {
+        await waitFor(() => expect(ops.GetResourcePolicies).toHaveBeenCalledTimes(2));
+        expect(sectionContent()?.findAllAlerts()).toHaveLength(0);
+        await refresh.finish(notImplemented());
+        await expectReadUnavailable();
+      }
+
+      await expand();
+      await expand();
+      await expectReadUnavailable();
+      expect(sectionContent()?.findAllContainers()).toHaveLength(2);
+      const added = card(createdRevision.PolicyId);
+      const original = card(POLICY.PolicyId);
+      assert(added && original);
+      const addedContent = added.findContent();
+      const originalContent = original.findContent();
+      assert(addedContent && originalContent);
+      const edit = added.findHeader()?.findButton('[aria-label="Edit resource policy created-policy"]');
+      const remove = added.findHeader()?.findButton('[aria-label="Delete resource policy created-policy"]');
+      expect(edit?.getElement()).toBeEnabled();
+      expect(remove?.getElement()).toBeEnabled();
+      expect(within(addedContent.getElement()).getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+      expect(within(originalContent.getElement()).getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+      expect(
+        original.findHeader()?.findButton('[aria-label="Delete resource policy policy-1"]')?.getElement(),
+      ).toBeEnabled();
+
+      assert(edit && remove);
+      const editDialog = await policyDialog(edit.getElement(), 'Edit resource policy');
+      expect(policyInput(editDialog, 'Policy document')).toHaveValue(UPDATED);
+      fireEvent.click(button('Cancel', editDialog));
+      const deleteDialog = await policyDialog(remove.getElement(), 'Delete resource policy');
+      change(deleteDialog, 'Confirmation', 'delete');
+      fireEvent.click(button('Delete resource policy', deleteDialog));
+      await waitFor(() =>
+        expect(flash(`Resource policy ${createdRevision.PolicyId} deleted from ${NAME}.`)).toBeVisible(),
+      );
+      expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, ...createdRevision });
+      await expectReadUnavailable();
+      expect(card(createdRevision.PolicyId)).toBeUndefined();
+      expect(card(POLICY.PolicyId)?.getElement()).toBeVisible();
+      expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
+    },
+  );
 
   it('P5 edits with the last read revision and deletes with the returned revision after a 501', async () => {
     const ops = openDetail();

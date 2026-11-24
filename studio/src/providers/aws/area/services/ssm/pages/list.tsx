@@ -19,6 +19,14 @@ import { DeleteControl } from '../components/delete/delete-control';
 import { PARAMETER_CREATE_PATH, parameterPath } from '../paths';
 import { useParameterListing } from '../queries';
 
+type ConfirmedPage = Pick<
+  ReturnType<typeof useParameterListing>,
+  'currentPage' | 'pagesCount' | 'openEnd' | 'selectionKey' | 'generation'
+> & {
+  read: ParameterMetadata[];
+  items: ParameterMetadata[];
+};
+
 export function ParameterListPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('parameters');
   const handleFollow = useFollow();
@@ -30,9 +38,38 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
   }, [failure, rememberFailure]);
 
   const [selection, setSelection] = useState<{ key: string; items: readonly ParameterMetadata[] }>();
-  const selectedItems = failure === undefined && selection?.key === listing.selectionKey ? selection.items : [];
+  const [confirmedPage, setConfirmedPage] = useState<ConfirmedPage>();
+  if (failure === undefined && listing.items !== undefined && listing.items !== confirmedPage?.read) {
+    setConfirmedPage({
+      read: listing.items,
+      items: listing.items,
+      currentPage: listing.currentPage,
+      pagesCount: listing.pagesCount,
+      openEnd: listing.openEnd,
+      selectionKey: listing.selectionKey,
+      generation: listing.generation,
+    });
+    if (selection !== undefined && selection.key !== listing.selectionKey) setSelection(undefined);
+  }
+  const retainedPage =
+    unavailable && connection.result?.kind === 'connected' && confirmedPage?.generation === listing.generation
+      ? confirmedPage
+      : undefined;
+  const page = retainedPage ?? listing;
+  const canSelect = failure === undefined || retainedPage !== undefined;
+  const items = canSelect ? (page.items ?? []) : [];
+  const selectedItems = canSelect && selection?.key === page.selectionKey ? selection.items : [];
   const selectedNames = selectedItems.flatMap(({ Name }) => (Name ? [Name] : []));
   const state = failure === undefined ? undefined : readFailureState(failure, connection, 'parameters');
+  const refusal = unavailable && state !== undefined && (
+    <Box textAlign="center">
+      <SpaceBetween size="xs">
+        <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
+        <Box variant="p">{state.detail}</Box>
+        <Button disabled>Retry</Button>
+      </SpaceBetween>
+    </Box>
+  );
   const empty = (
     <Box textAlign="center">
       <SpaceBetween size="xs">
@@ -45,6 +82,14 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
       </SpaceBetween>
     </Box>
   );
+
+  function reconcileDeleted(names: readonly string[]) {
+    setConfirmedPage((current) =>
+      current === undefined || current.generation !== listing.generation
+        ? current
+        : { ...current, items: current.items.filter(({ Name }) => Name === undefined || !names.includes(Name)) },
+    );
+  }
 
   return (
     <Table<ParameterMetadata>
@@ -74,7 +119,7 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
           cell: ({ LastModifiedDate }) => <ValueText kind="fixed" value={creationDateText(LastModifiedDate)} />,
         },
       ]}
-      items={failure === undefined ? (listing.items ?? []) : []}
+      items={items}
       trackBy={(parameter) => parameter.Name ?? parameter.ARN ?? ''}
       wrapLines
       selectionType="multi"
@@ -85,52 +130,42 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
         allItemsSelectionLabel: () => 'Select all parameters on this page',
         itemSelectionLabel: (_, item) => `Select ${item.Name ?? 'parameter'}`,
       }}
-      onSelectionChange={({ detail }) => setSelection({ key: listing.selectionKey, items: detail.selectedItems })}
+      onSelectionChange={({ detail }) => setSelection({ key: page.selectionKey, items: detail.selectedItems })}
       loading={failure === undefined && listing.loading}
       loadingText="Loading parameters…"
-      empty={
-        state === undefined ? (
-          empty
-        ) : unavailable ? (
-          <Box textAlign="center">
-            <SpaceBetween size="xs">
-              <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
-              <Box variant="p">{state.detail}</Box>
-              <Button disabled>Retry</Button>
-            </SpaceBetween>
-          </Box>
-        ) : (
-          <ReadFailure state={state} onRetry={listing.refresh} />
-        )
-      }
+      empty={refusal || (state === undefined ? empty : <ReadFailure state={state} onRetry={listing.refresh} />)}
       header={
-        <Header
-          variant="awsui-h1-sticky"
-          actions={
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable} onClick={listing.refresh} />
-              <DeleteControl
-                key={listing.generation}
-                names={selectedNames}
-                connection={connection}
-                disabled={listing.disconnected || failure !== undefined}
-                onSettled={() => setSelection(undefined)}
-              />
-              <Button variant="primary" href={PARAMETER_CREATE_PATH} onFollow={handleFollow}>
-                Create parameter
-              </Button>
-            </SpaceBetween>
-          }
-        >
-          Parameter Store
-        </Header>
+        <SpaceBetween size="s">
+          <Header
+            variant="awsui-h1-sticky"
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable} onClick={listing.refresh} />
+                <DeleteControl
+                  key={listing.generation}
+                  names={selectedNames}
+                  connection={connection}
+                  disabled={listing.disconnected || !canSelect}
+                  onConfirmed={reconcileDeleted}
+                  onSettled={() => setSelection(undefined)}
+                />
+                <Button variant="primary" href={PARAMETER_CREATE_PATH} onFollow={handleFollow}>
+                  Create parameter
+                </Button>
+              </SpaceBetween>
+            }
+          >
+            Parameter Store
+          </Header>
+          {items.length > 0 && refusal}
+        </SpaceBetween>
       }
       pagination={
-        (listing.openEnd || listing.pagesCount > 1) && (
+        (page.openEnd || page.pagesCount > 1) && (
           <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
+            currentPageIndex={page.currentPage}
+            pagesCount={page.pagesCount}
+            openEnd={page.openEnd}
             disabled={unavailable || listing.loading || listing.disconnected}
             ariaLabels={{
               nextPageLabel: 'Next page',
@@ -138,8 +173,9 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
               pageLabel: (page) => `Page ${String(page)}`,
             }}
             onChange={({ detail }) => {
-              setSelection(undefined);
-              listing.goToPage(detail.currentPageIndex);
+              if (!unavailable && !listing.loading && !listing.disconnected) {
+                listing.goToPage(detail.currentPageIndex);
+              }
             }}
           />
         )
