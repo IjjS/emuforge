@@ -19,7 +19,7 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { DeleteControl } from '../components/delete/delete-control';
-import { PARAMETER_STORE_PATH, parameterName } from '../paths';
+import { PARAMETER_STORE_PATH, parameterEditPath, parameterName } from '../paths';
 import { useParameterMetadata } from '../queries';
 
 function Metadata({ parameter }: { parameter: ParameterMetadata }) {
@@ -86,13 +86,18 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
       <Header
         variant="h1"
         actions={
-          <DeleteControl
-            key={JSON.stringify([connection.engineOrigin, disconnected])}
-            names={parameter === undefined ? [] : [name]}
-            connection={connection}
-            disabled={disconnected || parameter === undefined}
-            onDeleted={(_, result) => flash.handOver(PARAMETER_STORE_PATH, [result])}
-          />
+          <SpaceBetween direction="horizontal" size="xs">
+            <DeleteControl
+              key={JSON.stringify([connection.engineOrigin, disconnected])}
+              names={parameter === undefined ? [] : [name]}
+              connection={connection}
+              disabled={disconnected || parameter === undefined}
+              onDeleted={(_, result) => flash.handOver(PARAMETER_STORE_PATH, [result])}
+            />
+            <Button href={parameterEditPath(name)} onFollow={follow} disabled={disconnected || parameter === undefined}>
+              Edit parameter
+            </Button>
+          </SpaceBetween>
         }
       >
         {name ? <ValueText kind="name" value={name} /> : 'Parameter details'}
