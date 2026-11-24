@@ -16,6 +16,7 @@ import {
   LabelDialog,
   LabelListEmpty,
   LabelPagination,
+  LabelReadAnnouncement,
   LabelRowActions,
   UnavailableActions,
 } from './label-controls';
@@ -112,6 +113,7 @@ export function Tags({
     <SpaceBetween size="s">
       <UnavailableActions operations={action.unavailable} />
       <div ref={tableSection}>
+        <LabelReadAnnouncement failure={listing.failure} connection={connection} name="tags" />
         <Table
           trackBy="name"
           ariaLabels={{ tableLabel: showOverflowHint ? `Tags. ${OVERFLOW_HINT}` : 'Tags' }}
