@@ -4,7 +4,7 @@ import { expect, startStack, test, type Ctx } from './support';
 import { ACTION } from './support/frame';
 import { checkPrefix } from './support/service-screens';
 import {
-  answered, flashItems, openTopic, readSubscriptionSettings, SnsSeeded, subscriptionSettingsScreen,
+  flashItems, openTopic, readSubscriptionSettings, SnsSeeded, subscriptionSettingsScreen,
   valueOf, writeSubscriptionSetting,
 } from './services/sns/sns';
 
@@ -45,8 +45,24 @@ async function openSeededSettings(ctx: Ctx, page: Page, tag: string) {
     await expectShown(state);
   }
   await expectState(initial);
-  // The draft can already display the submitted value before the write and its readback finish.
-  const save = (button: typeof ui.savePolicy) => answered(page, 'GetSubscriptionAttributes', () => button.click(ACTION));
+  async function save(button: typeof ui.savePolicy, settledAction = button) {
+    const [readback] = await Promise.all([
+      page.waitForResponse((response) => {
+        const params = new URLSearchParams(response.request().postData() ?? '');
+        return params.get('Action') === 'GetSubscriptionAttributes' && params.get('SubscriptionArn') === arn;
+      }),
+      button.click(ACTION),
+    ]);
+    expect(readback.status()).toBe(200);
+    expect(await readback.finished()).toBeNull();
+
+    // A draft still allows saving. During a read or after a read error, the textarea cannot be edited.
+    // Together these states distinguish the applied readback from both earlier states.
+    await expect(async () => {
+      expect(await ui.policy.isEditable()).toBe(true);
+      expect(await settledAction.isDisabled()).toBe(true);
+    }).toPass({ timeout: 15_000 });
+  }
   return { ui, read, write, save, expectState, expectShown };
 }
 
@@ -68,7 +84,7 @@ test('studio.sns-subscription-filter-policy-and-scope', async ({ ctx, page }) =>
   await expect(ui.modal).toBeHidden();
   await expectState({ ...initial, policy: blue });
   await ui.clear.click(ACTION);
-  await save(ui.confirm);
+  await save(ui.confirm, ui.clear);
   await expect(ui.modal).toBeHidden();
   await expectState({ policy: undefined, scope: undefined, raw: 'true' });
 
