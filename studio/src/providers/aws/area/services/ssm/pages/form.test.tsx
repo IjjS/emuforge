@@ -171,6 +171,9 @@ describe('Parameter Store forms', () => {
     expect(edit).toHaveAttribute('href', parameterEditPath(NAME));
     fireEvent.click(edit);
     expect(await screen.findByLabelText('New value')).toHaveValue('');
+    expect(field('New value')).toHaveAccessibleDescription(
+      /Enter a new value for every save\. Saving creates a new version\./,
+    );
     expect(where()).toBe(parameterEditPath(NAME));
     expect(crumbs().getByRole('link', { name: NAME })).toHaveAttribute('href', parameterPath(NAME));
     expect(crumbs().getAllByText('Edit parameter')[0]).toBeVisible();
@@ -214,20 +217,47 @@ describe('Parameter Store forms', () => {
     expect(await screen.findByRole('heading', { name: 'Parameter details' })).toBeVisible();
   });
 
-  it('F3 shows field errors and never sends a missing name, missing value, or invalid policy', async () => {
+  it('F3 reveals the first invalid create input and preserves the draft without sending it', () => {
     open(PARAMETER_CREATE_PATH);
+    const revealName = vi.fn();
+    Object.defineProperty(field('Name'), 'scrollIntoView', { value: revealName });
     fireEvent.click(create());
     expect(screen.getByText('Enter a parameter name.')).toBeVisible();
     expect(screen.getByText('Enter a parameter value.')).toBeVisible();
+    expect(revealName).toHaveBeenCalledWith({ block: 'center' });
+    expect(field('Name')).toHaveFocus();
+    expect(field('Name')).toHaveAccessibleDescription(/Enter a parameter name\./);
     expect(putParameter).not.toHaveBeenCalled();
     fillCreate();
+    expect(screen.getByText('Choose Advanced to configure parameter policies.')).toBeVisible();
     select('Tier', 'Advanced');
     for (const text of ['[', '{}', '"policy"', '["policy"]']) {
       change('Parameter policies', text);
       fireEvent.click(create());
       expect(screen.getByText('Enter a JSON array of policy objects.')).toBeVisible();
+      expect(field('Parameter policies')).toHaveFocus();
+      expect(field('Parameter policies')).toHaveAccessibleDescription(/Enter a JSON array of policy objects\./);
+      expect(field('Parameter policies')).toHaveValue(text);
+      expect(field('Value')).toHaveValue('local-fixture');
       expect(putParameter).not.toHaveBeenCalled();
     }
+  });
+
+  it('reveals New value on invalid edit submit and preserves the settings draft', async () => {
+    await openEdit();
+    change('Description', 'Edited description');
+    change('Parameter policies', '[');
+    const value = field('New value');
+    const revealValue = vi.fn();
+    Object.defineProperty(value, 'scrollIntoView', { value: revealValue });
+    save().focus();
+    fireEvent.click(save());
+    expect(revealValue).toHaveBeenCalledWith({ block: 'center' });
+    expect(value).toHaveFocus();
+    expect(value).toHaveAccessibleDescription(/Enter a parameter value\./);
+    expect(field('Description')).toHaveValue('Edited description');
+    expect(field('Parameter policies')).toHaveValue('[');
+    expect(requests).toEqual(['DescribeParameters']);
   });
 
   it('F4 keeps or discards edits and returns immediately from an unchanged form', async () => {

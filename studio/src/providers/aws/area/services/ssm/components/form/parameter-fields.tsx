@@ -36,6 +36,12 @@ export function ParameterFields({
 }) {
   const secure = draft.type === 'SecureString';
   const advanced = draft.tier === 'Advanced';
+  const valueGuidance = [
+    metadata && 'Enter a new value for every save. Saving creates a new version.',
+    draft.type === 'StringList' && 'Enter a comma-separated list.',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <SpaceBetween size="l">
@@ -88,7 +94,7 @@ export function ParameterFields({
           )}
           <FormField
             label={metadata === undefined ? 'Value' : 'New value'}
-            description={draft.type === 'StringList' ? 'Enter a comma-separated list.' : undefined}
+            description={valueGuidance || undefined}
             errorText={errors.value}
           >
             <Textarea
@@ -104,7 +110,7 @@ export function ParameterFields({
       <Container header={<Header variant="h2">Parameter settings</Header>}>
         <SpaceBetween size="m">
           {metadata === undefined && (
-            <FormField label="Tier">
+            <FormField label="Tier" description="Choose Advanced to configure parameter policies.">
               <Select
                 selectedOption={{ value: draft.tier, label: draft.tier }}
                 options={TIERS.map((tier) => ({ value: tier, label: tier }))}

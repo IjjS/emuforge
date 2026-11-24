@@ -9,6 +9,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -116,11 +117,21 @@ function ParameterForm({
     else void navigate(cancelPath);
   };
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!connected || endpoint === undefined || blocked !== undefined || request.current !== null || missing) return;
+    if (Object.keys(errors).length > 0) {
+      const form = event.currentTarget;
+      // Commit the inline errors before focusing so the input already describes the error.
+      flushSync(() => setSubmitted(true));
+      const first = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        'input[aria-invalid="true"], textarea[aria-invalid="true"]',
+      );
+      first?.scrollIntoView?.({ block: 'center' });
+      first?.focus({ preventScroll: true });
+      return;
+    }
     setSubmitted(true);
-    if (Object.keys(errors).length > 0) return;
 
     const controller = new AbortController();
     const { signal } = controller;
