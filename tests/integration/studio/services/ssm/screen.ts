@@ -25,14 +25,12 @@ export async function cell(page: Page, control: Locator, column: string) {
   const rowIndex = await row.evaluate(
     (el) => (el as HTMLTableRowElement).sectionRowIndex + 1,
   );
-  const columnIndex = await row.evaluate((el, title) => {
-    const headers = (el as HTMLTableRowElement).closest("table")!.tHead!
-      .rows[0]!.cells;
-    return (
-      Array.from(headers).findIndex((h) => h.textContent?.trim() === title) + 1
-    );
-  }, column);
+  const grid = page.getByRole("table").filter({ has: control });
+  const headers = page.locator(table.findColumnHeaders().toSelector()).and(grid.getByRole("columnheader"));
+  const titles = (await headers.allTextContents()).map((label) => label.trim());
+  const columnIndex = titles.indexOf(column) + 1;
   expect(columnIndex).toBeGreaterThan(0);
+  await expect(headers.nth(columnIndex - 1)).toHaveText(column);
   return page
     .locator(table.findBodyCell(rowIndex, columnIndex).toSelector())
     .and(row.getByRole("cell").or(row.getByRole("rowheader")));
@@ -45,4 +43,10 @@ export async function missing(page: Page, name: string) {
   await expect(
     page.getByRole("link", { name: "Back to Parameter Store" }),
   ).toHaveAttribute("href", list);
+}
+
+export async function expectPair(page: Page, index: number, label: string, value: string) {
+  const pair = ui.findKeyValuePairs().findItems().get(index);
+  await expect(page.locator(pair.findLabel().toSelector())).toHaveText(label);
+  await expect(page.locator(pair.findValue().toSelector())).toHaveText(value);
 }

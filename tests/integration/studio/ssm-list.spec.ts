@@ -3,6 +3,7 @@ import {
   ABOUT_CONTROL,
   connectedAt,
   crumbLink,
+  crumbs,
   expectLine,
   notStartedOn,
 } from "./support/aws-area";
@@ -27,9 +28,13 @@ test("studio.ssm-parameter-list", async ({ ctx, page }) => {
     await f.seed({ Name: f.prefix + "/before-" + i });
   await f.seed();
   const target = page.getByRole("link", { name: f.name, exact: true });
+  const first = f.prefix + "/before-0";
   async function checkRow() {
     const metadata = await f.metadata();
     await expect(link(page, f.prefix + "/before-0")).toBeVisible();
+    const firstMetadata = await f.metadata(first);
+    const firstLink = page.getByRole("link", { name: first, exact: true });
+    await expect(await cell(page, firstLink, "Version")).toHaveText(String(firstMetadata.Version));
     await button(page, "Next page").click();
     for (const [column, value] of Object.entries({
       Name: metadata.Name!,
@@ -44,14 +49,17 @@ test("studio.ssm-parameter-list", async ({ ctx, page }) => {
   }
   await page.goto(list);
   await expect(link(page, f.prefix + "/before-0")).toBeVisible();
+  await expect.poll(() => crumbs(page)).toEqual(["EmuForge", "AWS", "Systems Manager", "Parameter Store"]);
   await expect(target).toHaveCount(0);
   await checkRow();
   await target.click();
   await expect(page).toHaveURL(detail(f.name));
   await f.seed({ Overwrite: true, Value: "second" });
+  await f.seed({ Name: first, Overwrite: true, Value: "second" });
   await crumbLink(page, "Parameter Store").click();
   await checkRow();
   await f.seed({ Overwrite: true, Value: "third" });
+  await f.seed({ Name: first, Overwrite: true, Value: "third" });
   await button(page, "Refresh").click();
   await expect(link(page, f.prefix + "/before-0")).toBeVisible();
   await checkRow();

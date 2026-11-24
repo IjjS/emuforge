@@ -4,6 +4,7 @@ import {
   button,
   detail,
   field,
+  expectPair,
   list,
   success,
   ui,
@@ -14,12 +15,12 @@ test("studio.ssm-parameter-save", async ({ ctx, page }) => {
   const key = await localKey(ctx, f.emulatorPort);
   await page.goto(list + "/parameters/create");
   await field(page, "Name").fill(f.name);
-  for (const [index, option] of ["SecureString", "Advanced"].entries()) {
-    await page
-      .locator(ui.findSelect().findTrigger().toSelector())
-      .nth(index)
-      .click();
-    await page.getByRole("option", { name: option, exact: true }).click();
+  for (const [label, value] of [["Type", "SecureString"], ["Tier", "Advanced"]]) {
+    const select = ui.findSelect();
+    const group = page.locator(ui.findFormField().toSelector()).filter({ has: page.getByText(label, { exact: true }) });
+    const trigger = page.locator(select.findTrigger().toSelector()).and(group.locator("*"));
+    await trigger.click();
+    await page.locator(select.findDropdown().findOptionByValue(value).toSelector()).click();
   }
   await field(page, "KMS key ID").fill(key);
   for (const version of [1, 2]) {
@@ -56,17 +57,13 @@ test("studio.ssm-parameter-save", async ({ ctx, page }) => {
     expect(
       metadata.Policies?.map((entry) => JSON.parse(entry.PolicyText!)),
     ).toEqual([policy]);
-    const pairs = page.locator(ui.findKeyValuePairs().toSelector());
-    for (const text of [
-      key,
-      description,
-      pattern,
-      "SecureString",
-      "Advanced",
-      "text",
-      String(version),
-    ])
-      await expect(pairs.getByText(text, { exact: true })).toBeVisible();
+    await expectPair(page, 2, "Type", metadata.Type!);
+    await expectPair(page, 3, "Version", String(metadata.Version));
+    await expectPair(page, 6, "Tier", metadata.Tier!);
+    await expectPair(page, 7, "Data type", metadata.DataType!);
+    await expectPair(page, 8, "Description", metadata.Description!);
+    await expectPair(page, 9, "KMS key ID", metadata.KeyId!);
+    await expectPair(page, 10, "Allowed pattern", metadata.AllowedPattern!);
     await expect(
       page.getByText(JSON.stringify(policy, null, 2), { exact: true }),
     ).toBeVisible();
@@ -95,7 +92,10 @@ test("studio.ssm-parameter-duplicate", async ({ ctx, page }) => {
         true && r.status() === 400,
   );
   await button(page, "Create parameter").click();
-  const body = await (await rejection).json();
+  const response = await rejection;
+  expect(response.request().postDataJSON().Name).toBe(f.name);
+  const body = await response.json();
+  expect((body.__type ?? response.headers()["x-amzn-errortype"])?.split("#").pop()).toBe("ParameterAlreadyExists");
   const reason = body.message ?? body.Message;
   expect(typeof reason).toBe("string");
   expect(reason.length).toBeGreaterThan(0);

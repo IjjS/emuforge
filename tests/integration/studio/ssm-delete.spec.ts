@@ -3,6 +3,7 @@ import { fixture } from "./services/ssm/fixture";
 import {
   button,
   detail,
+  cell,
   link,
   list,
   missing,
@@ -15,6 +16,8 @@ test("studio.ssm-parameter-delete", async ({ ctx, page }) => {
   const f = await fixture(ctx);
   await f.seed();
   await f.seed({ Value: "second", Overwrite: true });
+  const witness = f.prefix + "/retained";
+  await f.seed({ Name: witness });
   await page.goto(detail(f.name));
   await button(page, "Delete").click();
   await button(modal(page), "Cancel").click();
@@ -30,6 +33,7 @@ test("studio.ssm-parameter-delete", async ({ ctx, page }) => {
   await expect(success(page)).toContainText(
     "Parameter " + f.name + " deleted.",
   );
+  await expect(link(page, witness)).toBeVisible();
   await expect(link(page, f.name)).toHaveCount(0);
   await page.goto(detail(f.name));
   await missing(page, f.name);
@@ -48,6 +52,7 @@ test("studio.ssm-parameter-bulk-delete", async ({ ctx, page }) => {
       .check();
   await button(page, "Delete").click();
   await f.client.deleteParameter({ Name: rejected });
+  await f.seed({ Name: kept, Overwrite: true, Value: "fresh" });
   await modal(page).getByRole("textbox").fill("delete");
   await button(modal(page), "Delete").click();
   await expect(modal(page)).toBeHidden();
@@ -62,7 +67,8 @@ test("studio.ssm-parameter-bulk-delete", async ({ ctx, page }) => {
     await expect(item.getByText(name, { exact: true })).toBeVisible();
     await expect(item.getByText(other, { exact: true })).toHaveCount(0);
   }
-  await expect(link(page, kept)).toBeVisible();
+  const witness = page.getByRole("link", { name: kept, exact: true });
+  await expect(await cell(page, witness, "Version")).toHaveText("2");
   for (const name of [f.name, rejected]) {
     await expect(link(page, name)).toHaveCount(0);
     await expect(f.read(name)).rejects.toMatchObject({
@@ -71,7 +77,7 @@ test("studio.ssm-parameter-bulk-delete", async ({ ctx, page }) => {
   }
   expect(await f.read(kept)).toMatchObject({
     Name: kept,
-    Value: "fixture-one",
-    Version: 1,
+    Value: "fresh",
+    Version: 2,
   });
 });

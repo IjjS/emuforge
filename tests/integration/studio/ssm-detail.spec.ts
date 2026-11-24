@@ -5,6 +5,7 @@ import {
   cell,
   detail,
   field,
+  expectPair,
   modal,
   rows,
   ui,
@@ -27,6 +28,7 @@ test("studio.ssm-parameter-versions", async ({ ctx, page }) => {
       Version: version,
       Value: version === 2 ? "fixture-two" : "fixture-one",
     });
+    if (version === 2) await expectPair(page, 3, "Version", String(direct.Version));
     const region = page.getByRole("region", {
       name: version === 2 ? "Current value" : "Version 1 actions",
     });
@@ -63,7 +65,10 @@ test("studio.ssm-parameter-tags", async ({ ctx, page }) => {
   await page.goto(detail(f.name));
   await button(page, "Tags").click();
   const table = page.getByRole("table", { name: "Parameter tags" });
-  await expect(table.getByText("No tags")).toBeVisible();
+  const tagRows = rows(page).and(table.getByRole("row"));
+  const empty = page.locator(ui.findTable().findEmptySlot().toSelector()).and(table.locator("*"));
+  await expect(empty).toHaveText("No tags");
+  await expect(tagRows).toHaveCount(0);
   for (const [action, submit, value] of [
     ["Add tag", "Add tag", "first"],
     ["Edit tag scope", "Save tag", "second"],
@@ -82,13 +87,13 @@ test("studio.ssm-parameter-tags", async ({ ctx, page }) => {
         })
       ).TagList ?? [];
     expect(tags).toEqual(value ? [{ Key: "scope", Value: value }] : []);
+    await expect(tagRows).toHaveCount(tags.length);
     if (value) {
       const key = page.getByRole("rowheader", { name: "scope", exact: true });
       await expect(await cell(page, key, "Key")).toHaveText(tags[0]!.Key!);
       await expect(await cell(page, key, "Value")).toHaveText(tags[0]!.Value!);
     } else {
-      await expect(table.getByText("No tags")).toBeVisible();
-      await expect(rows(page).filter({ hasText: "scope" })).toHaveCount(0);
+      await expect(empty).toHaveText("No tags");
     }
   }
 });

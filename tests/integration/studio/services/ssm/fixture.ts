@@ -81,11 +81,11 @@ export async function fixture(ctx: Ctx, ownEmulator = false) {
       return (await client.getParameter({ Name: key, WithDecryption: true }))
         .Parameter!;
     },
-    async metadata() {
+    async metadata(key = name) {
       const result = await client.describeParameters({
-        ParameterFilters: [{ Key: "Name", Option: "Equals", Values: [name] }],
+        ParameterFilters: [{ Key: "Name", Option: "Equals", Values: [key] }],
       });
-      if (result.Parameters?.[0]?.Name !== name)
+      if (result.Parameters?.[0]?.Name !== key)
         throw new Error("Expected named parameter metadata");
       return result.Parameters[0];
     },
