@@ -26,7 +26,15 @@ type TagEdit = { kind: 'add' } | { kind: 'edit' | 'remove'; tag: KeyTag };
 const COMPACT_TABLE_WIDTH = 480;
 const OVERFLOW_HINT = 'Scroll sideways to see more of the table.';
 
-export function Tags({ connection, keyId }: { connection: AreaConnection; keyId: string }) {
+export function Tags({
+  connection,
+  keyId,
+  writesEnabled,
+}: {
+  connection: AreaConnection;
+  keyId: string;
+  writesEnabled: boolean;
+}) {
   const [edit, setEdit] = useState<TagEdit>();
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
@@ -40,7 +48,7 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
     operation: LABEL_OPERATIONS.listTags,
     read: (origin, marker, signal) => listKeyTags(origin, keyId, marker, signal),
   });
-  const action = useLabelAction(connection, () => setGeneration((current) => current + 1));
+  const action = useLabelAction(connection, writesEnabled, () => setGeneration((current) => current + 1));
   const hasRows = (listing.items?.length ?? 0) > 0;
   const showOverflowHint = hasRows && overflows;
 
@@ -178,6 +186,7 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
             </>
           }
           word="remove"
+          disabled={action.disabled(LABEL_OPERATIONS.untag)}
           pending={action.pending}
           onDismiss={handleClose}
           onConfirm={() => {

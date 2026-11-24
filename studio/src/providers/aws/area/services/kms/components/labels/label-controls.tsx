@@ -76,6 +76,7 @@ export function ConfirmLabelRemoval({
   title,
   body,
   word,
+  disabled,
   pending,
   onConfirm,
   onDismiss,
@@ -83,6 +84,7 @@ export function ConfirmLabelRemoval({
   title: string;
   body: ReactNode;
   word: string;
+  disabled: boolean;
   pending: boolean;
   onConfirm: () => void;
   onDismiss: () => void;
@@ -90,13 +92,13 @@ export function ConfirmLabelRemoval({
   const [typed, setTyped] = useState('');
   const confirmed = typed === word;
   const handleConfirm = () => {
-    if (confirmed && !pending) onConfirm();
+    if (confirmed && !disabled && !pending) onConfirm();
   };
   return (
     <LabelDialog
       title={title}
       submit={title}
-      disabled={!confirmed}
+      disabled={!confirmed || disabled}
       pending={pending}
       onSubmit={handleConfirm}
       onDismiss={onDismiss}
