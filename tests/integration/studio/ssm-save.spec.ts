@@ -24,7 +24,7 @@ test("studio.ssm-parameter-save", async ({ ctx, page }) => {
   await field(page, "KMS key ID").fill(key);
   for (const version of [1, 2]) {
     const editing = version === 2;
-    if (editing) await button(page, "Edit parameter").click();
+    if (editing) await page.getByRole("link", { name: "Edit parameter", exact: true }).click();
     const value = "synthetic-" + version;
     const description = "Integration version " + version;
     const pattern = "^synthetic-" + version + "$";

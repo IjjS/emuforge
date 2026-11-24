@@ -29,7 +29,8 @@ test("studio.ssm-parameter-list", async ({ ctx, page }) => {
   const target = page.getByRole("link", { name: f.name, exact: true });
   async function checkRow() {
     const metadata = await f.metadata();
-    if (!(await target.count())) await button(page, "Next page").click();
+    await expect(link(page, f.prefix + "/before-0")).toBeVisible();
+    await button(page, "Next page").click();
     for (const [column, value] of Object.entries({
       Name: metadata.Name!,
       Type: metadata.Type!,
