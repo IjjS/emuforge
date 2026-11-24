@@ -45,8 +45,8 @@ function TestPage() {
           <section aria-label="Page results">
             {flash?.map((item, index) => (
               <div role="status" key={index}>
-                {item.header}
-                {item.content}
+                <span>{item.header}</span>
+                <span>{item.content}</span>
               </div>
             ))}
           </section>
