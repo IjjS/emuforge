@@ -695,7 +695,13 @@ describe('Parameter Store forms', () => {
     required(retry(), 'Retry button').click();
     await waitFor(() => expect(retry()?.getElement()).toBeDisabled());
     expect(retry()?.getElement()).toBeVisible();
-    expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
+    const retryElement = required(retry(), 'disabled Retry button').getElement();
+    const readFailure = ui
+      .findAllContainers()
+      .find((container) => container.findContent().getElement().contains(retryElement));
+    const status = required(readFailure?.findContent().findStatusIndicator(), 'edit read-failure status').getElement();
+    expect(status).toBeVisible();
+    expect(status).toHaveTextContent('Not implemented by the emulator');
     expect(screen.getByText(/The emulator answered 501 Not Implemented for DescribeParameters/)).toBeVisible();
     required(retry(), 'disabled Retry button').click();
     expect(save()).toBeDisabled();
