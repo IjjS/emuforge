@@ -137,9 +137,9 @@ async function labelModal(name: string) {
   const modal = await waitFor(() => {
     const dialog = page.findModal();
     if (!dialog?.isVisible()) throw new Error(`Missing ${name} modal`);
+    expect(dialog.findHeader().getElement().textContent).toBe(name);
     return dialog;
   });
-  expect(modal.findHeader().getElement()).toHaveTextContent(name);
   expect(modal.getElement()).toHaveAccessibleName(name);
   const footer = modal.findFooter();
   if (!footer) throw new Error(`Missing ${name} modal footer`);
@@ -196,11 +196,12 @@ describe('key labels', () => {
     await waitFor(() => expectEmpty('Aliases', 'No aliases'));
     await waitFor(() => expectEmpty('Tags', 'No tags'));
     clickButton('Create alias');
-    const create = within(await screen.findByRole('dialog', { name: 'Create alias' }));
-    expect(create.getByRole('textbox', { name: 'Alias name' })).toBeEnabled();
-    fireEvent.click(create.getByRole('button', { name: 'Cancel' }));
+    const create = await labelModal('Create alias');
+    expect(within(create.content.getElement()).getByRole('textbox', { name: 'Alias name' })).toBeEnabled();
+    fireEvent.click(create.footer.getByRole('button', { name: 'Cancel' }));
     clickButton('Add tag');
-    const add = within(await screen.findByRole('dialog', { name: 'Add tag' }));
+    const { content } = await labelModal('Add tag');
+    const add = within(content.getElement());
     expect(add.getByRole('textbox', { name: 'Tag name' })).toBeEnabled();
     expect(add.getByRole('textbox', { name: 'Value' })).toBeEnabled();
   });
@@ -486,10 +487,10 @@ describe('key labels', () => {
 
     update({ writesEnabled: true });
     fireEvent.click(create);
-    const modal = await screen.findByRole('dialog', { name: 'Create alias' });
-    const dialog = within(modal);
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Alias name' }), { target: { value: 'events' } });
-    const submit = dialog.getByRole('button', { name: 'Create alias' });
+    const { modal, content, footer } = await labelModal('Create alias');
+    const name = within(content.getElement()).getByRole('textbox', { name: 'Alias name' });
+    fireEvent.change(name, { target: { value: 'events' } });
+    const submit = footer.getByRole('button', { name: 'Create alias' });
     fireEvent.click(submit);
     expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(1);
     expect(signal?.aborted).toBe(false);
@@ -609,11 +610,10 @@ describe('key labels', () => {
 
       const tag = await waitFor(() => labelRow('Tags', 'environment'));
       fireEvent.click(within(tag.element).getByRole('button', { name: 'Remove tag environment' }));
-      const modal = await screen.findByRole('dialog', { name: 'Remove tag' });
-      const dialog = within(modal);
-      const confirmation = dialog.getByRole('textbox');
+      const { modal, content, footer } = await labelModal('Remove tag');
+      const confirmation = within(content.getElement()).getByRole('textbox');
       fireEvent.change(confirmation, { target: { value: 'remove' } });
-      const submit = dialog.getByRole('button', { name: 'Remove tag' });
+      const submit = footer.getByRole('button', { name: 'Remove tag' });
       update({ currentConnection: offlineConnection });
       expect(submit).toBeDisabled();
       fireEvent.keyDown(confirmation, { key: 'Enter' });
@@ -685,8 +685,8 @@ describe('key labels', () => {
       const edit = within(row.element).getByRole('button', { name: 'Edit tag environment' });
       edit.focus();
       await userEvent.keyboard('{Enter}');
-      const dialog = within(await screen.findByRole('dialog', { name: 'Edit tag' }));
-      expect(dialog.getByRole('textbox', { name: 'Value' })).toHaveValue('local development');
+      const { content } = await labelModal('Edit tag');
+      expect(within(content.getElement()).getByRole('textbox', { name: 'Value' })).toHaveValue('local development');
     },
   );
 
