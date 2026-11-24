@@ -5,9 +5,7 @@ import { sendEc2 } from '../../lib/ec2-client';
 export const MODIFY_INSTANCE_ATTRIBUTE = 'ModifyInstanceAttribute';
 
 export type InstanceAttributeChange =
-  | { kind: 'type'; type: string }
-  | { kind: 'groups'; groupIds: string[] }
-  | { kind: 'protection'; enabled: boolean };
+  { kind: 'type'; type: string } | { kind: 'groups'; groupIds: string[] } | { kind: 'protection'; enabled: boolean };
 
 /** Sends one attribute per request. For groups, the IDs are the complete replacement set. */
 export async function modifyInstanceAttribute(

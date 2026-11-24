@@ -11,6 +11,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useCallback, useState, type ReactNode } from 'react';
 
+import { reportedNotImplementedMessage } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -22,6 +23,7 @@ import { nameOf, type Tag } from '../../../lib/ec2-client';
 import type { ScreenPageProps } from '../../../screens';
 import type { BlockDevice, Instance, InstanceGroup } from '../api';
 import { InstanceActions } from '../components/instance-actions';
+import { InstanceAttributeEditor } from '../components/instance-attribute-editor';
 import { InstanceStateValue } from '../components/instance-state';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
@@ -40,17 +42,24 @@ function Pairs({ label, items }: { label: string; items: { label: string; value:
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
 }
 
-/** Under "On": the emulator's operation that changes it; Studio has no screen for it yet (critique r3 P2 2, issue 561). */
+/** Under "On": the emulator operation that changes termination protection. */
 const PROTECTION_CHANGED = 'Changed with ModifyInstanceAttribute.';
 
 /** "Termination protection": "On", "Off", loading in that value alone, or its read's failure in that value alone. */
 function Protection({ read, connection }: { read: Ec2Read<boolean>; connection: AreaConnection }) {
   if (read.failure !== undefined) {
     const state = readFailureState(read.failure, connection, 'termination protection');
+    const message = reportedNotImplementedMessage(read.failure);
     return (
       <SpaceBetween size="xxs">
         <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
         {state.detail !== undefined && <Box variant="small">{state.detail}</Box>}
+        {message !== undefined && <ValueText kind="text" value={message} />}
+        {read.failure.kind !== 'not-implemented' && (
+          <Button variant="inline-link" onClick={read.refresh}>
+            Retry termination protection
+          </Button>
+        )}
       </SpaceBetween>
     );
   }
@@ -81,7 +90,15 @@ function KeyPair({ name }: { name: string | undefined }) {
   );
 }
 
-function Details({ instance, protection }: { instance: Instance; protection: ReactNode }) {
+function Details({
+  instance,
+  protection,
+  connection,
+}: {
+  instance: Instance;
+  protection: Ec2Read<boolean>;
+  connection: AreaConnection;
+}) {
   return (
     <Container header={<Header variant="h2">Instance details</Header>}>
       <Pairs
@@ -97,8 +114,29 @@ function Details({ instance, protection }: { instance: Instance; protection: Rea
               </SpaceBetween>
             ),
           },
-          { label: 'Termination protection', value: protection },
-          { label: 'Type', value: <ValueText kind="fixed" value={instance.type} none={NONE} /> },
+          {
+            label: 'Termination protection',
+            value: (
+              <SpaceBetween size="xxs">
+                <Protection read={protection} connection={connection} />
+                <InstanceAttributeEditor
+                  kind="protection"
+                  instance={instance}
+                  connection={connection}
+                  value={protection.value}
+                />
+              </SpaceBetween>
+            ),
+          },
+          {
+            label: 'Type',
+            value: (
+              <SpaceBetween size="xxs">
+                <ValueText kind="fixed" value={instance.type} none={NONE} />
+                <InstanceAttributeEditor kind="type" instance={instance} connection={connection} />
+              </SpaceBetween>
+            ),
+          },
           { label: 'Image ID', value: <Copy label="Image ID" value={instance.imageId} /> },
           { label: 'Launched', value: <ValueText kind="fixed" value={creationDateText(instance.launchTime)} /> },
           { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
@@ -145,7 +183,7 @@ function Empty({ children }: { children: string }) {
   );
 }
 
-function Groups({ groups }: { groups: InstanceGroup[] }) {
+function Groups({ instance, connection }: { instance: Instance; connection: AreaConnection }) {
   const handleFollow = useFollow();
   const columns: TableProps.ColumnDefinition<InstanceGroup>[] = [
     {
@@ -163,8 +201,15 @@ function Groups({ groups }: { groups: InstanceGroup[] }) {
   return (
     <Table<InstanceGroup>
       variant="container"
-      header={<Header variant="h2">Security groups</Header>}
-      items={groups}
+      header={
+        <Header
+          variant="h2"
+          actions={<InstanceAttributeEditor kind="groups" instance={instance} connection={connection} />}
+        >
+          Security groups
+        </Header>
+      }
+      items={instance.groups}
       trackBy="id"
       columnDefinitions={columns}
       wrapLines
@@ -335,10 +380,10 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
     content = <NotFound />;
   } else {
     content = (
-      <SpaceBetween size="l">
-        <Details instance={instance} protection={<Protection read={protection} connection={connection} />} />
+      <SpaceBetween size="l" key={instance.id}>
+        <Details instance={instance} protection={protection} connection={connection} />
         <Network instance={instance} />
-        <Groups groups={instance.groups} />
+        <Groups instance={instance} connection={connection} />
         <Volumes volumes={instance.volumes} />
         <Tags tags={instance.tags} />
       </SpaceBetween>

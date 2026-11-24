@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { modifyInstanceAttribute } from '../instance-attribute-api';
 import { getVolume } from '../volume-api';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
@@ -26,6 +27,11 @@ vi.mock('../api', async (importOriginal) => {
     actOnInstance: vi.fn(),
   };
 });
+
+vi.mock('../instance-attribute-api', async (original) => ({
+  ...(await original<typeof import('../instance-attribute-api')>()),
+  modifyInstanceAttribute: vi.fn(),
+}));
 
 vi.mock('../volume-api', async (original) => ({
   ...(await original<typeof import('../volume-api')>()),
@@ -187,7 +193,10 @@ function pairs(): Record<string, string> {
   const result: Record<string, string> = {};
   for (const group of PAGE.findAllKeyValuePairs()) {
     for (const item of group.findItems()) {
-      result[text(item.findLabel()?.getElement())] = text(item.findValue()?.getElement());
+      const value = item.findValue()?.getElement().cloneNode(true) as HTMLElement | undefined;
+      value?.querySelectorAll('[data-testid="instance-attribute-action"]').forEach((action) => action.remove());
+      const label = text(item.findLabel()?.getElement());
+      result[label] = text(value);
     }
   }
   return result;
@@ -284,6 +293,7 @@ describe("an instance's page", () => {
       ?.findValue()
       ?.getElement() as HTMLElement;
     const lines = [...value.querySelectorAll('*')]
+      .filter((node) => node.closest('[data-testid="instance-attribute-action"]') === null)
       .filter((node) => node.children.length === 0)
       .map((node) => node.textContent);
     expect(lines).toEqual(['On', CHANGED]);
@@ -718,5 +728,104 @@ describe("an instance's page", () => {
     expect(pairs()['State']).toBe('running');
     expect(pairs()['Private IPv4']).toBe('10.0.0.2');
     expect(pairs()['Termination protection']).toBe(PROTECTED);
+  });
+});
+
+describe('instance setting actions', () => {
+  it('explains the stopped requirement and makes groups and protection editable on a running instance', async () => {
+    holding(full());
+    open(pathOf('i-0full'));
+    await loaded();
+    const type = screen.getByRole('button', { name: 'Change instance type' });
+    expect(isDisabled(type)).toBe(true);
+    expect(screen.getByText('Stop the instance to change its type.')).toBeVisible();
+    expect(isDisabled(screen.getByRole('button', { name: 'Change security groups' }))).toBe(false);
+    await waitFor(() => {
+      expect(isDisabled(screen.getByRole('button', { name: 'Change termination protection' }))).toBe(false);
+    });
+  });
+
+  it.each(['detail', 'protection'] as const)('keeps the result when the %s refresh finishes first', async (first) => {
+    const nextProtection = first === 'detail';
+    holding(full(), !nextProtection);
+    vi.mocked(modifyInstanceAttribute).mockResolvedValue(undefined);
+    open(pathOf('i-0full'));
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe(nextProtection ? 'Off' : PROTECTED);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change termination protection' }));
+    const dialog = await screen.findByRole('dialog');
+    const toggle = createWrapper(dialog).findToggle();
+    expect(toggle).not.toBeNull();
+    toggle?.findNativeInput().click();
+
+    let finishDetail: (read: api.InstanceRead) => void = () => undefined;
+    let finishProtection: (enabled: boolean) => void = () => undefined;
+    vi.mocked(api.getInstance).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDetail = resolve;
+        }),
+    );
+    vi.mocked(api.getTerminationProtection).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProtection = resolve;
+        }),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    const flash = await screen.findByText('Termination protection updated.');
+    expect(vi.mocked(modifyInstanceAttribute)).toHaveBeenCalledWith(
+      ENGINE,
+      'i-0full',
+      { kind: 'protection', enabled: nextProtection },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => {
+      expect(api.getInstance).toHaveBeenCalledTimes(2);
+      expect(api.getTerminationProtection).toHaveBeenCalledTimes(2);
+    });
+
+    const detail = () => finishDetail({ found: true, instance: full({ privateIp: '10.0.0.2' }) });
+    const protection = () => finishProtection(nextProtection);
+    const expectProtection = () => {
+      expect(pairs()['Termination protection']).toBe(nextProtection ? PROTECTED : 'Off');
+      expect(terminate()).toBe(nextProtection ? 'Termination protection is on.' : 'available');
+    };
+    if (first === 'detail') {
+      await act(detail);
+      await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+      expect(pairs()['Termination protection']).toBe('Off');
+      await act(protection);
+    } else {
+      await act(protection);
+      await waitFor(expectProtection);
+      expect(pairs()['Private IPv4']).toBe('172.31.0.5');
+      await act(detail);
+    }
+    await waitFor(expectProtection);
+    await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+    expect(flash).toBeVisible();
+  });
+
+  it('shows a failed protection read without offering an editable Off value', async () => {
+    holding(
+      full(),
+      new RequestError({
+        kind: 'other',
+        operation: 'DescribeInstanceAttribute',
+        code: 'InternalError',
+        message: 'Protection read failed',
+      }),
+    );
+    open(pathOf('i-0full'));
+    await loaded();
+    expect(await screen.findByText(/Protection read failed/)).toBeVisible();
+    expect(pairs()['Termination protection']).not.toContain('Off');
+    const edit = screen.getByRole('button', { name: 'Change termination protection' });
+    expect(isDisabled(edit)).toBe(true);
+    fireEvent.click(edit);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(modifyInstanceAttribute).not.toHaveBeenCalled();
   });
 });
