@@ -347,10 +347,10 @@ describe('Parameter Store forms', () => {
     open(PARAMETER_CREATE_PATH);
     fillCreate();
     const form = field('Name').closest('form');
-    expect(form).not.toBeNull();
+    if (!form) throw new Error('Missing parameter form');
     act(() => {
-      fireEvent.submit(form!);
-      fireEvent.submit(form!);
+      fireEvent.submit(form);
+      fireEvent.submit(form);
     });
     await waitFor(() => expect(putParameter).toHaveBeenCalledTimes(1));
     expect(create()).toBeDisabled();
@@ -364,7 +364,7 @@ describe('Parameter Store forms', () => {
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText('The emulator answered 501 Not Implemented for PutParameter.')).toBeVisible();
     expect(create()).toBeDisabled();
-    fireEvent.submit(form!);
+    fireEvent.submit(form);
     expect(putParameter).toHaveBeenCalledTimes(2);
   });
 
