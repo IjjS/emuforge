@@ -165,16 +165,24 @@ function refusal() {
   return { name: 'ValidationException', message: REFUSAL, $fault: 'client', $metadata: { httpStatusCode: 400 } };
 }
 
-function modalSections(title: string) {
+function modalSections(title: string, nested = false) {
   return waitFor(() => {
-    const modal = createWrapper().findModal();
-    if (modal === null) throw new Error(`Expected the ${title} modal.`);
+    const page = createWrapper();
+    const modal = nested
+      ? page.findAllModals().find((candidate) => candidate.findHeader().getElement().textContent === title)
+      : page.findModal();
+    if (!modal) throw new Error(`Expected the ${title} modal.`);
     const footer = modal.findFooter();
     if (footer === null) throw new Error(`Expected the ${title} modal footer.`);
     expect(modal.isVisible()).toBe(true);
     expect(modal.findHeader().getElement()).toHaveTextContent(title);
     const body = modal.findContent();
-    return { body, content: within(body.getElement()), footer: within(footer.getElement()) };
+    return {
+      element: modal.getElement(),
+      body,
+      content: within(body.getElement()),
+      footer: within(footer.getElement()),
+    };
   });
 }
 
@@ -713,6 +721,55 @@ describe('KMS key access', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(opener).toHaveFocus();
     expect(screen.getByText(OLD_POLICY)).toBeVisible();
+  });
+
+  it('keeps keyboard focus inside the refused policy editor after Keep editing', async () => {
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof PutKeyPolicyCommand) throw refusal();
+      return fallback(command);
+    });
+    const { published } = openRefreshableAccess();
+    const user = userEvent.setup();
+    expect(await screen.findByText(OLD_POLICY)).toBeVisible();
+    const opener = screen.getByRole('button', { name: 'Edit key policy' });
+    await user.click(opener);
+    const editor = await modalSections('Edit key policy');
+    const field = editor.content.getByRole('textbox', { name: 'Policy document' });
+    const cancel = editor.footer.getByRole('button', { name: 'Cancel' });
+    fireEvent.change(field, { target: { value: NEW_POLICY } });
+    await user.click(editor.footer.getByRole('button', { name: 'Save policy' }));
+    await expectOpenRefusal(editor, 'PutKeyPolicy', published);
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    const confirmation = await modalSections('Discard what you entered?', true);
+    const keep = confirmation.footer.getByRole('button', { name: 'Keep editing' });
+    keep.focus();
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(confirmation.element).not.toBeInTheDocument());
+    expect(field).toHaveValue(NEW_POLICY);
+    expect(field).toBeVisible();
+    expect(field).toHaveFocus();
+    await user.tab();
+    expect(editor.element.contains(document.activeElement)).toBe(true);
+    expect(editor.content.getByRole('alert')).toHaveTextContent(REFUSAL);
+    expect(published).toHaveBeenCalledTimes(1);
+
+    cancel.focus();
+    await user.keyboard('{Enter}');
+    const cancelConfirmation = await modalSections('Discard what you entered?', true);
+    cancelConfirmation.footer.getByRole('button', { name: 'Keep editing' }).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(cancelConfirmation.element).not.toBeInTheDocument());
+    expect(cancel).toHaveFocus();
+    expect(field).toHaveValue(NEW_POLICY);
+
+    await user.keyboard('{Enter}');
+    const discardConfirmation = await modalSections('Discard what you entered?', true);
+    discardConfirmation.footer.getByRole('button', { name: 'Discard' }).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(editor.element).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+    expect(send.mock.calls.filter(([command]) => command instanceof PutKeyPolicyCommand)).toHaveLength(1);
   });
 
   it('keeps a pending policy save and announces its result across a same-target disconnect', async () => {
