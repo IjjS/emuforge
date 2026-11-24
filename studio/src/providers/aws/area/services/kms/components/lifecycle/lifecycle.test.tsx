@@ -188,6 +188,8 @@ beforeEach(() => {
 });
 
 describe('Key detail panel lifetime', () => {
+  const refreshFailureAnnouncement = 'Key metadata could not be refreshed. Showing the last successful read.';
+
   function selectTab(id: string) {
     const tab = PAGE.findTabs()?.findTabLinkById(id);
     if (!tab) throw new Error(`Missing key tab ${id}`);
@@ -227,9 +229,16 @@ describe('Key detail panel lifetime', () => {
     expect(writeOptions?.abortSignal.aborted).toBe(false);
 
     refuseMetadata = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    refresh.focus();
+    fireEvent.click(refresh);
     expect(await screen.findByText(/DescribeKey temporarily failed/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    const announcement = await screen.findByText(refreshFailureAnnouncement);
+    expect(announcement).toHaveAttribute('role', 'status');
+    expect(announcement).toHaveAttribute('aria-atomic', 'true');
+    expect(refresh).toHaveFocus();
+    expect(field('Status')).toHaveTextContent('Enabled');
     expect(writeOptions?.abortSignal.aborted).toBe(false);
 
     selectTab('rotation');
@@ -244,11 +253,51 @@ describe('Key detail panel lifetime', () => {
     selectTab('rotation');
     expect(usable(rotateButton())).toBe(true);
     expect(flashText()).toContain('On-demand rotation requested.');
+    expect(screen.getAllByText(refreshFailureAnnouncement)).toEqual([announcement]);
     refuseMetadata = false;
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
     await waitFor(() => expect(screen.queryByText(/DescribeKey temporarily failed/)).toBeNull());
+    expect(refresh).toHaveFocus();
+    expect(announcement).toBeEmptyDOMElement();
     expect(usable(rotateButton())).toBe(true);
     expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+  });
+
+  it('keeps user-moved focus when a metadata retry succeeds', async () => {
+    const retryReply = deferred<unknown>();
+    let reads = 0;
+    emulate(key('Enabled'), (command) => {
+      if (!(command instanceof DescribeKeyCommand)) return undefined;
+      reads += 1;
+      if (reads === 2) {
+        throw {
+          name: 'DependencyTimeoutException',
+          message: 'DescribeKey temporarily failed.',
+          $fault: 'server',
+          $metadata: { httpStatusCode: 500 },
+        };
+      }
+      return reads === 3 ? retryReply.promise : undefined;
+    });
+    open();
+    await expectStatus('Enabled');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(3));
+
+    const detailsTab = PAGE.findTabs()?.findTabLinkById('details')?.getElement();
+    if (!detailsTab) throw new Error('Missing Details tab');
+    detailsTab.focus();
+    expect(detailsTab).toHaveFocus();
+
+    await act(async () => retryReply.resolve({ KeyMetadata: key('Disabled') }));
+    await expectStatus('Disabled');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(detailsTab).toHaveFocus();
   });
 
   it('retains an operation-specific rotation 501 on return and resets it for a new key', async () => {

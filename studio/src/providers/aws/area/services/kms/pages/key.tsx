@@ -1,6 +1,6 @@
 import type { KeyMetadata } from '@aws-sdk/client-kms';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
@@ -10,7 +10,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs from '@cloudscape-design/components/tabs';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
@@ -79,6 +79,20 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const action = useLifecycleAction(connection, keyId);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const retryRequested = useRef(false);
+  const retryHadFocus = useRef(false);
+  const captureRetryFocus = useCallback((region: HTMLDivElement | null) => {
+    if (region === null) return;
+    retryHadFocus.current = false;
+    return () => {
+      // Capture focus before the successful read removes the Retry button.
+      const focused = region.ownerDocument.activeElement;
+      retryHadFocus.current =
+        retryRequested.current && focused instanceof HTMLButtonElement && region.contains(focused);
+      retryRequested.current = false;
+    };
+  }, []);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
   const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
   // A failed reread reports its error above the panels while the current visit keeps its last metadata.
@@ -86,7 +100,14 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   if (read.key !== undefined && read.key !== lastKey) setLastKey(read.key);
   const metadata = read.key === undefined ? lastKey : read.key;
   const failure = read.failure ?? (attemptedRetry ? undefined : offline);
+  const retainedMetadataFailed = read.failure !== undefined && metadata !== undefined && metadata !== null;
   const showPanels = metadata !== null && (failure === undefined || metadata !== undefined || attemptedRetry);
+  useLayoutEffect(() => {
+    if (failure !== undefined || read.key === undefined || !retryHadFocus.current) return;
+    retryHadFocus.current = false;
+    if (document.activeElement === document.body) refreshButton.current?.focus();
+  }, [failure, read.key]);
+
   const handleRefresh = () => {
     if (refreshing) return;
     setAttemptedRetry(true);
@@ -119,6 +140,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
           variant="h1"
           actions={
             <Button
+              ref={refreshButton}
               iconName="refresh"
               ariaLabel="Refresh"
               loading={refreshing}
@@ -131,14 +153,25 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
         </Header>
       }
     >
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {retainedMetadataFailed && !refreshing
+          ? 'Key metadata could not be refreshed. Showing the last successful read.'
+          : ''}
+      </div>
       <SpaceBetween size="l">
         {failure !== undefined && (
-          <Container>
-            <ReadFailure
-              state={readFailureState(failure, connection, `key (${failure.operation})`)}
-              onRetry={handleRefresh}
-            />
-          </Container>
+          <div ref={captureRetryFocus}>
+            <Container>
+              <ReadFailure
+                state={readFailureState(failure, connection, `key (${failure.operation})`)}
+                onRetry={() => {
+                  if (refreshing) return;
+                  retryRequested.current = true;
+                  handleRefresh();
+                }}
+              />
+            </Container>
+          </div>
         )}
         {read.key === null && (
           <Container>
