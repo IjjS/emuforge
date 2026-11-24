@@ -4,6 +4,7 @@ import {
   ADD_INSTANCE_PATTERN,
   addInstanceHref,
   CLUSTER_PATTERN,
+  CLUSTER_SNAPSHOTS_PATH,
   clusterHref,
   CLUSTERS_PATH,
   CLUSTERS_WORD,
@@ -18,12 +19,13 @@ import {
 } from './format';
 
 describe("RDS's addresses and words", () => {
-  it("the seven screens' addresses are the requirement's routes; an identifier is one segment encoded once", () => {
+  it("the screens' addresses are the requirement's routes; an identifier is one segment encoded once", () => {
     expect(RDS_PATH).toBe('/aws/rds');
     expect(INSTANCES_PATH).toBe('/aws/rds/instances');
     expect(CREATE_INSTANCE_PATH).toBe('/aws/rds/instances/create');
     expect(INSTANCE_PATTERN).toBe('/aws/rds/instances/instance/{id}');
     expect(CLUSTERS_PATH).toBe('/aws/rds/clusters');
+    expect(CLUSTER_SNAPSHOTS_PATH).toBe('/aws/rds/cluster-snapshots');
     expect(CREATE_CLUSTER_PATH).toBe('/aws/rds/clusters/create');
     expect(CLUSTER_PATTERN).toBe('/aws/rds/clusters/cluster/{id}');
     expect(ADD_INSTANCE_PATTERN).toBe('/aws/rds/clusters/cluster/{id}/add-instance');

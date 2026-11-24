@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as clusterApi from '../cluster-api';
+import * as snapshots from '../cluster-snapshot-api';
 
 // S4 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -25,6 +26,11 @@ vi.mock('../cluster-api', async (importOriginal) => {
     deleteCluster: vi.fn(),
     addInstance: vi.fn(),
   };
+});
+
+vi.mock('../cluster-snapshot-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../cluster-snapshot-api')>();
+  return { ...real, createClusterSnapshot: vi.fn(), listClusterSnapshots: vi.fn() };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -490,5 +496,40 @@ describe('the DB clusters list', () => {
     });
     expect(rows()).toHaveLength(1);
     expect(flashes('success')).toEqual(['Deleting DB cluster app-aur']);
+  });
+});
+
+describe('finding and taking DB cluster snapshots from the cluster list', () => {
+  it('links to manual DB cluster snapshots even when there are no clusters', async () => {
+    vi.mocked(clusterApi.listClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(snapshots.listClusterSnapshots).mockResolvedValue({ items: [] });
+    const router = open('/aws/rds/clusters');
+    await screen.findByText('No DB clusters');
+    fireEvent.click(screen.getByRole('link', { name: 'DB cluster snapshots' }));
+    expect(await screen.findByRole('heading', { name: 'DB cluster snapshots' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
+  });
+
+  it('takes a snapshot of the selected Aurora cluster', async () => {
+    vi.mocked(clusterApi.listClusters).mockResolvedValue({ clusters: [cluster('app-aur', 'available')] });
+    vi.mocked(snapshots.createClusterSnapshot).mockResolvedValue(undefined);
+    vi.mocked(snapshots.listClusterSnapshots).mockResolvedValue({ items: [] });
+    open('/aws/rds/clusters');
+    await screen.findByRole('radio', { name: 'app-aur' });
+    selectRow('app-aur');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take snapshot' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Take DB cluster snapshot' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' }), {
+      target: { value: 'new-snap' },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+    expect(await screen.findByText('Creating DB cluster snapshot new-snap')).toBeInTheDocument();
+    expect(snapshots.createClusterSnapshot).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      'new-snap',
+      expect.any(AbortSignal),
+    );
   });
 });

@@ -48,6 +48,17 @@ describe("RDS's DB cluster screens", () => {
     }
   });
 
+  it('registers the manual snapshots page under DB clusters', () => {
+    const path = '/aws/rds/cluster-snapshots';
+    expect(title(path)).toBe('DB cluster snapshots');
+    expect(crumbs(path)).toEqual([
+      { text: 'DB clusters', href: '/aws/rds/clusters' },
+      { text: 'DB cluster snapshots' },
+    ]);
+    expect(screenAt(path).navigation.activeHref).toBe('/aws/rds/clusters');
+    expect(SCREENS).toContain(screenAt(path));
+  });
+
   it("an identifier that needs encoding is one segment in S7's crumb to S6", () => {
     expect(crumbs(ADD, { id: 'a/b' })[1]).toEqual({ text: 'a/b', href: '/aws/rds/clusters/cluster/a%2Fb' });
   });

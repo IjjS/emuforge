@@ -13,6 +13,7 @@ import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
 import type { ClusterAction } from '../cluster-operations';
+import * as snapshots from '../cluster-snapshot-api';
 
 // S6 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -33,6 +34,11 @@ vi.mock('../cluster-api', async (importOriginal) => {
     addInstance: vi.fn(),
     operateCluster: vi.fn(),
   };
+});
+
+vi.mock('../cluster-snapshot-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../cluster-snapshot-api')>();
+  return { ...real, createClusterSnapshot: vi.fn(), listClusterSnapshots: vi.fn() };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1037,5 +1043,89 @@ describe('Aurora cluster operations', () => {
     expect(flashes('info')[0]).toContain(operation);
     expect(openActions().findItemById(action, { disabled: true })).not.toBeNull();
     expect(clusterApi.operateCluster).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('taking a DB cluster snapshot', () => {
+  beforeEach(() => {
+    vi.mocked(snapshots.createClusterSnapshot).mockReset().mockResolvedValue(undefined);
+    vi.mocked(snapshots.listClusterSnapshots).mockReset().mockResolvedValue({ items: [] });
+  });
+
+  async function takeSnapshot(id: string) {
+    await loaded();
+    fireEvent.click(control('Take snapshot'));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Take DB cluster snapshot' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' }), {
+      target: { value: id },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+  }
+
+  // Bound: Allow the real three-second snapshot poll after navigation and the first list response.
+  it('creates the named snapshot and keeps its result while the destination page polls', async () => {
+    const item = { id: 'app-snap', sourceId: 'app-aur', engine: 'aurora-postgresql', status: 'creating' };
+    vi.mocked(snapshots.listClusterSnapshots)
+      .mockResolvedValueOnce({ items: [item] })
+      .mockResolvedValue({ items: [{ ...item, status: 'available' }] });
+    answer(found());
+    const router = open(PATH);
+    await takeSnapshot('app-snap');
+
+    expect(snapshots.createClusterSnapshot).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      'app-snap',
+      expect.any(AbortSignal),
+    );
+    expect(await screen.findByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
+    const row = await screen.findByRole('row', { name: /app-snap/ });
+    expect(within(row).getByText('creating')).toBeInTheDocument();
+    await waitFor(
+      () => {
+        expect(within(screen.getByRole('row', { name: /app-snap/ })).getByText('available')).toBeInTheDocument();
+      },
+      { timeout: 6_000 },
+    );
+    expect(
+      vi
+        .mocked(snapshots.listClusterSnapshots)
+        .mock.calls.slice(0, 2)
+        .map((call) => call[1]),
+    ).toEqual([undefined, undefined]);
+    expect(screen.getByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();
+  }, 10_000);
+
+  it('shows the duplicate snapshot refusal and stays on the cluster', async () => {
+    vi.mocked(snapshots.createClusterSnapshot).mockRejectedValueOnce(
+      new RequestError({
+        kind: 'other',
+        operation: 'CreateDBClusterSnapshot',
+        code: 'DBClusterSnapshotAlreadyExistsFault',
+        message: 'This snapshot already exists.',
+      }),
+    );
+    answer(found());
+    const router = open(PATH);
+    await takeSnapshot('existing-snap');
+
+    expect(await screen.findByText('Create DB cluster snapshot existing-snap failed')).toBeInTheDocument();
+    expect(screen.getByText(/This snapshot already exists/)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(PATH);
+    expect(flashes('success')).toEqual([]);
+  });
+
+  it('disables Take snapshot after CreateDBClusterSnapshot returns 501', async () => {
+    vi.mocked(snapshots.createClusterSnapshot).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'CreateDBClusterSnapshot' }),
+    );
+    answer(found());
+    open(PATH);
+    await takeSnapshot('app-snap');
+
+    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
+    expect(flashes('info')[0]).toContain('501 Not Implemented for CreateDBClusterSnapshot');
+    expect(control('Take snapshot')).toBeDisabled();
   });
 });
