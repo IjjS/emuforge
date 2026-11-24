@@ -237,51 +237,82 @@ describe('customer managed keys', () => {
   });
 
   // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
-  it('recovers a failed list read while the first frame health response is pending', async () => {
-    const engine = new FakeEngine();
-    engine.configPort = 8311;
-    engine.healthAnswers = [{ hang: true }];
-    vi.stubGlobal('fetch', engine.fetch);
-    vi.stubGlobal('matchMedia', () => ({
-      matches: false,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    }));
-    send.mockRejectedValue(new TypeError('Failed to fetch'));
-    await AWS_PROVIDER.loadArea();
-    renderApp(KEYS_PATH);
+  it.each([
+    {
+      cause: 'an engine network rejection',
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+    },
+    {
+      cause: 'EmulatorTimeout',
+      failure: {
+        name: 'EmulatorTimeout',
+        message: `the emulator at ${emulator.endpoint} did not answer within 30 s`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: 'The emulator did not answer',
+    },
+    {
+      cause: 'EmulatorUnavailable',
+      failure: {
+        name: 'EmulatorUnavailable',
+        message: `the emulator at ${emulator.endpoint} is not reachable (not_started): start the emulator on port ${emulator.port}`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 },
+      },
+      status: 'The emulator did not answer',
+    },
+  ])(
+    'recovers a list read from $cause while first health is pending',
+    async ({ failure, status }) => {
+      const engine = new FakeEngine();
+      engine.configPort = 8311;
+      engine.healthAnswers = [{ hang: true }];
+      vi.stubGlobal('fetch', engine.fetch);
+      vi.stubGlobal('matchMedia', () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      send.mockRejectedValue(failure);
+      await AWS_PROVIDER.loadArea();
+      renderApp(KEYS_PATH);
 
-    const frame = createWrapper(
-      await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
-    );
-    const expectChecking = () => {
-      const indicator = frame.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent('Checking');
-    };
-    await waitFor(() => {
-      const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
-    });
-    expectChecking();
-    const empty = withinEmptySlot();
-    const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
-    expect(connectionStatus).toBeVisible();
-    expect(connectionStatus).toHaveAttribute('href', '/');
-    const retry = empty.getByRole('button', { name: 'Retry' });
-    expect(retry).toBeVisible();
+      const frame = createWrapper(
+        await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
+      );
+      const expectChecking = () => {
+        const indicator = frame.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent('Checking');
+      };
+      await waitFor(() => {
+        const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+      });
+      expectChecking();
+      const empty = withinEmptySlot();
+      if (!(failure instanceof TypeError)) expect(empty.getByText(failure.message)).toBeVisible();
+      const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
+      expect(connectionStatus).toBeVisible();
+      expect(connectionStatus).toHaveAttribute('href', '/');
+      const retry = empty.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
 
-    send.mockImplementation((command: ListKeysCommand | DescribeKeyCommand | ListAliasesCommand) =>
-      command instanceof ListKeysCommand ? { Keys: [keyEntry('recovered')] } : answerKeyReads(command),
-    );
-    fireEvent.click(retry);
-    const row = await expectRow('recovered');
-    expect(row).toHaveTextContent('Description of recovered');
-    expectChecking();
-    expect(engine.healths).toHaveLength(1);
-    expect(engine.healths[0]?.aborted()).toBe(false);
-  }, 15_000);
+      send.mockImplementation((command: ListKeysCommand | DescribeKeyCommand | ListAliasesCommand) =>
+        command instanceof ListKeysCommand ? { Keys: [keyEntry('recovered')] } : answerKeyReads(command),
+      );
+      fireEvent.click(retry);
+      const row = await expectRow('recovered');
+      expect(row).toHaveTextContent('Description of recovered');
+      expectChecking();
+      expect(engine.healths).toHaveLength(1);
+      expect(engine.healths[0]?.aborted()).toBe(false);
+    },
+    15_000,
+  );
 
   it('names ListKeys when the emulator returns 501', async () => {
     send.mockRejectedValueOnce({ $metadata: { httpStatusCode: 501 } });
