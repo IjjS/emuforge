@@ -3,21 +3,19 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useRef } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { connectionFailure } from '../../queries';
-import { ACCESS_OPERATIONS } from '../../access-api';
 import { Grants } from './grants';
 import { KeyPolicy } from './key-policy';
 
 export interface AccessProps {
   connection: AreaConnection;
   keyId: string;
+  writesEnabled?: boolean;
 }
 
-export function Access({ connection, keyId }: AccessProps) {
+export function Access({ connection, keyId, writesEnabled = true }: AccessProps) {
   const grants = useRef<HTMLDivElement>(null);
-  const offline = connectionFailure(connection, ACCESS_OPERATIONS.listPolicies) !== undefined;
   return (
-    <SpaceBetween key={JSON.stringify([connection.engineOrigin, keyId, offline])} size="l">
+    <SpaceBetween key={JSON.stringify([connection.engineOrigin, keyId])} size="l">
       <Link
         href="#kms-grants"
         onFollow={(event) => {
@@ -30,8 +28,8 @@ export function Access({ connection, keyId }: AccessProps) {
       >
         Jump to grants
       </Link>
-      <KeyPolicy connection={connection} keyId={keyId} />
-      <Grants connection={connection} keyId={keyId} sectionRef={grants} />
+      <KeyPolicy connection={connection} keyId={keyId} writesEnabled={writesEnabled} />
+      <Grants connection={connection} keyId={keyId} writesEnabled={writesEnabled} sectionRef={grants} />
     </SpaceBetween>
   );
 }

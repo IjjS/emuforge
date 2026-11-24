@@ -7,7 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import { useEffect, useRef, useState } from 'react';
 
-import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { ReadFailure } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -15,7 +15,7 @@ import type { ScreenPageProps } from '../../../screens';
 import { KMS_OPERATIONS, type CustomerKey } from '../api';
 import { KeyState } from '../components/lifecycle/key-state';
 import { keyPath, KEYS_TITLE } from '../paths';
-import { connectionFailure, useCustomerKeys } from '../queries';
+import { connectionFailure, readFailureState, useCustomerKeys } from '../queries';
 import { KEY_CREATE_PATH } from './create';
 
 const OVERFLOW_HINT = 'Scroll sideways to see all columns.';

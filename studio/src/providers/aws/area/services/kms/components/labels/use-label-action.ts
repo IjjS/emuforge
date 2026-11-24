@@ -5,7 +5,7 @@ import { actionFailureItem } from '../../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
 
-export function useLabelAction(connection: AreaConnection, onSaved: () => void) {
+export function useLabelAction(connection: AreaConnection, writesEnabled: boolean, onSaved: () => void) {
   const flash = usePageFlash();
   const signalForPage = usePageSignal();
   const inFlight = useRef(false);
@@ -16,7 +16,7 @@ export function useLabelAction(connection: AreaConnection, onSaved: () => void) 
   const connected = connection.result === undefined || connection.result.kind === 'connected';
 
   const disabled = (operation: string) =>
-    endpoint === undefined || !connected || pending || unavailable.includes(operation);
+    !writesEnabled || endpoint === undefined || !connected || pending || unavailable.includes(operation);
 
   const run = async (
     operation: string,

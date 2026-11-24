@@ -1,7 +1,7 @@
 import { DescribeKeyCommand, ListKeysCommand, NotFoundException, type KeyMetadata } from '@aws-sdk/client-kms';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -119,6 +119,43 @@ describe('key details', () => {
     const heading = page.findTable()?.findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
     expect(heading).toBeVisible();
     expect(heading).toHaveTextContent('Customer managed keys');
+  });
+
+  it.each([
+    {
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+    },
+    {
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: `Not answering at ${emulator.endpoint}`,
+    },
+  ])('shows $status when DescribeKey fails while the frame is connected', async ({ failure, status }) => {
+    send.mockRejectedValue(failure);
+    open(metadata.KeyId, online);
+
+    const recovery = await waitFor(() => {
+      const content = page.findContentLayout()?.findContent().findContainer()?.findContent();
+      if (!content) throw new Error('Expected metadata read recovery');
+      const indicator = content.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(status);
+      return within(content.getElement());
+    });
+    const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
+    expect(connectionStatus).toBeVisible();
+    expect(connectionStatus).toHaveAttribute('href', '/');
+    const retry = recovery.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
+
+    send.mockResolvedValue({ KeyMetadata: metadata });
+    fireEvent.click(retry);
+    await waitFor(() => expect(metadataHeading()).toBeVisible());
   });
 
   it('shows distinct engine and emulator recovery states and retries the key read', async () => {
