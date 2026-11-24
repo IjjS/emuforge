@@ -1089,10 +1089,19 @@ describe('taking a DB cluster snapshot', () => {
     vi.mocked(snapshots.listClusterSnapshots).mockReset().mockResolvedValue({ items: [] });
   });
 
+  async function openSnapshotDialog() {
+    fireEvent.click(control('Take snapshot'));
+    return waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null) throw new Error('Missing Take snapshot dialog.');
+      expect(modal.findHeader().getElement()).toHaveTextContent('Take DB cluster snapshot');
+      return within(modal.getElement());
+    });
+  }
+
   async function takeSnapshot(id: string) {
     await loaded();
-    fireEvent.click(control('Take snapshot'));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Take DB cluster snapshot' }));
+    const dialog = await openSnapshotDialog();
     fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' }), {
       target: { value: id },
     });
@@ -1115,13 +1124,20 @@ describe('taking a DB cluster snapshot', () => {
       'App-Snap',
       expect.any(AbortSignal),
     );
-    expect(await screen.findByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashes('success')[0]).toContain('Creating DB cluster snapshot app-snap');
+    });
     expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
-    const row = await screen.findByRole('row', { name: /app-snap/ });
-    expect(within(row).getByText('creating')).toBeInTheDocument();
+    await waitFor(() => {
+      const table = tableOf('DB cluster snapshots');
+      expect(table.findBodyCell(1, 2)?.getElement()).toHaveTextContent('app-snap');
+      expect(table.findBodyCell(1, 5)?.getElement()).toHaveTextContent('creating');
+    });
     await waitFor(
       () => {
-        expect(within(screen.getByRole('row', { name: /app-snap/ })).getByText('available')).toBeInTheDocument();
+        const table = tableOf('DB cluster snapshots');
+        expect(table.findBodyCell(1, 2)?.getElement()).toHaveTextContent('app-snap');
+        expect(table.findBodyCell(1, 5)?.getElement()).toHaveTextContent('available');
       },
       { timeout: 6_000 },
     );
@@ -1131,7 +1147,7 @@ describe('taking a DB cluster snapshot', () => {
         .mock.calls.slice(0, 2)
         .map((call) => call[1]),
     ).toEqual([undefined, undefined]);
-    expect(screen.getByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();
+    expect(flashes('success')[0]).toContain('Creating DB cluster snapshot app-snap');
   }, 10_000);
 
   it('shows the duplicate snapshot refusal and reopens the draft for correction', async () => {
@@ -1147,19 +1163,22 @@ describe('taking a DB cluster snapshot', () => {
     const router = open(PATH);
     await takeSnapshot('existing-snap');
 
-    expect(await screen.findByText('Create DB cluster snapshot existing-snap failed')).toBeInTheDocument();
-    expect(screen.getByText(/This snapshot already exists/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashes('error')[0]).toContain('Create DB cluster snapshot existing-snap failed');
+      expect(flashes('error')[0]).toContain('This snapshot already exists.');
+    });
     expect(router.state.location.pathname).toBe(PATH);
     expect(flashes('success')).toEqual([]);
 
     vi.mocked(snapshots.createClusterSnapshot).mockResolvedValueOnce('corrected-snap');
-    fireEvent.click(control('Take snapshot'));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Take DB cluster snapshot' }));
+    const dialog = await openSnapshotDialog();
     const input = dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' });
     expect(input).toHaveValue('existing-snap');
     fireEvent.change(input, { target: { value: 'corrected-snap' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
-    expect(await screen.findByText('Creating DB cluster snapshot corrected-snap')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashes('success')[0]).toContain('Creating DB cluster snapshot corrected-snap');
+    });
     expect(snapshots.createClusterSnapshot).toHaveBeenLastCalledWith(
       ENGINE,
       'app-aur',
@@ -1176,8 +1195,10 @@ describe('taking a DB cluster snapshot', () => {
     open(PATH);
     await takeSnapshot('app-snap');
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(flashes('info')[0]).toContain('501 Not Implemented for CreateDBClusterSnapshot');
+    await waitFor(() => {
+      expect(flashes('info')[0]).toContain('Not implemented by the emulator');
+      expect(flashes('info')[0]).toContain('501 Not Implemented for CreateDBClusterSnapshot');
+    });
     expect(control('Take snapshot')).toBeDisabled();
   });
 });
