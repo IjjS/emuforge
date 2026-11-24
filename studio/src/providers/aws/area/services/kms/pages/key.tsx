@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
-import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { ReadFailure } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -27,7 +27,7 @@ import { Lifecycle } from '../components/lifecycle/lifecycle';
 import { useLifecycleAction, type LifecycleAction } from '../components/lifecycle/use-lifecycle-action';
 import { Rotation } from '../components/rotation/rotation';
 import { KEYS_PATH } from '../paths';
-import { connectionFailure, KMS_KEYS, useKmsKey } from '../queries';
+import { connectionFailure, KMS_KEYS, readFailureState, useKmsKey } from '../queries';
 
 type ReadKey = KeyMetadata & { KeyId: string };
 
