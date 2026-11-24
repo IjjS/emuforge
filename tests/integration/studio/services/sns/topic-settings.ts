@@ -71,8 +71,8 @@ export async function openSettings(page: Page, arn: string) {
     },
     async confirmRemoval() {
       const modal = wrapper.findModal();
-      await page.locator(modal.findInput().findNativeInput().toSelector()).fill('remove');
-      await page.locator(modal.findFooter().findAllButtons().toSelector()).last().click(ACTION);
+      await page.locator(modal.findContent().toSelector()).getByRole('textbox').fill('remove');
+      await page.locator(modal.findFooter().toSelector()).getByRole('button', { name: 'Remove' }).click(ACTION);
     },
   };
 }
