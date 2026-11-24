@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import type { AreaConnection } from '../../components/emulator-line';
+import { readFailureState as areaReadFailureState } from '../../components/failure-states';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { describeKey, KMS_OPERATIONS, listCustomerKeys } from './api';
 
@@ -56,4 +57,29 @@ export function connectionFailure(connection: AreaConnection, operation: string)
     default:
       return undefined;
   }
+}
+
+/** A failed request can observe a connection problem before the frame's next poll. */
+export function readFailureState(failure: RequestFailure, connection: AreaConnection, thing: string) {
+  const { result } = connection;
+  if (result?.kind === 'connected') {
+    if (failure.kind === 'engine-did-not-answer') {
+      return areaReadFailureState(
+        failure,
+        {
+          ...connection,
+          result: { kind: 'engine-unreachable', checkedAt: result.checkedAt, lastEmulatorPort: result.emulator.port },
+        },
+        thing,
+      );
+    }
+    if (failure.kind === 'emulator-did-not-answer') {
+      return areaReadFailureState(
+        failure,
+        { ...connection, result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message } },
+        thing,
+      );
+    }
+  }
+  return areaReadFailureState(failure, connection, thing);
 }
