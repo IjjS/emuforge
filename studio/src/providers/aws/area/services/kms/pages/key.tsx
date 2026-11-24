@@ -191,6 +191,14 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
             </Box>
           </Container>
         )}
+        {showPanels && metadata === undefined && failure === undefined && (
+          <Container>
+            <SpaceBetween size="xxs">
+              <StatusIndicator type="loading">Loading key…</StatusIndicator>
+              <Box>Changes are available after the key metadata loads.</Box>
+            </SpaceBetween>
+          </Container>
+        )}
         {showPanels && (
           <Tabs
             key="key-settings"
@@ -203,10 +211,6 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
                 content:
                   metadata !== undefined && metadata !== null ? (
                     <KeyDetails action={action} metadata={metadata as ReadKey} />
-                  ) : failure === undefined ? (
-                    <Container>
-                      <StatusIndicator type="loading">Loading key…</StatusIndicator>
-                    </Container>
                   ) : null,
               },
               {
