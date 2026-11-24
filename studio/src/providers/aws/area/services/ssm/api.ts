@@ -37,7 +37,11 @@ export async function findParameter(endpoint: string, name: string, signal: Abor
   const ParameterFilters = [{ Key: 'Name', Option: 'Equals', Values: [name] }];
   let token: string | undefined;
   do {
-    const { Parameters, NextToken } = await describeParameters(endpoint, { ParameterFilters, NextToken: token }, signal);
+    const { Parameters, NextToken } = await describeParameters(
+      endpoint,
+      { ParameterFilters, NextToken: token },
+      signal,
+    );
     signal.throwIfAborted();
     const exact = Parameters?.find((parameter) => parameter.Name === name);
     if (exact !== undefined) return exact;
