@@ -60,6 +60,12 @@ function metadataHeading() {
     .find((heading) => heading.textContent === 'Key metadata');
 }
 
+function metadataRecovery() {
+  const content = page.findContentLayout()?.findContent().findContainer()?.findContent();
+  if (!content) throw new Error('Expected metadata read recovery');
+  return content;
+}
+
 function fieldValue(label: string) {
   const item = page
     .findAllKeyValuePairs()
@@ -146,8 +152,7 @@ describe('key details', () => {
     open(metadata.KeyId, online);
 
     const recovery = await waitFor(() => {
-      const content = page.findContentLayout()?.findContent().findContainer()?.findContent();
-      if (!content) throw new Error('Expected metadata read recovery');
+      const content = metadataRecovery();
       const indicator = content.findStatusIndicator()?.getElement();
       expect(indicator).toBeVisible();
       expect(indicator).toHaveTextContent(status);
@@ -179,16 +184,22 @@ describe('key details', () => {
     await AWS_PROVIDER.loadArea();
     renderApp(keyPath(metadata.KeyId));
 
-    const frame = await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 });
+    const frame = createWrapper(
+      await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
+    );
+    const expectChecking = () => {
+      const indicator = frame.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent('Checking');
+    };
     const recovery = await waitFor(() => {
-      const content = page.findContentLayout()?.findContent().findContainer()?.findContent();
-      if (!content) throw new Error('Expected metadata read recovery');
+      const content = metadataRecovery();
       const indicator = content.findStatusIndicator()?.getElement();
       expect(indicator).toBeVisible();
       expect(indicator).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
       return within(content.getElement());
     });
-    expect(within(frame).getByText('Checking')).toBeVisible();
+    expectChecking();
     const connectionStatus = recovery.getByRole('link', { name: 'Connection status' });
     expect(connectionStatus).toBeVisible();
     expect(connectionStatus).toHaveAttribute('href', '/');
@@ -200,7 +211,7 @@ describe('key details', () => {
     await waitFor(() => expect(metadataHeading()).toBeVisible());
     expectField('Key ID', metadata.KeyId);
     expectField('Description', metadata.Description);
-    expect(within(frame).getByText('Checking')).toBeVisible();
+    expectChecking();
     expect(engine.healths).toHaveLength(1);
     expect(engine.healths[0]?.aborted()).toBe(false);
   }, 15_000);
@@ -211,24 +222,30 @@ describe('key details', () => {
       result: { kind: 'engine-unreachable', lastEmulatorPort: emulator.port, checkedAt: 1 },
     });
 
-    const expectRecovery = (label: string, message: string) => {
-      expect(screen.getByText(label)).toHaveTextContent(message);
-      expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    const expectRecovery = (message: string) => {
+      const content = metadataRecovery();
+      const indicator = content.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(message);
+      const recovery = within(content.getElement());
+      expect(recovery.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+      const retry = recovery.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
       expect(screen.queryByText('Key not found')).toBeNull();
+      return retry;
     };
-    expectRecovery('The EmuForge engine at is not answering', `The EmuForge engine at ${endpoint} is not answering`);
+    expectRecovery(`The EmuForge engine at ${endpoint} is not answering`);
 
     const down = { kind: 'emulator-unreachable', emulator, checkedAt: 2, message: '' } as const;
     showConnection({ engineOrigin: endpoint, result: { ...down, reason: 'not_started' } });
-    expectRecovery('Not started on port', `Not started on port ${emulator.port}`);
+    expectRecovery(`Not started on port ${emulator.port}`);
 
     showConnection({ engineOrigin: endpoint, result: { ...down, reason: 'timeout' } });
-    expectRecovery('Not answering at', `Not answering at ${emulator.endpoint}`);
+    const retry = expectRecovery(`Not answering at ${emulator.endpoint}`);
     expect(send).not.toHaveBeenCalled();
 
     send.mockResolvedValue({ KeyMetadata: metadata });
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(retry);
     await waitFor(() => expect(metadataHeading()).toBeVisible());
   });
 });
