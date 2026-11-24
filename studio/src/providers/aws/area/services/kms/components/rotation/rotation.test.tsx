@@ -94,6 +94,12 @@ function expectField(label: string, value: string, scope = page) {
   expect(element).toHaveTextContent(value);
 }
 
+function expectSettingsLoading() {
+  const indicator = page.findContainer()?.findContent().findStatusIndicator()?.getElement();
+  expect(indicator).toBeVisible();
+  expect(indicator).toHaveTextContent(/^Loading rotation settings…$/);
+}
+
 function expectRotation(type: string, date: Date, scope = page) {
   const history = scope.findTable();
   expect(history?.findRows()).toHaveLength(1);
@@ -194,7 +200,7 @@ describe('Key rotation', () => {
       history.resolve({ $metadata: {}, Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] }),
     );
     await waitFor(() => expectRotation('On-demand', rotationDate));
-    expect(screen.getByText('Loading rotation settings…')).toBeVisible();
+    expectSettingsLoading();
     expectSuccess('On-demand rotation requested.');
 
     await act(() => settings.resolve({ $metadata: {}, ...enabledSettings }));
@@ -490,7 +496,7 @@ describe('Key rotation', () => {
 
     update(reconnected);
     await waitFor(() => expect(readSettings).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('Loading rotation settings…')).toBeVisible();
+    expectSettingsLoading();
     expectDisabledToggle();
     fireEvent.click(disable);
 
