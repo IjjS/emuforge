@@ -9,8 +9,9 @@ import { useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../../components/area-modal';
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import type { TokenListing } from '../../../../components/use-token-listing';
+import { readFailureState } from '../../queries';
 
 export function LabelPagination<T>({ listing, label }: { listing: TokenListing<T>; label: string }) {
   if (listing.pagesCount === 1 && !listing.openEnd) return null;
