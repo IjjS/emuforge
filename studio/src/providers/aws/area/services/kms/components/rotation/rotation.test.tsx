@@ -63,17 +63,18 @@ function RotationPage(props: ComponentProps<typeof Rotation>) {
   );
 }
 
-function open(keySpec?: KeyMetadata['KeySpec']) {
+function open(keySpec?: KeyMetadata['KeySpec'], writesEnabled = true) {
   const client = new QueryClient();
-  const view = (currentConnection: AreaConnection, currentKey: string) => (
+  const view = (currentConnection: AreaConnection, currentKey: string, allowWrites: boolean) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <RotationPage connection={currentConnection} keyId={currentKey} keySpec={keySpec} />
+        <RotationPage connection={currentConnection} keyId={currentKey} keySpec={keySpec} writesEnabled={allowWrites} />
       </MemoryRouter>
     </QueryClientProvider>
   );
-  const { rerender } = render(view(connection, keyId));
-  return (currentConnection: AreaConnection, currentKey = keyId) => rerender(view(currentConnection, currentKey));
+  const { rerender } = render(view(connection, keyId, writesEnabled));
+  return (currentConnection: AreaConnection, currentKey = keyId, allowWrites = writesEnabled) =>
+    rerender(view(currentConnection, currentKey, allowWrites));
 }
 
 function click(name: string) {
@@ -337,6 +338,46 @@ describe('Key rotation', () => {
     expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
     expect(screen.getByText('The emulator does not implement RotateKeyOnDemand.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
+  });
+
+  it('blocks new writes until enabled and retains a pending refusal while writes are blocked', async () => {
+    const reply = pendingAnswer<undefined>();
+    const write = vi.fn<(signal: AbortSignal) => void>();
+    send.mockImplementation(async (command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => {
+      if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      write(abortSignal);
+      await reply.promise;
+      throw { $metadata: { httpStatusCode: 501 } };
+    });
+    const update = open(undefined, false);
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    const rotate = screen.getByRole('button', { name: 'Rotate now' });
+    const toggle = screen.getByRole('button', { name: 'Disable automatic rotation' });
+
+    expect(rotate).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    fireEvent.click(rotate);
+    fireEvent.click(toggle);
+    expect(write).not.toHaveBeenCalled();
+
+    update(connection, keyId, true);
+    expect(rotate).toBeEnabled();
+    fireEvent.click(rotate);
+    const signal = write.mock.calls[0]?.[0];
+    update(connection, keyId, false);
+    expect(rotate).toHaveAttribute('aria-disabled', 'true');
+    expect(signal?.aborted).toBe(false);
+    await act(() => reply.resolve(undefined));
+    expect(flashItem('info')?.findContent()?.getElement()).toHaveTextContent(
+      '501 Not Implemented for RotateKeyOnDemand',
+    );
+
+    update(connection, keyId, true);
+    expect(rotate).toBeDisabled();
+    expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
+    expect(toggle).toBeEnabled();
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it.each(['success', '501'] as const)(
