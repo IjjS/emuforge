@@ -19,6 +19,7 @@ vi.mock('../../../../../../lib/aws/client-factory', () => ({
 
 const endpoint = 'http://127.0.0.1:8311';
 const emulator = { port: 9311, endpoint: 'https://127.0.0.1:9311' };
+const startPort = 9545;
 const online = { engineOrigin: endpoint, result: { kind: 'connected', checkedAt: 0, emulator } } as const;
 const page = createWrapper(document.body);
 
@@ -215,26 +216,51 @@ describe('customer managed keys', () => {
       },
       status: `Not answering at ${emulator.endpoint}`,
     },
-  ])('shows $status when ListKeys fails while the frame is connected', async ({ failure, status }) => {
-    send.mockRejectedValue(failure);
-    open(online);
+    {
+      failure: {
+        name: 'EmulatorUnavailable',
+        message: `the emulator at https://127.0.0.1:${startPort} is not reachable (not_started): start the emulator on port ${startPort}`,
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 },
+      },
+      status: `Not started on port ${startPort}`,
+      startInstruction: `start the emulator on port ${startPort}`,
+    },
+  ])(
+    'shows $status when ListKeys fails while the frame is connected',
+    async ({ failure, status, startInstruction }) => {
+      send.mockRejectedValue(failure);
+      open(online);
 
-    await waitFor(() => {
-      const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
-      expect(indicator).toBeVisible();
-      expect(indicator).toHaveTextContent(status);
-    });
-    const empty = withinEmptySlot();
-    const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
-    expect(connectionStatus).toBeVisible();
-    expect(connectionStatus).toHaveAttribute('href', '/');
-    const retry = empty.getByRole('button', { name: 'Retry' });
-    expect(retry).toBeVisible();
+      await waitFor(() => {
+        const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
+        expect(indicator).toBeVisible();
+        expect(indicator).toHaveTextContent(status);
+      });
+      const empty = withinEmptySlot();
+      const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
+      if (startInstruction !== undefined) {
+        expect(empty.getByText(failure.message)).toHaveTextContent(startInstruction);
+      }
+      expect(connectionStatus).toBeVisible();
+      expect(connectionStatus).toHaveAttribute('href', '/');
+      const retry = empty.getByRole('button', { name: 'Retry' });
+      expect(retry).toBeVisible();
 
-    send.mockResolvedValue({ Keys: [] });
-    fireEvent.click(retry);
-    await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys')).toBeVisible());
-  });
+      if (startInstruction === undefined) {
+        send.mockResolvedValue({ Keys: [] });
+        fireEvent.click(retry);
+        await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys')).toBeVisible());
+      } else {
+        send.mockImplementation((command: ListKeysCommand | DescribeKeyCommand | ListAliasesCommand) =>
+          command instanceof ListKeysCommand ? { Keys: [keyEntry('recovered')] } : answerKeyReads(command),
+        );
+        fireEvent.click(retry);
+        const row = await expectRow('recovered');
+        expect(row).toHaveTextContent('Description of recovered');
+      }
+    },
+  );
 
   // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
   it.each([
