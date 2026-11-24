@@ -497,7 +497,7 @@ describe('Key rotation', () => {
     await act(() => settings.resolve(undefined));
     const retry = await screen.findByRole('button', { name: 'Retry' });
     expect(screen.getByText('http://127.0.0.1:8310')).toBeVisible();
-    expect(screen.getByText('rotation settings (GetKeyRotationStatus) could not be read.')).toBeVisible();
+    expect(screen.getByText('The rotation settings (GetKeyRotationStatus) could not be read.')).toBeVisible();
     expectDisabledToggle();
     expectSuccess('On-demand rotation requested.');
     fireEvent.click(disable);
@@ -598,9 +598,9 @@ describe.each([
       const link = panel.getByRole('link', { name: 'Connection status' });
       expect(link).toBeVisible();
       expect(link).toHaveAttribute('href', '/');
-      expect(panel.getByText(`${read} (${operation}) could not be read.`)).toBeVisible();
+      expect(panel.getByText(`The ${read} (${operation}) could not be read.`)).toBeVisible();
     } else {
-      expect(panel.getByText(`${read} (${operation}) could not be read`)).toBeVisible();
+      expect(panel.getByText(`The ${read} (${operation}) could not be read`)).toBeVisible();
       expect(panel.getByText('KMSInvalidStateException')).toBeVisible();
       expect(panel.getByText(/The key is not in a valid state/)).toBeVisible();
       expect(panel.queryByRole('link', { name: 'Connection status' })).toBeNull();
