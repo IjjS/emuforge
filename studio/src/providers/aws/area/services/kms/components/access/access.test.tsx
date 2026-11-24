@@ -165,22 +165,25 @@ function refusal() {
   return { name: 'ValidationException', message: REFUSAL, $fault: 'client', $metadata: { httpStatusCode: 400 } };
 }
 
-function modalSections(title: string, nested = false) {
+function modalSections(title: string) {
   return waitFor(() => {
-    const page = createWrapper();
-    const modal = nested
-      ? page.findAllModals().find((candidate) => candidate.findHeader().getElement().textContent === title)
-      : page.findModal();
+    const modal = createWrapper()
+      .findAllModals()
+      .find((candidate) => candidate.isVisible() && candidate.findHeader().getElement().textContent === title);
     if (!modal) throw new Error(`Expected the ${title} modal.`);
     const footer = modal.findFooter();
     if (footer === null) throw new Error(`Expected the ${title} modal footer.`);
-    expect(modal.isVisible()).toBe(true);
+    const element = modal.getElement();
+    expect(element).toBeVisible();
+    expect(element).toHaveRole('dialog');
+    expect(element).toHaveAccessibleName(title);
     expect(modal.findHeader().getElement()).toHaveTextContent(title);
     const body = modal.findContent();
     return {
-      element: modal.getElement(),
+      element,
       body,
       content: within(body.getElement()),
+      dismiss: modal.findDismissButton(),
       footer: within(footer.getElement()),
     };
   });
@@ -703,21 +706,27 @@ describe('KMS key access', () => {
     await screen.findByText(OLD_POLICY);
     const opener = screen.getByRole('button', { name: 'Edit key policy' });
     await user.click(opener);
-    const editor = await screen.findByRole('dialog', { name: 'Edit key policy' });
-    const field = within(editor).getByRole('textbox', { name: 'Policy document' });
+    const editor = await modalSections('Edit key policy');
+    const field = editor.content.getByRole('textbox', { name: 'Policy document' });
     field.focus();
     fireEvent.change(field, { target: { value: NEW_POLICY } });
     fireEvent.keyDown(field, { key: 'Escape', code: 'Escape', keyCode: 27 });
 
-    await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+    await modalSections('Discard what you entered?');
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard what you entered?' })).toBeNull());
     expect(field).toHaveValue(NEW_POLICY);
     expect(field).toHaveFocus();
 
-    await user.click(within(editor).getByRole('button', { name: 'Close dialog' }));
-    const confirm = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-    await user.click(within(confirm).getByRole('button', { name: 'Discard' }));
+    const dismiss = editor.dismiss.getElement();
+    expect(dismiss).toBeVisible();
+    expect(dismiss).toHaveRole('button');
+    expect(dismiss).toHaveAccessibleName('Close dialog');
+    await user.click(dismiss);
+    const confirm = await modalSections('Discard what you entered?');
+    expect(editor.element).toBeVisible();
+    expect(confirm.element).not.toBe(editor.element);
+    await user.click(confirm.footer.getByRole('button', { name: 'Discard' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(opener).toHaveFocus();
     expect(screen.getByText(OLD_POLICY)).toBeVisible();
@@ -740,7 +749,7 @@ describe('KMS key access', () => {
     await user.click(editor.footer.getByRole('button', { name: 'Save policy' }));
     await expectOpenRefusal(editor, 'PutKeyPolicy', published);
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
-    const confirmation = await modalSections('Discard what you entered?', true);
+    const confirmation = await modalSections('Discard what you entered?');
     const keep = confirmation.footer.getByRole('button', { name: 'Keep editing' });
     keep.focus();
     await user.keyboard('{Enter}');
@@ -756,7 +765,7 @@ describe('KMS key access', () => {
 
     cancel.focus();
     await user.keyboard('{Enter}');
-    const cancelConfirmation = await modalSections('Discard what you entered?', true);
+    const cancelConfirmation = await modalSections('Discard what you entered?');
     cancelConfirmation.footer.getByRole('button', { name: 'Keep editing' }).focus();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(cancelConfirmation.element).not.toBeInTheDocument());
@@ -764,7 +773,7 @@ describe('KMS key access', () => {
     expect(field).toHaveValue(NEW_POLICY);
 
     await user.keyboard('{Enter}');
-    const discardConfirmation = await modalSections('Discard what you entered?', true);
+    const discardConfirmation = await modalSections('Discard what you entered?');
     discardConfirmation.footer.getByRole('button', { name: 'Discard' }).focus();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(editor.element).not.toBeInTheDocument());
