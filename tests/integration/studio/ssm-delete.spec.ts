@@ -28,12 +28,16 @@ test("studio.ssm-parameter-delete", async ({ ctx, page }) => {
   });
   await button(page, "Delete").click();
   await modal(page).getByRole("textbox").fill(f.name);
+  await f.seed({ Name: witness, Overwrite: true, Value: "updated during confirmation" });
+  const updated = await f.read(witness);
+  expect(updated.Version).toBe(2);
   await button(modal(page), "Delete").click();
   await expect(page).toHaveURL(list);
   await expect(success(page)).toContainText(
     "Parameter " + f.name + " deleted.",
   );
-  await expect(link(page, witness)).toBeVisible();
+  const retained = page.getByRole("link", { name: witness, exact: true });
+  await expect(await cell(page, retained, 4, "Version")).toHaveText(String(updated.Version));
   await expect(link(page, f.name)).toHaveCount(0);
   await page.goto(detail(f.name));
   await missing(page, f.name);
@@ -68,7 +72,7 @@ test("studio.ssm-parameter-bulk-delete", async ({ ctx, page }) => {
     await expect(item.getByText(other, { exact: true })).toHaveCount(0);
   }
   const witness = page.getByRole("link", { name: kept, exact: true });
-  await expect(await cell(page, witness, "Version")).toHaveText("2");
+  await expect(await cell(page, witness, 4, "Version")).toHaveText("2");
   for (const name of [f.name, rejected]) {
     await expect(link(page, name)).toHaveCount(0);
     await expect(f.read(name)).rejects.toMatchObject({

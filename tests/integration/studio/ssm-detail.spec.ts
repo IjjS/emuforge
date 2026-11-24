@@ -21,7 +21,7 @@ test("studio.ssm-parameter-versions", async ({ ctx, page }) => {
     if (version === 1) {
       await button(page, "Version history").click();
       await control.check();
-      await expect(await cell(page, control, "Version")).toHaveText("1");
+      await expect(await cell(page, control, 2, "Version")).toHaveText("1");
     }
     const direct = await f.read(version === 2 ? f.name : f.name + ":1");
     expect(direct).toMatchObject({
@@ -53,7 +53,7 @@ test("studio.ssm-parameter-versions", async ({ ctx, page }) => {
       .Parameters!;
     const first = versions.find((entry) => entry.Version === 1)!;
     expect(first.Labels ?? []).toEqual(adding ? ["stable"] : []);
-    await expect(await cell(page, control, "Labels")).toHaveText(
+    await expect(await cell(page, control, 4, "Labels")).toHaveText(
       first.Labels?.join(", ") || "-",
     );
   }
@@ -90,8 +90,8 @@ test("studio.ssm-parameter-tags", async ({ ctx, page }) => {
     await expect(tagRows).toHaveCount(tags.length);
     if (value) {
       const key = page.getByRole("rowheader", { name: "scope", exact: true });
-      await expect(await cell(page, key, "Key")).toHaveText(tags[0]!.Key!);
-      await expect(await cell(page, key, "Value")).toHaveText(tags[0]!.Value!);
+      await expect(await cell(page, key, 1, "Key")).toHaveText(tags[0]!.Key!);
+      await expect(await cell(page, key, 2, "Value")).toHaveText(tags[0]!.Value!);
     } else {
       await expect(empty).toHaveText("No tags");
     }

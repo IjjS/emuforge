@@ -34,18 +34,17 @@ test("studio.ssm-parameter-list", async ({ ctx, page }) => {
     await expect(link(page, f.prefix + "/before-0")).toBeVisible();
     const firstMetadata = await f.metadata(first);
     const firstLink = page.getByRole("link", { name: first, exact: true });
-    await expect(await cell(page, firstLink, "Version")).toHaveText(String(firstMetadata.Version));
+    await expect(await cell(page, firstLink, 4, "Version")).toHaveText(String(firstMetadata.Version));
     await button(page, "Next page").click();
-    for (const [column, value] of Object.entries({
-      Name: metadata.Name!,
-      Type: metadata.Type!,
-      Version: String(metadata.Version),
-      "Last modified": creationDateText(
-        metadata.LastModifiedDate!.toISOString(),
-        SEOUL,
-      ),
-    }))
-      await expect(await cell(page, target, column)).toHaveText(value);
+    const columns = [
+      [2, "Name", metadata.Name!],
+      [3, "Type", metadata.Type!],
+      [4, "Version", String(metadata.Version)],
+      [5, "Last modified", creationDateText(metadata.LastModifiedDate!.toISOString(), SEOUL)],
+    ] as const;
+    for (const [position, label, value] of columns) {
+      await expect(await cell(page, target, position, label)).toHaveText(value);
+    }
   }
   await page.goto(list);
   await expect(link(page, f.prefix + "/before-0")).toBeVisible();

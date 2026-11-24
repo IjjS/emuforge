@@ -18,7 +18,7 @@ export const rows = (page: Page) =>
 export const link = (page: Page, name: string) =>
   rows(page).getByRole("link", { name, exact: true });
 
-export async function cell(page: Page, control: Locator, column: string) {
+export async function cell(page: Page, control: Locator, columnIndex: number, column: string) {
   const table = ui.findTable();
   const row = rows(page).filter({ has: control });
   await expect(row).toBeVisible();
@@ -27,9 +27,6 @@ export async function cell(page: Page, control: Locator, column: string) {
   );
   const grid = page.getByRole("table").filter({ has: control });
   const headers = page.locator(table.findColumnHeaders().toSelector()).and(grid.getByRole("columnheader"));
-  const titles = (await headers.allTextContents()).map((label) => label.trim());
-  const columnIndex = titles.indexOf(column) + 1;
-  expect(columnIndex).toBeGreaterThan(0);
   await expect(headers.nth(columnIndex - 1)).toHaveText(column);
   return page
     .locator(table.findBodyCell(rowIndex, columnIndex).toSelector())
