@@ -90,13 +90,13 @@ function saveButton(dialog: HTMLElement) {
 }
 
 function typeField() {
-  const field = PAGE.findModal()?.findSelect();
+  const field = PAGE.findSelect();
   if (field === null || field === undefined) throw new Error('Missing instance type selector');
   return field;
 }
 
 function groupField() {
-  const field = PAGE.findModal()?.findMultiselect();
+  const field = PAGE.findMultiselect();
   if (field === null || field === undefined) throw new Error('Missing security group selector');
   return field;
 }
@@ -124,7 +124,7 @@ async function enterDraft(label: string) {
   const dialog = await edit(label);
   if (label === TYPE) await selectLarge();
   else if (label === GROUPS) await selectBeta();
-  else PAGE.findModal()?.findToggle()?.findNativeInput().click();
+  else PAGE.findToggle()?.findNativeInput().click();
   expect(isDisabled(saveButton(dialog))).toBe(false);
   return dialog;
 }
