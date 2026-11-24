@@ -487,7 +487,7 @@ describe('Settings on a topic page', () => {
   const expectUnavailable = async (operation: string) => {
     const detail = await screen.findByText(`The emulator answered 501 Not Implemented for ${operation}.`);
     expect(
-      within(detail.closest('[role="alert"]') ?? document.body).getByText('Not implemented by the emulator'),
+      within(detail.closest('[role="group"]') ?? document.body).getByText('Not implemented by the emulator'),
     ).toBeVisible();
   };
 

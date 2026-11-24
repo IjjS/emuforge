@@ -7,7 +7,6 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
 import Textarea from '@cloudscape-design/components/textarea';
 import { useState, type ReactNode } from 'react';
@@ -83,7 +82,7 @@ function EditForm({
             <Button formAction="none" disabled={pending} onClick={onCancel}>
               Cancel
             </Button>
-            <Button variant="primary" formAction="submit" loading={pending} disabled={pending || disabled}>
+            <Button variant="primary" formAction="submit" loading={pending} disabled={disabled}>
               Save changes
             </Button>
           </SpaceBetween>
@@ -166,6 +165,8 @@ function AttributeSetting({
                 <Textarea
                   value={draft}
                   rows={10}
+                  resize="vertical"
+                  autoFocus
                   readOnly={pending}
                   spellcheck={false}
                   onChange={({ detail }) => {
@@ -175,6 +176,7 @@ function AttributeSetting({
               ) : (
                 <Input
                   value={draft}
+                  autoFocus
                   readOnly={pending}
                   onChange={({ detail }) => {
                     setDraft(detail.value);
@@ -264,6 +266,7 @@ function TopicTags({
         <FormField label="Key">
           <Input
             value={draft.key}
+            autoFocus={editingKey}
             readOnly={!editingKey || saving}
             onChange={({ detail }) => {
               setDraft({ ...draft, key: detail.value });
@@ -273,6 +276,7 @@ function TopicTags({
         <FormField label="Value">
           <Input
             value={draft.value}
+            autoFocus={!editingKey}
             readOnly={saving}
             onChange={({ detail }) => {
               setDraft({ ...draft, value: detail.value });

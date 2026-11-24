@@ -30,9 +30,9 @@ const TAGS = [
   { key: 'color', value: 'red' },
   { key: 'keep', value: 'one' },
 ];
-const topic = (displayName = 'Orders'): api.TopicRead => ({
+const topic = (displayName = 'Orders', policy = POLICY): api.TopicRead => ({
   found: true,
-  topic: { arn: ARN, displayName, policy: POLICY, fifo: false, contentBasedDeduplication: false },
+  topic: { arn: ARN, displayName, policy, fifo: false, contentBasedDeduplication: false },
 });
 
 function TestPage() {
@@ -149,10 +149,7 @@ describe('topic attribute editors', () => {
     expect(field).toHaveValue('invalid');
     expect(screen.queryByText('Access policy saved.')).not.toBeInTheDocument();
     const corrected = '{\n    "Statement": []\n}';
-    vi.mocked(api.getTopic).mockResolvedValue({
-      ...topic(),
-      topic: { arn: ARN, policy: corrected, fifo: false, contentBasedDeduplication: false },
-    });
+    vi.mocked(api.getTopic).mockResolvedValue(topic('Orders', corrected));
     setField(field, corrected);
     save();
     expect(await screen.findByText('Access policy saved.')).toBeVisible();
@@ -166,7 +163,7 @@ describe('topic attribute editors', () => {
   });
 
   it('sends a pending attribute save only once', async () => {
-    const write = hold<void>();
+    const write = hold<undefined>();
     vi.mocked(api.setTopicSetting).mockReturnValueOnce(write.promise);
     open();
     const field = await editAttribute('Display name');
@@ -239,7 +236,7 @@ describe('reading topic tags', () => {
     expect(screen.getByText(/Tag store temporarily unavailable/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
     expect(screen.getByText(POLICY, { normalizer: (text) => text })).toBeVisible();
-    expect(within(screen.getByRole('tabpanel')).getByText('Orders')).toBeVisible();
+    expect(within(screen.getByRole('tabpanel', { name: 'Settings' })).getByText('Orders')).toBeVisible();
     expect(screen.queryByText('No tags')).not.toBeInTheDocument();
   });
 
@@ -379,7 +376,9 @@ describe('writing topic tags', () => {
       await act(async () => {
         detail.resolve(topic('Fresh details'));
       });
-      expect(await within(screen.getByRole('tabpanel')).findByText('Fresh details')).toBeVisible();
+      expect(
+        await within(screen.getByRole('tabpanel', { name: 'Settings' })).findByText('Fresh details'),
+      ).toBeVisible();
     };
     const finishTags = async () => {
       await act(async () => {
