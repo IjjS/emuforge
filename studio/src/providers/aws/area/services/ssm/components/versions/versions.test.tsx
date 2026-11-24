@@ -592,7 +592,9 @@ describe('Parameter Store values and versions', () => {
       expect(flashContent('success')).toHaveTextContent(`Added labels for ${NAME}, version 1: release.`);
       expect(getHistory).toHaveBeenCalledTimes(3);
     });
-    expect(addLabels.mock.invocationCallOrder[0]).toBeLessThan(getHistory.mock.invocationCallOrder[2]);
+    const refreshOrder = getHistory.mock.invocationCallOrder[2];
+    assert(refreshOrder !== undefined);
+    expect(addLabels.mock.invocationCallOrder[0]).toBeLessThan(refreshOrder);
     await refresh.finish(notImplemented());
 
     const refusal = 'The emulator answered 501 Not Implemented for GetParameterHistory.';
