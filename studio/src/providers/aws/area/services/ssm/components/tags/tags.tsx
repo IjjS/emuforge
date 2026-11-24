@@ -75,6 +75,7 @@ function TagsTable({ connection, name }: TagsProps) {
           {
             id: 'actions',
             header: 'Actions',
+            minWidth: 220,
             cell: (tag) => (
               <SpaceBetween size="xs" direction="horizontal">
                 <Button
