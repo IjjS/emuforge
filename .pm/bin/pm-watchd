@@ -72,7 +72,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import (CHECKS, EVENTS, PANE_ROLES, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room,
-                    find_key, herdr, load, log, mem_gb, notify, now, pane_ops, pane_rss_gb, resetting, room,
+                    find_key, herdr, load, log, mem_gb, notify, now, pane_ops, pane_rss_gb, panes, resetting, room,
                     save, thermal_room, thermal_state, transcript_ctx, update)
 from _pmroute import PM as TO_PM, route
 from _pmwake import Waker
@@ -127,6 +127,7 @@ def room_tick(st, reg, checks=check_room, freed=None, given=None):
     live = {r["name"] for r in reg}
     done, out, judged = [], [], {}
     check_told = False
+    open_panes = None
     for w in waiting:
         if w.get("asker") not in live:
             done.append(w)
@@ -143,10 +144,16 @@ def room_tick(st, reg, checks=check_room, freed=None, given=None):
                 done.append(w)
                 check_told = True
             continue
-        key = (w.get("role"), w.get("side"), w.get("issue"))
+        if st.get("tokens_over"):
+            continue
+        if open_panes is None:
+            # Use pane presence like pm-pane does. An open shell without an agent still takes a slot.
+            listed = panes()
+            pane_ids = None if listed is None else {p["pane_id"] for p in listed}
+            open_panes = reg if pane_ids is None else [r for r in reg if r["pane_id"] in pane_ids]
+        key = (w.get("role"), w.get("issue"))
         if key not in judged:
-            why = "token rate over today's target" if st.get("tokens_over") else room(*key, alive=reg, tokens=False, given=given)
-            judged[key] = why
+            judged[key] = room(*key, alive=open_panes, tokens=False, given=given)
         if judged[key] is None:
             out.append(f"EVENT room {w['asker']} pane {w.get('role')} {w.get('side')}")
             done.append(w)

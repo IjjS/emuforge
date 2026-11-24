@@ -9,9 +9,11 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { targetOf } from '../../../../../../lib/engine/engine-client';
 import { DiscardDialog } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState } from '../../../components/failure-states';
@@ -74,10 +76,12 @@ function ParameterForm({
   connection,
   name,
   metadata,
+  awaitingMetadata = false,
 }: {
   connection: AreaConnection;
   name: string;
   metadata?: ParameterMetadata | undefined;
+  awaitingMetadata?: boolean;
 }) {
   const editing = metadata !== undefined;
   const navigate = useNavigate();
@@ -108,6 +112,7 @@ function ParameterForm({
   const { errors, policies } = validate(draft);
   const cancelPath = editing ? parameterPath(name) : PARAMETER_STORE_PATH;
   const blocked = writes.failure ?? (editing ? reads.failure : undefined);
+  const saveDisabled = !connected || endpoint === undefined || awaitingMetadata || pending || blocked !== undefined;
   const reason = blocked ?? failure;
   const feedback = reason === undefined ? undefined : actionFailureItem(reason, 'Saving the parameter', endpoint);
 
@@ -116,11 +121,21 @@ function ParameterForm({
     else void navigate(cancelPath);
   };
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!connected || endpoint === undefined || blocked !== undefined || request.current !== null || missing) return;
+    if (saveDisabled || endpoint === undefined || request.current !== null || missing) return;
+    if (Object.keys(errors).length > 0) {
+      const form = event.currentTarget;
+      // Commit the inline errors before focusing so the input already describes the error.
+      flushSync(() => setSubmitted(true));
+      const first = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        'input[aria-invalid="true"], textarea[aria-invalid="true"]',
+      );
+      first?.scrollIntoView?.({ block: 'center' });
+      first?.focus({ preventScroll: true });
+      return;
+    }
     setSubmitted(true);
-    if (Object.keys(errors).length > 0) return;
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -183,11 +198,7 @@ function ParameterForm({
               <Button formAction="none" variant="link" disabled={pending} onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button
-                variant="primary"
-                loading={pending}
-                disabled={!connected || endpoint === undefined || pending || blocked !== undefined}
-              >
+              <Button variant="primary" loading={pending} disabled={saveDisabled}>
                 {editing ? 'Save changes' : 'Create parameter'}
               </Button>
             </SpaceBetween>
@@ -223,13 +234,28 @@ function ParameterForm({
 function EditParameter({ name, connection }: { name: string; connection: AreaConnection }) {
   const { metadata, failure, loading, refresh, rememberFailure } = useParameterMetadata(connection, name);
   const [parameter, setParameter] = useState<ParameterMetadata>();
-  if (metadata && parameter === undefined) setParameter(metadata);
+  if (metadata && !loading && parameter === undefined) setParameter(metadata);
   useEffect(() => {
     if (failure?.kind === 'not-implemented') rememberFailure(failure);
   }, [failure, rememberFailure]);
 
-  if (parameter && (metadata || failure?.kind === 'not-implemented')) {
-    return <ParameterForm connection={connection} name={name} metadata={parameter} />;
+  if (parameter && (metadata || failure !== undefined || loading)) {
+    return (
+      <>
+        {failure !== undefined && failure.kind !== 'not-implemented' && (
+          <Container>
+            <ReadFailure state={readFailureState(failure, connection, 'parameter')} onRetry={refresh} />
+          </Container>
+        )}
+        {loading && <StatusIndicator type="loading">Loading parameter…</StatusIndicator>}
+        <ParameterForm
+          connection={connection}
+          name={name}
+          metadata={parameter}
+          awaitingMetadata={!metadata || loading}
+        />
+      </>
+    );
   }
   if (failure !== undefined) {
     const state = readFailureState(failure, connection, 'parameter');
@@ -267,10 +293,24 @@ export function EditParameterPage({ connection }: { connection: AreaConnection }
   useShowsResources('parameters');
   const [query] = useSearchParams();
   const name = parameterName(query);
+  const { engineOrigin, result } = connection;
+  const reportedTarget =
+    result?.kind === 'connected' || result?.kind === 'emulator-unreachable'
+      ? JSON.stringify([targetOf(result), result.emulator.endpoint])
+      : undefined;
+  const [scope, setScope] = useState({ engineOrigin, target: reportedTarget });
+  // An unreachable engine cannot identify its target. Keep the last reported identity for this origin.
+  if (scope.engineOrigin !== engineOrigin || (reportedTarget !== undefined && scope.target !== reportedTarget)) {
+    setScope({ engineOrigin, target: reportedTarget });
+  }
   return (
     <SpaceBetween size="l">
       <Header variant="h1">Edit parameter</Header>
-      <EditParameter key={name} connection={connection} name={name} />
+      <EditParameter
+        key={JSON.stringify([name, scope.engineOrigin, scope.target])}
+        connection={connection}
+        name={name}
+      />
     </SpaceBetween>
   );
 }

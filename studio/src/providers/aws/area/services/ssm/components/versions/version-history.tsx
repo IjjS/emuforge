@@ -76,21 +76,23 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
         loading={!failure && listing.loading}
         loadingText="Loading version history…"
         pagination={
-          <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            disabled={unavailable || listing.loading}
-            ariaLabels={{
-              previousPageLabel: 'Previous page',
-              nextPageLabel: 'Next page',
-              pageLabel: (page) => `Page ${String(page)}`,
-            }}
-            onChange={({ detail }) => {
-              setSelectedVersion(undefined);
-              listing.goToPage(detail.currentPageIndex);
-            }}
-          />
+          (listing.openEnd || listing.pagesCount > 1) && (
+            <Pagination
+              currentPageIndex={listing.currentPage}
+              pagesCount={listing.pagesCount}
+              openEnd={listing.openEnd}
+              disabled={unavailable || listing.loading}
+              ariaLabels={{
+                previousPageLabel: 'Previous page',
+                nextPageLabel: 'Next page',
+                pageLabel: (page) => `Page ${String(page)}`,
+              }}
+              onChange={({ detail }) => {
+                setSelectedVersion(undefined);
+                listing.goToPage(detail.currentPageIndex);
+              }}
+            />
+          )
         }
         empty={
           feedback ? (
