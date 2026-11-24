@@ -269,6 +269,79 @@ describe('Key rotation', () => {
   });
 
   it.each([
+    {
+      command: EnableKeyRotationCommand,
+      operation: 'EnableKeyRotation',
+      initialEnabled: false,
+      refusedAction: 'Enable automatic rotation',
+      supportedAction: 'Disable automatic rotation',
+      supportedResult: 'Automatic rotation disabled.',
+      nextConnection: connection,
+      nextKey: 'other-key',
+    },
+    {
+      command: DisableKeyRotationCommand,
+      operation: 'DisableKeyRotation',
+      initialEnabled: true,
+      refusedAction: 'Disable automatic rotation',
+      supportedAction: 'Enable automatic rotation',
+      supportedResult: 'Automatic rotation enabled.',
+      nextConnection: { ...connection, engineOrigin: 'http://127.0.0.1:8311' },
+      nextKey: keyId,
+    },
+  ])('retains a learned $operation 501 after the setting and Flashbar change', async (scenario) => {
+    const rotation = pendingAnswer<undefined>();
+    let enabled = scenario.initialEnabled;
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) return { KeyRotationEnabled: enabled };
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      if (command instanceof scenario.command) throw { $metadata: { httpStatusCode: 501 } };
+      if (command instanceof RotateKeyOnDemandCommand) await rotation.promise;
+      if (command instanceof EnableKeyRotationCommand) enabled = true;
+      if (command instanceof DisableKeyRotationCommand) enabled = false;
+      return {};
+    });
+    const update = open();
+    const original = scenario.initialEnabled ? 'Enabled' : 'Disabled';
+    const opposite = scenario.initialEnabled ? 'Disabled' : 'Enabled';
+    await waitFor(() => expectField('Automatic rotation', original));
+    click(scenario.refusedAction);
+    await waitFor(() =>
+      expect(flashItem('info')?.findContent()?.getElement()).toHaveTextContent(
+        `501 Not Implemented for ${scenario.operation}`,
+      ),
+    );
+
+    click('Rotate now');
+    enabled = !scenario.initialEnabled;
+    await act(() => rotation.resolve(undefined));
+    await waitFor(() => expectField('Automatic rotation', opposite));
+    expectSuccess('On-demand rotation requested.');
+    expect(flashItem('info')).toBeUndefined();
+
+    const refused = screen.getByRole('button', { name: scenario.refusedAction });
+    const reason = `The emulator does not implement ${scenario.operation}.`;
+    expect(refused).toBeVisible();
+    expect(refused).toBeDisabled();
+    expect(refused).toHaveAccessibleDescription(reason);
+    expect(screen.getByText(reason)).toBeVisible();
+    fireEvent.click(refused);
+    expect(send.mock.calls.filter(([command]) => command instanceof scenario.command)).toHaveLength(1);
+
+    expect(screen.getByRole('button', { name: scenario.supportedAction })).toBeEnabled();
+    click(scenario.supportedAction);
+    await waitFor(() => expectSuccess(scenario.supportedResult));
+    await waitFor(() => expectField('Automatic rotation', original));
+    expect(refused).toBeDisabled();
+
+    update(scenario.nextConnection, scenario.nextKey);
+    await waitFor(() => expectField('Automatic rotation', original));
+    expect(screen.getByRole('button', { name: scenario.refusedAction })).toBeEnabled();
+    expect(screen.queryByText(reason)).toBeNull();
+    expect(send.mock.calls.filter(([command]) => command instanceof scenario.command)).toHaveLength(1);
+  });
+
+  it.each([
     ['Enable automatic rotation', 'EnableKeyRotation'],
     ['Rotate now', 'RotateKeyOnDemand'],
   ])('adds the key spec when %s receives an unsupported operation refusal', async (button, operation) => {

@@ -31,6 +31,11 @@ const successMessage = {
   rotate: 'On-demand rotation requested.',
 };
 
+const automaticActionLabels = {
+  enable: 'Enable automatic rotation',
+  disable: 'Disable automatic rotation',
+};
+
 interface RotationProps {
   connection: AreaConnection;
   keyId: string;
@@ -87,8 +92,11 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const nextDate = creationDateText(status.data?.NextRotationDate);
   const toggleAction = (enabled ?? lastEnabled) === true ? 'disable' : 'enable';
   const writeBlocked = !writesEnabled || engineOrigin === undefined || statusOffline !== undefined;
-  const toggleReason = unavailable[toggleAction] ? `${reasonId}-automatic` : undefined;
-  const rotateReason = unavailable.rotate ? `${reasonId}-on-demand` : undefined;
+  const automaticActions = (['enable', 'disable'] as const).filter(
+    (action) => action === toggleAction || unavailable[action],
+  );
+  const unavailableActions = [...automaticActions, 'rotate' as const].filter((action) => unavailable[action]);
+  const reasonFor = (action: RotationAction) => `${reasonId}-${action}`;
 
   const handleAction = async (action: RotationAction) => {
     if (writeBlocked || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
@@ -154,39 +162,41 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
           <Header
             variant="h2"
             description={
-              (toggleReason !== undefined || rotateReason !== undefined) && (
+              unavailableActions.length > 0 && (
                 <SpaceBetween size="xxs">
-                  {toggleReason !== undefined && (
-                    <div id={toggleReason}>The emulator does not implement {ROTATION_OPERATIONS[toggleAction]}.</div>
-                  )}
-                  {rotateReason !== undefined && (
-                    <div id={rotateReason}>The emulator does not implement {ROTATION_OPERATIONS.rotate}.</div>
-                  )}
+                  {unavailableActions.map((action) => (
+                    <div key={action} id={reasonFor(action)}>
+                      The emulator does not implement {ROTATION_OPERATIONS[action]}.
+                    </div>
+                  ))}
                 </SpaceBetween>
               )
             }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
+                {automaticActions.map((action) => (
+                  <Button
+                    key={action}
+                    disabled={
+                      pending !== action &&
+                      (writeBlocked ||
+                        pending !== undefined ||
+                        enabled === undefined ||
+                        statusFailure !== undefined ||
+                        unavailable[action] === true)
+                    }
+                    {...(unavailable[action] ? { ariaDescribedby: reasonFor(action) } : {})}
+                    loading={pending === action}
+                    onClick={() => void handleAction(action)}
+                  >
+                    {automaticActionLabels[action]}
+                  </Button>
+                ))}
                 <Button
                   disabled={
-                    pending !== toggleAction &&
-                    (writeBlocked ||
-                      pending !== undefined ||
-                      enabled === undefined ||
-                      statusFailure !== undefined ||
-                      toggleReason !== undefined)
+                    pending !== 'rotate' && (writeBlocked || pending !== undefined || unavailable.rotate === true)
                   }
-                  {...(toggleReason === undefined ? {} : { ariaDescribedby: toggleReason })}
-                  loading={pending === toggleAction}
-                  onClick={() => void handleAction(toggleAction)}
-                >
-                  {toggleAction === 'disable' ? 'Disable automatic rotation' : 'Enable automatic rotation'}
-                </Button>
-                <Button
-                  disabled={
-                    pending !== 'rotate' && (writeBlocked || pending !== undefined || rotateReason !== undefined)
-                  }
-                  {...(rotateReason === undefined ? {} : { ariaDescribedby: rotateReason })}
+                  {...(unavailable.rotate ? { ariaDescribedby: reasonFor('rotate') } : {})}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
                 >
