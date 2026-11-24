@@ -21,6 +21,7 @@ import {
   LabelDialog,
   LabelListEmpty,
   LabelPagination,
+  LabelReadAnnouncement,
   LabelRowActions,
   UnavailableActions,
 } from './label-controls';
@@ -88,19 +89,22 @@ export function Aliases({
         loadingText="Loading aliases…"
         empty={<LabelListEmpty listing={listing} connection={connection} name="aliases" onRetry={listing.refresh} />}
         header={
-          <Header
-            variant="h2"
-            actions={
-              <Button
-                disabled={action.disabled(LABEL_OPERATIONS.createAlias)}
-                onClick={() => handleOpen({ kind: 'create' })}
-              >
-                Create alias
-              </Button>
-            }
-          >
-            Aliases
-          </Header>
+          <>
+            <LabelReadAnnouncement failure={listing.failure} connection={connection} name="aliases" />
+            <Header
+              variant="h2"
+              actions={
+                <Button
+                  disabled={action.disabled(LABEL_OPERATIONS.createAlias)}
+                  onClick={() => handleOpen({ kind: 'create' })}
+                >
+                  Create alias
+                </Button>
+              }
+            >
+              Aliases
+            </Header>
+          </>
         }
         pagination={<LabelPagination listing={listing} label="Alias pages" />}
         columnDefinitions={[
@@ -184,6 +188,7 @@ export function Aliases({
           <LabelActionError failure={action.failure} />
           <Box>
             Move <ValueText kind="address" value={edit.alias} /> to another customer managed key.
+            <LabelReadAnnouncement failure={targets.failure} connection={connection} name="target keys" />
           </Box>
           <FormField label="Target key" description="Choose the key that should receive this alias.">
             <Select

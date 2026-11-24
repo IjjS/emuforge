@@ -226,26 +226,49 @@ describe('key labels', () => {
       rowName: 'environment',
     },
   ] as const)(
-    'offers panel-only recovery when $operation fails with a connected frame',
+    'announces $operation recovery once without stealing focus from the connected Labels panel',
     async ({ heading, commandType, operation, failure, status, rowName }) => {
+      const pendingRead = deferred<object>();
       let panelFails = true;
       send.mockImplementation(async (command: unknown) => {
         if (command instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: keyId, KeyState: 'Enabled' } };
-        if (panelFails && command instanceof commandType) throw failure;
+        if (panelFails && command instanceof commandType) return pendingRead.promise;
         if (command instanceof ListAliasesCommand) return aliasPage(alias);
         if (command instanceof ListResourceTagsCommand) return tagPage('environment', 'development');
         throw new Error('Unexpected KMS request');
       });
-      render(
-        <QueryClientProvider client={new QueryClient()}>
+      const client = new QueryClient();
+      const tree = (current: AreaConnection) => (
+        <QueryClientProvider client={client}>
           <MemoryRouter initialEntries={[`/aws/kms/keys/${keyId}`]}>
-            <KeyPage connection={connection} params={{ keyid: keyId }} />
+            <KeyPage connection={current} params={{ keyid: keyId }} />
           </MemoryRouter>
-        </QueryClientProvider>,
+        </QueryClientProvider>
       );
+      const { rerender } = render(tree(connection));
 
       expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
       await userEvent.click(screen.getByRole('tab', { name: 'Labels' }));
+      const panel = screen.getByRole('tabpanel', { name: 'Labels' });
+      const regions = [...panel.querySelectorAll('[aria-live="polite"][aria-atomic="true"]')];
+      const focused = within(panel).getByRole('button', { name: heading === 'Aliases' ? 'Create alias' : 'Add tag' });
+      focused.focus();
+      const detail = `The ${heading.toLowerCase()} (${operation}) could not be read.`;
+      const message = `${status}. ${detail}`;
+      expect(regions.some((region) => region.textContent === message)).toBe(false);
+      await act(async () => pendingRead.reject(failure));
+      const announcement = await waitFor(() => {
+        const matches = regions.filter((region) => region.textContent === message);
+        expect(matches).toHaveLength(1);
+        return matches[0]?.firstChild;
+      });
+      expect(announcement).toBeInTheDocument();
+      const region = announcement?.parentElement;
+      expect(focused).toHaveFocus();
+      rerender(tree({ ...connection, result: { ...connection.result, checkedAt: 1 } }));
+      expect(region?.firstChild).toBe(announcement);
+      expect(focused).toHaveFocus();
+
       const recovery = await waitFor(() => {
         const empty = labelsTable(heading).findEmptySlot();
         const indicator = empty?.findStatusIndicator()?.getElement();
@@ -254,7 +277,7 @@ describe('key labels', () => {
         if (!empty) throw new Error(`Missing ${heading} recovery`);
         return within(empty.getElement());
       });
-      expect(recovery.getByText(`The ${heading.toLowerCase()} (${operation}) could not be read.`)).toBeVisible();
+      expect(recovery.getByText(detail)).toBeVisible();
       const link = recovery.getByRole('link', { name: 'Connection status' });
       expect(link).toBeVisible();
       expect(link).toHaveAttribute('href', '/');
@@ -269,6 +292,7 @@ describe('key labels', () => {
       await waitFor(() => expect(labelRow(heading, rowName).cell(1)).toBeVisible());
       if (heading === 'Tags') expectTag('environment', 'development');
       expect(retry).not.toBeInTheDocument();
+      expect(region).toBeEmptyDOMElement();
       expect(send.mock.calls.filter(([command]) => command instanceof commandType)).toHaveLength(2);
       expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
     },
