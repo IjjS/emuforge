@@ -770,9 +770,16 @@ describe('instance setting actions', () => {
     const action = await screen.findByRole('button', { name: 'Change termination protection' });
     await waitFor(() => expect(isDisabled(action)).toBe(false));
     fireEvent.click(action);
-    const dialog = await screen.findByRole('dialog', { name: 'Change termination protection' });
-    createWrapper(dialog).findToggle()?.findNativeInput().click();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    const modal = await waitFor(() => {
+      const wrapper = PAGE.findModal();
+      if (wrapper === null) throw new Error('Missing termination protection modal');
+      expect(wrapper.findHeader().getElement()).toHaveTextContent('Change termination protection');
+      return wrapper;
+    });
+    modal.findContent().findToggle()?.findNativeInput().click();
+    const save = modal.findFooter()?.findAllButtons()[1];
+    expect(save?.getElement()).toHaveAccessibleName('Save changes');
+    save?.click();
   }
 
   function holdAttributeWrite() {
@@ -868,7 +875,7 @@ describe('instance setting actions', () => {
     await act(() => client.invalidateQueries({ queryKey: EC2_KEYS.instance('i-0full') }));
     await waitFor(() => {
       expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found');
-      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(PAGE.findModal()).toBeNull();
     });
     expect(signal?.aborted).toBe(false);
 
@@ -934,7 +941,7 @@ describe('instance setting actions', () => {
     const edit = screen.getByRole('button', { name: 'Change termination protection' });
     expect(isDisabled(edit)).toBe(true);
     fireEvent.click(edit);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
   });
 });
