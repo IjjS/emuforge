@@ -8,18 +8,20 @@ export function Labels({
   connection,
   keyId,
   writesEnabled = true,
+  keyMissing = false,
 }: {
   connection: AreaConnection;
   keyId: string;
   writesEnabled?: boolean;
+  keyMissing?: boolean;
 }) {
   // The AWS area remounts the whole page on target changes, independently of connection status.
   const scope = JSON.stringify([connection.engineOrigin, keyId]);
 
   return (
     <SpaceBetween key={scope} size="l">
-      <Aliases connection={connection} keyId={keyId} writesEnabled={writesEnabled} />
-      <Tags connection={connection} keyId={keyId} writesEnabled={writesEnabled} />
+      <Aliases connection={connection} keyId={keyId} writesEnabled={writesEnabled} keyMissing={keyMissing} />
+      <Tags connection={connection} keyId={keyId} writesEnabled={writesEnabled} keyMissing={keyMissing} />
     </SpaceBetween>
   );
 }

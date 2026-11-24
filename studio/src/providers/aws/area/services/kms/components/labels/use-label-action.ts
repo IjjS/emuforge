@@ -1,22 +1,32 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem } from '../../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
 
-export function useLabelAction(connection: AreaConnection, writesEnabled: boolean, onSaved: () => void) {
+export function useLabelAction(
+  connection: AreaConnection,
+  writesEnabled: boolean,
+  keyMissing: boolean,
+  onSaved: () => void,
+) {
   const flash = usePageFlash();
   const signalForPage = usePageSignal();
-  const inFlight = useRef(false);
+  const inFlight = useRef<{ dialogClosed: boolean }>(undefined);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [unavailable, setUnavailable] = useState<readonly string[]>([]);
   const endpoint = connection.engineOrigin;
   const connected = connection.result === undefined || connection.result.kind === 'connected';
 
+  useLayoutEffect(() => {
+    // Even if a later read finds the key, the dialog for this request has already gone.
+    if (keyMissing && inFlight.current !== undefined) inFlight.current.dialogClosed = true;
+  }, [keyMissing]);
+
   const disabled = (operation: string) =>
-    !writesEnabled || endpoint === undefined || !connected || pending || unavailable.includes(operation);
+    keyMissing || !writesEnabled || endpoint === undefined || !connected || pending || unavailable.includes(operation);
 
   const run = async (
     operation: string,
@@ -25,9 +35,10 @@ export function useLabelAction(connection: AreaConnection, writesEnabled: boolea
     close: () => void,
     keepOpenOnFailure = true,
   ) => {
-    if (endpoint === undefined || disabled(operation) || inFlight.current) return;
+    if (endpoint === undefined || disabled(operation) || inFlight.current !== undefined) return;
     const signal = signalForPage();
-    inFlight.current = true;
+    const attempt = { dialogClosed: false };
+    inFlight.current = attempt;
     setPending(true);
     setFailure(undefined);
     try {
@@ -40,7 +51,7 @@ export function useLabelAction(connection: AreaConnection, writesEnabled: boolea
         setUnavailable((operations) => [...operations, operation]);
         close();
         flash.show([item]);
-      } else if (keepOpenOnFailure) {
+      } else if (keepOpenOnFailure && !attempt.dialogClosed) {
         setFailure(item);
         flash.show([{ ...item, announcedInDialog: true }]);
       } else {
@@ -49,7 +60,7 @@ export function useLabelAction(connection: AreaConnection, writesEnabled: boolea
       }
       return;
     } finally {
-      inFlight.current = false;
+      inFlight.current = undefined;
       if (!signal.aborted) setPending(false);
     }
     if (signal.aborted) return;

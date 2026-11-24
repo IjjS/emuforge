@@ -31,10 +31,12 @@ export function Tags({
   connection,
   keyId,
   writesEnabled,
+  keyMissing,
 }: {
   connection: AreaConnection;
   keyId: string;
   writesEnabled: boolean;
+  keyMissing: boolean;
 }) {
   const [edit, setEdit] = useState<TagEdit>();
   const [name, setName] = useState('');
@@ -49,7 +51,8 @@ export function Tags({
     operation: LABEL_OPERATIONS.listTags,
     read: (origin, marker, signal) => listKeyTags(origin, keyId, marker, signal),
   });
-  const action = useLabelAction(connection, writesEnabled, () => setGeneration((current) => current + 1));
+  const action = useLabelAction(connection, writesEnabled, keyMissing, () => setGeneration((current) => current + 1));
+  if (keyMissing && edit !== undefined) setEdit(undefined);
   const hasRows = (listing.items?.length ?? 0) > 0;
   const showOverflowHint = hasRows && overflows;
 
