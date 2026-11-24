@@ -69,6 +69,7 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
     fetching: names.isFetching || (names.data === true && policy.isFetching),
     loading: names.data === undefined || (names.data && policy.data === undefined),
     failure,
+    failureCount: names.isError ? names.errorUpdateCount : policy.errorUpdateCount,
     refresh,
     retry,
   };
@@ -76,6 +77,11 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
 
 export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessProps) {
   const policy = useDefaultPolicy(connection, keyId);
+  const failure = policy.failure;
+  const recovery =
+    failure === undefined
+      ? undefined
+      : readFailureState(failure, connection, `default key policy (${failure.operation})`);
   const action = useAccessAction(connection, writesEnabled);
   const [draft, setDraft] = useState<{ original: string; text: string }>();
   const [syntaxError, setSyntaxError] = useState<{ message: string }>();
@@ -145,6 +151,11 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessPro
         </Header>
       }
     >
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {recovery !== undefined && (
+          <span key={`${failure?.operation}:${policy.failureCount}`}>Key policy. {recovery.firstText}</span>
+        )}
+      </div>
       <SpaceBetween size="m">
         {action.unavailable.has(putPolicy) && draft === undefined && (
           <ActionNotice
@@ -152,11 +163,8 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessPro
             endpoint={connection.engineOrigin}
           />
         )}
-        {policy.failure !== undefined ? (
-          <ReadFailure
-            state={readFailureState(policy.failure, connection, `default key policy (${policy.failure.operation})`)}
-            onRetry={policy.retry}
-          />
+        {recovery !== undefined ? (
+          <ReadFailure state={recovery} onRetry={policy.retry} />
         ) : policy.loading ? (
           <StatusIndicator type="loading">Loading key policy…</StatusIndicator>
         ) : policy.document === undefined ? (

@@ -539,9 +539,21 @@ describe('Key rotation', () => {
 });
 
 describe.each([
-  { command: GetKeyRotationStatusCommand, operation: 'GetKeyRotationStatus', read: 'rotation settings' },
-  { command: ListKeyRotationsCommand, operation: 'ListKeyRotations', read: 'rotation history' },
-])('$read recovery on a connected key page', ({ command, operation, read }) => {
+  {
+    command: GetKeyRotationStatusCommand,
+    operation: 'GetKeyRotationStatus',
+    read: 'rotation settings',
+    title: 'Key rotation',
+    announcement: 'Rotation settings read status',
+  },
+  {
+    command: ListKeyRotationsCommand,
+    operation: 'ListKeyRotations',
+    read: 'rotation history',
+    title: 'Rotation history',
+    announcement: 'Rotation history read status',
+  },
+])('$read recovery on a connected key page', ({ command, operation, read, title, announcement }) => {
   it.each([
     { name: 'an engine network failure', failure: new TypeError('Failed to fetch'), address: connection.engineOrigin },
     {
@@ -565,12 +577,15 @@ describe.each([
       address: undefined,
     },
   ])('reports $name and retries only the failed read', async ({ failure, address }) => {
+    const user = userEvent.setup();
+    const reply = pendingAnswer<undefined>();
     const failedRead = vi.fn();
     send.mockImplementation(async (request: unknown) => {
       if (request instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: keyId, KeyState: 'Enabled' } };
       if (request instanceof command) {
         failedRead();
         if (failedRead.mock.calls.length === 1) throw failure;
+        await reply.promise;
       }
       if (request instanceof GetKeyRotationStatusCommand) return enabledSettings;
       if (request instanceof ListKeyRotationsCommand) {
@@ -578,20 +593,31 @@ describe.each([
       }
       return {};
     });
-    render(
-      <QueryClientProvider client={new QueryClient()}>
+    const client = new QueryClient();
+    const view = (currentConnection: AreaConnection) => (
+      <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[keyPath(keyId)]}>
-          <KeyPage connection={reconnected} params={{ keyid: keyId }} />
+          <KeyPage connection={currentConnection} params={{ keyid: keyId }} />
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
     );
+    const { rerender } = render(view(reconnected));
     expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
-    fireEvent.click(screen.getByRole('tab', { name: 'Rotation' }));
+    const rotationTab = screen.getByRole('tab', { name: 'Rotation' });
+    rotationTab.focus();
+    await user.keyboard('{Enter}');
     const tab = screen.getByRole('tabpanel', { name: 'Rotation' });
     const panel = within(tab);
     const scope = createWrapper(tab);
     const retry = await panel.findByRole('button', { name: 'Retry' });
     expect(retry).toBeVisible();
+    const announcer = panel.getByRole('status', { name: announcement });
+    expect(announcer).toHaveAttribute('aria-atomic', 'true');
+    expect(announcer).toHaveTextContent(address ?? `The ${read} (${operation}) could not be read`);
+    expect(rotationTab).toHaveFocus();
+    const announced = announcer.firstChild;
+    rerender(view({ ...reconnected }));
+    expect(announcer.firstChild).toBe(announced);
 
     if (address !== undefined) {
       expect(panel.getByText(address)).toBeVisible();
@@ -606,13 +632,26 @@ describe.each([
       expect(panel.queryByRole('link', { name: 'Connection status' })).toBeNull();
     }
 
-    fireEvent.click(retry);
+    retry.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      const heading = panel.getByRole('heading', { name: title });
+      expect(heading).toBeVisible();
+      expect(heading).toContainElement(document.activeElement as HTMLElement);
+      expect(panel.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(announcer).toBeEmptyDOMElement();
+    });
+
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    refresh.focus();
+    await act(() => reply.resolve(undefined));
     await waitFor(() => {
       expectField('Automatic rotation', 'Enabled', scope);
       expectRotation('On-demand', rotationDate, scope);
     });
     expect(failedRead).toHaveBeenCalledTimes(2);
     expect(panel.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(refresh).toHaveFocus();
     expect(send.mock.calls.filter(([request]) => request instanceof DescribeKeyCommand)).toHaveLength(1);
   });
 });

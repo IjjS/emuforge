@@ -55,6 +55,8 @@ export function Grants({
     read: (endpoint, marker, signal) => listGrants(endpoint, keyId, marker, signal),
   });
   const failure = listing.failure ?? (attemptedRetry ? undefined : offline);
+  const recovery =
+    failure === undefined ? undefined : readFailureState(failure, connection, `grants (${failure.operation})`);
   const unavailable = [...action.unavailable].filter(
     (operation) => operation !== operations.createGrant || draft === undefined,
   );
@@ -175,6 +177,9 @@ export function Grants({
 
   return (
     <div ref={sectionRef} id="kms-grants" tabIndex={-1} role="region" aria-label="Grants">
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {recovery !== undefined && !listing.loading && <>Grants. {recovery.firstText}</>}
+      </div>
       <Table
         trackBy="id"
         wrapLines
@@ -202,15 +207,12 @@ export function Grants({
         }
         columnDefinitions={columns}
         empty={
-          failure === undefined ? (
+          recovery === undefined ? (
             <Box textAlign="center" variant="strong">
               {listing.pastEnd ? 'No more grants' : 'No grants'}
             </Box>
           ) : (
-            <ReadFailure
-              state={readFailureState(failure, connection, `grants (${failure.operation})`)}
-              onRetry={handleRetry}
-            />
+            <ReadFailure state={recovery} onRetry={handleRetry} />
           )
         }
         pagination={
