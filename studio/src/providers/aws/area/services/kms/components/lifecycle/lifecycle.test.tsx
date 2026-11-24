@@ -97,8 +97,7 @@ function Page({ observeList, keyId, target }: { observeList: boolean; keyId: str
   );
 }
 
-function open(observeList = false) {
-  const client = new QueryClient();
+function open(observeList = false, client = new QueryClient()) {
   const page = (keyId: string, target: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -401,6 +400,79 @@ describe('Key detail panel lifetime', () => {
 });
 
 describe('Key lifecycle', () => {
+  it('keeps an open draft offline, blocks its submission, and preserves a later pending save during an outage', async () => {
+    const write = deferred<unknown>();
+    const emulator = emulate(key('Enabled'), (command) =>
+      command instanceof UpdateKeyDescriptionCommand ? write.promise : undefined,
+    );
+    const showTarget = open();
+    const outage: AreaConnection['result'] = {
+      kind: 'emulator-unreachable',
+      reason: 'timeout',
+      message: '',
+      checkedAt: 1,
+      emulator: connection.result.emulator,
+    };
+    const draft = 'Local invoices';
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    await opened('Edit description');
+    const description = within(dialog().findContent().getElement()).getByRole('textbox');
+    fireEvent.change(description, { target: { value: draft } });
+    expect(usable(dialogButton('Save'))).toBe(true);
+
+    showTarget(KEY_ID, { ...connection, result: outage });
+    expect(dialog().findHeader().getElement()).toHaveTextContent('Edit description');
+    expect(description).toHaveValue(draft);
+    expect(dialogButton('Save')).toBeDisabled();
+    confirm('Save');
+    expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(0);
+
+    showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 2 } });
+    expect(description).toHaveValue(draft);
+    expect(usable(dialogButton('Save'))).toBe(true);
+    confirm('Save');
+    await waitFor(() => expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1));
+    const options = sent(UpdateKeyDescriptionCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+
+    showTarget(KEY_ID, { ...connection, result: { ...outage, checkedAt: 3 } });
+    expect(description).toHaveValue(draft);
+    expect(dialogButton('Save')).toHaveAttribute('aria-disabled', 'true');
+    expect(dialogButton('Save')).not.toBeDisabled();
+    confirm('Save');
+    expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(1);
+    expect(options?.abortSignal.aborted).toBe(false);
+
+    emulator.metadata = key('Enabled', { Description: draft });
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+    expect(flashText()).toContain('Key description updated.');
+    expect(options?.abortSignal.aborted).toBe(false);
+    showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 4 } });
+    await waitFor(() => expect(field('Description')).toHaveTextContent(draft));
+  });
+
+  it('blocks submission when refreshed metadata makes an open Disable key dialog ineligible', async () => {
+    const client = new QueryClient();
+    const emulator = emulate(key('Enabled'));
+    open(false, client);
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    await opened('Disable key');
+    expect(usable(dialogButton('Disable key'))).toBe(true);
+
+    emulator.metadata = key('Disabled');
+    await act(async () => client.invalidateQueries({ queryKey: KMS_KEYS.detail(KEY_ID) }));
+    await expectStatus('Disabled');
+    expect(dialog().findContent().getElement()).toHaveTextContent(KEY_ID);
+    expect(dialogButton('Disable key')).toBeDisabled();
+    confirm('Disable key');
+    expect(sent(DisableKeyCommand)).toHaveLength(0);
+
+    confirm('Cancel');
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+    expect(field('Status')).toHaveTextContent('Disabled');
+    expect(sent(DisableKeyCommand)).toHaveLength(0);
+  });
+
   it('keeps a held write on the same offline target and gates new writes until reconnect', async () => {
     const write = deferred<unknown>();
     const emulator = emulate(key('Disabled'), (command) => {
