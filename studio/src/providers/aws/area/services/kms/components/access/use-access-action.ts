@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../../components/emulator-line';
@@ -6,16 +6,22 @@ import { actionFailureItem } from '../../../../components/failure-states';
 import { usePageFlash } from '../../../../components/page-flash';
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
 
-export function useAccessAction(connection: AreaConnection, writesEnabled: boolean) {
+export function useAccessAction(connection: AreaConnection, writesEnabled: boolean, keyMissing: boolean) {
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const busy = useRef(false);
+  const dialogClosed = useRef(false);
   const [pending, setPending] = useState<string>();
   const [failure, setFailure] = useState<RequestFailure>();
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
   const endpoint = connection.engineOrigin;
+  useLayoutEffect(() => {
+    // A missing key closes the portal for this write even if the key returns before settlement.
+    if (keyMissing) dialogClosed.current = true;
+  }, [keyMissing]);
   const disabled = (operation: string) =>
     !writesEnabled ||
+    keyMissing ||
     pending !== undefined ||
     endpoint === undefined ||
     connection.result?.kind !== 'connected' ||
@@ -31,6 +37,7 @@ export function useAccessAction(connection: AreaConnection, writesEnabled: boole
     if (disabled(operation) || busy.current || endpoint === undefined) return;
     const signal = pageSignal();
     busy.current = true;
+    dialogClosed.current = false;
     setPending(operation);
     setFailure(undefined);
     try {
@@ -45,7 +52,7 @@ export function useAccessAction(connection: AreaConnection, writesEnabled: boole
       flash.show([
         {
           ...actionFailureItem(failure, operation, endpoint),
-          ...(onFailed === undefined && { announcedInDialog: true }),
+          ...(onFailed === undefined && !dialogClosed.current && { announcedInDialog: true }),
         },
       ]);
       onFailed?.();

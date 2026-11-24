@@ -10,9 +10,10 @@ export interface AccessProps {
   connection: AreaConnection;
   keyId: string;
   writesEnabled?: boolean;
+  keyMissing?: boolean;
 }
 
-export function Access({ connection, keyId, writesEnabled = true }: AccessProps) {
+export function Access({ connection, keyId, writesEnabled = true, keyMissing = false }: AccessProps) {
   const grants = useRef<HTMLDivElement>(null);
   return (
     <SpaceBetween key={JSON.stringify([connection.engineOrigin, keyId])} size="l">
@@ -28,8 +29,14 @@ export function Access({ connection, keyId, writesEnabled = true }: AccessProps)
       >
         Jump to grants
       </Link>
-      <KeyPolicy connection={connection} keyId={keyId} writesEnabled={writesEnabled} />
-      <Grants connection={connection} keyId={keyId} writesEnabled={writesEnabled} sectionRef={grants} />
+      <KeyPolicy connection={connection} keyId={keyId} writesEnabled={writesEnabled} keyMissing={keyMissing} />
+      <Grants
+        connection={connection}
+        keyId={keyId}
+        writesEnabled={writesEnabled}
+        keyMissing={keyMissing}
+        sectionRef={grants}
+      />
     </SpaceBetween>
   );
 }
