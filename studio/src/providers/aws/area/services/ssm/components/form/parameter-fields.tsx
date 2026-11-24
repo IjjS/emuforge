@@ -91,21 +91,13 @@ export function ParameterFields({
             description={draft.type === 'StringList' ? 'Enter a comma-separated list.' : undefined}
             errorText={errors.value}
           >
-            {secure ? (
-              <Input
-                type="password"
-                value={draft.value}
-                onChange={({ detail }) => onChange({ ...draft, value: detail.value })}
-                autoComplete={false}
-                disabled={disabled}
-              />
-            ) : (
-              <Textarea
-                value={draft.value}
-                onChange={({ detail }) => onChange({ ...draft, value: detail.value })}
-                disabled={disabled}
-              />
-            )}
+            <Textarea
+              value={draft.value}
+              onChange={({ detail }) => onChange({ ...draft, value: detail.value })}
+              autoComplete={false}
+              spellcheck={false}
+              disabled={disabled}
+            />
           </FormField>
         </SpaceBetween>
       </Container>

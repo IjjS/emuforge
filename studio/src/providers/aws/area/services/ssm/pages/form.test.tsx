@@ -182,7 +182,7 @@ describe('Parameter Store forms', () => {
   it.each([
     ['String', 'literal value ', undefined],
     ['StringList', 'one,two,three', undefined],
-    ['SecureString', 'default key value', undefined],
+    ['SecureString', 'default key\nvalue', undefined],
     ['SecureString', 'custom key value', 'alias/local-key'],
   ])('F2 creates %s with its original value and requested settings (%s)', async (type, value, key) => {
     open(PARAMETER_CREATE_PATH);
