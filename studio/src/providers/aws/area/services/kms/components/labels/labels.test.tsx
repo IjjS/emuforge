@@ -133,14 +133,27 @@ function expectFlash(type: 'success' | 'error' | 'info', message: string | RegEx
   expect(content).toHaveTextContent(message);
 }
 
+async function labelModal(name: string) {
+  const modal = await waitFor(() => {
+    const dialog = page.findModal();
+    if (!dialog?.isVisible()) throw new Error(`Missing ${name} modal`);
+    return dialog;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent(name);
+  expect(modal.getElement()).toHaveAccessibleName(name);
+  const footer = modal.findFooter();
+  if (!footer) throw new Error(`Missing ${name} modal footer`);
+  return { modal: modal.getElement(), content: modal.findContent(), footer: within(footer.getElement()) };
+}
+
 async function openTargetPicker() {
   const row = await waitFor(() => labelRow('Aliases', alias));
   fireEvent.click(within(row.element).getByRole('button', { name: `Reassign alias ${alias}` }));
-  const modal = await screen.findByRole('dialog', { name: 'Reassign alias' });
-  const select = createWrapper(modal).findSelect();
+  const { content, footer } = await labelModal('Reassign alias');
+  const select = content.findSelect();
   if (!select) throw new Error('Missing target key Select');
   select.openDropdown();
-  return { modal, select };
+  return { footer, select };
 }
 
 function tagPage(name: string, value: string) {
@@ -154,19 +167,11 @@ function clickButton(name: string) {
 async function submitLabel(name: string, field: string, value: string) {
   const opener = screen.getByRole('button', { name });
   await userEvent.click(opener);
-  const modal = await waitFor(() => {
-    const dialog = page.findModal();
-    if (!dialog?.isVisible()) throw new Error(`Missing ${name} modal`);
-    return dialog;
-  });
-  expect(modal.findHeader().getElement()).toHaveTextContent(name);
-  expect(modal.getElement()).toHaveAccessibleName(name);
-  const footer = modal.findFooter();
-  if (!footer) throw new Error(`Missing ${name} modal footer`);
-  const input = within(modal.findContent().getElement()).getByRole('textbox', { name: field });
+  const { modal, content, footer } = await labelModal(name);
+  const input = within(content.getElement()).getByRole('textbox', { name: field });
   fireEvent.change(input, { target: { value } });
-  await userEvent.click(within(footer.getElement()).getByRole('button', { name }));
-  return { opener, modal: modal.getElement() };
+  await userEvent.click(footer.getByRole('button', { name }));
+  return { opener, modal };
 }
 
 function deferred<T>() {
@@ -350,10 +355,10 @@ describe('key labels', () => {
     });
     open();
 
-    const { modal, select } = await openTargetPicker();
+    const { footer, select } = await openTargetPicker();
     await waitFor(() => expect(select.findDropdown().findOptionByValue(targetId)?.getElement()).toBeVisible());
     select.selectOptionByValue(targetId);
-    fireEvent.click(within(modal).getByRole('button', { name: 'Reassign alias' }));
+    fireEvent.click(footer.getByRole('button', { name: 'Reassign alias' }));
 
     await waitFor(() => expectEmpty('Aliases', 'No aliases'));
     expectFlash('success', /^Alias reassigned\.$/);
@@ -380,12 +385,13 @@ describe('key labels', () => {
 
     await waitFor(() => expect(labelRow('Aliases', alias).cell(1)).toBeVisible());
     clickButton('Create alias');
-    const dialog = within(await screen.findByRole('dialog', { name: 'Create alias' }));
-    const name = dialog.getByRole('textbox', { name: 'Alias name' });
+    const { content, footer } = await labelModal('Create alias');
+    const body = within(content.getElement());
+    const name = body.getByRole('textbox', { name: 'Alias name' });
     fireEvent.change(name, { target: { value: 'events' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Create alias' }));
+    fireEvent.click(footer.getByRole('button', { name: 'Create alias' }));
 
-    expect(await dialog.findByText(/This alias already exists/)).toBeVisible();
+    expect(await body.findByText(/This alias already exists/)).toBeVisible();
     expect(name).toHaveValue('events');
     expect(labelRow('Aliases', alias).cell(1)).toBeVisible();
     expect(send.mock.calls.filter(([command]) => command instanceof UpdateAliasCommand)).toHaveLength(0);
@@ -409,9 +415,9 @@ describe('key labels', () => {
 
     const tag = await waitFor(() => labelRow('Tags', 'environment'));
     fireEvent.click(within(tag.element).getByRole('button', { name: 'Remove tag environment' }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Remove tag' }));
-    fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'remove' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove tag' }));
+    const { content, footer } = await labelModal('Remove tag');
+    fireEvent.change(within(content.getElement()).getByRole('textbox'), { target: { value: 'remove' } });
+    fireEvent.click(footer.getByRole('button', { name: 'Remove tag' }));
 
     await waitFor(() => expectFlash('error', /This key is pending deletion/));
     expectTag('environment', 'development');
@@ -426,12 +432,12 @@ describe('key labels', () => {
     await waitFor(() => expectEmpty('Aliases', 'No aliases'));
     const opener = screen.getByRole('button', { name: 'Create alias' });
     await user.click(opener);
-    const modal = await screen.findByRole('dialog', { name: 'Create alias' });
-    const dialog = within(modal);
-    const name = dialog.getByRole('textbox', { name: 'Alias name' });
+    const { modal, content, footer } = await labelModal('Create alias');
+    const body = within(content.getElement());
+    const name = body.getByRole('textbox', { name: 'Alias name' });
     expect(name).toHaveAccessibleDescription(/letters, numbers.*alias\/aws\/ is reserved/);
     await user.type(name, 'events');
-    const submit = dialog.getByRole('button', { name: 'Create alias' });
+    const submit = footer.getByRole('button', { name: 'Create alias' });
     await user.click(submit);
 
     expect(submit).toHaveFocus();
@@ -449,7 +455,7 @@ describe('key labels', () => {
         $metadata: { httpStatusCode: 400 },
       });
     });
-    const refusal = await dialog.findByRole('alert');
+    const refusal = await body.findByRole('alert');
     expect(refusal).toHaveFocus();
     expect(name).toHaveValue('events');
     fireEvent.keyDown(refusal, { key: 'Escape', keyCode: 27 });
