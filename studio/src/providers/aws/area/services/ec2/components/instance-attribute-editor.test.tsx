@@ -33,16 +33,15 @@ const CONNECTION: AreaConnection = {
   engineOrigin: ENDPOINT,
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9397, endpoint: 'https://127.0.0.1:9397' } },
 };
+const ALPHA = { id: 'sg-a', name: 'alpha' };
+const CHARLIE = { id: 'sg-c', name: 'charlie' };
 const CORE: instanceApi.Instance = {
   id: 'i-561',
   state: 'stopped',
   type: 't3.micro',
   volumes: [],
   tags: [],
-  groups: [
-    { id: 'sg-a', name: 'alpha' },
-    { id: 'sg-c', name: 'charlie' },
-  ],
+  groups: [ALPHA, CHARLIE],
 };
 const TYPE = 'Change instance type';
 const GROUPS = 'Change security groups';
@@ -169,8 +168,8 @@ describe('instance attribute editor', () => {
 
   it('shows current groups from different pages, requires at least one, and keeps the draft while paging', async () => {
     vi.mocked(listGroupChoices)
-      .mockResolvedValueOnce({ choices: [CORE.groups[0]!, BETA], nextToken: 'next-group' })
-      .mockResolvedValueOnce({ choices: [CORE.groups[1]!] });
+      .mockResolvedValueOnce({ choices: [ALPHA, BETA], nextToken: 'next-group' })
+      .mockResolvedValueOnce({ choices: [CHARLIE] });
     renderEditor();
     const dialog = await edit(GROUPS);
     expect(tokens()).toEqual(['alpha', 'charlie']);
