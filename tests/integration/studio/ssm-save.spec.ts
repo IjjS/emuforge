@@ -16,7 +16,7 @@ test("studio.ssm-parameter-save", async ({ ctx, page }) => {
   await page.goto(list + "/parameters/create");
   await field(page, "Name").fill(f.name);
   const formField = ui.findFormField();
-  const fields = page.locator("form").locator(formField.toSelector());
+  const fields = page.locator(formField.toSelector()).and(page.locator("form").locator("*"));
   for (const [index, label, value] of [
     [1, "Type", "SecureString"],
     [4, "Tier", "Advanced"],
