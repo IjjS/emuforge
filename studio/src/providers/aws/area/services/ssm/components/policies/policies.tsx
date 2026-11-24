@@ -185,14 +185,18 @@ function PolicyDialog({
         `Resource policy ${revision.PolicyId} deleted from ${name}.`,
         onClose,
       );
-    } else {
-      if (document.trim() === '' || (action.mode === 'edit' && !revision)) return;
-      void write.run(
-        (endpoint, signal) => putResourcePolicy(endpoint, arn, document, revision, signal),
-        `Resource policy ${action.mode === 'edit' ? 'updated' : 'created'} for ${name}.`,
-        onClose,
-      );
+      return;
     }
+    if (document.trim() === '') return;
+    if (action.mode === 'edit') {
+      if (revision) void write.edit(document, revision, onClose);
+      return;
+    }
+    void write.run(
+      (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
+      `Resource policy created for ${name}.`,
+      onClose,
+    );
   };
 
   return (

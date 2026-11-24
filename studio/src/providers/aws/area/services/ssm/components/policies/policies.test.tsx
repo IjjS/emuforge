@@ -484,6 +484,53 @@ describe('Parameter resource policies', () => {
     ]);
   });
 
+  it('retains the saved policy revision through section reopen and detail revisit after a read 501', async () => {
+    const ops = openDetail();
+    const savedRevision = { PolicyId: 'policy-after-edit', PolicyHash: 'hash-after-edit' };
+    const savedEdit = `Edit resource policy ${savedRevision.PolicyId}`;
+    const savedDelete = `Delete resource policy ${savedRevision.PolicyId}`;
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY])).mockImplementationOnce(notImplemented);
+    ops.PutResourcePolicy.mockImplementationOnce(() => answer(savedRevision));
+    await expand();
+    await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
+
+    const edit = await policyDialog(editName, 'Edit resource policy');
+    change(edit, 'Policy document', UPDATED);
+    fireEvent.click(button('Save resource policy', edit));
+    await waitFor(() => expect(flash(updated)).toBeVisible());
+    await expectReadUnavailable();
+    expect(ops.PutResourcePolicy).toHaveBeenCalledExactlyOnceWith({
+      ResourceArn: ARN,
+      PolicyId: POLICY.PolicyId,
+      PolicyHash: POLICY.PolicyHash,
+      Policy: UPDATED,
+    });
+
+    await expand();
+    expect(screen.queryByRole('button', { name: savedEdit })).toBeNull();
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+    expect(button(savedEdit)).toBeEnabled();
+    expect(button(savedDelete)).toBeEnabled();
+
+    await ops.navigateTo('/app/database/port');
+    await ops.navigateTo(NAME);
+    expect(screen.queryByRole('button', { name: savedDelete })).toBeNull();
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+    expect(button(savedEdit)).toBeEnabled();
+    expect(button(savedDelete)).toBeEnabled();
+
+    const remove = await policyDialog(savedDelete, 'Delete resource policy');
+    change(remove, 'Confirmation', 'delete');
+    fireEvent.click(button('Delete resource policy', remove));
+    await waitFor(() => expect(flash(`Resource policy ${savedRevision.PolicyId} deleted from ${NAME}.`)).toBeVisible());
+    expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, ...savedRevision });
+    expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
+  });
+
   it.each(['resource', 'target'] as const)('P5 isolates retained policies when switching %s', async (scope) => {
     const ops = openDetail();
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY])).mockImplementationOnce(notImplemented);
