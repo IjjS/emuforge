@@ -1030,8 +1030,8 @@ describe('instance tags and user data', () => {
       await editContent('tags', 'new-name');
       const flash = await waitFor(() => {
         const item = flashItem('success');
-        expect(item?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
-        return item?.getElement();
+        if (item === undefined) throw new Error('Missing tag update notification');
+        return item.getElement();
       });
       await waitFor(() => {
         expect(api.getInstance).toHaveBeenCalledTimes(2);
@@ -1049,6 +1049,7 @@ describe('instance tags and user data', () => {
         expect(tableOf('Tags').wrapper.findBodyCell(1, 2)?.getElement()).toHaveTextContent('new-name');
       });
       expect(flashItem('success')?.getElement()).toBe(flash);
+      expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
       expect(flash).toBeVisible();
 
       vi.mocked(api.listInstances).mockResolvedValue({ instances: [updated] });
@@ -1146,7 +1147,7 @@ describe('instance tags and user data', () => {
   ] as const)('delivers a pending %s write’s %s after detail removes the dialog', async (editor, outcome) => {
     const id = 'i-0full';
     const client = new QueryClient();
-    const write = held<void>();
+    const write = held<undefined>();
     const detail = held<api.InstanceRead>();
     holding(full({ state: 'stopped' }));
     vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
@@ -1173,7 +1174,7 @@ describe('instance tags and user data', () => {
     const reason = 'The service denied the submitted change.';
     const operation = editor === 'tags' ? 'CreateTags' : 'ModifyInstanceAttribute';
     await act(() => {
-      if (outcome === 'success') write.resolve();
+      if (outcome === 'success') write.resolve(undefined);
       else
         write.reject(
           new RequestError(
@@ -1197,7 +1198,7 @@ describe('instance tags and user data', () => {
   });
 
   it.each(['route', 'target'] as const)('cancels a pending content write on %s departure', async (departure) => {
-    const write = held<void>();
+    const write = held<undefined>();
     holding(full({ state: 'stopped' }));
     vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
     vi.mocked(changeInstanceContent).mockReturnValueOnce(write.promise);
@@ -1214,7 +1215,7 @@ describe('instance tags and user data', () => {
       await act(() => connection.changeTarget());
     }
     expect(signal?.aborted).toBe(true);
-    await act(() => write.resolve());
+    await act(() => write.resolve(undefined));
     expect(flashItem('success')).toBeUndefined();
     expect(flashItem('error')).toBeUndefined();
   });

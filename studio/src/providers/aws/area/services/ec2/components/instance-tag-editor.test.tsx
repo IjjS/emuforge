@@ -86,12 +86,8 @@ async function open(name: string) {
 }
 
 function field(dialog: HTMLElement, label: string) {
-  const input = createWrapper(dialog)
-    .findAllFormFields()
-    [label === 'Key' ? 0 : 1]?.findControl()
-    ?.findInput()
-    ?.findNativeInput()
-    .getElement();
+  const forms = createWrapper(dialog).findAllFormFields();
+  const input = forms[label === 'Key' ? 0 : 1]?.findControl()?.findInput()?.findNativeInput().getElement();
   if (input === undefined || input === null) throw new Error(`Missing input ${label}`);
   return input;
 }
