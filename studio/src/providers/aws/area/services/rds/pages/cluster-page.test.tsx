@@ -206,8 +206,14 @@ function tableOf(heading: string) {
 }
 
 function memberRows(): string[][] {
-  return (tableOf('DB instances').findRows() ?? []).map((row) =>
-    [...row.getElement().querySelectorAll('td, th')].map(text),
+  const table = tableOf('DB instances');
+  const columns = table.findColumnHeaders();
+  return table.findRows().map((_, row) =>
+    columns.map((_, column) => {
+      const cell = table.findBodyCell(row + 1, column + 1);
+      if (cell === null) throw new Error('Missing DB instance cell.');
+      return text(cell.getElement());
+    }),
   );
 }
 
@@ -724,9 +730,19 @@ function chooseAction(action: ClusterAction) {
   fireEvent.click(item.getElement());
 }
 
+async function openOperationDialog(action: 'modify' | 'failover', heading: string) {
+  chooseAction(action);
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error(`Missing dialog: ${heading}`);
+    expect(modal.findHeader().getElement()).toHaveTextContent(heading);
+    return modal;
+  });
+}
+
 async function editCluster() {
-  chooseAction('modify');
-  return within(await screen.findByRole('dialog', { name: 'Modify DB cluster' }));
+  const modal = await openOperationDialog('modify', 'Modify DB cluster');
+  return within(modal.getElement());
 }
 
 function deferred<T>() {
@@ -756,11 +772,10 @@ function rowsAt(status = 'available') {
 }
 
 async function editFailover() {
-  chooseAction('failover');
-  const dialog = await screen.findByRole('dialog', { name: 'Fail over DB cluster' });
-  const picker = createWrapper(dialog).findSelect();
+  const modal = await openOperationDialog('failover', 'Fail over DB cluster');
+  const picker = modal.findContent().findSelect();
   if (picker === null) throw new Error('Missing failover reader picker.');
-  return { picker, submit: within(dialog).getByRole('button', { name: 'Fail over' }) };
+  return { picker, submit: within(modal.getElement()).getByRole('button', { name: 'Fail over' }) };
 }
 
 async function selectReader(target: string) {
@@ -815,12 +830,12 @@ describe('Aurora cluster operations', () => {
     }
   });
 
-  // Bound: Allow the real three-second poll and the separately settled cluster and member responses.
+  // Bound: Allow two real three-second polls, including a round with conflicting terminal statuses.
   it.each([
     ['stop', 'available', 'stopping', 'stopped', 'Stopping'],
     ['start', 'stopped', 'starting', 'available', 'Starting'],
   ] as const)(
-    'polls the cluster and members together after %s is accepted',
+    'polls until the cluster and members agree after %s is accepted',
     async (action, before, moving, final, verb) => {
       answer(found({ status: before, members: ROLES }), rowsAt(before));
       open(PATH);
@@ -828,7 +843,7 @@ describe('Aurora cluster operations', () => {
 
       answer(found({ status: moving, members: ROLES }), rowsAt(moving));
       chooseAction(action);
-      await screen.findByText(`${verb} DB cluster app-aur`);
+      await waitFor(() => expect(flashes('success')).toEqual([`${verb} DB cluster app-aur`]));
       await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe(moving));
       expect(clusterApi.operateCluster).toHaveBeenCalledWith(
         ENGINE,
@@ -839,9 +854,12 @@ describe('Aurora cluster operations', () => {
 
       const next = holdRound();
       await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+      const settled = holdRound();
       await act(async () => next.cluster.resolve(found({ status: final, members: ROLES })));
-      expect(pairsOf('DB cluster details')['Status']).toBe(moving);
-      await act(async () => next.members.resolve(rowsAt(final)));
+      await act(async () => next.members.resolve(rowsAt(before)));
+      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(4), { timeout: 4_000 });
+      await act(async () => settled.cluster.resolve(found({ status: final, members: ROLES })));
+      await act(async () => settled.members.resolve(rowsAt(final)));
       await waitFor(() => {
         expect(pairsOf('DB cluster details')['Status']).toBe(final);
         expect(memberRows().map((row) => row.slice(0, 3))).toEqual(
@@ -850,7 +868,7 @@ describe('Aurora cluster operations', () => {
       });
       expect(flashes('success')).toEqual([`${verb} DB cluster app-aur`]);
     },
-    8_000,
+    11_000,
   );
 
   it.each([
@@ -877,7 +895,7 @@ describe('Aurora cluster operations', () => {
     const next = holdRound();
     fireEvent.click(protection);
     fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
-    await screen.findByText('DB cluster app-aur updated');
+    await waitFor(() => expect(flashes('success')).toEqual(['DB cluster app-aur updated']));
     expect(clusterApi.operateCluster).toHaveBeenCalledWith(
       ENGINE,
       'app-aur',
@@ -886,7 +904,6 @@ describe('Aurora cluster operations', () => {
     );
     await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(2));
     await act(async () => next.cluster.resolve(found({ members: ROLES })));
-    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
     await act(async () => next.members.resolve(rowsAt()));
     await waitFor(() => {
       expect(pairsOf('DB cluster details')['Deletion protection']).toBe('Off');
@@ -921,12 +938,15 @@ describe('Aurora cluster operations', () => {
     answer(found());
     open(PATH);
     await loaded();
-    const dialog = await editCluster();
+    const modal = await openOperationDialog('modify', 'Modify DB cluster');
+    const field = modal.findContent().findFormField();
+    expect(field?.findLabel()?.getElement()).toHaveTextContent('Backup retention period (days)');
+    const dialog = within(modal.getElement());
     const retention = dialog.getByRole('textbox', { name: 'Backup retention period (days)' });
     const save = dialog.getByRole('button', { name: 'Save changes' });
     for (const value of ['', '1.5', '0', '36']) {
       fireEvent.change(retention, { target: { value } });
-      expect(dialog.getByText('Enter a whole number from 1 to 35.')).toBeVisible();
+      expect(field?.findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 35.');
       expect(save).toBeDisabled();
       fireEvent.click(save);
     }
@@ -934,7 +954,7 @@ describe('Aurora cluster operations', () => {
 
     for (const value of ['1', '35']) {
       fireEvent.change(retention, { target: { value } });
-      expect(dialog.queryByText('Enter a whole number from 1 to 35.')).toBeNull();
+      expect(field?.findError()).toBeNull();
       expect(save).toBeEnabled();
     }
   });
@@ -961,7 +981,7 @@ describe('Aurora cluster operations', () => {
     fireEvent.change(retention, { target: { value: '21' } });
     answer(found({ deletionProtection: false, backupRetentionPeriod: 21 }));
     fireEvent.click(reopened.getByRole('button', { name: 'Save changes' }));
-    await screen.findByText('DB cluster app-aur updated');
+    await waitFor(() => expect(flashes('success')).toEqual(['DB cluster app-aur updated']));
     expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
       ENGINE,
       'app-aur',
@@ -984,7 +1004,7 @@ describe('Aurora cluster operations', () => {
       );
     });
     fireEvent.click(failover.getElement());
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(clusterApi.operateCluster).not.toHaveBeenCalled();
   });
 
@@ -996,7 +1016,7 @@ describe('Aurora cluster operations', () => {
     const submit = await selectReader('app-aur-3');
     answer(found({ status: 'failing-over', members: ROLES }), rowsAt());
     fireEvent.click(submit);
-    await screen.findByText('Failing over DB cluster app-aur');
+    await waitFor(() => expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']));
     expect(clusterApi.operateCluster).toHaveBeenCalledWith(
       ENGINE,
       'app-aur',
@@ -1009,7 +1029,6 @@ describe('Aurora cluster operations', () => {
     await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
     const promoted = ROLES.map(({ id }) => ({ id, writer: id === 'app-aur-3' }));
     await act(async () => next.cluster.resolve(found({ members: promoted })));
-    expect(pairsOf('DB cluster details')['Status']).toBe('failing-over');
     await act(async () => next.members.resolve(rowsAt()));
     await waitFor(() => {
       expect(pairsOf('DB cluster details')['Status']).toBe('available');
@@ -1035,7 +1054,7 @@ describe('Aurora cluster operations', () => {
     picker.openDropdown();
     picker.selectOptionByValue('app-aur-2');
     fireEvent.click(submit);
-    await screen.findByText('Failing over DB cluster app-aur');
+    await waitFor(() => expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']));
     expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
       ENGINE,
       'app-aur',
@@ -1075,9 +1094,11 @@ describe('Aurora cluster operations', () => {
       chooseAction(action);
     }
 
-    await screen.findByText('Not implemented by the emulator');
-    expect(flashes('info')[0]).toContain(operation);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => {
+      expect(flashes('info')[0]).toContain('Not implemented by the emulator');
+      expect(flashes('info')[0]).toContain(operation);
+      expect(PAGE.findModal()).toBeNull();
+    });
     expect(openActions().findItemById(action, { disabled: true })).not.toBeNull();
     expect(clusterApi.operateCluster).toHaveBeenCalledTimes(1);
   });

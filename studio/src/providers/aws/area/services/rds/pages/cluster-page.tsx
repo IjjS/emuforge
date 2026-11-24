@@ -31,7 +31,7 @@ import type { DbInstance } from '../api';
 import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
 import { CLUSTER_ACTIONS, clusterActionResult, type ClusterAction, type ClusterOperation } from '../cluster-operations';
-import { useClusterDelete, useClusterOperation, useClusterRound, type MembersRead } from '../cluster-queries';
+import { useClusterDelete, useClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
 import { ClusterOperationControls } from '../components/cluster-operations';
 import { TakeSnapshotAction } from '../components/cluster-snapshot-dialogs';
@@ -308,13 +308,12 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const remove = useClusterDelete(connection.engineOrigin);
-  const operate = useClusterOperation(connection.engineOrigin);
   const [announcement, announce] = useAnnouncer();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const [unavailable, setUnavailable] = useState<ReadonlySet<ClusterAction>>(() => new Set());
   const reading = useClusterRound(connection.engineOrigin, id);
-  const { value: round, failure, refresh, fetching, retryMembers } = reading;
+  const { value: round, failure, refresh, fetching, retryMembers, operate } = reading;
   const cluster = round?.cluster.found === true ? round.cluster.cluster : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB cluster');
 
