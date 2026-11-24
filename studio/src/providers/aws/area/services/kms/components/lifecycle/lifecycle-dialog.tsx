@@ -36,6 +36,9 @@ export function LifecycleDialog({
   const handleDismiss = () => {
     if (!pending) onDismiss();
   };
+  const handleSubmit = () => {
+    if (!pending && !disabled) onSubmit();
+  };
 
   return (
     <AreaModal
@@ -49,7 +52,7 @@ export function LifecycleDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               {dismissLabel}
             </Button>
-            <Button variant="primary" disabled={disabled} loading={pending} onClick={onSubmit}>
+            <Button variant="primary" disabled={!pending && disabled} loading={pending} onClick={handleSubmit}>
               {submitLabel}
             </Button>
           </SpaceBetween>
