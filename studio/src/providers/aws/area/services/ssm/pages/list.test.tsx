@@ -1,4 +1,5 @@
 import type { DescribeParametersCommandInput } from '@aws-sdk/client-ssm';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useEffect, useState } from 'react';
@@ -32,8 +33,8 @@ function answer(body: object, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/x-amz-json-1.1' } });
 }
 
-function parameter(Name: string, Version = 1) {
-  return { Name, Type: 'String', Version, LastModifiedDate: modified };
+function parameter(Name: string, Version = 1, Type = 'String', LastModifiedDate = modified) {
+  return { Name, Type, Version, LastModifiedDate };
 }
 
 function page(names: string[], NextToken?: string) {
@@ -113,15 +114,75 @@ function open(observeMetadata = false) {
   };
 }
 
-const button = (name: string) => screen.getByRole('button', { name });
-const row = (name: string) => screen.findByRole('link', { name });
-function tableRow(link: HTMLElement) {
-  const element = link.closest('tr');
-  if (element === null) throw new Error('Expected a parameter table row');
-  return within(element);
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Expected ${label}`);
+  return value;
 }
 
-const select = (name: string) => fireEvent.click(screen.getByRole('checkbox', { name: `Select ${name}` }));
+const ui = createWrapper();
+const table = () => ui.findTable();
+const actions = () => table()?.findHeaderSlot()?.findHeader()?.findActions()?.getElement();
+function button(name: string) {
+  const pagination = table()?.findPagination();
+  switch (name) {
+    case 'Next page':
+      return required(pagination, 'pagination').findNextPageButton().getElement();
+    case 'Previous page':
+      return required(pagination, 'pagination').findPreviousPageButton().getElement();
+    case 'Page 1':
+      return required(pagination?.findPageNumberByIndex(1), 'page 1').getElement();
+    case 'Retry':
+      return within(required(table()?.findEmptySlot(), 'empty table slot').getElement()).getByRole('button', { name });
+    default:
+      return within(required(actions(), 'list actions')).getByRole('button', { name });
+  }
+}
+
+function findRow(name: string) {
+  return table()
+    ?.findRows()
+    .map((row) => within(row.getElement()))
+    .find((row) => row.queryByRole('link', { name }) !== null);
+}
+
+async function row(name: string) {
+  return waitFor(() => {
+    const entry = findRow(name);
+    if (entry === undefined) throw new Error(`Expected a parameter row for ${name}`);
+    return entry;
+  });
+}
+
+function selection(name: string) {
+  return findRow(name)?.getByRole('checkbox', { name: `Select ${name}` });
+}
+
+const select = (name: string) => fireEvent.click(required(selection(name), `selection for ${name}`));
+
+async function expectMetadata({ Name, Type, Version, LastModifiedDate }: ReturnType<typeof parameter>) {
+  await waitFor(() => {
+    const entry = required(findRow(Name), `parameter row for ${Name}`);
+    expect(entry.getByRole('link', { name: Name })).toHaveAttribute('href', parameterPath(Name));
+    for (const value of [Type, String(Version), creationDateText(new Date(LastModifiedDate * 1000))]) {
+      expect(entry.getByRole('cell', { name: value })).toBeVisible();
+    }
+  });
+}
+
+function flash(title: string) {
+  return ui
+    .findFlashbar()
+    ?.findItems()
+    .find((item) => item.findHeader()?.getElement().textContent === title);
+}
+
+function expectResultNames(title: string, names: string[]) {
+  const item = flash(title);
+  expect(item?.findHeader()?.getElement()).toBeVisible();
+  const entries = within(required(item?.findContent(), `${title} message`).getElement()).getAllByRole('listitem');
+  expect(entries.map((entry) => entry.textContent)).toEqual(names);
+  for (const entry of entries) expect(entry).toBeVisible();
+}
 
 async function deleteDialog(names: string[]) {
   for (const name of names) {
@@ -129,12 +190,26 @@ async function deleteDialog(names: string[]) {
     select(name);
   }
   fireEvent.click(button('Delete'));
-  return within(await screen.findByRole('dialog'));
+  return waitFor(() => {
+    const dialog = ui.findModal();
+    if (dialog === null) throw new Error('Expected the delete confirmation dialog');
+    expect(dialog.findHeader().getElement()).toHaveTextContent(
+      names.length === 1 ? /^Delete parameter$/ : /^Delete parameters$/,
+    );
+    return dialog;
+  });
 }
 
-function confirm(dialog: ReturnType<typeof within>, text: string) {
-  fireEvent.change(dialog.getByRole('textbox'), { target: { value: text } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+type DeleteDialog = Awaited<ReturnType<typeof deleteDialog>>;
+
+const dialogButton = (dialog: DeleteDialog, name: string) =>
+  within(required(dialog.findFooter(), 'dialog footer').getElement()).getByRole('button', { name });
+
+function confirm(dialog: DeleteDialog, text: string) {
+  fireEvent.change(required(dialog.findContent().findInput(), 'confirmation input').findNativeInput().getElement(), {
+    target: { value: text },
+  });
+  fireEvent.click(dialogButton(dialog, 'Delete'));
 }
 
 describe('Parameter Store list', () => {
@@ -142,34 +217,39 @@ describe('Parameter Store list', () => {
     const response = deferred();
     read.mockReturnValue(response.promise);
     open();
-    expect(await screen.findByText('Loading parameters…')).toBeVisible();
+    await waitFor(() => {
+      const loading = table()?.findLoadingText()?.getElement();
+      expect(loading).toBeVisible();
+      expect(loading).toHaveTextContent('Loading parameters…');
+    });
     response.resolve(page([]));
-    expect(await screen.findByText('No parameters')).toBeVisible();
-    expect(screen.getByText('Create a parameter to store a configuration value.')).toBeVisible();
+    await waitFor(() => {
+      const empty = within(required(table()?.findEmptySlot(), 'empty table slot').getElement());
+      expect(empty.getByText('No parameters')).toBeVisible();
+      expect(empty.getByText('Create a parameter to store a configuration value.')).toBeVisible();
+    });
   });
 
   it('L2 reads current metadata on entry, return and first-page Refresh', async () => {
-    let version = 1;
+    const initial = parameter(FIRST);
+    const returned = parameter(FIRST, 2, 'StringList', modified + 3600);
+    const refreshed = parameter(FIRST, 3, 'SecureString', modified + 7200);
+    let metadata = initial;
     read.mockImplementation(({ NextToken }) =>
-      NextToken === undefined ? answer({ Parameters: [parameter(FIRST, version)], NextToken: 'next' }) : page([SECOND]),
+      NextToken === undefined ? answer({ Parameters: [metadata], NextToken: 'next' }) : page([SECOND]),
     );
     const { router } = open();
-    const link = await row(FIRST);
-    expect(link).toHaveAttribute('href', parameterPath(FIRST));
-    const entry = tableRow(link);
-    expect(entry.getByText('String')).toBeVisible();
-    expect(entry.getByText('1')).toBeVisible();
-    expect(entry.getByRole('cell', { name: creationDateText(new Date(modified * 1000)) })).toBeVisible();
+    await expectMetadata(initial);
 
     await act(() => router.navigate('/aws'));
-    version = 2;
+    metadata = returned;
     await act(() => router.navigate(PARAMETER_STORE_PATH));
-    expect(tableRow(await row(FIRST)).getByText('2')).toBeVisible();
+    await expectMetadata(returned);
     fireEvent.click(button('Next page'));
     await row(SECOND);
-    version = 3;
+    metadata = refreshed;
     fireEvent.click(button('Refresh'));
-    expect(tableRow(await row(FIRST)).getByText('3')).toBeVisible();
+    await expectMetadata(refreshed);
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, undefined, 'next', undefined]);
   });
 
@@ -183,12 +263,12 @@ describe('Parameter Store list', () => {
     select(FIRST);
     expect(button('Delete')).toBeEnabled();
     fireEvent.click(button('Next page'));
-    await screen.findByText('No parameters on this page');
+    await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent('No parameters on this page'));
     expect(button('Delete')).toBeDisabled();
     expect(button('Next page')).toBeEnabled();
     fireEvent.click(button('Next page'));
     await row(SECOND);
-    expect(screen.getByRole('checkbox', { name: `Select ${SECOND}` })).not.toBeChecked();
+    expect(selection(SECOND)).not.toBeChecked();
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, 'next', 'through-empty']);
   });
 
@@ -200,11 +280,13 @@ describe('Parameter Store list', () => {
         answer({ __type: 'AccessDeniedException', message: 'Listing was denied by the engine.' }, 403),
       );
     open();
-    expect(await screen.findByText(/The listing failed/)).toBeVisible();
+    await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent(/The listing failed/));
     fireEvent.click(button('Retry'));
     await row(FIRST);
     fireEvent.click(button('Refresh'));
-    expect(await screen.findByText(/Listing was denied by the engine/)).toBeVisible();
+    await waitFor(() =>
+      expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent(/Listing was denied by the engine/),
+    );
   });
 
   it('L5 shows the DescribeParameters 501 and disables its read controls', async () => {
@@ -212,8 +294,11 @@ describe('Parameter Store list', () => {
     open();
     await row(FIRST);
     fireEvent.click(button('Next page'));
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for DescribeParameters/)).toBeVisible();
+    await waitFor(() => {
+      const empty = table()?.findEmptySlot();
+      expect(empty?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(empty?.getElement()).toHaveTextContent(/501 Not Implemented for DescribeParameters/);
+    });
     for (const name of ['Refresh', 'Retry']) {
       expect(button(name)).toBeDisabled();
       fireEvent.click(button(name));
@@ -228,14 +313,15 @@ describe('Parameter Store list', () => {
   it('L6 lists the selected names and requires exact confirmation before sending a delete', async () => {
     open();
     const dialog = await deleteDialog([FIRST, SECOND]);
-    expect(dialog.getByText(FIRST)).toBeVisible();
-    expect(dialog.getByText(SECOND)).toBeVisible();
-    expect(dialog.getByText(/their versions from your local emulator/)).toBeVisible();
-    expect(dialog.getByText(/type .delete. in the field/)).toBeVisible();
+    const content = within(dialog.findContent().getElement());
+    expect(content.getByText(FIRST)).toBeVisible();
+    expect(content.getByText(SECOND)).toBeVisible();
+    expect(content.getByText(/their versions from your local emulator/)).toBeVisible();
+    expect(content.getByText(/type .delete. in the field/)).toBeVisible();
     confirm(dialog, 'Delete');
-    expect(dialog.getByRole('button', { name: 'Delete' })).toBeDisabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(dialogButton(dialog, 'Delete')).toBeDisabled();
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
+    expect(ui.findModal()).toBeNull();
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -255,42 +341,64 @@ describe('Parameter Store list', () => {
     await waitFor(() => expect(read.mock.calls.some(([input]) => input.ParameterFilters !== undefined)).toBe(true));
     confirm(dialog, 'delete');
     expect(await screen.findByText('Observed metadata is empty')).toBeVisible();
-    expect(screen.getByText('Deleted parameters')).toBeVisible();
-    expect(screen.getByText('Rejected parameters')).toBeVisible();
+    expectResultNames('Deleted parameters', [FIRST]);
+    expectResultNames('Rejected parameters', [SECOND]);
     expect(remove).toHaveBeenCalledWith({ Names: [FIRST, SECOND] }, 'DeleteParameters');
     refreshedList.resolve(page([SECOND]));
-    await row(SECOND);
-    const results = within(screen.getByRole('list', { name: /notifications/i }));
-    expect(results.getByText(FIRST)).toBeVisible();
-    expect(results.getByText(SECOND)).toBeVisible();
-    expect(screen.queryByRole('link', { name: FIRST })).toBeNull();
+    await waitFor(() => {
+      expect(findRow(SECOND)).toBeDefined();
+      expect(findRow(FIRST)).toBeUndefined();
+    });
+    expectResultNames('Deleted parameters', [FIRST]);
+    expectResultNames('Rejected parameters', [SECOND]);
+    expect(findRow(FIRST)).toBeUndefined();
   });
 
   it('L8 preserves completed batches and disables only bulk delete after a 501', async () => {
     const firstBatch = Array.from({ length: 10 }, (_, index) => `/batch/item-${String(index)}`);
-    const remaining = ['/batch/item-10', '/batch/item-11'];
+    const firstRemaining = '/batch/item-10';
+    const secondRemaining = '/batch/item-11';
+    const remaining = [firstRemaining, secondRemaining];
     const names = [...firstBatch, ...remaining];
     read.mockReturnValueOnce(page(names)).mockImplementation(() => page(remaining));
     remove
       .mockReturnValueOnce(answer({ DeletedParameters: firstBatch }))
       .mockReturnValueOnce(answer({ __type: 'NotImplemented' }, 501));
-    open();
+    const { router } = open();
     const dialog = await deleteDialog(names);
     confirm(dialog, 'delete');
-    expect(await screen.findByText('Deletion not confirmed')).toBeVisible();
-    expect(screen.getByText('Deleted parameters')).toBeVisible();
-    expect(screen.getByText('The emulator answered 501 Not Implemented for DeleteParameters.')).toBeVisible();
+    await waitFor(() => {
+      expect(table()?.findRows()).toHaveLength(remaining.length);
+      for (const name of remaining) expect(findRow(name)).toBeDefined();
+    });
+    expectResultNames('Deleted parameters', firstBatch);
+    expectResultNames('Deletion not confirmed', remaining);
+    const unavailable = flash('Not implemented by the emulator');
+    const message = 'The emulator answered 501 Not Implemented for DeleteParameters.';
+    expect(unavailable?.findContent()?.getElement()).toHaveTextContent(message);
     expect(remove.mock.calls).toEqual([
       [{ Names: firstBatch }, 'DeleteParameters'],
       [{ Names: remaining }, 'DeleteParameters'],
     ]);
-    const results = within(screen.getByRole('list', { name: /notifications/i }));
-    for (const name of names) expect(results.getByText(name)).toBeVisible();
-    await row('/batch/item-10');
-    select('/batch/item-10');
+    select(firstRemaining);
     expect(button('Delete')).toBeEnabled();
-    select('/batch/item-11');
+    expect(actions()).not.toHaveTextContent(message);
+    select(secondRemaining);
     expect(button('Delete')).toBeDisabled();
+    expect(button('Delete')).toHaveAccessibleDescription(expect.stringContaining(message));
+    expect(actions()).toHaveTextContent(message);
+
+    fireEvent.click(required(unavailable?.findDismissButton(), 'dismiss button').getElement());
+    await waitFor(() => expect(flash('Not implemented by the emulator')).toBeUndefined());
+    expect(actions()).toHaveTextContent(message);
+    await act(() => router.navigate('/aws'));
+    await act(() => router.navigate(PARAMETER_STORE_PATH));
+    for (const name of remaining) {
+      await row(name);
+      select(name);
+    }
+    expect(button('Delete')).toBeDisabled();
+    expect(actions()).toHaveTextContent(message);
   });
 
   it('L9 discards the in-flight page and selection on disconnect and reconnects from page one', async () => {
@@ -309,8 +417,8 @@ describe('Parameter Store list', () => {
     connect({ ...connected, checkedAt: 3 });
     await row('/app/reconnected');
     await act(async () => oldPage.resolve(page(['/app/late'])));
-    expect(screen.queryByRole('link', { name: '/app/late' })).toBeNull();
-    expect(screen.getByRole('checkbox', { name: 'Select /app/reconnected' })).not.toBeChecked();
+    expect(findRow('/app/late')).toBeUndefined();
+    expect(selection('/app/reconnected')).not.toBeChecked();
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, 'next', undefined]);
   });
 
@@ -324,13 +432,13 @@ describe('Parameter Store list', () => {
     open();
     await row(FIRST);
     fireEvent.click(button('Next page'));
-    expect(tableRow(await row(SECOND)).getByText('2')).toBeVisible();
+    expect((await row(SECOND)).getByText('2')).toBeVisible();
     fireEvent.click(button('Previous page'));
     confirm(await deleteDialog([FIRST]), FIRST);
     await row('/app/remaining');
     expect(remove).toHaveBeenCalledWith({ Name: FIRST }, 'DeleteParameter');
     fireEvent.click(button('Next page'));
-    expect(tableRow(await row(SECOND)).getByText('3')).toBeVisible();
+    expect((await row(SECOND)).getByText('3')).toBeVisible();
     expect(read.mock.calls.map(([input]) => input.NextToken)).toEqual([
       undefined,
       'old-next',

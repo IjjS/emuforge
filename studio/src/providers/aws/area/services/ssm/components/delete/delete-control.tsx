@@ -1,7 +1,8 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../../lib/aws/request';
 import { ConfirmDialog } from '../../../../components/confirm-dialog';
@@ -74,6 +75,7 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
   const refresh = useRefreshParameterReads(connection);
   const single = useUnsupportedOperation(connection, DELETE_PARAMETER);
   const bulk = useUnsupportedOperation(connection, DELETE_PARAMETERS);
+  const unavailableId = useId();
   const getSignal = usePageSignal();
   const [targets, setTargets] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
@@ -153,15 +155,30 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
     }
   };
 
-  const unsupported = names.length === 1 ? single.failure : bulk.failure;
+  const unsupported = names.length > 1 ? bulk.failure : single.failure;
+  const unavailable =
+    names.length > 0 && unsupported !== undefined
+      ? actionFailureItem(unsupported, names.length === 1 ? 'Deleting the parameter' : 'Deleting parameters', endpoint)
+      : undefined;
   return (
     <>
-      <Button
-        disabled={disabled || names.length === 0 || endpoint === undefined || unsupported !== undefined}
-        onClick={handleOpen}
-      >
-        Delete
-      </Button>
+      <SpaceBetween size="xxs">
+        <Button
+          disabled={disabled || names.length === 0 || endpoint === undefined || unavailable !== undefined}
+          {...(unavailable !== undefined && { ariaDescribedby: unavailableId })}
+          onClick={handleOpen}
+        >
+          Delete
+        </Button>
+        {unavailable !== undefined && (
+          <div id={unavailableId}>
+            <StatusIndicator type="info">{unavailable.header}</StatusIndicator>
+            <Box variant="div" fontSize="body-s">
+              {unavailable.content}
+            </Box>
+          </div>
+        )}
+      </SpaceBetween>
       <ConfirmDialog
         visible={targets.length > 0}
         header={name === undefined ? 'Delete parameters' : 'Delete parameter'}
