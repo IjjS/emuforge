@@ -146,3 +146,17 @@ export function useRefreshParameterReads(connection: AreaConnection) {
     }
   };
 }
+
+/** Save refreshes the resource reads and any cached version history for the edited name. */
+export function useRefreshParameterSave(connection: AreaConnection) {
+  const client = useQueryClient();
+  const refresh = useRefreshParameterReads(connection);
+  return (name: string, editing: boolean) => {
+    if (editing) {
+      const history = { queryKey: [...targetKey(connection), 'history', name] };
+      void client.cancelQueries(history);
+      void client.invalidateQueries(history);
+    }
+    refresh([name]);
+  };
+}

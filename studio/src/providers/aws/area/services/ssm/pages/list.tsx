@@ -16,7 +16,7 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { DeleteControl } from '../components/delete/delete-control';
-import { parameterPath } from '../paths';
+import { PARAMETER_CREATE_PATH, parameterPath } from '../paths';
 import { useParameterListing } from '../queries';
 
 export function ParameterListPage({ connection }: { connection: AreaConnection }) {
@@ -113,6 +113,9 @@ export function ParameterListPage({ connection }: { connection: AreaConnection }
                 disabled={listing.disconnected || failure !== undefined}
                 onSettled={() => setSelection(undefined)}
               />
+              <Button variant="primary" href={PARAMETER_CREATE_PATH} onFollow={handleFollow}>
+                Create parameter
+              </Button>
             </SpaceBetween>
           }
         >
