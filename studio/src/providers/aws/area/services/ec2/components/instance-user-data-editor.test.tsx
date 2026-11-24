@@ -33,6 +33,7 @@ const READ = 'DescribeInstanceAttribute';
 const WRITE = 'ModifyInstanceAttribute';
 
 const PAGE = createWrapper(document.body);
+type Modal = NonNullable<ReturnType<typeof PAGE.findModal>>;
 
 function Editor() {
   const writes = useInstanceContentChange(ENDPOINT, INSTANCE.id, usePageSignal());
@@ -80,15 +81,15 @@ async function open() {
     const modal = PAGE.findModal();
     if (modal === null) throw new Error('Missing user data dialog');
     expect(modal.findHeader().getElement()).toHaveTextContent(LABEL);
-    return modal.getElement();
+    return modal;
   });
 }
 
-function field(dialog: HTMLElement) {
-  return createWrapper(dialog).findTextarea()?.findNativeTextarea().getElement();
+function field(dialog: Modal) {
+  return dialog.findContent().findTextarea()?.findNativeTextarea().getElement();
 }
 
-async function loadedField(dialog: HTMLElement) {
+async function loadedField(dialog: Modal) {
   return waitFor(() => {
     const textarea = field(dialog);
     if (!textarea) throw new Error('Missing user data field');
@@ -96,8 +97,22 @@ async function loadedField(dialog: HTMLElement) {
   });
 }
 
-function save(dialog: HTMLElement) {
-  return within(dialog).getByRole('button', { name: 'Save changes' });
+function footerButton(dialog: Modal, name: 'Cancel' | 'Save changes') {
+  const button = dialog.findFooter()?.findAllButtons()[name === 'Cancel' ? 0 : 1];
+  if (button === undefined) throw new Error(`Missing ${name} footer button`);
+  expect(button.getElement()).toHaveAccessibleName(name);
+  return button;
+}
+
+function save(dialog: Modal) {
+  return footerButton(dialog, 'Save changes').getElement();
+}
+
+function clickContentButton(dialog: Modal, name: 'Retry' | 'Edit as JSON string') {
+  const button = dialog.findContent().findButton();
+  if (button === null) throw new Error(`Missing ${name} button`);
+  expect(button.getElement()).toHaveAccessibleName(name);
+  button.click();
 }
 
 it('allows Retry after a failed read and enables saving a change once the actual value arrives', async () => {
@@ -113,7 +128,7 @@ it('allows Retry after a failed read and enables saving a change once the actual
   });
   expect(field(dialog)).toBeUndefined();
   expect(save(dialog)).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
+  clickContentButton(dialog, 'Retry');
   const textarea = await loadedField(dialog);
   expect(textarea).toHaveValue('first\nsecond\n');
   expect(save(dialog)).toBeDisabled();
@@ -126,7 +141,7 @@ it('explains why binary user data cannot be edited and prevents saving it', asyn
   showEditor({ kind: 'binary' });
   const dialog = await open();
   await waitFor(() => {
-    expect(createWrapper(dialog).findStatusIndicator()?.getElement()).toHaveTextContent(
+    expect(dialog.findContent().findStatusIndicator()?.getElement()).toHaveTextContent(
       'The existing user data cannot be edited as UTF-8 text.',
     );
   });
@@ -143,8 +158,8 @@ it('cancels edits to multiline text and reads the original content on reopening'
   expect(textarea).toHaveValue('first\nsecond\n');
   fireEvent.change(textarea, { target: { value: 'new first\nnew second' } });
   expect(textarea).toHaveValue('new first\nnew second');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).toBeNull();
+  footerButton(dialog, 'Cancel').click();
+  expect(PAGE.findModal()).toBeNull();
   expect(await loadedField(await open())).toHaveValue('first\nsecond\n');
   expect(getInstanceUserData).toHaveBeenCalledTimes(2);
   expect(changeInstanceContent).not.toHaveBeenCalled();
@@ -161,7 +176,7 @@ it('keeps the original refusal and multiline draft when the instance was started
   fireEvent.change(textarea, { target: { value: draft } });
   fireEvent.click(save(dialog));
   const message = 'IncorrectInstanceState: The instance is running.';
-  expect(await within(dialog).findByRole('alert')).toHaveTextContent(message);
+  expect(await within(dialog.getElement()).findByRole('alert')).toHaveTextContent(message);
   expect(PAGE.findFlashbar()?.findItemsByType('error')[0]?.findContent()?.getElement()).toHaveTextContent(message);
   expect(textarea).toHaveValue(draft);
   expect(PAGE.findFlashbar()?.findItemsByType('success')).toHaveLength(0);
@@ -173,7 +188,7 @@ it('keeps the original refusal and multiline draft when the instance was started
       'User data updated.',
     );
   });
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(PAGE.findModal()).toBeNull();
   expect(changeInstanceContent).toHaveBeenLastCalledWith(
     ENDPOINT,
     INSTANCE.id,
@@ -203,14 +218,14 @@ it.each([READ, WRITE])('keeps the edit action visible and unavailable after a 50
   const edit = screen.getByRole('button', { name: LABEL });
   expect(edit).toBeVisible();
   expect(edit).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(PAGE.findModal()).toBeNull();
 });
 
 it.each(['x\r\ny\rz\n', '\uFEFF한글\n'])('opens %j as reversible JSON and rejects invalid input', async (text) => {
   showEditor({ kind: 'text', text });
   const dialog = await open();
   const textarea = await loadedField(dialog);
-  const form = createWrapper(dialog).findFormField();
+  const form = dialog.findContent().findFormField();
   expect(form?.findDescription()?.getElement()).toHaveTextContent(
     'Use a JSON string to preserve line endings and leading BOM',
   );
@@ -232,12 +247,12 @@ it('can enter exact line endings in JSON mode and clear the data with an empty f
   let textarea = await loadedField(dialog);
   expect(textarea).toHaveValue('');
   expect(save(dialog)).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Edit as JSON string' }));
+  clickContentButton(dialog, 'Edit as JSON string');
   expect(textarea).toHaveValue('""');
   expect(save(dialog)).toBeDisabled();
   fireEvent.change(textarea, { target: { value: '"A\\r\\nB\\rC 😃"' } });
   fireEvent.click(save(dialog));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() => expect(PAGE.findModal()).toBeNull());
   expect(changeInstanceContent).toHaveBeenLastCalledWith(
     ENDPOINT,
     INSTANCE.id,
@@ -254,7 +269,7 @@ it('can enter exact line endings in JSON mode and clear the data with an empty f
   expect(save(dialog)).toBeDisabled();
   fireEvent.change(textarea, { target: { value: '' } });
   fireEvent.click(save(dialog));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() => expect(PAGE.findModal()).toBeNull());
   expect(changeInstanceContent).toHaveBeenLastCalledWith(
     ENDPOINT,
     INSTANCE.id,

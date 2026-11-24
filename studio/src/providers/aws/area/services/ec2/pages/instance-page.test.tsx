@@ -671,11 +671,13 @@ describe("an instance's page", () => {
     expect(isDisabled(stateItem('Stop'))).toBe(true);
     expect(isDisabled(stateItem('Reboot'))).toBe(true);
     choose('Terminate');
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('web-1 is terminated in the local emulator.');
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'terminate' } });
+    const dialog = await modalWithTitle('Terminate instance?');
+    expect(dialog.findContent().getElement()).toHaveTextContent('web-1 is terminated in the local emulator.');
+    const input = dialog.findContent().findInput()?.findNativeInput().getElement();
+    if (input === undefined) throw new Error('Missing termination confirmation input');
+    fireEvent.change(input, { target: { value: 'terminate' } });
     vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: full({ state: 'terminated' }) });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Terminate' }));
+    primaryModalAction(dialog, 'Terminate').click();
     await waitFor(() => {
       expect(screen.getByText('Terminating i-0full')).toBeInTheDocument();
     });
@@ -961,20 +963,34 @@ function flashItem(type: 'success' | 'error') {
   return PAGE.findFlashbar()?.findItemsByType(type)[0];
 }
 
+function modalWithTitle(title: string) {
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error(`Missing ${title} dialog`);
+    expect(modal.findHeader().getElement()).toHaveTextContent(title);
+    return modal;
+  });
+}
+
+function primaryModalAction(modal: NonNullable<ReturnType<typeof PAGE.findModal>>, name: string) {
+  const button = modal.findFooter()?.findAllButtons()[1];
+  if (button === undefined) throw new Error(`Missing ${name} footer button`);
+  expect(button.getElement()).toHaveAccessibleName(name);
+  return button;
+}
+
 async function editContent(editor: 'tags' | 'user-data', value: string) {
   const userData = editor === 'user-data';
   fireEvent.click(userData ? screen.getByRole('button', { name: 'Edit user data' }) : tagButton('edit'));
-  await waitFor(() => {
-    expect(PAGE.findModal()?.findHeader().getElement()).toHaveTextContent(userData ? 'Edit user data' : 'Edit tag');
-  });
+  const modal = await modalWithTitle(userData ? 'Edit user data' : 'Edit tag');
   const field = await waitFor(() => {
-    const modal = PAGE.findModal()?.findContent();
-    const input = userData ? modal?.findTextarea()?.findNativeTextarea() : modal?.findInput()?.findNativeInput();
+    const content = modal.findContent();
+    const input = userData ? content.findTextarea()?.findNativeTextarea() : content.findInput()?.findNativeInput();
     if (input === undefined) throw new Error('Missing editor field');
     return input.getElement();
   });
   fireEvent.change(field, { target: { value } });
-  PAGE.findModal()?.findFooter()?.findAllButtons()[1]?.click();
+  primaryModalAction(modal, 'Save changes').click();
 }
 
 function held<T>() {
@@ -1009,14 +1025,15 @@ describe('instance tags and user data', () => {
     open(pathOf(id), false, client);
     await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Edit user data' }));
+    const modal = await modalWithTitle('Edit user data');
     const textarea = await waitFor(() => {
-      const field = PAGE.findModal()?.findContent().findTextarea()?.findNativeTextarea();
+      const field = modal.findContent().findTextarea()?.findNativeTextarea();
       if (field === undefined) throw new Error('Missing user data field');
       return field.getElement();
     });
     const draft = 'changed\nuser data';
     fireEvent.change(textarea, { target: { value: draft } });
-    const save = PAGE.findModal()?.findFooter()?.findAllButtons()[1]?.getElement();
+    const save = primaryModalAction(modal, 'Save changes').getElement();
     expect(save).toBeEnabled();
 
     const queryKey = EC2_KEYS.instance(id, ENGINE);
@@ -1029,7 +1046,6 @@ describe('instance tags and user data', () => {
       expect(save).toBeDisabled();
     });
     expect(textarea).toHaveValue(draft);
-    if (save === undefined) throw new Error('Missing Save button');
     fireEvent.click(save);
     expect(changeInstanceContent).not.toHaveBeenCalled();
 
@@ -1148,7 +1164,7 @@ describe('instance tags and user data', () => {
         expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found'),
       );
       expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
-      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(PAGE.findModal()).toBeNull();
     }
     expect(flash()).toHaveTextContent(message);
     expect(flashItem('success')).toBeUndefined();
@@ -1182,7 +1198,7 @@ describe('instance tags and user data', () => {
     await act(() => finishList({ instances: [] }));
     await waitFor(() => expect(list).toBeEmptyDOMElement());
     expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
   });
 
   it.each([
