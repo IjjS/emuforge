@@ -11,7 +11,9 @@ export const button = (root: Page | Locator, name: string) => root.getByRole('bu
 const table = ui.findTable();
 
 function tableRoot(page: Page, title: string) {
-  return page.locator(table.toSelector()).filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+  const heading = table.findHeaderSlot().findHeader().findHeadingText().toSelector();
+  const slot = page.locator(heading.slice(table.toSelector().length).trim()).filter({ hasText: new RegExp('^' + title + '$') });
+  return page.locator(table.toSelector()).filter({ has: slot });
 }
 
 function tableSlot(page: Page, title: string, selector: string) {
@@ -31,6 +33,17 @@ export async function expectTableRows(page: Page, title: string, columns: number
       await expect(cell).toHaveText(expected[i]![j]!);
     }
   }
+}
+
+/** Snapshot without auto-wait so the next comparison can fetch a fresh emulator result. */
+export async function rotationHistoryView(page: Page) {
+  const slot = (selector: string) => tableSlot(page, 'Rotation history', selector);
+  const count = await slot(table.findRows().toSelector()).count();
+  const entries = await Promise.all(Array.from({ length: count }, async (_, i) => {
+    const cell = (column: number) => slot(table.findBodyCell(i + 1, column).toSelector()).allTextContents();
+    return [await cell(1), await cell(2)].map(text => text.join('').trim());
+  }));
+  return { entries, empty: await slot(table.findEmptySlot().toSelector()).allTextContents() };
 }
 
 export async function expectEmptyTable(page: Page, title: string, message: string) {

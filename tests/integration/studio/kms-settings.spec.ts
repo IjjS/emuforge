@@ -1,7 +1,7 @@
 import { expect, test } from './support';
 import { SEOUL } from './support/service-screens';
 import { fixture } from './services/kms/fixture';
-import { button, content, dateText, field, flash, footer, openModal, openTab, expectEmptyTable, expectTableRows, submit, ui } from './services/kms/screen';
+import { button, content, dateText, field, flash, footer, openModal, openTab, expectEmptyTable, expectTableRows, rotationHistoryView, submit, ui } from './services/kms/screen';
 
 test.use({ timezoneId: SEOUL.timeZone });
 
@@ -134,27 +134,32 @@ test('studio.kms-rotate-key', async ({ ctx, page }) => {
       await expect(panel.locator(pair.findLabel().toSelector().replace(/^body /, ''))).toHaveText(label!);
       await expect(panel.locator(pair.findValue().toSelector().replace(/^body /, ''))).toHaveText(value!);
     }
-    const records = (await history()).Rotations ?? [];
-    if (records.length === 0) {
-      await expectEmptyTable(page, 'Rotation history', 'No completed rotations');
-    } else {
-      const expected = records.map(entry => [
+    await expect.poll(async () => {
+      const records = (await history()).Rotations ?? [];
+      const entries = records.map(entry => [
         dateText(entry.RotationDate!),
         entry.RotationType === 'ON_DEMAND' ? 'On-demand' : entry.RotationType === 'AUTOMATIC' ? 'Automatic' : entry.RotationType!,
       ]);
-      await expectTableRows(page, 'Rotation history', [1, 2], expected);
-    }
+      const expected = { entries, empty: entries.length ? [] : ['No completed rotations'] };
+      const shown = await rotationHistoryView(page);
+      return JSON.stringify(shown) === JSON.stringify(expected) ? 'matched' : { shown, expected };
+    }, { timeout: 10_000, message: 'Settled Rotation history matches a fresh direct ListKeyRotations read' }).toBe('matched');
   }
   await verify(false);
   await button(page, 'Enable automatic rotation').click();
   await flash(page, 'Automatic rotation enabled.');
   await verify(true);
-  const [rotation] = await Promise.all([
-    page.waitForResponse(response => response.request().headers()['x-amz-target']?.endsWith('.RotateKeyOnDemand') === true),
-    button(page, 'Rotate now').click(),
-  ]);
-  expect(rotation.ok()).toBe(true);
-  expect(rotation.request().postDataJSON()).toMatchObject({ KeyId: id });
+  const readAfterRotation = async () => {
+    const rotation = await page.waitForResponse(response => response.request().headers()['x-amz-target']?.endsWith('.RotateKeyOnDemand') === true);
+    expect(rotation.ok()).toBe(true);
+    expect(rotation.request().postDataJSON()).toMatchObject({ KeyId: id });
+    const read = await page.waitForRequest(request =>
+      request.headers()['x-amz-target']?.endsWith('.ListKeyRotations') === true && request.postDataJSON().KeyId === id);
+    const response = await read.response();
+    expect(response?.ok()).toBe(true);
+    await response!.finished();
+  };
+  await Promise.all([readAfterRotation(), button(page, 'Rotate now').click()]);
   await flash(page, 'On-demand rotation requested.');
   await verify(true);
   await button(page, 'Disable automatic rotation').click();
