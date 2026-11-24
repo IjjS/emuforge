@@ -76,7 +76,6 @@ function KeyDetails({ action, metadata }: { action: LifecycleAction; metadata: R
 function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & { keyId: string }) {
   const handleFollow = useFollow();
   const queryClient = useQueryClient();
-  const action = useLifecycleAction(connection, keyId);
   const [retriedConnection, setRetriedConnection] = useState<ScreenPageProps['connection']['result']>();
   const [refreshing, setRefreshing] = useState(false);
   const refreshButton = useRef<ButtonProps.Ref>(null);
@@ -98,6 +97,12 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const attemptedRetry = retriedConnection !== undefined && retriedConnection === connection.result;
   const canRead = offline === undefined || attemptedRetry;
   const read = useKmsKey(connection.engineOrigin, keyId, canRead);
+  // A new query generation cannot confirm the write with a cached or already in-flight answer.
+  const action = useLifecycleAction(connection, keyId, read.refresh);
+  const confirmReadback = action.confirmReadback;
+  useLayoutEffect(() => {
+    if (read.key !== undefined) confirmReadback();
+  }, [confirmReadback, read.key]);
   const [openedPanels, setOpenedPanels] = useState(canRead);
   if (canRead && !openedPanels) setOpenedPanels(true);
   // A failed reread reports its error above the panels while the current visit keeps its last metadata.

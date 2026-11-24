@@ -1,23 +1,32 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem } from '../../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../../components/page-flash';
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
-import type { LifecycleOperation } from '../../lifecycle-api';
+import { LIFECYCLE_OPERATIONS, type LifecycleOperation } from '../../lifecycle-api';
 import { KMS_KEYS } from '../../queries';
+
+const stateChangingOperations = new Set<LifecycleOperation>([
+  LIFECYCLE_OPERATIONS.disable,
+  LIFECYCLE_OPERATIONS.enable,
+  LIFECYCLE_OPERATIONS.schedule,
+  LIFECYCLE_OPERATIONS.cancel,
+]);
 
 /**
  * Runs one lifecycle request of a key at a time. A result goes to the area's flash, outside the dialog that asked for
  * it, and the key's detail and the key list are read again, so the controls follow the state KMS returns.
  */
-export function useLifecycleAction(connection: AreaConnection, keyId: string) {
+export function useLifecycleAction(connection: AreaConnection, keyId: string, refreshState: () => void) {
   const flash = usePageFlash();
   const signalForPage = usePageSignal();
   const queryClient = useQueryClient();
   const inFlight = useRef(false);
+  const awaitingReadback = useRef(false);
   const [pending, setPending] = useState<LifecycleOperation>();
+  const [confirmingState, setConfirmingState] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [unavailable, setUnavailable] = useState<readonly LifecycleOperation[]>([]);
   const endpoint = connection.engineOrigin;
@@ -25,6 +34,11 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
 
   const isUnavailable = (operation: LifecycleOperation) => unavailable.includes(operation);
   const disabled = (operation: LifecycleOperation) => endpoint === undefined || !connected || isUnavailable(operation);
+  const confirmReadback = useCallback(() => {
+    if (!awaitingReadback.current) return;
+    awaitingReadback.current = false;
+    setConfirmingState(false);
+  }, []);
 
   /**
    * Sends `request`. `close` ends the dialog that asked for it, if any: on success, and on a 501, whose action then
@@ -36,7 +50,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
     success: string,
     close?: (unavailableOperation?: LifecycleOperation) => void,
   ) => {
-    if (endpoint === undefined || disabled(operation) || inFlight.current) return;
+    if (endpoint === undefined || disabled(operation) || inFlight.current || awaitingReadback.current) return;
     const signal = signalForPage();
     inFlight.current = true;
     setPending(operation);
@@ -63,13 +77,28 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
       if (!signal.aborted) setPending(undefined);
     }
     if (signal.aborted) return;
+    const changedState = stateChangingOperations.has(operation);
+    if (changedState) {
+      awaitingReadback.current = true;
+      setConfirmingState(true);
+    }
     flash.show([{ type: 'success', content: success }]);
     close?.();
-    void queryClient.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
+    if (changedState) refreshState();
+    else void queryClient.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
     void queryClient.invalidateQueries({ queryKey: KMS_KEYS.list });
   };
 
-  return { pending, failure, isUnavailable, disabled, run, clearFailure: () => setFailure(undefined) };
+  return {
+    pending,
+    confirmingState,
+    confirmReadback,
+    failure,
+    isUnavailable,
+    disabled,
+    run,
+    clearFailure: () => setFailure(undefined),
+  };
 }
 
 export type LifecycleAction = ReturnType<typeof useLifecycleAction>;

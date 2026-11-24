@@ -25,6 +25,7 @@ type Dialog = 'describe' | 'disable' | 'schedule' | 'cancel';
 type KeyOperation = Exclude<LifecycleOperation, typeof LIFECYCLE_OPERATIONS.create>;
 
 const RANGE_TEXT = `From ${String(DELETION_WINDOW.min)} to ${String(DELETION_WINDOW.max)} days.`;
+const CONFIRMING_STATE = 'Wait for Studio to confirm the current key state.';
 
 /** The waiting period typed, when it is a whole number of days KMS accepts. */
 function waitingDays(text: string): number | undefined {
@@ -60,7 +61,8 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     [LIFECYCLE_OPERATIONS.schedule]: usable,
     [LIFECYCLE_OPERATIONS.cancel]: pendingDeletion,
   };
-  const canStart = (operation: KeyOperation) => allowedByState[operation] && !action.disabled(operation);
+  const canStart = (operation: KeyOperation) =>
+    allowedByState[operation] && !action.disabled(operation) && !action.confirmingState;
 
   useEffect(() => {
     if (restoreTo === undefined) return;
@@ -95,10 +97,11 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const blockedReason = (operation: KeyOperation, task: string, stateReason: string) =>
     unavailableReason(operation) ??
     (action.disabled(operation) ? `Reconnect to the emulator to ${task}.` : undefined) ??
+    (action.confirmingState ? CONFIRMING_STATE : undefined) ??
     (allowedByState[operation] ? undefined : stateReason);
 
   const control = (operation: KeyOperation, label: string, onClick: () => void, stateReason?: string) => {
-    const reason = unavailableReason(operation) ?? stateReason;
+    const reason = unavailableReason(operation) ?? (action.confirmingState ? CONFIRMING_STATE : stateReason);
     const loading = dialog === undefined && action.pending === operation;
     return (
       <Button
