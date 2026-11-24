@@ -9,15 +9,16 @@ import {
   type ListKeyRotationsCommandOutput,
 } from '@aws-sdk/client-kms';
 import Flashbar from '@cloudscape-design/components/flashbar';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { creationDateText } from '../../../../components/format-date';
-import { PageFlashContext, type FlashResult } from '../../../../components/page-flash';
+import { PageFlashContext, type FlashItem, type FlashResult } from '../../../../components/page-flash';
 import { Rotation } from './rotation';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -28,6 +29,7 @@ const connection = { engineOrigin: 'http://127.0.0.1:8310', result: undefined };
 const nextDate = new Date('2026-05-16T12:35:00Z');
 const rotationDate = new Date('2026-02-04T14:15:00Z');
 const enabledSettings = { KeyRotationEnabled: true, RotationPeriodInDays: 90, NextRotationDate: nextDate };
+const page = createWrapper();
 
 function RotationPage({ keySpec }: { keySpec?: KeyMetadata['KeySpec'] }) {
   const [flash, setFlash] = useState<FlashResult>();
@@ -63,13 +65,32 @@ function click(name: string) {
 }
 
 function expectField(label: string, value: string) {
-  expect(screen.getByText(label).closest('dt')?.nextElementSibling).toHaveTextContent(value);
+  const field = page
+    .findKeyValuePairs()
+    ?.findItems()
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  const element = field?.findValue()?.getElement();
+  expect(element).toBeVisible();
+  expect(element).toHaveTextContent(value);
 }
 
-async function expectRotation(type: string, date: Date) {
-  const cell = await screen.findByRole('cell', { name: type });
-  expect(cell).toBeVisible();
-  expect(cell.closest('tr')).toHaveTextContent(creationDateText(date));
+function expectRotation(type: string, date: Date) {
+  const history = page.findTable();
+  expect(history?.findRows()).toHaveLength(1);
+  const typeCell = history?.findBodyCell(1, 2)?.getElement();
+  expect(typeCell).toBeVisible();
+  expect(typeCell).toHaveTextContent(type);
+  expect(history?.findBodyCell(1, 1)?.getElement()).toHaveTextContent(creationDateText(date));
+}
+
+function flashItem(type: FlashItem['type']) {
+  return page.findFlashbar()?.findItemsByType(type)[0];
+}
+
+function expectSuccess(message: string) {
+  const content = flashItem('success')?.findContent()?.getElement();
+  expect(content).toBeVisible();
+  expect(content).toHaveTextContent(message);
 }
 
 function pendingAnswer<T>() {
@@ -100,15 +121,13 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('Enabled')).toBeVisible();
-    expectField('Automatic rotation', 'Enabled');
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     expectField('Rotation period', '90 days');
     expectField('Next rotation date', creationDateText(nextDate));
-    await expectRotation('On-demand', rotationDate);
+    await waitFor(() => expectRotation('On-demand', rotationDate));
 
     click('Next page');
-    await expectRotation('Automatic', earlier);
-    expect(screen.queryByText('On-demand')).toBeNull();
+    await waitFor(() => expectRotation('Automatic', earlier));
     expect(
       send.mock.calls.find(
         ([command]) => command instanceof ListKeyRotationsCommand && command.input.Marker === 'older-rotations',
@@ -134,10 +153,14 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('No completed rotations')).toBeVisible();
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => {
+      const empty = page.findTable()?.findEmptySlot()?.getElement();
+      expect(empty).toBeVisible();
+      expect(empty).toHaveTextContent('No completed rotations');
+    });
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     click('Rotate now');
-    expect(await screen.findByText('On-demand rotation requested.')).toBeVisible();
+    await waitFor(() => expectSuccess('On-demand rotation requested.'));
     await waitFor(() => {
       expect(send.mock.calls.filter(([command]) => command instanceof GetKeyRotationStatusCommand)).toHaveLength(2);
       expect(send.mock.calls.filter(([command]) => command instanceof ListKeyRotationsCommand)).toHaveLength(2);
@@ -150,14 +173,14 @@ describe('Key rotation', () => {
     await act(() =>
       history.resolve({ $metadata: {}, Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] }),
     );
-    await expectRotation('On-demand', rotationDate);
+    await waitFor(() => expectRotation('On-demand', rotationDate));
     expect(screen.getByText('Loading rotation settings…')).toBeVisible();
-    expect(screen.getByText('On-demand rotation requested.')).toBeVisible();
+    expectSuccess('On-demand rotation requested.');
 
     await act(() => settings.resolve({ $metadata: {}, ...enabledSettings }));
-    expect(await screen.findByText('Enabled')).toBeVisible();
-    expect(screen.getByText('On-demand')).toBeVisible();
-    expect(screen.getByText('On-demand rotation requested.')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    expectRotation('On-demand', rotationDate);
+    expectSuccess('On-demand rotation requested.');
   });
 
   it('preserves the settings and shows the reason when rotation is refused for the key state', async () => {
@@ -174,15 +197,19 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     click('Rotate now');
 
-    expect(await screen.findByText('RotateKeyOnDemand failed')).toBeVisible();
-    expect(screen.getByText(new RegExp(reason))).toBeVisible();
+    await waitFor(() =>
+      expect(flashItem('error')?.findHeader()?.getElement()).toHaveTextContent('RotateKeyOnDemand failed'),
+    );
+    const content = flashItem('error')?.findContent()?.getElement();
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent(reason);
     expectField('Automatic rotation', 'Enabled');
     expectField('Rotation period', '90 days');
     expectField('Next rotation date', creationDateText(nextDate));
-    expect(screen.queryByText('On-demand rotation requested.')).toBeNull();
+    expect(flashItem('success')).toBeUndefined();
   });
 
   it('enables and disables automatic rotation and shows the settings returned after each action', async () => {
@@ -198,13 +225,13 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('Disabled')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Disabled'));
     click('Enable automatic rotation');
-    expect(await screen.findByText('Automatic rotation enabled.')).toBeVisible();
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => expectSuccess('Automatic rotation enabled.'));
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     click('Disable automatic rotation');
-    expect(await screen.findByText('Automatic rotation disabled.')).toBeVisible();
-    expect(await screen.findByText('Disabled')).toBeVisible();
+    await waitFor(() => expectSuccess('Automatic rotation disabled.'));
+    await waitFor(() => expectField('Automatic rotation', 'Disabled'));
     expect(send.mock.calls.find(([command]) => command instanceof EnableKeyRotationCommand)).toEqual([
       expect.objectContaining({ input: { KeyId: keyId } }),
       { abortSignal: expect.any(AbortSignal) },
@@ -228,14 +255,16 @@ describe('Key rotation', () => {
     });
     open('RSA_2048');
 
-    expect(await screen.findByText('Disabled')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Disabled'));
     click(button);
 
-    expect(await screen.findByText(`${operation} failed`)).toBeVisible();
-    expect(screen.getByText(refusal).parentElement).toHaveTextContent(`${refusal}: ${message}`);
-    expect(screen.getByText('RSA_2048').parentElement).toHaveTextContent(
-      'The emulator does not support this rotation operation on this RSA_2048 key.',
+    await waitFor(() =>
+      expect(flashItem('error')?.findHeader()?.getElement()).toHaveTextContent(`${operation} failed`),
     );
+    const content = flashItem('error')?.findContent()?.getElement();
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent(`${refusal}: ${message}`);
+    expect(content).toHaveTextContent('The emulator does not support this rotation operation on this RSA_2048 key.');
   });
 
   it('leaves an unimplemented action visible and disables it without disabling other operations', async () => {
@@ -246,10 +275,14 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     click('Rotate now');
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for RotateKeyOnDemand/)).toBeVisible();
+    await waitFor(() =>
+      expect(flashItem('info')?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+    );
+    const content = flashItem('info')?.findContent()?.getElement();
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent('501 Not Implemented for RotateKeyOnDemand');
     expect(screen.getByRole('button', { name: 'Rotate now' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
   });
@@ -265,7 +298,7 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
     const rotate = screen.getByRole('button', { name: 'Rotate now' });
     rotate.focus();
     await user.keyboard('{Enter}{Enter}');
@@ -276,9 +309,14 @@ describe('Key rotation', () => {
 
     await act(() => reply.resolve(failure));
 
-    expect(await screen.findByText('Not implemented by the emulator')).toHaveFocus();
-    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByText('Not implemented by the emulator')).toBeNull();
+    const notice = flashItem('info');
+    const header = notice?.findHeader()?.getElement();
+    const dismiss = notice?.findDismissButton()?.getElement();
+    if (!header || !dismiss) throw new Error('Expected a dismissible rotation result');
+    expect(within(header).getByText('Not implemented by the emulator')).toHaveFocus();
+    expect(dismiss).toHaveAccessibleName('Dismiss');
+    await user.click(dismiss);
+    expect(flashItem('info')).toBeUndefined();
     expect(rotate).toBeDisabled();
     expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
     expect(screen.getByText('The emulator does not implement RotateKeyOnDemand.')).toBeVisible();
