@@ -247,7 +247,12 @@ describe('key labels', () => {
       );
       const { rerender } = render(tree(connection));
 
-      expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+      await waitFor(() => {
+        const details = screen.getByRole('tabpanel', { name: 'Details' });
+        const metadata = createWrapper(details).findHeader()?.findHeadingText().getElement();
+        expect(metadata).toBeVisible();
+        expect(metadata).toHaveTextContent(/^Key metadata$/);
+      });
       await userEvent.click(screen.getByRole('tab', { name: 'Labels' }));
       const panel = screen.getByRole('tabpanel', { name: 'Labels' });
       const regions = [...panel.querySelectorAll('[aria-live="polite"][aria-atomic="true"]')];

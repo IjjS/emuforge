@@ -602,7 +602,20 @@ describe.each([
       </QueryClientProvider>
     );
     const { rerender } = render(view(reconnected));
-    expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+    await waitFor(() => {
+      const metadata = page
+        .findContentLayout()
+        ?.findContent()
+        .findTabs()
+        ?.findTabContent()
+        ?.findContainer()
+        ?.findHeader()
+        ?.findHeader()
+        ?.findHeadingText()
+        .getElement();
+      expect(metadata).toBeVisible();
+      expect(metadata).toHaveTextContent('Key metadata');
+    });
     const rotationTab = screen.getByRole('tab', { name: 'Rotation' });
     rotationTab.focus();
     await user.keyboard('{Enter}');
@@ -635,8 +648,13 @@ describe.each([
     retry.focus();
     await user.keyboard('{Enter}');
     await waitFor(() => {
-      const heading = panel.getByRole('heading', { name: title });
+      const headerSlot =
+        command === GetKeyRotationStatusCommand
+          ? scope.findContainer()?.findHeader()
+          : scope.findTable()?.findHeaderSlot();
+      const heading = headerSlot?.findHeader()?.findHeadingText().getElement();
       expect(heading).toBeVisible();
+      expect(heading).toHaveTextContent(title);
       expect(heading).toContainElement(document.activeElement as HTMLElement);
       expect(panel.queryByRole('button', { name: 'Retry' })).toBeNull();
       expect(announcer).toBeEmptyDOMElement();
