@@ -9,7 +9,7 @@ import {
   type RequestFailure,
 } from '../../../../../lib/aws/request';
 import { actionFailureItem } from '../../components/failure-states';
-import { usePageFlash } from '../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../components/page-flash';
 import { noEndpoint } from '../../components/use-token-listing';
 import { OPERATIONS } from './api';
 import {
@@ -66,6 +66,7 @@ export function useInstanceContentChange(endpoint: string | undefined, id: strin
   const flash = usePageFlash();
   const active = useRef<AbortController | undefined>(undefined);
   const [pending, setPending] = useState(false);
+  const [refusal, setRefusal] = useState<FlashItem>();
   useEffect(() => () => active.current?.abort(), []);
 
   const save = async (
@@ -83,6 +84,7 @@ export function useInstanceContentChange(endpoint: string | undefined, id: strin
     if (active.current !== undefined || endpoint === undefined) return;
     const controller = new AbortController();
     active.current = controller;
+    setRefusal(undefined);
     setPending(true);
     try {
       await changeInstanceContent(endpoint, id, change, controller.signal);
@@ -99,8 +101,14 @@ export function useInstanceContentChange(endpoint: string | undefined, id: strin
     } catch (error) {
       if (controller.signal.aborted) return;
       const failure = requestFailure(contentOperation(change), error);
-      flash.show([contentFailureItem(failure, label, endpoint)]);
-      onSettled(failure);
+      const item = contentFailureItem(failure, label, endpoint);
+      if (failure.kind === 'not-implemented') {
+        flash.show([item]);
+        onSettled(failure);
+      } else {
+        setRefusal(item);
+        flash.show([{ ...item, announcedInDialog: true }]);
+      }
     } finally {
       if (!controller.signal.aborted) {
         active.current = undefined;
@@ -109,5 +117,11 @@ export function useInstanceContentChange(endpoint: string | undefined, id: strin
     }
   };
 
-  return { pending, save, canDismiss: () => active.current === undefined };
+  return {
+    pending,
+    refusal,
+    save,
+    canDismiss: () => active.current === undefined,
+    clearRefusal: () => setRefusal(undefined),
+  };
 }
