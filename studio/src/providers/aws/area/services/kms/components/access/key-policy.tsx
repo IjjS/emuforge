@@ -75,19 +75,24 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
   };
 }
 
-export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessProps) {
+export function KeyPolicy({ connection, keyId, writesEnabled = true, keyMissing = false }: AccessProps) {
   const policy = useDefaultPolicy(connection, keyId);
   const failure = policy.failure;
   const recovery =
     failure === undefined
       ? undefined
       : readFailureState(failure, connection, `default key policy (${failure.operation})`);
-  const action = useAccessAction(connection, writesEnabled);
+  const action = useAccessAction(connection, writesEnabled, keyMissing);
   const [draft, setDraft] = useState<{ original: string; text: string }>();
   const [syntaxError, setSyntaxError] = useState<{ message: string }>();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const textarea = useRef<TextareaProps.Ref>(null);
   const pending = action.pending === putPolicy;
+
+  if (keyMissing) {
+    if (draft !== undefined) setDraft(undefined);
+    if (confirmDiscard) setConfirmDiscard(false);
+  }
 
   useLayoutEffect(() => {
     if (syntaxError !== undefined) textarea.current?.focus();
@@ -175,7 +180,7 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessPro
           </Box>
         )}
       </SpaceBetween>
-      {draft !== undefined && (
+      {!keyMissing && draft !== undefined && (
         <AccessDialog
           title="Edit key policy"
           submitLabel="Save policy"
@@ -203,7 +208,7 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessPro
         </AccessDialog>
       )}
       <DiscardDialog
-        visible={confirmDiscard}
+        visible={!keyMissing && confirmDiscard}
         onAnswer={(answer) => {
           setConfirmDiscard(false);
           if (answer === 'discard') setDraft(undefined);
