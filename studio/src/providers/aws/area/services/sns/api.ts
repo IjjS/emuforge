@@ -11,12 +11,16 @@ import {
   GetSubscriptionAttributesCommand,
   GetTopicAttributesCommand,
   ListSubscriptionsByTopicCommand,
+  ListTagsForResourceCommand,
   ListTopicsCommand,
   PublishCommand,
   SetSubscriptionAttributesCommand,
+  SetTopicAttributesCommand,
   SNSClient,
   SubscribeCommand,
+  TagResourceCommand,
   UnsubscribeCommand,
+  UntagResourceCommand,
   type MessageAttributeValue,
 } from '@aws-sdk/client-sns';
 import {
@@ -42,6 +46,10 @@ import { permissionStatementId, policySids, queuePolicyWithStatement, readPolicy
 export const OPERATIONS = {
   listTopics: 'ListTopics',
   getTopicAttributes: 'GetTopicAttributes',
+  setTopicAttributes: 'SetTopicAttributes',
+  listTagsForResource: 'ListTagsForResource',
+  tagResource: 'TagResource',
+  untagResource: 'UntagResource',
   listSubscriptionsByTopic: 'ListSubscriptionsByTopic',
   getSubscriptionAttributes: 'GetSubscriptionAttributes',
   setSubscriptionAttributes: 'SetSubscriptionAttributes',
@@ -172,6 +180,8 @@ export interface Topic {
   arn: string;
   /** `DisplayName`; absent when empty. */
   displayName?: string;
+  /** The raw `Policy` document. */
+  policy?: string;
   fifo: boolean;
   contentBasedDeduplication: boolean;
   /** `SubscriptionsConfirmed`. */
@@ -206,6 +216,10 @@ export async function getTopic(endpoint: string, arn: string, signal: AbortSigna
   if (displayName !== undefined) {
     topic.displayName = displayName;
   }
+  const policy = attributes['Policy'];
+  if (policy !== undefined) {
+    topic.policy = policy;
+  }
   const confirmed = wholeNumber(attributes['SubscriptionsConfirmed']);
   if (confirmed !== undefined) {
     topic.confirmed = confirmed;
@@ -215,6 +229,67 @@ export async function getTopic(endpoint: string, arn: string, signal: AbortSigna
     topic.pending = pending;
   }
   return { found: true, topic };
+}
+
+export interface TopicSetting {
+  name: 'DisplayName' | 'Policy';
+  value: string;
+}
+
+export async function setTopicSetting(
+  endpoint: string,
+  arn: string,
+  setting: TopicSetting,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.setTopicAttributes,
+    (abortSignal) =>
+      snsClient(endpoint).send(
+        new SetTopicAttributesCommand({
+          TopicArn: arn,
+          AttributeName: setting.name,
+          AttributeValue: setting.value,
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+export interface TopicTag {
+  key: string;
+  value: string;
+}
+
+export async function listTopicTags(endpoint: string, arn: string, signal: AbortSignal): Promise<TopicTag[]> {
+  const output = await sendRequest(
+    OPERATIONS.listTagsForResource,
+    (abortSignal) => snsClient(endpoint).send(new ListTagsForResourceCommand({ ResourceArn: arn }), { abortSignal }),
+    signal,
+  );
+  return (output.Tags ?? []).flatMap(({ Key, Value }) => (Key === undefined ? [] : [{ key: Key, value: Value ?? '' }]));
+}
+
+export async function tagTopic(endpoint: string, arn: string, tag: TopicTag, signal: AbortSignal): Promise<void> {
+  await sendRequest(
+    OPERATIONS.tagResource,
+    (abortSignal) =>
+      snsClient(endpoint).send(
+        new TagResourceCommand({ ResourceArn: arn, Tags: [{ Key: tag.key, Value: tag.value }] }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+export async function untagTopic(endpoint: string, arn: string, key: string, signal: AbortSignal): Promise<void> {
+  await sendRequest(
+    OPERATIONS.untagResource,
+    (abortSignal) =>
+      snsClient(endpoint).send(new UntagResourceCommand({ ResourceArn: arn, TagKeys: [key] }), { abortSignal }),
+    signal,
+  );
 }
 
 /** What "Create topic" sends. */

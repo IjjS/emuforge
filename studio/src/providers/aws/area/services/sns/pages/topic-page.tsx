@@ -9,13 +9,13 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -25,13 +25,38 @@ import { DeleteTopicDialog } from '../components/delete-topic-dialog';
 import { PublishTab } from '../components/publish-tab';
 import type { FilterPolicyRecovery } from '../components/subscription-settings';
 import { SubscriptionsTab, type SubscriptionsTabProps } from '../components/subscriptions-tab';
-import { NONE, publishTabHref, TAB_PARAMETER, tabOf, topicHref, topicName, TOPICS_PATH } from '../format';
+import {
+  TopicOperationUnavailable,
+  TopicSettings,
+  type TopicSettingsOperation,
+  type TopicSettingsProps,
+} from '../components/topic-settings';
+import {
+  NONE,
+  publishTabHref,
+  settingsTabHref,
+  TAB_PARAMETER,
+  tabOf,
+  topicHref,
+  topicName,
+  TOPICS_PATH,
+} from '../format';
 import { EMPTY_FORM, type PublishForm, type PublishResult } from '../publish-form';
-import { failureOf, useDeleteTopic, usePageSignal, useSetSubscriptionSetting, useTopic } from '../queries';
+import {
+  failureOf,
+  useDeleteTopic,
+  usePageSignal,
+  useSetSubscriptionSetting,
+  useSetTopicSetting,
+  useTagTopic,
+  useTopic,
+  useTopicTags,
+  useUntagTopic,
+} from '../queries';
 
 // A topic's page, S3 (issue 536, design task 1 step 2, task 3 step 1, task 5 step 2): its header with "Refresh" and
-// "Delete", "Topic details" from `GetTopicAttributes`, then the tabs "Subscriptions" and "Publish", addressed by the
-// query of the topic's one address (`?tab=publish`), so the page stays mounted across them and keeps the publish
+// "Delete", "Topic details" from `GetTopicAttributes`, then the tabs addressed by the query
+// of the topic’s one address, so the page stays mounted across them and keeps the publish
 // form's text and its last result. A topic the emulator does not hold shows "Topic not found" in their place.
 
 const REFRESHED = 'Topic refreshed';
@@ -104,6 +129,7 @@ function NotFound() {
 
 interface TopicTabsProps extends Pick<SubscriptionsTabProps, 'onSaveSetting' | 'settingsSave'> {
   topic: Topic;
+  settings: ReactNode;
   arn: string;
   connection: AreaConnection;
   onTopicChanged: () => void;
@@ -113,9 +139,10 @@ interface TopicTabsProps extends Pick<SubscriptionsTabProps, 'onSaveSetting' | '
   onResultChange: (result: PublishResult | undefined) => void;
 }
 
-/** "Subscriptions" and "Publish": the active one read from `?tab=`; choosing one changes the query alone. */
+/** Choosing a topic tab changes only the query. */
 function TopicTabs({
   topic,
+  settings,
   arn,
   connection,
   onTopicChanged,
@@ -170,6 +197,12 @@ function TopicTabs({
         />
       ),
     },
+    {
+      id: 'settings',
+      label: 'Settings',
+      href: settingsTabHref(arn),
+      content: settings,
+    },
   ];
   return (
     <Tabs
@@ -193,12 +226,48 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   const name = topicName(arn);
   const client = useQueryClient();
   const [announcement, announce] = useAnnouncer();
+  const [writeRejection, setWriteRejection] = useState<{ id: number; item: FlashItem }>();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
-  const reading = useTopic(connection.engineOrigin, arn);
+  const [searchParams] = useSearchParams();
+  const inSettings = tabOf(searchParams.get(TAB_PARAMETER)) === 'settings';
+  const endpoint = connection.engineOrigin;
+  const scope = JSON.stringify([endpoint, arn]);
+  const currentScope = useRef(scope);
+  useLayoutEffect(() => {
+    currentScope.current = scope;
+  }, [scope]);
+  const [unavailableOperations, setUnavailableOperations] = useState<ReadonlySet<string>>(() => new Set());
+  const operationKey = (operation: string) => JSON.stringify([scope, operation]);
+  const rememberUnavailable = (operation: string) => {
+    const key = operationKey(operation);
+    setUnavailableOperations((current) => new Set([...current, key]));
+  };
+  const attributesUnavailable = inSettings && unavailableOperations.has(operationKey(OPERATIONS.getTopicAttributes));
+  const reading = useTopic(endpoint, arn, !attributesUnavailable);
   const { value: read, failure, refresh } = reading;
   const topic = read?.found === true ? read.topic : undefined;
-  const removeTopic = useDeleteTopic(connection.engineOrigin);
+  const tagsUnavailable = unavailableOperations.has(operationKey(OPERATIONS.listTagsForResource));
+  const tags = useTopicTags(
+    endpoint,
+    arn,
+    inSettings && topic !== undefined && !attributesUnavailable && !tagsUnavailable,
+  );
+  const operationUnavailable = attributesUnavailable || (inSettings && failure?.kind === 'not-implemented');
+  if (inSettings && !attributesUnavailable && failure?.kind === 'not-implemented') {
+    rememberUnavailable(OPERATIONS.getTopicAttributes);
+  }
+  if (inSettings && !tagsUnavailable && tags.failure?.kind === 'not-implemented') {
+    rememberUnavailable(OPERATIONS.listTagsForResource);
+  }
+
+  const setTopicSetting = useSetTopicSetting(endpoint);
+  const tagTopic = useTagTopic(endpoint);
+  const untagTopic = useUntagTopic(endpoint);
+  const writes = [OPERATIONS.setTopicAttributes, OPERATIONS.tagResource, OPERATIONS.untagResource] as const;
+  const activeWrites = useRef(new Set<string>());
+  const [pendingWrites, setPendingWrites] = useState<ReadonlySet<string>>(() => new Set());
+  const removeTopic = useDeleteTopic(endpoint);
   const saveSetting = useSetSubscriptionSetting(connection.engineOrigin, arn);
   const savingSetting = useRef(false);
   const [pendingSetting, setPendingSetting] = useState<SubscriptionsTabProps['settingsSave']['pending']>();
@@ -236,7 +305,9 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
     setSeenConnected(connected);
     if (connected && (failure !== undefined || wasDown)) {
       setWasDown(false);
-      refresh();
+      if (!operationUnavailable) {
+        refresh();
+      }
     }
   }
 
@@ -248,9 +319,79 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   }, [refresh, client, arn]);
 
   const handleRefresh = () => {
+    if (operationUnavailable) {
+      return;
+    }
     setRefreshing(true);
     readAgain();
   };
+
+  const writeTopic = async (
+    operation: TopicSettingsOperation,
+    write: (signal: AbortSignal) => Promise<void>,
+    success: string,
+    action: string,
+  ): ReturnType<TopicSettingsProps['onSaveSetting']> => {
+    const key = operationKey(operation);
+    if (activeWrites.current.has(key) || unavailableOperations.has(key)) {
+      return { saved: false };
+    }
+
+    const signal = pageSignal();
+    activeWrites.current.add(key);
+    setPendingWrites(new Set(activeWrites.current));
+    try {
+      await write(signal);
+      if (signal.aborted || currentScope.current !== scope) {
+        return { saved: false };
+      }
+      setWriteRejection(undefined);
+      flash.show([{ type: 'success', content: success }]);
+      return { saved: true };
+    } catch (error) {
+      if (signal.aborted) {
+        return { saved: false };
+      }
+      const failure = failureOf(error, operation);
+      const item = actionFailureItem(failure, action, endpoint);
+      if (currentScope.current === scope) {
+        if (item.type === 'error') {
+          // The page announces the result without moving focus into the Flashbar.
+          flash.show([{ ...item, announcedInDialog: true }]);
+          setWriteRejection((previous) => ({ id: (previous?.id ?? 0) + 1, item }));
+        } else {
+          setWriteRejection(undefined);
+          flash.show([item]);
+        }
+      }
+      if (failure.kind === 'not-implemented') {
+        rememberUnavailable(operation);
+        return { saved: false };
+      }
+      return { saved: false, error: item };
+    } finally {
+      activeWrites.current.delete(key);
+      if (!signal.aborted) {
+        setPendingWrites(new Set(activeWrites.current));
+      }
+    }
+  };
+
+  const handleSaveTopicSetting: TopicSettingsProps['onSaveSetting'] = (setting) => {
+    const name = setting.name === 'DisplayName' ? 'Display name' : 'Access policy';
+    return writeTopic(
+      OPERATIONS.setTopicAttributes,
+      (signal) => setTopicSetting(arn, setting, signal),
+      `${name} saved.`,
+      `Save ${name.toLowerCase()}`,
+    );
+  };
+
+  const handleSaveTag: TopicSettingsProps['onSaveTag'] = (tag) =>
+    writeTopic(OPERATIONS.tagResource, (signal) => tagTopic(arn, tag, signal), 'Tag saved.', 'Save tag');
+
+  const handleRemoveTag: TopicSettingsProps['onRemoveTag'] = (key) =>
+    writeTopic(OPERATIONS.untagResource, (signal) => untagTopic(arn, key, signal), 'Tag removed.', 'Remove tag');
 
   const handleSaveSetting: SubscriptionsTabProps['onSaveSetting'] = async (subscriptionArn, setting, recovery) => {
     if (savingSetting.current || unavailableArns.has(subscriptionArn)) {
@@ -326,10 +467,23 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
   };
 
   let content;
-  if (failureState !== undefined) {
+  if (operationUnavailable) {
     content = (
       <Container>
-        <ReadFailure state={failureState} onRetry={refresh} />
+        <TopicOperationUnavailable operation={OPERATIONS.getTopicAttributes} />
+      </Container>
+    );
+  } else if (failureState !== undefined) {
+    content = (
+      <Container>
+        {inSettings && failure?.kind === 'access-denied' ? (
+          <SpaceBetween size="xxs">
+            <StatusIndicator type="error">{failureState.first}</StatusIndicator>
+            <Box>{failureState.detail}</Box>
+          </SpaceBetween>
+        ) : (
+          <ReadFailure state={failureState} onRetry={refresh} />
+        )}
       </Container>
     );
   } else if (read === undefined) {
@@ -348,6 +502,25 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
         <TopicDetails topic={topic} />
         <TopicTabs
           topic={topic}
+          settings={
+            <TopicSettings
+              key={scope}
+              topic={topic}
+              connection={connection}
+              tags={tags}
+              unavailable={
+                new Set(
+                  [...writes, OPERATIONS.listTagsForResource].filter((operation) =>
+                    unavailableOperations.has(operationKey(operation)),
+                  ),
+                )
+              }
+              pending={new Set(writes.filter((operation) => pendingWrites.has(operationKey(operation))))}
+              onSaveSetting={handleSaveTopicSetting}
+              onSaveTag={handleSaveTag}
+              onRemoveTag={handleRemoveTag}
+            />
+          }
           arn={arn}
           connection={connection}
           onTopicChanged={readAgain}
@@ -370,7 +543,12 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
             variant="h1"
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+                <Button
+                  iconName="refresh"
+                  ariaLabel="Refresh"
+                  disabled={operationUnavailable}
+                  onClick={handleRefresh}
+                />
                 {topic !== undefined && (
                   <Button
                     onClick={() => {
@@ -399,6 +577,13 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
         }}
       />
       {announcement}
+      <div className="aws-area-announcer" role="status" aria-atomic="true">
+        {writeRejection !== undefined && (
+          <span key={writeRejection.id}>
+            Error. {writeRejection.item.header} {writeRejection.item.content}
+          </span>
+        )}
+      </div>
     </>
   );
 }

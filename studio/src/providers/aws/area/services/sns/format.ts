@@ -19,8 +19,8 @@ export const CREATE_TOPIC_PATH = `${TOPICS_PATH}/create`;
 /** The query parameter that names a topic page's tab. */
 export const TAB_PARAMETER = 'tab';
 
-/** The tabs of a topic's page: "Subscriptions" at the page's own address, "Publish" at `?tab=publish`. */
-export type TopicTab = 'subscriptions' | 'publish';
+/** The topic tabs, with Subscriptions at the page’s own address. */
+export type TopicTab = 'subscriptions' | 'publish' | 'settings';
 
 /** S3, a topic's page: its ARN percent-encoded once as one segment below `topic/`. */
 export function topicHref(arn: string): string {
@@ -37,9 +37,14 @@ export function publishTabHref(arn: string): string {
   return `${topicHref(arn)}?${TAB_PARAMETER}=publish`;
 }
 
-/** The tab a value of `?tab=` names: `publish` names "Publish"; no value and any other "Subscriptions". */
+/** The Settings tab of the topic `arn`. */
+export function settingsTabHref(arn: string): string {
+  return `${topicHref(arn)}?${TAB_PARAMETER}=settings`;
+}
+
+/** Read the selected tab, defaulting to Subscriptions. */
 export function tabOf(value: string | null | undefined): TopicTab {
-  return value === 'publish' ? 'publish' : 'subscriptions';
+  return value === 'publish' || value === 'settings' ? value : 'subscriptions';
 }
 
 /** The suffix of a FIFO topic's name. */

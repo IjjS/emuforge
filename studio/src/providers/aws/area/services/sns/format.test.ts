@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { endpointName, publishTabHref, subscribeHref, tabOf, topicHref, topicName, topicType } from './format';
+import {
+  endpointName,
+  publishTabHref,
+  settingsTabHref,
+  subscribeHref,
+  tabOf,
+  topicHref,
+  topicName,
+  topicType,
+} from './format';
 
 const ARN = 'arn:aws:sns:us-east-1:000000000000:orders';
 
@@ -28,6 +37,16 @@ describe('format', () => {
     expect(tabOf('')).toBe('subscriptions');
     expect(tabOf('Publish')).toBe('subscriptions');
     expect(tabOf('subscriptions')).toBe('subscriptions');
+  });
+
+  it('addresses Settings with the topic ARN encoded once', () => {
+    expect(settingsTabHref(ARN)).toBe(
+      '/aws/sns/topics/topic/arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders?tab=settings',
+    );
+  });
+
+  it('selects Settings from the settings parameter', () => {
+    expect(tabOf('settings')).toBe('settings');
   });
 
   it("an endpoint's name from a queue's or a function's ARN", () => {

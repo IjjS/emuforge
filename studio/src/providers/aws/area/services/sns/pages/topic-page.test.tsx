@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,21 +14,34 @@ import * as api from '../api';
 import type { PublishTabProps } from '../components/publish-tab';
 import type { SubscriptionsTabProps } from '../components/subscriptions-tab';
 import type { PublishForm } from '../publish-form';
+import { useTopicListing } from '../queries';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case and its two tabs replaced by
 // stand-ins that record what the page hands them (`api.test.ts` proves the calls against a fake engine).
 
 function hold<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((complete, fail) => {
     resolve = complete;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, getTopic: vi.fn(), deleteTopic: vi.fn(), listTopics: vi.fn(), setSubscriptionSetting: vi.fn() };
+  return {
+    ...real,
+    getTopic: vi.fn(),
+    deleteTopic: vi.fn(),
+    listTopics: vi.fn(),
+    setSubscriptionSetting: vi.fn(),
+    listTopicTags: vi.fn(),
+    setTopicSetting: vi.fn(),
+    tagTopic: vi.fn(),
+    untagTopic: vi.fn(),
+  };
 });
 
 const handed: { subscriptions?: SubscriptionsTabProps; publish?: PublishTabProps } = {};
@@ -161,7 +175,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path: string) {
+function TopicsListObserver() {
+  const listing = useTopicListing(ENGINE);
+  return <output>{listing.items?.join(', ')}</output>;
+}
+
+function open(path: string, observeList = false) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -173,6 +192,7 @@ function open(path: string) {
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
+      {observeList && <TopicsListObserver />}
     </QueryClientProvider>,
   );
   return router;
@@ -458,4 +478,435 @@ it('reports a successful settings write after a refresh finds the topic missing'
     expect(item?.findHeader()?.getElement()).toHaveTextContent('Subscription settings updated');
     expect(item?.findContent()?.getElement()).toHaveTextContent(`${ARN}:subscription`);
   });
+});
+
+describe('Settings on a topic page', () => {
+  const settingsPath = `${pathOf(ARN)}?tab=settings`;
+  const policy = '{\n  "Statement": []\n}';
+  const fixtureTag = { key: 'color', value: 'red' };
+  const topicContent = () => PAGE.findContentLayout()?.findContent();
+  const settingsContent = () => (activeTab() === 'Settings' ? PAGE.findTabs()?.findTabContent() : null);
+  const settingsHeading = (label: string) =>
+    settingsContent()
+      ?.findAllHeaders()
+      .map((header) => header.findHeadingText())
+      .find((heading) => text(heading.getElement()) === label)
+      ?.getElement();
+
+  const refreshButton = () => {
+    const button = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton()?.getElement();
+    if (!button) {
+      throw new Error('Missing topic Refresh button');
+    }
+    return button;
+  };
+
+  const unavailable = (operation: string) => new RequestError({ kind: 'not-implemented', operation });
+  const expectUnavailable = (operation: string) =>
+    waitFor(() => {
+      const scope = operation === 'GetTopicAttributes' ? topicContent() : settingsContent();
+      const explanation = `The emulator answered 501 Not Implemented for ${operation}.`;
+      const alert = scope?.findAllAlerts().find((item) => text(item.findContent().getElement()) === explanation);
+      expect(alert?.getElement()).toBeVisible();
+      expect(alert?.findHeader()?.getElement()).toBeVisible();
+      expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(alert?.findContent().getElement()).toBeVisible();
+      expect(alert?.findContent().getElement()).toHaveTextContent(explanation);
+    });
+
+  const colorTagCell = () =>
+    waitFor(() => {
+      const table = settingsContent()?.findTable();
+      const cell = table?.findBodyCell(1, 1);
+      if (!cell) {
+        throw new Error('Missing the tag cell');
+      }
+      expect(table?.findRows()).toHaveLength(1);
+      expect(within(cell.getElement()).getByText('color')).toBeVisible();
+      return cell;
+    });
+
+  const expectLoadingTopic = () =>
+    waitFor(() => {
+      const status = topicContent()
+        ?.findAllStatusIndicators()
+        .find((indicator) => text(indicator.getElement()) === 'Loading topic');
+      expect(status?.getElement()).toBeVisible();
+      expect(settingsContent()).toBeNull();
+    });
+
+  async function tagRemovalModal() {
+    return waitFor(() => {
+      const modal = PAGE.findModal();
+      if (!modal) {
+        throw new Error('Missing the tag removal modal');
+      }
+      expect(modal.getElement()).toBeVisible();
+      expect(modal.findHeader().getElement()).toHaveTextContent('Remove tag');
+      return modal;
+    });
+  }
+
+  function removalControls(modal: Awaited<ReturnType<typeof tagRemovalModal>>) {
+    const confirmation = modal.findContent().findInput()?.findNativeInput().getElement();
+    const remove = modal.findFooter()?.findAllButtons()[1]?.getElement();
+    if (!confirmation || !remove) {
+      throw new Error('Missing tag removal controls');
+    }
+    expect(remove).toHaveTextContent('Remove');
+    return { confirmation, remove };
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.getTopic).mockReset().mockResolvedValue(standard({ policy }));
+    vi.mocked(api.listTopicTags).mockReset().mockResolvedValue([fixtureTag]);
+    vi.mocked(api.listTopics)
+      .mockReset()
+      .mockResolvedValue({ arns: [ARN] });
+    vi.mocked(api.setTopicSetting).mockReset().mockResolvedValue();
+    vi.mocked(api.tagTopic).mockReset().mockResolvedValue();
+    vi.mocked(api.untagTopic).mockReset().mockResolvedValue();
+  });
+
+  it('opens Settings directly for the ARN in the path', async () => {
+    open(settingsPath);
+    await waitFor(() => {
+      expect(settingsHeading('Access policy')).toBeVisible();
+    });
+    expect(activeTab()).toBe('Settings');
+    expect(api.getTopic).toHaveBeenCalledWith(ENGINE, ARN, expect.any(AbortSignal));
+    const [edit, remove] = (await colorTagCell()).findAllButtons();
+    expect(edit?.getElement()).toBeVisible();
+    expect(edit?.getElement()).toHaveAccessibleName('Edit tag color');
+    expect(remove?.getElement()).toBeVisible();
+    expect(remove?.getElement()).toHaveAccessibleName('Remove tag color');
+    expect(api.listTopicTags).toHaveBeenCalledWith(ENGINE, ARN, expect.any(AbortSignal));
+  });
+
+  it('chooses Settings for the same ARN from the default topic page', async () => {
+    const router = open(pathOf(ARN));
+    await loaded();
+    expect(activeTab()).toBe('Subscriptions');
+    expect(api.listTopicTags).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    await waitFor(() => {
+      expect(settingsHeading('Access policy')).toBeVisible();
+    });
+    expect(router.state.location.pathname + router.state.location.search).toBe(settingsPath);
+    expect(api.getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables Refresh and omits Retry when Settings cannot read topic attributes', async () => {
+    vi.mocked(api.getTopic).mockRejectedValue(unavailable('GetTopicAttributes'));
+    open(settingsPath);
+    await expectUnavailable('GetTopicAttributes');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(refreshButton()).toBeDisabled();
+    fireEvent.click(refreshButton());
+    expect(api.getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an unavailable topic read disabled after reconnecting', async () => {
+    vi.mocked(api.getTopic).mockRejectedValue(unavailable('GetTopicAttributes'));
+    open(settingsPath);
+    await expectUnavailable('GetTopicAttributes');
+    connection.set(notStartedResult());
+    connection.set(connectedResult());
+    await expectUnavailable('GetTopicAttributes');
+    expect(refreshButton()).toBeDisabled();
+    expect(api.getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['refresh', 'reconnect'])(
+    'retains an unavailable tag read through %s and Settings remount',
+    async (trigger) => {
+      vi.mocked(api.listTopicTags).mockRejectedValue(unavailable('ListTagsForResource'));
+      open(settingsPath);
+      await expectUnavailable('ListTagsForResource');
+      const detail = hold<api.TopicRead>();
+      vi.mocked(api.getTopic).mockReturnValueOnce(detail.promise);
+      if (trigger === 'refresh') {
+        fireEvent.click(refreshButton());
+      } else {
+        connection.set(notStartedResult());
+        connection.set(connectedResult());
+      }
+      await expectLoadingTopic();
+      await act(async () => {
+        detail.resolve(standard({ policy }));
+      });
+      await expectUnavailable('ListTagsForResource');
+      expect(screen.getByRole('button', { name: 'Add tag' })).toBeDisabled();
+      expect(api.getTopic).toHaveBeenCalledTimes(2);
+      expect(api.listTopicTags).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  const saveChanges = () => {
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    save.focus();
+    fireEvent.click(save);
+  };
+  const editAttribute = (label: string, value: string) => {
+    fireEvent.click(screen.getByRole('button', { name: `Edit ${label.toLowerCase()}` }));
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
+    saveChanges();
+  };
+  const saveTag = () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tag color' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value' }), { target: { value: 'blue' } });
+    saveChanges();
+  };
+  const removeTag = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tag color' }));
+    const { confirmation, remove } = removalControls(await tagRemovalModal());
+    confirmation.focus();
+    fireEvent.change(confirmation, { target: { value: 'remove' } });
+    fireEvent.click(remove);
+  };
+
+  const writeCases = [
+    {
+      operation: 'SetTopicAttributes',
+      heading: 'Display name',
+      write: api.setTopicSetting,
+      attempt: () => editAttribute('Display name', 'Rejected name'),
+      disabledActions: ['Edit display name', 'Edit access policy'],
+      supportedAction: 'Edit tag color',
+      useSupported: saveTag,
+      success: 'Tag saved.',
+    },
+    {
+      operation: 'TagResource',
+      heading: 'Tags',
+      write: api.tagTopic,
+      attempt: saveTag,
+      disabledActions: ['Add tag', 'Edit tag color'],
+      supportedAction: 'Remove tag color',
+      useSupported: removeTag,
+      success: 'Tag removed.',
+    },
+    {
+      operation: 'UntagResource',
+      heading: 'Tags',
+      write: api.untagTopic,
+      attempt: removeTag,
+      disabledActions: ['Remove tag color'],
+      supportedAction: 'Edit tag color',
+      useSupported: saveTag,
+      success: 'Tag saved.',
+    },
+  ];
+
+  it.each(writeCases)(
+    'retains $operation unavailability after a header refresh and Settings remount',
+    async ({ operation, heading, write, attempt, disabledActions, supportedAction, useSupported, success }) => {
+      vi.mocked(write).mockRejectedValueOnce(unavailable(operation));
+      open(settingsPath);
+      await colorTagCell();
+      await attempt();
+      await expectUnavailable(operation);
+      expect(settingsHeading(heading)).toContainElement(document.activeElement as HTMLElement);
+      const flash = PAGE.findFlashbar()?.findItemsByType('info') ?? [];
+      expect(flash).toHaveLength(1);
+      expect(flash[0]?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(flash[0]?.findContent()?.getElement()).toHaveTextContent(operation);
+      flash[0]?.findDismissButton()?.click();
+
+      const detail = hold<api.TopicRead>();
+      vi.mocked(api.getTopic).mockReturnValueOnce(detail.promise);
+      fireEvent.click(refreshButton());
+      await expectLoadingTopic();
+      await act(async () => {
+        detail.resolve(standard({ policy }));
+      });
+
+      await expectUnavailable(operation);
+      expect(PAGE.findFlashbar()?.findItemsByType('info') ?? []).toHaveLength(0);
+      for (const name of disabledActions) {
+        const button = await screen.findByRole('button', { name });
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: supportedAction })).toBeEnabled();
+      await useSupported();
+      expect(await screen.findByText(success)).toBeVisible();
+      expect(write).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(writeCases)('leaves focus elsewhere when $operation returns 501', async ({ operation, write, attempt }) => {
+    const response = hold<undefined>();
+    vi.mocked(write).mockReturnValueOnce(response.promise);
+    open(settingsPath);
+    await colorTagCell();
+    const refresh = refreshButton();
+    await attempt();
+    refresh.focus();
+    expect(refresh).toHaveFocus();
+    await act(async () => {
+      response.reject(unavailable(operation));
+    });
+    await expectUnavailable(operation);
+    expect(refresh).toHaveFocus();
+  });
+
+  it.each([
+    { destination: 'Tags', moveOutside: false },
+    { destination: 'Refresh', moveOutside: true },
+  ])(
+    'keeps the focused Remove path stable through pending and 501, ending at $destination',
+    async ({ moveOutside }) => {
+      const response = hold<undefined>();
+      vi.mocked(api.untagTopic).mockReturnValueOnce(response.promise);
+      open(settingsPath);
+      const user = userEvent.setup();
+      const refresh = refreshButton();
+      await user.click(await screen.findByRole('button', { name: 'Remove tag color' }));
+      const modal = await tagRemovalModal();
+      const { confirmation, remove } = removalControls(modal);
+      await user.type(confirmation, 'remove');
+      await user.tab();
+      await user.tab();
+      expect(remove).toHaveFocus();
+
+      await user.keyboard('{Enter}');
+      expect(remove).toBeDisabled();
+      expect(remove).not.toHaveFocus();
+      expect(within(modal.findContent().getElement()).getByText(/from this topic/)).toHaveFocus();
+      await user.keyboard('{Enter}');
+      confirmation.focus();
+      await user.keyboard('{Enter}');
+      expect(api.untagTopic).toHaveBeenCalledExactlyOnceWith(ENGINE, ARN, 'color', expect.any(AbortSignal));
+
+      if (moveOutside) {
+        refresh.focus();
+        expect(refresh).toHaveFocus();
+      }
+      await act(async () => {
+        response.reject(unavailable('UntagResource'));
+      });
+      await expectUnavailable('UntagResource');
+      expect(PAGE.findModal()).toBeNull();
+      if (moveOutside) {
+        expect(refresh).toHaveFocus();
+      } else {
+        expect(settingsHeading('Tags')).toContainElement(document.activeElement as HTMLElement);
+      }
+      expect(screen.getByRole('button', { name: 'Remove tag color' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Edit tag color' })).toBeEnabled();
+      expect(api.untagTopic).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('announces the first rejected write once in a mounted live region and keeps the draft and reason', async () => {
+    const message = 'Invalid parameter: Policy Error: null';
+    vi.mocked(api.setTopicSetting).mockRejectedValueOnce(
+      new RequestError({
+        kind: 'other',
+        operation: 'SetTopicAttributes',
+        code: 'InvalidParameter',
+        message,
+      }),
+    );
+    open(settingsPath);
+    await colorTagCell();
+    expect(PAGE.findFlashbar()).toBeNull();
+    const mountedStatuses = screen.getAllByRole('status');
+
+    editAttribute('Access policy', 'invalid');
+    const content = settingsContent();
+    if (!content) {
+      throw new Error('Missing Settings content');
+    }
+    const panel = within(content.getElement());
+    await waitFor(() => {
+      const alert = content.findAlert();
+      expect(alert?.findHeader()?.getElement()).toHaveTextContent('Save access policy failed');
+      const detail = alert?.findContent().getElement();
+      expect(detail).toBeVisible();
+      expect(detail).toHaveTextContent('InvalidParameter');
+      expect(detail).toHaveTextContent(message);
+    });
+    expect(panel.getByRole('textbox', { name: 'Access policy' })).toHaveValue('invalid');
+    expect(panel.getByRole('button', { name: 'Save changes' })).toHaveFocus();
+
+    const alerts = PAGE.findFlashbar()?.findItemsByType('error') ?? [];
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.getElement()).not.toHaveAttribute('role', 'alert');
+    expect(alerts[0]?.getElement()).toHaveTextContent(message);
+    const matches = screen.getAllByRole('status').filter((element) => element.textContent.includes(message));
+    expect(matches).toHaveLength(1);
+    expect(mountedStatuses).toContain(matches[0]);
+    expect(matches[0]).toHaveTextContent('Error. Save access policy failed InvalidParameter:');
+  });
+
+  const attributeCases = [
+    {
+      label: 'Display name',
+      value: 'New orders',
+      change: { displayName: 'New orders' },
+      success: 'Display name saved.',
+    },
+    {
+      label: 'Access policy',
+      value: '{\n    "Statement": []\n}',
+      change: { policy: '{\n    "Statement": []\n}' },
+      success: 'Access policy saved.',
+    },
+  ];
+
+  it.each(
+    attributeCases.flatMap((setting) => [
+      { ...setting, first: 'detail' },
+      { ...setting, first: 'list' },
+    ]),
+  )(
+    'shows $success and the reread value when $first responds first',
+    async ({ label, value, change, success, first }) => {
+      open(settingsPath, true);
+      expect(await screen.findByText(ARN, { selector: 'output' })).toBeVisible();
+      expect(await screen.findByRole('button', { name: `Edit ${label.toLowerCase()}` })).toBeVisible();
+
+      const list = hold<api.TopicPage>();
+      const detail = hold<api.TopicRead>();
+      const nextArn = `${ARN}-another`;
+      vi.mocked(api.listTopics).mockReturnValueOnce(list.promise);
+      vi.mocked(api.getTopic).mockReturnValueOnce(detail.promise);
+      editAttribute(label, value);
+      expect(await screen.findByText(success)).toBeVisible();
+      const finishList = async () => {
+        await act(async () => {
+          list.resolve({ arns: [ARN, nextArn] });
+        });
+        expect(await screen.findByText(`${ARN}, ${nextArn}`, { selector: 'output' })).toBeVisible();
+      };
+      const finishDetail = async () => {
+        await act(async () => {
+          detail.resolve(standard(change));
+        });
+        if (label === 'Display name') {
+          await waitFor(() => {
+            expect(details()['Display name']).toBe(value);
+          });
+        } else {
+          expect(await screen.findByText(value, { normalizer: (text) => text })).toBeVisible();
+        }
+      };
+
+      if (first === 'list') {
+        await finishList();
+        expect(screen.getByText(success)).toBeVisible();
+        await finishDetail();
+      } else {
+        await finishDetail();
+        expect(screen.getByText(success)).toBeVisible();
+        await finishList();
+      }
+      expect(screen.getByText(success)).toBeVisible();
+      expect(api.listTopics).toHaveBeenCalledTimes(2);
+      expect(api.getTopic).toHaveBeenCalledTimes(2);
+    },
+  );
 });
