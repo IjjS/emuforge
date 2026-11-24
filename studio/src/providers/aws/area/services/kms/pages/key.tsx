@@ -81,7 +81,12 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const [refreshing, setRefreshing] = useState(false);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
   const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
+  // A failed reread reports its error above the panels while the current visit keeps its last metadata.
+  const [lastKey, setLastKey] = useState<typeof read.key>();
+  if (read.key !== undefined && read.key !== lastKey) setLastKey(read.key);
+  const metadata = read.key === undefined ? lastKey : read.key;
   const failure = read.failure ?? (attemptedRetry ? undefined : offline);
+  const showPanels = metadata !== null && (failure === undefined || metadata !== undefined || attemptedRetry);
   const handleRefresh = () => {
     if (refreshing) return;
     setAttemptedRetry(true);
@@ -126,60 +131,67 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
         </Header>
       }
     >
-      {failure !== undefined ? (
-        <Container>
-          <ReadFailure
-            state={readFailureState(failure, connection, `key (${failure.operation})`)}
-            onRetry={handleRefresh}
+      <SpaceBetween size="l">
+        {failure !== undefined && (
+          <Container>
+            <ReadFailure
+              state={readFailureState(failure, connection, `key (${failure.operation})`)}
+              onRetry={handleRefresh}
+            />
+          </Container>
+        )}
+        {read.key === null && (
+          <Container>
+            <Box textAlign="center">
+              <SpaceBetween size="xs">
+                <Box variant="strong">Key not found</Box>
+                <Link href={KEYS_PATH} onFollow={handleFollow}>
+                  View customer managed keys
+                </Link>
+              </SpaceBetween>
+            </Box>
+          </Container>
+        )}
+        {showPanels && (
+          <Tabs
+            key="key-settings"
+            ariaLabel="Key settings"
+            tabs={[
+              {
+                id: 'details',
+                label: 'Details',
+                contentRenderStrategy: 'lazy',
+                content:
+                  metadata !== undefined && metadata !== null ? (
+                    <KeyDetails action={action} metadata={metadata as ReadKey} />
+                  ) : failure === undefined ? (
+                    <Container>
+                      <StatusIndicator type="loading">Loading key…</StatusIndicator>
+                    </Container>
+                  ) : null,
+              },
+              {
+                id: 'labels',
+                label: 'Labels',
+                contentRenderStrategy: 'eager',
+                content: <Labels connection={connection} keyId={keyId} />,
+              },
+              {
+                id: 'access',
+                label: 'Access',
+                contentRenderStrategy: 'lazy',
+                content: <Access connection={connection} keyId={keyId} />,
+              },
+              {
+                id: 'rotation',
+                label: 'Rotation',
+                contentRenderStrategy: 'lazy',
+                content: <Rotation connection={connection} keyId={keyId} keySpec={metadata?.KeySpec} />,
+              },
+            ]}
           />
-        </Container>
-      ) : read.key === null ? (
-        <Container>
-          <Box textAlign="center">
-            <SpaceBetween size="xs">
-              <Box variant="strong">Key not found</Box>
-              <Link href={KEYS_PATH} onFollow={handleFollow}>
-                View customer managed keys
-              </Link>
-            </SpaceBetween>
-          </Box>
-        </Container>
-      ) : (
-        <Tabs
-          ariaLabel="Key settings"
-          tabs={[
-            {
-              id: 'details',
-              label: 'Details',
-              contentRenderStrategy: 'lazy',
-              content:
-                read.key === undefined ? (
-                  <Container>
-                    <StatusIndicator type="loading">Loading key…</StatusIndicator>
-                  </Container>
-                ) : (
-                  <KeyDetails action={action} metadata={read.key as ReadKey} />
-                ),
-            },
-            {
-              id: 'labels',
-              label: 'Labels',
-              contentRenderStrategy: 'eager',
-              content: <Labels connection={connection} keyId={keyId} />,
-            },
-            {
-              id: 'access',
-              label: 'Access',
-              content: <Access connection={connection} keyId={keyId} />,
-            },
-            {
-              id: 'rotation',
-              label: 'Rotation',
-              content: <Rotation connection={connection} keyId={keyId} keySpec={read.key?.KeySpec} />,
-            },
-          ]}
-        />
-      )}
+        )}
+      </SpaceBetween>
     </ContentLayout>
   );
 }

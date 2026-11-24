@@ -4,6 +4,7 @@ import {
   DisableKeyCommand,
   EnableKeyCommand,
   ListKeysCommand,
+  RotateKeyOnDemandCommand,
   ScheduleKeyDeletionCommand,
   UpdateKeyDescriptionCommand,
   type KeyMetadata,
@@ -79,7 +80,7 @@ function ListObserver() {
   );
 }
 
-function Page({ observeList }: { observeList: boolean }) {
+function Page({ observeList, keyId }: { observeList: boolean; keyId: string }) {
   const [flash, setFlash] = useState<FlashResult>();
   const root = useRef<HTMLDivElement>(null);
   return (
@@ -88,7 +89,7 @@ function Page({ observeList }: { observeList: boolean }) {
         <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
           <Flashbar items={flash ? [...flash] : []} />
           {observeList && <ListObserver />}
-          <KeyPage connection={connection} params={{ keyid: KEY_ID }} />
+          <KeyPage connection={connection} params={{ keyid: keyId }} />
         </PageFlashContext.Provider>
       </div>
     </AreaRootContext.Provider>
@@ -96,13 +97,16 @@ function Page({ observeList }: { observeList: boolean }) {
 }
 
 function open(observeList = false) {
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const client = new QueryClient();
+  const page = (keyId: string) => (
+    <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Page observeList={observeList} />
+        <Page observeList={observeList} keyId={keyId} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(page(KEY_ID));
+  return (keyId: string) => view.rerender(page(keyId));
 }
 
 function usable(button: HTMLElement) {
@@ -181,6 +185,104 @@ function deferred<T>() {
 
 beforeEach(() => {
   send.mockReset();
+});
+
+describe('Key detail panel lifetime', () => {
+  function selectTab(id: string) {
+    const tab = PAGE.findTabs()?.findTabLinkById(id);
+    if (!tab) throw new Error(`Missing key tab ${id}`);
+    fireEvent.click(tab.getElement());
+  }
+
+  function rotateButton() {
+    const panel = PAGE.findTabs()?.findTabContent();
+    if (!panel) throw new Error('Missing active key panel');
+    return within(panel.getElement()).getByRole('button', { name: 'Rotate now' });
+  }
+
+  it('keeps a pending rotation and its result through tab changes and a failed metadata refresh', async () => {
+    const write = deferred<unknown>();
+    let refuseMetadata = false;
+    const reason = 'DescribeKey temporarily failed.';
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof RotateKeyOnDemandCommand) return write.promise;
+      if (command instanceof DescribeKeyCommand && refuseMetadata) {
+        throw {
+          name: 'DependencyTimeoutException',
+          message: reason,
+          $fault: 'server',
+          $metadata: { httpStatusCode: 500 },
+        };
+      }
+      return undefined;
+    });
+    open();
+    await expectStatus('Enabled');
+
+    selectTab('rotation');
+    fireEvent.click(rotateButton());
+    await waitFor(() => expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1));
+    const writeOptions = sent(RotateKeyOnDemandCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    selectTab('details');
+    expect(writeOptions?.abortSignal.aborted).toBe(false);
+
+    refuseMetadata = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText(/DescribeKey temporarily failed/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    expect(writeOptions?.abortSignal.aborted).toBe(false);
+
+    selectTab('rotation');
+    expect(rotateButton()).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(rotateButton());
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+    selectTab('details');
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
+    expect(writeOptions?.abortSignal.aborted).toBe(false);
+
+    selectTab('rotation');
+    expect(usable(rotateButton())).toBe(true);
+    expect(flashText()).toContain('On-demand rotation requested.');
+    refuseMetadata = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/DescribeKey temporarily failed/)).toBeNull());
+    expect(usable(rotateButton())).toBe(true);
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+  });
+
+  it('retains an operation-specific rotation 501 on return and resets it for a new key', async () => {
+    const otherKeyId = '0987abcd-12ab-34cd-56ef-1234567890ab';
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof DescribeKeyCommand && command.input.KeyId === otherKeyId) {
+        return { KeyMetadata: key('Enabled', { KeyId: otherKeyId }) };
+      }
+      if (command instanceof RotateKeyOnDemandCommand && command.input.KeyId === KEY_ID) throw NOT_IMPLEMENTED;
+      return undefined;
+    });
+    const changeKey = open();
+    await expectStatus('Enabled');
+    selectTab('rotation');
+    fireEvent.click(rotateButton());
+    await waitFor(() => expect(flashText('info')).toContain('RotateKeyOnDemand'));
+    expect(rotateButton()).toBeDisabled();
+
+    selectTab('details');
+    selectTab('rotation');
+    expect(rotateButton()).toBeDisabled();
+    expect(rotateButton()).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
+    fireEvent.click(rotateButton());
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(1);
+
+    changeKey(otherKeyId);
+    await waitFor(() => expect(field('Key ID')).toHaveTextContent(otherKeyId));
+    selectTab('rotation');
+    expect(usable(rotateButton())).toBe(true);
+    fireEvent.click(rotateButton());
+    await waitFor(() => expect(flashText()).toContain('On-demand rotation requested.'));
+    expect(sent(RotateKeyOnDemandCommand)).toHaveLength(2);
+    expect(sent(RotateKeyOnDemandCommand)[1]?.[0]).toEqual(expect.objectContaining({ input: { KeyId: otherKeyId } }));
+  });
 });
 
 describe('Key lifecycle', () => {
