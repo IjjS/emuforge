@@ -1,7 +1,7 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 
@@ -24,6 +24,7 @@ const TAG = { key: 'Name', value: 'dev' };
 const TAGS = [TAG, { key: 'env', value: 'test' }];
 
 const PAGE = createWrapper(document.body);
+type Modal = NonNullable<ReturnType<typeof PAGE.findModal>>;
 
 function Editor() {
   const writes = useInstanceContentChange(ENGINE, ID, usePageSignal());
@@ -79,34 +80,41 @@ async function open(name: string) {
   fireEvent.click(action(name));
   return waitFor(() => {
     const modal = PAGE.findModal();
-    expect(modal?.findHeader().getElement()).toHaveTextContent(name);
     if (modal === null) throw new Error('Missing tag dialog');
-    return modal.getElement();
+    expect(modal.findHeader().getElement()).toHaveTextContent(name);
+    return modal;
   });
 }
 
-function field(dialog: HTMLElement, label: string) {
-  const forms = createWrapper(dialog).findAllFormFields();
+function field(dialog: Modal, label: string) {
+  const forms = dialog.findContent().findAllFormFields();
   const input = forms[label === 'Key' ? 0 : 1]?.findControl()?.findInput()?.findNativeInput().getElement();
   if (input === undefined || input === null) throw new Error(`Missing input ${label}`);
   return input;
 }
 
-function enter(dialog: HTMLElement, label: string, value: string) {
+function enter(dialog: Modal, label: string, value: string) {
   fireEvent.change(field(dialog, label), { target: { value } });
 }
 
-function save(dialog: HTMLElement) {
-  return within(dialog).getByRole('button', { name: 'Save changes' });
+function footerButton(dialog: Modal, name: 'Cancel' | 'Save changes' | 'Delete tag') {
+  const button = dialog.findFooter()?.findAllButtons()[name === 'Cancel' ? 0 : 1];
+  if (button === undefined) throw new Error(`Missing ${name} footer button`);
+  expect(button.getElement()).toHaveAccessibleName(name);
+  return button;
 }
 
-function submit(dialog: HTMLElement, name: string) {
+function save(dialog: Modal) {
+  return footerButton(dialog, 'Save changes').getElement();
+}
+
+function submit(dialog: Modal, name: string) {
   if (name === 'Delete tag') {
-    const input = createWrapper(dialog).findInput()?.findNativeInput().getElement();
+    const input = dialog.findContent().findInput()?.findNativeInput().getElement();
     if (!input) throw new Error('Missing delete confirmation');
     fireEvent.change(input, { target: { value: 'delete' } });
   }
-  fireEvent.click(within(dialog).getByRole('button', { name: name === 'Delete tag' ? name : 'Save changes' }));
+  footerButton(dialog, name === 'Delete tag' ? name : 'Save changes').click();
 }
 
 function deny(operation: string, code: string, message: string, status: number) {
@@ -120,7 +128,7 @@ function deny(operation: string, code: string, message: string, status: number) 
 it('saves the empty value for just the existing key', async () => {
   const show = showTags();
   const dialog = await open('Edit tag');
-  expect(PAGE.findModal()?.findContent().getElement()).toHaveTextContent(TAG.key);
+  expect(dialog.findContent().getElement()).toHaveTextContent(TAG.key);
   expect(save(dialog)).toBeDisabled();
   enter(dialog, 'Value', 'changed');
   expect(save(dialog)).toBeEnabled();
@@ -141,9 +149,9 @@ it('saves the empty value for just the existing key', async () => {
 it('cancels a deletion and leaves the key and value in the table', async () => {
   showTags();
   const dialog = await open('Delete tag');
-  expect(PAGE.findModal()?.findContent().getElement()).toHaveTextContent(TAG.key);
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(dialog.findContent().getElement()).toHaveTextContent(TAG.key);
+  footerButton(dialog, 'Cancel').click();
+  expect(PAGE.findModal()).toBeNull();
   expect(PAGE.findTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent(TAG.key);
   expect(PAGE.findTable()?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(TAG.value);
   expect(changeInstanceContent).not.toHaveBeenCalled();
@@ -158,10 +166,10 @@ it.each([
   const dialog = await open(name);
   if (name === 'Edit tag') enter(dialog, 'Value', 'updated draft');
   submit(dialog, name);
-  const alert = await within(dialog).findByRole('alert');
+  const alert = await within(dialog.getElement()).findByRole('alert');
   expect(alert).toHaveTextContent(`${code}: ${message}`);
   if (name === 'Edit tag') expect(field(dialog, 'Value')).toHaveValue('updated draft');
-  else expect(createWrapper(dialog).findInput()?.findNativeInput().getElement()).toHaveValue('delete');
+  else expect(dialog.findContent().findInput()?.findNativeInput().getElement()).toHaveValue('delete');
   expect(show).toHaveBeenCalledTimes(1);
   expect(show).toHaveBeenCalledWith([
     expect.objectContaining({ type: 'error', content: expect.stringContaining(`${code}: ${message}`) }),
@@ -187,7 +195,7 @@ it.each([
       `${name}. The emulator answered 501 Not Implemented for ${operation}. Tag operation unavailable.`,
     );
   });
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(PAGE.findModal()).toBeNull();
   expect(action(name)).toBeVisible();
   expect(action(name)).toHaveAttribute('aria-disabled', 'true');
   expect(show).toHaveBeenCalledTimes(1);
@@ -198,7 +206,7 @@ it('keeps an existing key out of Add and preserves the draft while the key is co
   const show = showTags();
   const dialog = await open('Add tag');
   enter(dialog, 'Key', TAG.key);
-  expect(createWrapper(dialog).findFormField()?.findError()?.getElement()).toHaveTextContent(
+  expect(dialog.findContent().findFormField()?.findError()?.getElement()).toHaveTextContent(
     'This key already exists. Use Edit tag in its row to change the value.',
   );
   expect(save(dialog)).toBeDisabled();
@@ -209,7 +217,7 @@ it('keeps an existing key out of Add and preserves the draft while the key is co
   enter(dialog, 'Key', 'aws:probe');
   enter(dialog, 'Value', 'draft');
   fireEvent.click(save(dialog));
-  expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+  expect(await within(dialog.getElement()).findByRole('alert')).toHaveTextContent(
     'InvalidParameterValue: This tag key is reserved.',
   );
   expect(field(dialog, 'Key')).toHaveValue('aws:probe');
