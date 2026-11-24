@@ -43,12 +43,26 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
     if (failure?.kind === 'not-implemented') rememberFailure(failure);
   }, [failure, rememberFailure]);
   const [selectedVersion, setSelectedVersion] = useState<number>();
-  const version = listing.items?.find(({ Version }) => Version === selectedVersion);
+  const [confirmedItems, setConfirmedItems] = useState<HistoryVersion[]>();
+  // The detail keys this table's lifetime to the parameter and connection.
+  if (listing.items !== undefined && listing.items !== confirmedItems) {
+    setConfirmedItems(listing.items);
+  }
   const unavailable = failure?.kind === 'not-implemented';
+  const items = (unavailable ? confirmedItems : listing.items) ?? [];
+  const version = items.find(({ Version }) => Version === selectedVersion);
   const feedback = unavailable && actionFailureItem(failure, 'Loading version history', connection.engineOrigin);
+  const refusal = feedback && (
+    <SpaceBetween size="xs">
+      <StatusIndicator type="info">{feedback.header}</StatusIndicator>
+      <Box variant="p">{feedback.content}</Box>
+      <Button disabled>Retry</Button>
+    </SpaceBetween>
+  );
 
   return (
     <SpaceBetween size="m">
+      {items.length > 0 && refusal}
       <Table<HistoryVersion>
         ariaLabels={{
           tableLabel: 'Parameter versions',
@@ -69,7 +83,7 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
           },
         ]}
         trackBy={(item) => String(item.Version)}
-        items={failure ? [] : (listing.items ?? [])}
+        items={items}
         selectionType="single"
         selectedItems={version ? [version] : []}
         onSelectionChange={({ detail }) => setSelectedVersion(detail.selectedItems[0]?.Version)}
@@ -88,27 +102,24 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
                 pageLabel: (page) => `Page ${String(page)}`,
               }}
               onChange={({ detail }) => {
+                if (unavailable || listing.loading) return;
                 setSelectedVersion(undefined);
+                setConfirmedItems(undefined);
                 listing.goToPage(detail.currentPageIndex);
               }}
             />
           )
         }
         empty={
-          feedback ? (
-            <SpaceBetween size="xs">
-              <StatusIndicator type="info">{feedback.header}</StatusIndicator>
-              <Box variant="p">{feedback.content}</Box>
-              <Button disabled>Retry</Button>
-            </SpaceBetween>
-          ) : failure ? (
+          refusal ||
+          (failure ? (
             <ReadFailure state={readFailureState(failure, connection, 'version history')} onRetry={listing.refresh} />
           ) : (
             <Box textAlign="center">{listing.openEnd ? 'No versions on this page' : 'No versions'}</Box>
-          )
+          ))
         }
       />
-      {version && !failure && (
+      {version && (
         <VersionActions key={version.Version} connection={connection} name={name} version={version} secure={secure} />
       )}
     </SpaceBetween>
