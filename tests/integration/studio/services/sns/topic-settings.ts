@@ -67,16 +67,21 @@ export async function openSettings(page: Page, arn: string) {
       const entries = Object.entries(tags);
       await expect(rows).toHaveCount(entries.length);
       const cells = entries.map((_, index) => page.locator(table.findBodyCell(index + 1, 1).toSelector()));
-      for (const [key, value] of entries) {
-        // SNS can return the keys in any order. Both values must appear in the same cell.
-        await expect.poll(async () => {
-          for (const cell of cells) {
-            if (await cell.getByText(key, { exact: true }).isVisible()
-              && await cell.getByText(value, { exact: true }).isVisible()) return true;
+      const byKey = ([a]: string[], [b]: string[]) => a.localeCompare(b);
+      await expect.poll(async () => {
+        const pairs: string[][] = [];
+        for (const cell of cells) {
+          const pair: string[] = [];
+          for (const label of ['Key', 'Value']) {
+            const caption = cell.getByText(label, { exact: true });
+            const content = caption.locator('xpath=following-sibling::*[1]');
+            if (!await caption.isVisible() || !await content.isVisible()) return undefined;
+            pair.push(await content.innerText());
           }
-          return false;
-        }, { message: `tag ${key} has visible value ${value}`, timeout: 15_000 }).toBe(true);
-      }
+          pairs.push(pair);
+        }
+        return pairs.sort(byKey);
+      }, { message: 'visible Key and Value pairs in the tags table', timeout: 15_000 }).toEqual(entries.sort(byKey));
     },
     dismissSuccess: page.locator(wrapper.findFlashbar().findItemsByType('success').get(1).findDismissButton().toSelector()),
     async confirmRemoval() {
