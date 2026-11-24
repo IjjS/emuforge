@@ -165,15 +165,27 @@ function refusal() {
   return { name: 'ValidationException', message: REFUSAL, $fault: 'client', $metadata: { httpStatusCode: 400 } };
 }
 
+function modalSections(title: string) {
+  return waitFor(() => {
+    const modal = createWrapper().findModal();
+    if (modal === null) throw new Error(`Expected the ${title} modal.`);
+    const footer = modal.findFooter();
+    if (footer === null) throw new Error(`Expected the ${title} modal footer.`);
+    expect(modal.isVisible()).toBe(true);
+    expect(modal.findHeader().getElement()).toHaveTextContent(title);
+    return { content: within(modal.findContent().getElement()), footer: within(footer.getElement()) };
+  });
+}
+
 async function editPolicy() {
   expect(await screen.findByText(OLD_POLICY)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Edit key policy' }));
-  const dialog = within(await screen.findByRole('dialog', { name: 'Edit key policy' }));
-  const field = dialog.getByRole('textbox', { name: 'Policy document' });
+  const modal = await modalSections('Edit key policy');
+  const field = modal.content.getByRole('textbox', { name: 'Policy document' });
   expect(field).toHaveValue(OLD_POLICY);
   fireEvent.change(field, { target: { value: NEW_POLICY } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Save policy' }));
-  return dialog;
+  fireEvent.click(modal.footer.getByRole('button', { name: 'Save policy' }));
+  return modal;
 }
 
 function expectCommand(command: object) {
@@ -210,7 +222,7 @@ async function openRevocation() {
     return within(row).getByRole('button', { name: `Revoke grant ${grant.GrantId}` });
   });
   fireEvent.click(revoke);
-  return within(await screen.findByRole('dialog', { name: 'Revoke grant' }));
+  return modalSections('Revoke grant');
 }
 
 beforeEach(() => {
@@ -230,7 +242,7 @@ describe('KMS key access', () => {
       expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
       await user.click(refresh);
       const dialog = await editPolicy();
-      expect(dialog.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+      expect(dialog.footer.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
 
       await act(async () => metadata.resolve(undefined));
       const returnLink = await screen.findByRole('link', { name: 'View customer managed keys' });
@@ -253,6 +265,40 @@ describe('KMS key access', () => {
       expect(published).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
       expect(returnLink).toHaveFocus();
+    });
+
+    it('announces the late policy refusal on the page after the missing key is found again', async () => {
+      const { metadata, save, saveSignal } = holdMissingKeyAndSave(true);
+      const { published } = openRefreshableAccess();
+      const user = userEvent.setup();
+      const refresh = screen.getByRole('button', { name: 'Refresh' });
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      await user.click(refresh);
+      const dialog = await editPolicy();
+      expect(dialog.footer.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+
+      await act(async () => metadata.resolve(undefined));
+      const returnLink = await screen.findByRole('link', { name: 'View customer managed keys' });
+      expect(createWrapper().findModal()).toBeNull();
+      refresh.focus();
+      await user.tab();
+      expect(returnLink).toHaveFocus();
+
+      await user.click(refresh);
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      expect(returnLink).not.toBeInTheDocument();
+      expect(createWrapper().findModal()).toBeNull();
+      expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
+      expect(saveSignal()?.aborted).toBe(false);
+      expect(published).not.toHaveBeenCalled();
+
+      await act(async () => save.resolve(undefined));
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('PutKeyPolicy failed');
+      expect(alert).toHaveTextContent(REFUSAL);
+      expect(createWrapper().findFlashbar()?.getElement()).toContainElement(alert);
+      expect(published).toHaveBeenCalledTimes(1);
+      expect(createWrapper().findModal()).toBeNull();
     });
 
     it.each([
@@ -281,7 +327,7 @@ describe('KMS key access', () => {
       });
       const update = open();
       const dialog = await openRevocation();
-      fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
+      fireEvent.change(dialog.content.getByRole('textbox'), { target: { value: 'revoke' } });
       update({ keyMissing: true, writesEnabled: true });
       await waitFor(() => expect(screen.queryByRole('dialog', { hidden: true })).toBeNull());
       for (const name of ['Edit key policy', 'Create grant', `Revoke grant ${grant.GrantId}`]) {
@@ -438,8 +484,8 @@ describe('KMS key access', () => {
 
     const dialog = await editPolicy();
 
-    expect(await dialog.findByText(REFUSAL, { exact: false })).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
+    expect(await dialog.content.findByText(REFUSAL, { exact: false })).toBeVisible();
+    expect(dialog.content.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
     expectCommand(expect.objectContaining({ input: { KeyId: KEY_ID } }));
     expect(send.mock.calls.some(([command]) => command instanceof ListKeyPoliciesCommand)).toBe(true);
     expect(
@@ -506,7 +552,7 @@ describe('KMS key access', () => {
     expectCommand(expect.objectContaining({ input: { KeyId: KEY_ID, Marker: 'next-grants', Limit: 20 } }));
 
     const dialog = await openRevocation();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(dialog.footer.getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(grantRow(grant.GrantId)).toBeVisible());
     expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
@@ -527,10 +573,10 @@ describe('KMS key access', () => {
     open();
     expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
     const dialog = await openRevocation();
-    expect(dialog.getByText(grant.GrantId)).toBeVisible();
-    expect(dialog.getByText(KEY_ID)).toBeVisible();
-    fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Revoke grant' }));
+    expect(dialog.content.getByText(grant.GrantId)).toBeVisible();
+    expect(dialog.content.getByText(KEY_ID)).toBeVisible();
+    fireEvent.change(dialog.content.getByRole('textbox'), { target: { value: 'revoke' } });
+    fireEvent.click(dialog.footer.getByRole('button', { name: 'Revoke grant' }));
 
     await waitFor(() => {
       expect(grantsTable().findEmptySlot()?.getElement()).toHaveTextContent('No grants');
@@ -668,8 +714,8 @@ describe('KMS key access', () => {
 
     update({ connection: offline });
     expect(saveSignal?.aborted).toBe(false);
-    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
-    expect(dialog.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+    expect(dialog.content.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
+    expect(dialog.footer.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
     await act(async () => response.resolve({}));
 
     expect(successFlash('Key policy saved.')).toBeVisible();
@@ -708,13 +754,13 @@ describe('KMS key access', () => {
 
     update({ writesEnabled: true });
     const dialog = await openRevocation();
-    const confirmation = dialog.getByRole('textbox');
+    const confirmation = dialog.content.getByRole('textbox');
     fireEvent.change(confirmation, { target: { value: 'revoke' } });
-    expect(dialog.getByRole('button', { name: 'Revoke grant' })).toBeEnabled();
+    expect(dialog.footer.getByRole('button', { name: 'Revoke grant' })).toBeEnabled();
 
     update({ connection: offline, writesEnabled: true });
     expect(confirmation).toHaveValue('revoke');
-    const submit = dialog.getByRole('button', { name: 'Revoke grant' });
+    const submit = dialog.footer.getByRole('button', { name: 'Revoke grant' });
     expect(submit).toBeDisabled();
     fireEvent.keyDown(confirmation, { key: 'Enter', keyCode: 13 });
     expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
@@ -733,7 +779,7 @@ describe('KMS key access', () => {
     open();
     const user = userEvent.setup();
     const dialog = await openRevocation();
-    const confirmation = dialog.getByRole('textbox');
+    const confirmation = dialog.content.getByRole('textbox');
     await user.type(confirmation, 'revoke{Enter}');
 
     expect(confirmation).toHaveFocus();
@@ -765,8 +811,8 @@ describe('KMS key access', () => {
     async function startRevocation() {
       revokeSignal = undefined;
       const dialog = await openRevocation();
-      fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
-      fireEvent.click(dialog.getByRole('button', { name: 'Revoke grant' }));
+      fireEvent.change(dialog.content.getByRole('textbox'), { target: { value: 'revoke' } });
+      fireEvent.click(dialog.footer.getByRole('button', { name: 'Revoke grant' }));
       await waitFor(() => expect(revokeSignal).toBeInstanceOf(AbortSignal));
     }
 
