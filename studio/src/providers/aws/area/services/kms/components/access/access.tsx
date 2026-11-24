@@ -1,4 +1,6 @@
+import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import { useRef } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { connectionFailure } from '../../queries';
@@ -12,11 +14,24 @@ export interface AccessProps {
 }
 
 export function Access({ connection, keyId }: AccessProps) {
+  const grants = useRef<HTMLDivElement>(null);
   const offline = connectionFailure(connection, ACCESS_OPERATIONS.listPolicies) !== undefined;
   return (
     <SpaceBetween key={JSON.stringify([connection.engineOrigin, keyId, offline])} size="l">
+      <Link
+        href="#kms-grants"
+        onFollow={(event) => {
+          const section = grants.current;
+          if (section === null) return;
+          event.preventDefault();
+          section.focus({ preventScroll: true });
+          section.scrollIntoView({ block: 'start' });
+        }}
+      >
+        Jump to grants
+      </Link>
       <KeyPolicy connection={connection} keyId={keyId} />
-      <Grants connection={connection} keyId={keyId} />
+      <Grants connection={connection} keyId={keyId} sectionRef={grants} />
     </SpaceBetween>
   );
 }

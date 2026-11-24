@@ -3,9 +3,9 @@ import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Table from '@cloudscape-design/components/table';
+import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { type RefObject, useEffect, useState } from 'react';
 
 import { ConfirmDialog } from '../../../../components/confirm-dialog';
 import { ReadFailure, readFailureState } from '../../../../components/failure-states';
@@ -20,10 +20,25 @@ import { GrantFields, type GrantDraft } from './grant-fields';
 import { useAccessAction } from './use-access-action';
 
 const operations = ACCESS_OPERATIONS;
+const COMPACT_BELOW = 720;
 
-export function Grants({ connection, keyId }: AccessProps) {
+function GrantOperations({ values }: { values: KeyGrant['operations'] }) {
+  if (values.length === 0) return '–';
+  return values.map((operation, index) => (
+    <div key={index}>
+      <ValueText kind="name" value={operation} />
+    </div>
+  ));
+}
+
+export function Grants({
+  connection,
+  keyId,
+  sectionRef,
+}: AccessProps & { sectionRef: RefObject<HTMLDivElement | null> }) {
   const action = useAccessAction(connection);
   const client = useQueryClient();
+  const [compact, setCompact] = useState(false);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const [draft, setDraft] = useState<GrantDraft>();
   const [revoking, setRevoking] = useState<KeyGrant>();
@@ -39,6 +54,18 @@ export function Grants({ connection, keyId }: AccessProps) {
   const unavailable = [...action.unavailable].filter(
     (operation) => operation !== operations.createGrant || draft === undefined,
   );
+
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (section === null || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry !== undefined && entry.contentRect.width > 0) {
+        setCompact(entry.contentRect.width < COMPACT_BELOW);
+      }
+    });
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [sectionRef]);
 
   function handleRetry() {
     setAttemptedRetry(true);
@@ -79,8 +106,71 @@ export function Grants({ connection, keyId }: AccessProps) {
     );
   }
 
+  function revokeButton(grant: KeyGrant) {
+    return (
+      <Button
+        ariaLabel={`Revoke grant ${grant.id}`}
+        wrapText={false}
+        disabled={action.disabled(operations.revokeGrant)}
+        onClick={() => setRevoking(grant)}
+      >
+        Revoke
+      </Button>
+    );
+  }
+
+  const columns: TableProps.ColumnDefinition<KeyGrant>[] = compact
+    ? [
+        {
+          id: 'grant',
+          header: 'Grant',
+          cell: (grant) => (
+            <SpaceBetween size="xs">
+              <div>
+                <Box variant="awsui-key-label">Grantee principal</Box>
+                <ValueText kind="address" value={grant.grantee} none="–" />
+              </div>
+              {revokeButton(grant)}
+              <div>
+                <Box variant="awsui-key-label">Allowed operations</Box>
+                <GrantOperations values={grant.operations} />
+              </div>
+              <div>
+                <Box variant="awsui-key-label">Grant ID</Box>
+                <ValueText kind="name" value={grant.id} />
+              </div>
+            </SpaceBetween>
+          ),
+        },
+      ]
+    : [
+        {
+          id: 'grantee',
+          header: 'Grantee principal',
+          minWidth: 180,
+          cell: (grant) => <ValueText kind="address" value={grant.grantee} none="–" />,
+        },
+        {
+          id: 'operations',
+          header: 'Allowed operations',
+          cell: (grant) => <GrantOperations values={grant.operations} />,
+        },
+        {
+          id: 'id',
+          header: 'Grant ID',
+          minWidth: 220,
+          cell: (grant) => <ValueText kind="name" value={grant.id} />,
+        },
+        {
+          id: 'actions',
+          header: 'Actions',
+          minWidth: 110,
+          cell: revokeButton,
+        },
+      ];
+
   return (
-    <>
+    <div ref={sectionRef} id="kms-grants" tabIndex={-1} role="region" aria-label="Grants">
       <Table
         trackBy="id"
         wrapLines
@@ -106,46 +196,7 @@ export function Grants({ connection, keyId }: AccessProps) {
             Grants
           </Header>
         }
-        columnDefinitions={[
-          {
-            id: 'grantee',
-            header: 'Grantee principal',
-            cell: (grant) => <ValueText kind="address" value={grant.grantee} none="–" />,
-          },
-          {
-            id: 'operations',
-            header: 'Allowed operations',
-            cell: (grant) =>
-              grant.operations.length > 0
-                ? grant.operations.map((operation, index) => (
-                    <div key={index}>
-                      <ValueText kind="fixed" value={operation} />
-                    </div>
-                  ))
-                : '–',
-          },
-          {
-            id: 'id',
-            header: 'Grant ID',
-            minWidth: 220,
-            cell: (grant) => <ValueText kind="name" value={grant.id} />,
-          },
-          {
-            id: 'actions',
-            header: 'Actions',
-            minWidth: 110,
-            cell: (grant) => (
-              <Button
-                ariaLabel={`Revoke grant ${grant.id}`}
-                wrapText={false}
-                disabled={action.disabled(operations.revokeGrant)}
-                onClick={() => setRevoking(grant)}
-              >
-                Revoke
-              </Button>
-            ),
-          },
-        ]}
+        columnDefinitions={columns}
         empty={
           failure === undefined ? (
             <Box textAlign="center" variant="strong">
@@ -222,6 +273,6 @@ export function Grants({ connection, keyId }: AccessProps) {
           onDismiss={() => setRevoking(undefined)}
         />
       )}
-    </>
+    </div>
   );
 }
