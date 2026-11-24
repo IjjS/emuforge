@@ -1,4 +1,5 @@
 import {
+  DescribeKeyCommand,
   DisableKeyRotationCommand,
   EnableKeyRotationCommand,
   GetKeyRotationStatusCommand,
@@ -20,6 +21,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { creationDateText } from '../../../../components/format-date';
 import { PageFlashContext, type FlashItem, type FlashResult } from '../../../../components/page-flash';
+import { KeyPage } from '../../pages/key';
+import { keyPath } from '../../paths';
 import { Rotation } from './rotation';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -81,8 +84,8 @@ function click(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
 }
 
-function expectField(label: string, value: string) {
-  const field = page
+function expectField(label: string, value: string, scope = page) {
+  const field = scope
     .findKeyValuePairs()
     ?.findItems()
     .find((item) => item.findLabel()?.getElement().textContent === label);
@@ -91,8 +94,8 @@ function expectField(label: string, value: string) {
   expect(element).toHaveTextContent(value);
 }
 
-function expectRotation(type: string, date: Date) {
-  const history = page.findTable();
+function expectRotation(type: string, date: Date, scope = page) {
+  const history = scope.findTable();
   expect(history?.findRows()).toHaveLength(1);
   const typeCell = history?.findBodyCell(1, 2)?.getElement();
   expect(typeCell).toBeVisible();
@@ -437,15 +440,19 @@ describe('Key rotation', () => {
     },
   );
 
-  it('keeps the learned disable reason when a held rotation completes offline and settings refresh on reconnect', async () => {
+  it('keeps the learned disable reason through an offline completion, a rejected reconnect read and Retry', async () => {
     const rotation = pendingAnswer<undefined>();
-    const settings = pendingAnswer<GetKeyRotationStatusCommandOutput>();
+    const settings = pendingAnswer<undefined>();
     const writes = vi.fn<(command: unknown) => void>();
     const readSettings = vi.fn();
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) {
         readSettings();
-        return readSettings.mock.calls.length === 1 ? enabledSettings : settings.promise;
+        if (readSettings.mock.calls.length === 2) {
+          await settings.promise;
+          throw new TypeError('Failed to fetch');
+        }
+        return enabledSettings;
       }
       if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
       writes(command);
@@ -487,8 +494,17 @@ describe('Key rotation', () => {
     expectDisabledToggle();
     fireEvent.click(disable);
 
-    await act(() => settings.resolve({ $metadata: {}, ...enabledSettings }));
+    await act(() => settings.resolve(undefined));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('http://127.0.0.1:8310')).toBeVisible();
+    expect(screen.getByText('The rotation settings (GetKeyRotationStatus) could not be read.')).toBeVisible();
+    expectDisabledToggle();
+    expectSuccess('On-demand rotation requested.');
+    fireEvent.click(disable);
+    fireEvent.click(retry);
+
     await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    expect(readSettings).toHaveBeenCalledTimes(3);
     expectDisabledToggle();
     expectSuccess('On-demand rotation requested.');
     expect(writes).toHaveBeenCalledTimes(2);
@@ -519,5 +535,84 @@ describe('Key rotation', () => {
     expect(screen.getByRole('button', { name: 'Rotate now' })).toBeEnabled();
     await act(() => reply.resolve(undefined));
     expect(flashItem('success')).toBeUndefined();
+  });
+});
+
+describe.each([
+  { command: GetKeyRotationStatusCommand, operation: 'GetKeyRotationStatus', read: 'rotation settings' },
+  { command: ListKeyRotationsCommand, operation: 'ListKeyRotations', read: 'rotation history' },
+])('$read recovery on a connected key page', ({ command, operation, read }) => {
+  it.each([
+    { name: 'an engine network failure', failure: new TypeError('Failed to fetch'), address: connection.engineOrigin },
+    {
+      name: 'an emulator timeout',
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      address: 'https://127.0.0.1:9310',
+    },
+    {
+      name: 'an ordinary refusal',
+      failure: {
+        name: 'KMSInvalidStateException',
+        message: 'The key is not in a valid state.',
+        $fault: 'client',
+        $metadata: { httpStatusCode: 400 },
+      },
+      address: undefined,
+    },
+  ])('reports $name and retries only the failed read', async ({ failure, address }) => {
+    const failedRead = vi.fn();
+    send.mockImplementation(async (request: unknown) => {
+      if (request instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: keyId, KeyState: 'Enabled' } };
+      if (request instanceof command) {
+        failedRead();
+        if (failedRead.mock.calls.length === 1) throw failure;
+      }
+      if (request instanceof GetKeyRotationStatusCommand) return enabledSettings;
+      if (request instanceof ListKeyRotationsCommand) {
+        return { Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] };
+      }
+      return {};
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={[keyPath(keyId)]}>
+          <KeyPage connection={reconnected} params={{ keyid: keyId }} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Key metadata' })).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'Rotation' }));
+    const tab = screen.getByRole('tabpanel', { name: 'Rotation' });
+    const panel = within(tab);
+    const scope = createWrapper(tab);
+    const retry = await panel.findByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
+
+    if (address !== undefined) {
+      expect(panel.getByText(address)).toBeVisible();
+      const link = panel.getByRole('link', { name: 'Connection status' });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute('href', '/');
+      expect(panel.getByText(`The ${read} (${operation}) could not be read.`)).toBeVisible();
+    } else {
+      expect(panel.getByText(`The ${read} (${operation}) could not be read`)).toBeVisible();
+      expect(panel.getByText('KMSInvalidStateException')).toBeVisible();
+      expect(panel.getByText(/The key is not in a valid state/)).toBeVisible();
+      expect(panel.queryByRole('link', { name: 'Connection status' })).toBeNull();
+    }
+
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expectField('Automatic rotation', 'Enabled', scope);
+      expectRotation('On-demand', rotationDate, scope);
+    });
+    expect(failedRead).toHaveBeenCalledTimes(2);
+    expect(panel.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(send.mock.calls.filter(([request]) => request instanceof DescribeKeyCommand)).toHaveLength(1);
   });
 });

@@ -9,11 +9,11 @@ import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
 import { type RefObject, useEffect, useState } from 'react';
 
-import { ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { ReadFailure } from '../../../../components/failure-states';
 import { useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { ACCESS_OPERATIONS, createGrant, listGrants, revokeGrant, type KeyGrant } from '../../access-api';
-import { KMS_KEYS, connectionFailure } from '../../queries';
+import { KMS_KEYS, connectionFailure, readFailureState } from '../../queries';
 import { AccessDialog } from './access-dialog';
 import type { AccessProps } from './access';
 import { ActionNotice } from './action-notice';
