@@ -749,18 +749,23 @@ function rowsAt(status = 'available') {
   return ROLES.map(({ id }) => member(id, { status }));
 }
 
-async function selectReader(target: string) {
+async function editFailover() {
   chooseAction('failover');
   const dialog = await screen.findByRole('dialog', { name: 'Fail over DB cluster' });
   const picker = createWrapper(dialog).findSelect();
   if (picker === null) throw new Error('Missing failover reader picker.');
+  return { picker, submit: within(dialog).getByRole('button', { name: 'Fail over' }) };
+}
+
+async function selectReader(target: string) {
+  const { picker, submit } = await editFailover();
   picker.openDropdown();
   await waitFor(() => {
     const options = picker.findDropdown().findOptions();
     expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['app-aur-2', 'app-aur-3']);
   });
   picker.selectOptionByValue(target);
-  return within(dialog).getByRole('button', { name: 'Fail over' });
+  return submit;
 }
 
 function rejectOperation(operation: string, message: string) {
@@ -928,17 +933,35 @@ describe('Aurora cluster operations', () => {
     }
   });
 
-  it('shows a refused Modify without changing the displayed protection or retention period', async () => {
+  it('shows a refused Modify on the page and prefills the draft when reopened', async () => {
     answer(found({ deletionProtection: true }));
     rejectOperation('ModifyDBCluster', 'The cluster cannot be modified now.');
     open(PATH);
     await loaded();
     const dialog = await editCluster();
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Backup retention period (days)' }), {
+      target: { value: '14' },
+    });
     fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
     await expectRefusal('The cluster cannot be modified now.');
     expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
     expect(pairsOf('DB cluster details')['Backup retention period (days)']).toBe('7');
+
+    const reopened = await editCluster();
+    expect(reopened.getByRole('checkbox', { name: 'Deletion protection' })).not.toBeChecked();
+    const retention = reopened.getByRole('textbox', { name: 'Backup retention period (days)' });
+    expect(retention).toHaveValue('14');
+    fireEvent.change(retention, { target: { value: '21' } });
+    answer(found({ deletionProtection: false, backupRetentionPeriod: 21 }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Save changes' }));
+    await screen.findByText('DB cluster app-aur updated');
+    expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { deletionProtection: false, backupRetentionPeriod: 21 } },
+      expect.any(AbortSignal),
+    );
   });
 
   it('explains why a cluster without a reader cannot fail over', async () => {
@@ -993,13 +1016,26 @@ describe('Aurora cluster operations', () => {
     expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']);
   }, 8_000);
 
-  it('shows the cluster and service error when the selected reader disappears before failover', async () => {
+  it('shows a refused Fail over on the page and prefills the reader when reopened', async () => {
     answer(found({ members: ROLES }), rowsAt());
     rejectOperation('FailoverDBCluster', 'The selected DB instance is no longer in this cluster.');
     open(PATH);
     await loaded();
     fireEvent.click(await selectReader('app-aur-3'));
     await expectRefusal('The selected DB instance is no longer in this cluster.');
+
+    const { picker, submit } = await editFailover();
+    expect(picker.findTrigger().getElement()).toHaveTextContent('app-aur-3');
+    picker.openDropdown();
+    picker.selectOptionByValue('app-aur-2');
+    fireEvent.click(submit);
+    await screen.findByText('Failing over DB cluster app-aur');
+    expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'failover', target: 'app-aur-2' },
+      expect.any(AbortSignal),
+    );
   });
 
   it('keeps the Multi-AZ detail and Delete without exposing Aurora operations', async () => {
@@ -1035,6 +1071,7 @@ describe('Aurora cluster operations', () => {
 
     await screen.findByText('Not implemented by the emulator');
     expect(flashes('info')[0]).toContain(operation);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(openActions().findItemById(action, { disabled: true })).not.toBeNull();
     expect(clusterApi.operateCluster).toHaveBeenCalledTimes(1);
   });

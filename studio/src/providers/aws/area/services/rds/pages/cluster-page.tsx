@@ -371,8 +371,11 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
     );
   };
 
-  const handleOperation = async (target: string, action: ClusterOperation) => {
-    if (inFlight.current) return;
+  const handleOperation = async (
+    target: string,
+    action: ClusterOperation,
+  ): Promise<'retain-draft' | 'discard-draft'> => {
+    if (inFlight.current) return 'discard-draft';
     const signal = pageSignal();
     inFlight.current = true;
     setPending(true);
@@ -382,7 +385,7 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
         flash.show([{ type: 'success', content: clusterActionResult(action.kind, target) }]);
       }
     } catch (error) {
-      if (signal.aborted) return;
+      if (signal.aborted) return 'discard-draft';
       const { label, operation } = CLUSTER_ACTIONS[action.kind];
       const failure = failureOf(error, operation);
       const subject = `${label} DB cluster ${target}`;
@@ -402,12 +405,14 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
               ),
             },
       ]);
+      return failure.kind === 'not-implemented' ? 'discard-draft' : 'retain-draft';
     } finally {
       if (!signal.aborted) {
         inFlight.current = false;
         setPending(false);
       }
     }
+    return 'discard-draft';
   };
 
   let content;
@@ -459,9 +464,7 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
                     pending={pending}
                     reading={fetching}
                     unavailable={unavailable}
-                    onSubmit={(target, action) => {
-                      void handleOperation(target, action);
-                    }}
+                    onSubmit={handleOperation}
                   />
                 )}
                 {cluster !== undefined && (
