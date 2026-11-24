@@ -177,7 +177,7 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
               <Link href={CLUSTERS_PATH} onFollow={handleFollow}>
                 DB clusters
               </Link>
-              , select an Aurora DB cluster and choose Take snapshot.
+              , open an Aurora DB cluster and choose Take snapshot.
             </Box>
           )}
         </SpaceBetween>

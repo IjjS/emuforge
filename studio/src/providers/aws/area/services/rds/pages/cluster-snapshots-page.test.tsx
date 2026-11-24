@@ -204,7 +204,7 @@ describe('DB cluster snapshots', () => {
     const empty = await waitFor(() => {
       const slot = tableOf()?.findEmptySlot()?.getElement();
       expect(slot).toHaveTextContent('No DB cluster snapshots');
-      expect(slot).toHaveTextContent('select an Aurora DB cluster and choose Take snapshot.');
+      expect(slot).toHaveTextContent('open an Aurora DB cluster and choose Take snapshot.');
       return slot as HTMLElement;
     });
     expect(within(empty).getByRole('link', { name: 'DB clusters' })).toHaveAttribute('href', '/aws/rds/clusters');
