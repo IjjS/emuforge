@@ -108,15 +108,13 @@ No second run (issue 569). Every step runs once: a step that fails has failed, a
 Nothing is written to <root>/.pm/run/flakes.jsonl or <root>/.pm/run/flakes/ any more; what is there stays.
 
 Load (issue 478). A run that calls for a module that builds or tests the product (engine, studio, integration) and
-exists, and every --checks run, asks for room before its first step: _pmlib.check_room judges the machine against
-the limits of _pmlib (memory, swap, CPU as measured; an unknown reading is room) and counts a heavy run that started
-under 60 s ago as no room (its load is not measured yet); the ask is taken under a lock, <root>/.pm/run/checks/
-.start.lock, so two asks never start on one reading. There is no limit on the number of runs: with room the run
-starts, however many already run. Without room it writes no record and no log, prints one line and exits 75:
+exists, and every --checks run, asks for room before its first step. _pmlib.check_room checks memory, swap and
+thermal state. CPU is recorded for information. Without room it writes no check result or step log, prints one
+line and exits 75:
   WAIT <n>s: <why>; running: <worktree> <step> (about <s>s left), ...; expected room at <HH:MM:SS>; <tail>
 where <n> is the least any running heavy run still needs (the rest of its step, at least 30 s, then its later
-steps, each the median of the step's last 20 recorded durations, 300 s for a step never recorded), the rest of the
-60 s for a run that started under it, or 60 s when none runs. For a caller that is a registered pane the tail is
+steps, each the median of the step's last 20 recorded durations, 300 s for a step never recorded), or 60 s when
+none runs. For a caller that is a registered pane the tail is
 `end your turn: EVENT room <name> check <checkout> comes when there is room`, and the pane is remembered in
 <root>/.pm/run/waiting.json: pm-watchd prompts it that line once there is room. For any other caller (the pm, a
 terminal) it is `run pm-check again after it`. A run that calls for no product module that exists (harness only,
@@ -126,6 +124,10 @@ to <root>/.pm/run/check-durations.jsonl (a --checks run as step `integration-che
 checks.json) holds `waited` {seconds, asks}: the time from the first WAIT answer this checkout got since its last
 start, and how many asks were answered WAIT; {0, 0} when none was (<checkout>/output/checks/waited.json keeps them
 in between).
+
+Before launching a test step, pm-check rechecks memory, swap and thermal state. Studio unit and integration steps
+(including --checks) also reserve a shared local suite slot. Only the affected step waits for a slot. Its run
+continues in place once admitted, and the slot is released after the step and its cleanup.
 
 Processes. Each step runs in its own process group, recorded in <checkout>/output/checks/running.json while the
 run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded
@@ -154,6 +156,7 @@ run ends, it tries the same idle-time build cache maintenance as pm-emulator-ima
 the measured sizes or why maintenance was deferred. The check verdict comes from the check steps alone.
 """
 import argparse
+import contextlib
 import datetime as dt
 import fcntl
 import hashlib
@@ -169,9 +172,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmbuildcache import cache_activity, prune_if_idle
 from _pmitrun import SWEEP_BOUND, sweep_earlier, sweep_log
-from _pmlib import (CHECKS, ROOT, caller, check_room, end_check, note_check, now, record_duration,
+from _pmlib import (CHECKS, ROOT, caller, check_room, cpu_pct, end_check, machine_room, note_check, now, record_duration, save,
                     wait_for_check_room)
 from _pmscope import called, deferred, lines, manifest_parts, scope, services_file
+from _pmtest import STEP_SUITE, end_group, try_slot
 
 STEPS = {
     "engine": ("engine", "Cargo.toml", [
@@ -203,6 +207,8 @@ STUDIO_INSTALL = "studio-install"
 WAIT_EXIT = 75  # EX_TEMPFAIL: no room now; ask again after the wait the answer names
 current = None  # the running step's Popen
 current_step = None  # the running step's name
+launching = False
+pending_signal = None
 GRACE = 10  # seconds a step's group has between SIGTERM and SIGKILL when the step is stopped
 STOP_GRACE = {"integration": 60}  # a longer grace: the integration run's EXIT trap removes its emulator (issue 342)
 BIN_DIR = os.path.dirname(os.path.abspath(__file__))  # pm-emulator-dir is the sweep's, beside this script
@@ -223,18 +229,16 @@ def waited_file(co):
 
 
 def ask(co, steps):
-    """Ask for room for a heavy run of `steps`. With room: record this run in CHECKS and return
-    (readings, waited {seconds, asks}). Without: remember the asker, print the WAIT line and exit WAIT_EXIT."""
+    """Ask for room for a heavy run of `steps`. Record it and return its wait, or exit with WAIT."""
     global this_run
     CHECKS.mkdir(parents=True, exist_ok=True)
     wf = waited_file(co)
     with open(CHECKS / ".start.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        readings = {}
-        why, wait, left = check_room(readings=readings)
+        why, wait, left = check_room()
         at = time.time()
         if why is None:
-            this_run = dict(pid=os.getpid(), checkout=str(co), started=at, steps=list(steps),
+            this_run = dict(pid=os.getpid(), checkout=str(co), started=at, steps=list(steps), suite_slots=True,
                             step=steps[0] if steps else None, step_started=at)
             note_check(this_run)
     try:
@@ -246,7 +250,7 @@ def ask(co, steps):
         first = w.get("first_at")
         waited = dict(seconds=round(at - first, 1) if isinstance(first, (int, float)) else 0,
                       asks=w.get("asks", 0) if isinstance(w.get("asks"), int) else 0)
-        return readings, waited
+        return waited
     wf.parent.mkdir(parents=True, exist_ok=True)
     w = dict(first_at=w.get("first_at") if isinstance(w.get("first_at"), (int, float)) else at,
              asks=(w.get("asks") if isinstance(w.get("asks"), int) else 0) + 1)
@@ -264,10 +268,11 @@ def ask(co, steps):
     sys.exit(WAIT_EXIT)
 
 
-def at_step(name):
-    """Note in this run's CHECKS entry that it now runs step `name` (a name not among its steps is the one it has)."""
-    if this_run is not None and name in this_run["steps"]:
-        this_run.update(step=name, step_started=time.time())
+def at_step(name, waiting=False):
+    """Record the active step or the step waiting for admission."""
+    if this_run is not None:
+        step = "integration-checks" if this_run["steps"] == ["integration-checks"] else name
+        this_run.update(step=step, step_started=time.time(), waiting=waiting)
         note_check(this_run)
 
 
@@ -277,32 +282,19 @@ def done():
         end_check(this_run["pid"])
 
 
-def end_group(pgid, grace=10):
-    """SIGTERM a process group, then SIGKILL what is left after `grace` seconds. True when it is gone."""
-    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2)):
-        try:
-            os.killpg(pgid, sig)
-        except (ProcessLookupError, PermissionError):
-            return True
-        end = time.time() + wait
-        while time.time() < end:
-            try:
-                os.killpg(pgid, 0)
-            except (ProcessLookupError, PermissionError):
-                return True
-            time.sleep(0.1)
-    return False
-
-
 def grace_of(step):
     return STOP_GRACE.get(step, GRACE)
 
 
 def on_signal(signum, _frame):
+    global pending_signal
+    if launching:
+        pending_signal = signum
+        return
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, signal.SIG_IGN)  # a second signal never cuts the step's end or the sweep short
     if current is not None and current.poll() is None:
-        end_group(current.pid, grace=grace_of(current_step))
+        end_group(current.pid, grace=grace_of(current_step), reap=current.poll)
     done()
     sys.exit(128 + signum)  # run_step's `finally` sweeps an integration step's run
 
@@ -409,9 +401,32 @@ def invalidate_studio_install(studio):
         stamp.unlink(missing_ok=True)
 
 
-def run_step(cmd, cwd, env, log, record, name, cache_fd):
+@contextlib.contextmanager
+def step_slot(name, record):
+    """Wait here without restarting earlier steps. Keep the slot through runner cleanup."""
+    suite = STEP_SUITE.get(name)
+    if suite is None and name != "engine-test":
+        yield ()
+        return
+    last = None
+    while True:
+        admission = try_slot(suite) if suite else contextlib.nullcontext((None, machine_room()))
+        with admission as (fd, why):
+            if why is None:
+                yield (fd,) if fd is not None else ()
+                return
+        if why != last:
+            if last is None:
+                save(record, dict(pm_check_pid=os.getpid(), step=name, started=now(), waiting=True))
+                at_step(name, waiting=True)
+            print(f"  {name:18} waiting  {why}", flush=True)
+            last = why
+        time.sleep(5)
+
+
+def run_step(cmd, cwd, env, log, record, name, cache_fd, slot_fds=()):
     """Run one step in its own process group with its output in `log`; return the exit code (127: not found)."""
-    global current, current_step
+    global current, current_step, launching
     with open(log, "w") as f:
         if name == "integration":
             try:
@@ -420,19 +435,24 @@ def run_step(cmd, cwd, env, log, record, name, cache_fd):
                 print(f"cannot invalidate the Studio install stamp: {e}", file=f)
                 return 127
         try:
-            current = subprocess.Popen(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                       env=env, start_new_session=True, pass_fds=(cache_fd,))
+            launching = True
+            try:
+                current_step = name
+                current = subprocess.Popen(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                           env=env, start_new_session=True, pass_fds=(cache_fd, *slot_fds))
+                save(record, dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now(), log=str(log)))
+                at_step(name)
+            finally:
+                launching = False
+                if pending_signal is not None:
+                    on_signal(pending_signal, None)
+            return current.wait()
         except FileNotFoundError as e:
             f.write(f"{e}\n")
             return 127
-        record.write_text(json.dumps(dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now(),
-                                          log=str(log))))
-        current_step = name
-        at_step(name)
-        try:
-            return current.wait()
         finally:
-            end_group(current.pid, grace=2)  # nothing a step started outlives it
+            if current is not None:
+                end_group(current.pid, grace=2)  # nothing a step started outlives it
             current = current_step = None
             if name == "integration":  # what the run's EXIT trap could not remove (issue 342)
                 for line in sweep_log(pathlib.Path(record).parents[2], log, BIN_DIR):
@@ -665,8 +685,8 @@ def run_check(a, co, ids, cache_fd):
             if mod == "studio" and not studio_install_current(co / "studio"):
                 steps.append(STUDIO_INSTALL)
             steps.extend(name for name, _ in STEPS[mod][2])
-        readings, waited = ask(co, steps)
-        cpu = readings.get("cpu")
+        waited = ask(co, steps)
+        cpu = cpu_pct()
     else:
         waited_file(co).unlink(missing_ok=True)
     results = []
@@ -722,8 +742,9 @@ def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held=(), ta
             if mod == "integration" and services is not None:
                 cmd = cmd + ["--services", str(services_json)]
             log = logs / f"check-{name}.log"
-            t = started = time.time()
-            code = run_step(cmd, str(co / sub), env, log, record, name, cache_fd)
+            with step_slot(name, record) as slot_fds:
+                t = started = time.time()
+                code = run_step(cmd, str(co / sub), env, log, record, name, cache_fd, slot_fds)
             status = "error" if code == 127 else "failed" if code != 0 else "passed"
             results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
             record_duration(name, results[-1]["seconds"], status)
@@ -768,12 +789,13 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids,
     listed.write_text(json.dumps(dict(checks=[dict(id=i, reason="not asked for (pm-check --checks)")
                                               for i in ids if i not in asked]), indent=1))
     log = logs / "checks-integration.log"
-    readings, waited = ask(co, ["integration-checks"])  # the suite builds and starts an emulator, whatever it is asked
-    cpu = readings.get("cpu")
+    waited = ask(co, ["integration-checks"])  # the suite builds and starts an emulator, whatever it is asked
+    cpu = cpu_pct()
     try:
-        t = time.time()
         cmd = ["./run", "--not-run", str(listed), "--on-request"] + (["--full"] if suite_knows_full(co) else [])
-        code = run_step(cmd, str(suite), env, log, record, "integration", cache_fd)
+        with step_slot("integration", record) as slot_fds:
+            t = time.time()
+            code = run_step(cmd, str(suite), env, log, record, "integration", cache_fd, slot_fds)
     finally:
         record.unlink(missing_ok=True)
         done()

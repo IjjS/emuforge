@@ -78,7 +78,7 @@ own unit is not this: that is `BLOCKED`.
   nothing; end your turn with `WAITING <name> check <worktree>`, and `EVENT room <name> check <worktree>` arrives when
   there is room: run it again.
 - Checks only through `<Root>/.pm/bin/pm-check <worktree>`; captures only through `pm-capture`. Their records
-  are the evidence; a command you ran by hand is not.
+  are the evidence. For a direct test while developing, use the local slots below.
 - For a unit of an issue that has an issue branch, `pm-check` is the fast check: it runs what the unit's own paths
   against the issue branch call for and leaves `integration` to the issue branch (the step is recorded
   `deferred`). The integration checks run once, in the whole check on the issue branch.
@@ -129,13 +129,38 @@ the next `pm-check` of your worktree removes what an earlier stopped run left; y
 
 ## Machine
 
-Memory budget 22.5 GB used, CPU 90% (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or
-an emulator run `pm-mem --wait`: it waits up to five minutes for the CPU to drop and fails at once on memory. If
-it fails on memory, stop with `BLOCKED <name> memory` at once; if the CPU is still over after the wait, stop with
-`BLOCKED <name> cpu`. `pm-check` needs nothing before it: it asks for room itself and either starts, however many
-other checks run, or answers `WAIT` with the expected wait (above); never start a second one of your own. No
-long-running dev servers: web checks use the built app served by `pm-capture --serve` or on your own port.
-Headless Playwright only.
+The limits are 22.5 GB used memory and 256 MB free swap when swap exists. CPU percentage is informational.
+Before `cargo build`, Playwright, a dev server or an emulator, run `<Root>/.pm/bin/pm-mem --wait`. Nominal and
+fair thermal states have room. The command waits up to five minutes at serious or critical and fails at once on
+memory or swap. Report `BLOCKED <name> memory` for memory or swap, and `BLOCKED <name> thermal` if still too hot.
+`pm-check` handles admission itself. It may answer `WAIT` before starting or wait inside a running check at
+the affected step. Never start a second one of your own. No long-running dev servers: web checks use the built
+app served by `pm-capture --serve` or on your own port. Headless Playwright only.
+
+### Local test slots
+
+The main checkout's harness shares three Vitest slots and one integration suite slot across worktrees. Ask your
+lead or the PM before running a suite directly. From your Studio directory, reserve a named ticket, run the usual
+command, and return the ticket after the command and its children have stopped:
+
+```sh
+pm_test=/absolute/path/to/main-checkout/.pm/bin/pm-test
+if "$pm_test" acquire vitest i83-worker-s1-unit; then
+  bun run test:unit
+  "$pm_test" release i83-worker-s1-unit
+fi
+```
+
+Start the test only after `acquire` succeeds. A manual ticket stays held until returned, including when a
+terminal closes. `pm-test list` shows held tickets. For automatic release, reserve for the original command alone:
+
+```sh
+"$pm_test" run vitest -- bun run test:unit path/to/example.test.ts
+```
+
+For an authorized direct integration suite, use `pm-test run integration -- ./run` from your
+`tests/integration` directory with your assigned ports. Use `pm-check` for recorded integration checks.
+`pm-test` returns 75 if it could not reserve room. Apply the same task ownership and stop rules below.
 
 Other worktrees run the same tools as you at the same time. Stop only what is yours:
 
@@ -176,14 +201,14 @@ line. So when you stop to wait on purpose, say so with `WAITING`.
 | `UNIT READY <name> <branch> …` | worker: `pm-check` (the fast check) passed on the branch's head; harness-engineer: `pm-check` passed and `output/report.md` is written | delivered to your lead |
 | `ISSUE READY <name> <branch> report=<path> [filed #<n> …]` | plan: the issue is whole on its collecting branch (`lead.md`, Close) | delivered to the `pm` |
 | `DONE <name> <one line>` | an order your lead sent after your ready line finished (what changed, committed) | delivered to your lead |
-| `BLOCKED <name> <reason>` | you cannot continue without your lead: `decision-needed <q>` \| `memory` \| `cpu` \| `depends <unit> <what>` \| `review <stage>` (3 rounds failed) \| `check <id>` | delivered to your lead; `memory`, `cpu` and `depends emulator image` to the `pm` |
+| `BLOCKED <name> <reason>` | you cannot continue without your lead: `decision-needed <q>` \| `memory` \| `thermal` \| `depends <unit> <what>` \| `review <stage>` (3 rounds failed) \| `check <id>` | delivered to your lead; `memory`, `thermal` and `depends emulator image` to the `pm` |
 | `WAITING <name> <what>` | you stop on purpose and something else will prompt you: `check <worktree>` (a `WAIT` answer, until `EVENT room`), `room <role>` (a `QUEUE` answer, until `EVENT room`), `unit <unit>` (a plan, until that worker's line), `review <stage> r<k>` (a plan, until rev's `REVIEWED`), `run <what>` (a run of your own in the background that prompts you when it ends) | logged only |
 | `REVIEWED <stage> r<k> verdict=<pass\|revise> p1=<n> p2=<n> p3=<n> <review-file>` | rev only: sent to the lead with `herdr agent prompt`, and `pm-report --from <rev-name>` for the log | logged only (the lead has it from rev) |
 | `RESET READY <name> <nonce>` | the line a reset asks for, reported and printed exactly as given (Context budget) | logged only (`pm-pane reset` reads its record, or the screen when it is only printed) |
 | no typed line | never on purpose | `EVENT silent <name>` to your lead |
 
 A delivered line goes to whoever opened your pane: a worker's, rev's and crit's to their plan, a plan's and a
-harness-engineer's to the PM. `BLOCKED … memory`, `cpu` and `depends emulator image` go to the PM from every pane,
+harness-engineer's to the PM. `BLOCKED … memory`, `thermal` and `depends emulator image` go to the PM from every pane,
 since the PM hears the machine. What your lead does with a delivered line, and with `EVENT silent`, is in its own
 events table: the `pm`'s in the PM skill (Events), a plan's in `lead.md` (Events that reach you). Progress is never
 reported. Report faithfully: a failed or skipped check is stated with its log path.

@@ -1,0 +1,91 @@
+#!/usr/bin/env -S python3 -I
+"""Reserve local test room from the main checkout. Commands run in the caller's directory."""
+import argparse
+import os
+import re
+import signal
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import caller, load
+from _pmtest import CAPACITY, TICKETS, acquire, end_group, release, try_slot
+
+
+def run(suite, command):
+    # A signal during Popen must not drop the slot before the child is accounted for.
+    interrupted = None
+
+    def interrupt(sig, _frame):
+        nonlocal interrupted
+        interrupted = sig
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, interrupt)
+    with try_slot(suite) as (fd, why):
+        if interrupted:
+            return 128 + interrupted
+        if why:
+            return wait(why)
+        try:
+            proc = subprocess.Popen(command, start_new_session=True, pass_fds=(fd,))
+        except OSError as error:
+            print(error, file=sys.stderr)
+            return 127
+        try:
+            while not interrupted:
+                try:
+                    code = proc.wait(timeout=0.25)
+                    return code if code >= 0 else 128 - code
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            grace = (60 if suite == "integration" else 10) if interrupted else 2
+            end_group(proc.pid, grace=grace, reap=proc.poll)
+            proc.wait()
+        return 128 + interrupted
+
+
+def wait(why):
+    print(f"WAIT: {why}", file=sys.stderr)
+    return 75
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="action", required=True)
+    take = sub.add_parser("acquire", help="hold a named ticket until release")
+    take.add_argument("suite", choices=CAPACITY)
+    take.add_argument("ticket")
+    sub.add_parser("release", help="return a ticket after the test has stopped").add_argument("ticket")
+    sub.add_parser("list", help="show held tickets")
+    launch = sub.add_parser("run", help="reserve only for the command after --, then release on exit")
+    launch.add_argument("suite", choices=CAPACITY)
+    launch.add_argument("command", nargs=argparse.REMAINDER)
+    args = p.parse_args()
+    if args.action == "list":
+        for ticket, row in load(TICKETS, {}).items():
+            print(f"{ticket} {row['suite']} {row['owner']}")
+        return 0
+    if args.action == "run":
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        if not command:
+            launch.error("supply a command after the suite")
+        return run(args.suite, command)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.ticket):
+        p.error("ticket must start with a letter or digit and use only letters, digits, dots, hyphens or underscores")
+    try:
+        if args.action == "release":
+            release(args.ticket)
+        else:
+            pane = caller() or {}
+            why = acquire(args.suite, args.ticket, pane.get("name") or os.getcwd())
+            if why:
+                return wait(why)
+            print(args.ticket)
+    except ValueError as error:
+        p.error(str(error))
+    return 0
+
+
+sys.exit(main())

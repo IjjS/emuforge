@@ -26,9 +26,9 @@ EVENTS = RUN / "events.log"
 
 MODEL_IDS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
 # worker panes per side (a unit's first letter), the same for every side, and live panes in all (plan, rev and crit
-# included), set so that every side can reach its limit; memory, swap, CPU and the token rate still gate every new pane.
+# included), set so that every side can reach its limit; memory, swap and the token rate still gate every new pane.
 LIMITS = {"studio_worker": 8, "engine_worker": 8, "tests_worker": 8, "harness_worker": 8, "total": 24,
-          "mem_gb": 22.5, "cpu_pct": 90}
+          "mem_gb": 22.5}
 SIDES = {"s": "studio", "e": "engine", "t": "tests", "h": "harness"}  # first letter of a unit name: s1, e2, t1, h1
 
 
@@ -196,6 +196,25 @@ def cpu_pct(seconds=1):
         return None
     idle = re.findall(r"CPU usage:.*?([0-9.]+)% idle", out)
     return round(100 - float(idle[-1]), 1) if idle else None
+
+
+def thermal_state():
+    """macOS Foundation's processInfo.thermalState, or None when unavailable."""
+    if sys.platform != "darwin":
+        return None
+    import ctypes as c
+    try:
+        c.CDLL("/System/Library/Frameworks/Foundation.framework/Foundation")
+        objc = c.CDLL("/usr/lib/libobjc.A.dylib")
+        objc.objc_getClass.argtypes = objc.sel_registerName.argtypes = [c.c_char_p]
+        objc.objc_getClass.restype = objc.sel_registerName.restype = c.c_void_p
+        send_object = c.CFUNCTYPE(c.c_void_p, c.c_void_p, c.c_void_p)(("objc_msgSend", objc))
+        send_integer = c.CFUNCTYPE(c.c_long, c.c_void_p, c.c_void_p)(("objc_msgSend", objc))
+        info = send_object(objc.objc_getClass(b"NSProcessInfo"), objc.sel_registerName(b"processInfo"))
+        value = send_integer(info, objc.sel_registerName(b"thermalState"))
+        return {0: "nominal", 1: "fair", 2: "serious", 3: "critical"}.get(value)
+    except (OSError, AttributeError):
+        return None
 
 
 def wake_watchd():
@@ -502,23 +521,29 @@ def resetting(entry, at=None):
     return isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= at - t < RESETTING_FOR
 
 
-def machine_room(readings=None, given=None):
-    """Why the machine has no room now (memory, swap, CPU as measured, against LIMITS), or None. An unknown reading
-    is room. The one measurement a new pane (room) and a heavy check (check_room) share. `readings`, a dict, gets
-    what was read: mem_gb, and cpu when memory left room to read it. `given` ({"mem": mem_gb(), "cpu": cpu_pct()}),
-    readings already taken (pm-watchd's timer), is used instead of measuring again."""
-    readings = {} if readings is None else readings
-    given = given or {}
-    used, su, st = given["mem"] if "mem" in given else mem_gb()
-    readings["mem_gb"] = round(used, 1)
-    if used > LIMITS["mem_gb"]:
-        return f"memory {used:.1f}GB > {LIMITS['mem_gb']}GB"
+def memory_room(mem, limit=LIMITS["mem_gb"]):
+    """Why memory or swap leaves no room, or None."""
+    used, su, st = mem
+    if used > limit:
+        return f"memory {used:.1f}GB > {limit}GB"
     if st and st - su < 0.25:
         return f"swap free {(st - su) * 1024:.0f}MB < 256MB"
-    cpu = readings["cpu"] = given["cpu"] if "cpu" in given else cpu_pct()
-    if cpu is not None and cpu > LIMITS["cpu_pct"]:
-        return f"cpu {cpu:.0f}% > {LIMITS['cpu_pct']}%"
     return None
+
+
+def thermal_room(state):
+    if state in ("serious", "critical"):
+        return f"thermal state {state}"
+    return None
+
+
+def machine_room(given=None):
+    """Why heavy work must wait. Reuse the daemon's measurements when supplied."""
+    mem = given["mem"] if given else mem_gb()
+    why = memory_room(mem)
+    if why:
+        return why
+    return thermal_room(given["thermal"] if given else thermal_state())
 
 
 def room(role, side, issue, alive=None, tokens=True, given=None):
@@ -528,7 +553,7 @@ def room(role, side, issue, alive=None, tokens=True, given=None):
     why = start_allowed(issue)
     if why:
         return why
-    why = machine_room(given=given)
+    why = memory_room(given["mem"] if given else mem_gb())
     if why:
         return why
     if tokens:
@@ -559,7 +584,6 @@ def wait_for_room(asker, role, side, issue, reason):
 # machine under its limits, however many checks already run, and is otherwise answered WAIT with an expected wait.
 CHECKS = RUN / "checks"                      # <pid>.json of each heavy pm-check that runs now; .start.lock
 DURATIONS = RUN / "check-durations.jsonl"    # one line per step that ran: {at, step, seconds, status}
-SETTLE = 60          # seconds: a heavy run that started more recently has not shown its load yet; it is no room
 UNKNOWN_STEP = 300   # seconds counted for a step with no recorded duration
 STEP_FLOOR = 30      # seconds: the least a running step is counted as still needing
 IDLE_WAIT = 60       # seconds of wait when no check runs (the load is the machine's other work)
@@ -637,20 +661,14 @@ def remaining(entry, est, at):
     return left + sum(est.get(s, UNKNOWN_STEP) for s in later)
 
 
-def check_room(running=None, at=None, readings=None, given=None):
+def check_room(running=None, at=None, given=None):
     """(why, wait seconds, [(checkout, step, seconds left)]) for a heavy check that asks now; why is None when there
-    is room. The machine's limits (machine_room) first, then a heavy run started under SETTLE seconds ago. The wait
-    is the least any running check still needs (remaining), or the rest of SETTLE, or IDLE_WAIT when none runs."""
+    is room. The wait is the least any running check still needs (remaining), or IDLE_WAIT when none runs."""
     running = running_checks() if running is None else running
-    why = machine_room(readings, given)
+    why = machine_room(given)
     at = time.time() if at is None else at
     est = step_estimates()
     left = [(r.get("checkout"), r.get("step"), round(remaining(r, est, at))) for r in running]
-    young = [r for r in running if at - float(r.get("started") or 0) < SETTLE]
-    if why is None and young:
-        newest = max(float(r.get("started") or 0) for r in young)
-        return (f"a check started {at - newest:.0f}s ago has not shown its load yet",
-                max(1, round(SETTLE - (at - newest))), left)
     if why is None:
         return None, 0, left
     wait = min((s for _, _, s in left), default=IDLE_WAIT)

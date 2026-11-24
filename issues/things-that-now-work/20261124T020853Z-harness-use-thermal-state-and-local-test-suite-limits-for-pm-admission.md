@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|local-test-admission|thermal-and-suite-slots
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 34bb4e22c4b99aec4f70c70a075dc6f498038415
 
 # Use thermal state and local test suite limits for PM admission

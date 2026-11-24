@@ -211,7 +211,7 @@ its affected IDs before the new review round. Run the whole check on the new hea
 ## Events that reach you
 
 The events of your issue's panes come to you as prompts starting with `EVENT`. Your own lines, a dialog in one of
-your panes (`EVENT blocked`), a pane's `BLOCKED … memory`, `cpu` or `depends emulator image`, and the machine's
+your panes (`EVENT blocked`), a pane's `BLOCKED … memory`, `thermal` or `depends emulator image`, and the machine's
 events go to the `pm`.
 
 | line | you do |

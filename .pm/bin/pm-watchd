@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -I
 """Event daemon: watches herdr panes and pushes EVENT lines into the PM pane. Runs outside Claude Code.
 
-  pm-watchd start [--pm <pane-id|agent-name>] [--interval 60] [--mem 22.5] [--cpu 90] [--ctx 300000] [--pm-ctx 400000] [--stale-hours 3]
+  pm-watchd start [--pm <pane-id|agent-name>] [--interval 60] [--mem 22.5] [--ctx 300000] [--pm-ctx 400000] [--stale-hours 3]
   pm-watchd stop | status | tail [N] | whoami
 
 Start it at the beginning of every PM session from the PM pane. The PM pane is found from the process tree (Claude)
@@ -24,8 +24,8 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
   EVENT room <pane> pane <role> <side>                          to the pane a QUEUE answer of pm-pane told to wait: there is room now
   EVENT room <pane> check <checkout>                            to the pane a WAIT answer of pm-check told to wait: there is room
                                                                 now (the longest waiting first, one per look). Room is judged only
-                                                                when something frees it: a check ends, a pane closes or is gone,
-                                                                the timer's reading of memory and CPU is under the limits, or the
+                                                                when a check ends, a pane closes or is gone,
+                                                                the timer checks memory and thermal state, or the
                                                                 token rate goes back under its target
   EVENT emulator-image refreshed <before> -> <after>           a refresh moved aws-emulator to a new version or commit (pm-emulator-image)
   EVENT emulator-image failed <reason>                        a refresh failed; aws-emulator was left as it was (pm-emulator-image)
@@ -41,8 +41,9 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
   EVENT ctx pm <tokens>                                         the PM's own context passed --pm-ctx
   EVENT mem <used>GB swap <used>/<total>GB top=<pane> <GB>,…    memory over --mem (at most once per 10 min)
   EVENT mem ok <used>GB                                         back under budget after a mem event (once)
-  EVENT cpu <pct>% top=<pane> <GB>,…                            CPU over --cpu on three looks in a row, 30 s apart (at most once per 10 min)
-  EVENT cpu ok <pct>%                                           back under after a cpu event (once)
+  EVENT thermal serious                                        defer new tests while the machine cools
+  EVENT thermal critical checks=… top=<pane> <GB>,…            PM reduces active heavy work through its owner
+  EVENT thermal ok <nominal|fair>                               thermal admission clear
   EVENT tokens over <rate> target <rate>                        the last hour's Claude token rate passed today's target (pm-tokens)
   EVENT tokens ok <rate>                                        back under the target (once)
   EVENT check still <worktree> <step> <minutes>m                a pm-check step has run for an hour (again every hour)
@@ -70,9 +71,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (CHECKS, EVENTS, PANE_ROLES, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room, cpu_pct,
-                    find_key, herdr, load, log, machine_room, mem_gb, notify, now, pane_ops, pane_rss_gb, resetting, room,
-                    save, transcript_ctx, update)
+from _pmlib import (CHECKS, EVENTS, PANE_ROLES, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room,
+                    find_key, herdr, load, log, mem_gb, notify, now, pane_ops, pane_rss_gb, resetting, room,
+                    save, thermal_room, thermal_state, transcript_ctx, update)
 from _pmroute import PM as TO_PM, route
 from _pmwake import Waker
 
@@ -115,13 +116,11 @@ def send_to(name, ags_list, lines):
 
 
 def room_tick(st, reg, checks=check_room, freed=None, given=None):
-    """EVENT room for each pane in waiting.json whose limit has cleared, judged only when something freed room since
-    the last look (issue 497): `freed` names it (a check ended, a pane closed or is gone, the daemon's own reading of
-    memory and CPU on its timer is under the limits, the token rate went back under its target); `given` is that
-    reading, used instead of measuring again. Without `freed` nothing is judged; an asker that is no longer a live
+    """EVENT room for panes in waiting.json whose limits have cleared (issue 497). `freed` names the event
+    prompting a look, such as a check ending or a scheduled machine sample. `given` holds any machine
+    readings from that sample. Without `freed` nothing is judged; an asker that is no longer a live
     pane is dropped. Of the panes a WAIT answer of pm-check told to wait, only the longest waiting is told, once
-    `checks` finds room: the check it starts changes the room, and check_room holds the next one until the machine
-    shows its load (the next timer reading judges again)."""
+    `checks` finds room; the next timer reading judges again."""
     waiting = load(WAITING, [])
     if not waiting:
         return []
@@ -165,6 +164,17 @@ def check_files():
         return sorted(f.name for f in CHECKS.glob("*.json"))
     except OSError:
         return []
+
+
+def active_checks():
+    """Recorded check steps with a live controller for the critical thermal notice."""
+    from _pmstill import checkouts, live_pm_check, record
+    active = []
+    for name, path in checkouts():
+        rec = record(path)
+        if rec and live_pm_check(rec[0]):
+            active.append(f"{name}:{rec[1]}")
+    return ",".join(active) or "-"
 
 
 def what_freed(st, live_now, checks_now):
@@ -512,25 +522,21 @@ def run(a):
             elif st.get("mem_over") and used < a.mem - 1.0:  # back under budget with 1 GB to spare: tell the PM once
                 events.append(f"EVENT mem ok {used:.1f}GB")
                 st["mem_over"] = False
-            if time.time() - st.get("cpu_checked", 0) >= 30:  # a second of measuring, so not on every wake-up
-                st["cpu_checked"] = time.time()
-                cpu = cpu_pct()
-                if cpu is not None and cpu > a.cpu:
-                    st["cpu_streak"] = st.get("cpu_streak", 0) + 1
-                    if st["cpu_streak"] >= 3 and time.time() - st.get("last_cpu", 0) > 600:
-                        events.append(f"EVENT cpu {cpu:.0f}% top={top_panes(reg)}")
-                        st["last_cpu"] = time.time()
-                        st["cpu_over"] = True
-                elif cpu is not None:
-                    st["cpu_streak"] = 0
-                    if st.get("cpu_over") and cpu < a.cpu - 10:
-                        events.append(f"EVENT cpu ok {cpu:.0f}%")
-                        st["cpu_over"] = False
-                # the timer's reading of memory and CPU judges room too, with no look of its own (issue 497)
-                reading = {"mem": (used, su, stot), "cpu": cpu}
-                if load(WAITING, []) and machine_room(given=reading) is None:
-                    freed.append("the machine is under its limits")
-                    given = reading
+            if at - st.get("thermal_checked", 0) >= 30:
+                st["thermal_checked"] = at
+                thermal = thermal_state()
+                previous = st.get("thermal")
+                if thermal and thermal != previous:
+                    if thermal == "critical":
+                        events.append(f"EVENT thermal critical checks={active_checks()} top={top_panes(reg)}")
+                    elif thermal == "serious":
+                        events.append("EVENT thermal serious")
+                    elif thermal_room(previous):
+                        events.append(f"EVENT thermal ok {thermal}")
+                    st["thermal"] = thermal
+                if load(WAITING, []):
+                    freed.append("the machine was sampled")
+                    given = {"mem": (used, su, stot), "thermal": thermal}
             if time.time() - st.get("tokens_checked", 0) > 300:  # transcripts are large: look every 5 minutes
                 st["tokens_checked"] = time.time()
                 from _pmtokens import fmt, status as token_status
@@ -589,9 +595,8 @@ def run(a):
         if on != socket_state:
             log("herdr event socket in use" if on else f"herdr event socket unavailable ({waker.error}); looking every {a.interval}s")
             socket_state = on
-        # while the CPU is being watched for a streak, look again in 30 s even when nothing happens; a worktree due for
-        # an orphan look (_pmorphanevent) wakes the daemon at its time
-        timeout = min(a.interval, 30) if st.get("cpu_streak") else a.interval
+        # Sample thermal state even when no event arrives. Orphan looks can wake the daemon earlier.
+        timeout = max(1, min(a.interval, st.get("thermal_checked", 0) + 30 - time.time()))
         try:
             from _pmorphanevent import next_look
             due_at = next_look(st)
@@ -652,7 +657,6 @@ def main():
     p.add_argument("cmd", choices=["start", "stop", "status", "tail", "run", "whoami"])
     p.add_argument("n", nargs="?", default="30")
     p.add_argument("--pm"); p.add_argument("--interval", type=int, default=60); p.add_argument("--mem", type=float, default=22.5)
-    p.add_argument("--cpu", type=float, default=90)
     p.add_argument("--ctx", type=int, default=300000); p.add_argument("--pm-ctx", type=int, default=1000000); p.add_argument("--stale-hours", type=float, default=3)
     a = p.parse_args()
     if a.cmd in ("start", "stop"):
@@ -722,11 +726,11 @@ def main():
                     session_issues=session_issues, workspace=pm_a.get("workspace_id") or os.environ.get("HERDR_WORKSPACE_ID"),
                     started=now())
     args = [sys.executable, "-I", os.path.abspath(__file__), "run", "--pm", pm_pane, "--interval", str(a.interval),
-            "--mem", str(a.mem), "--cpu", str(a.cpu), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
+            "--mem", str(a.mem), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
     with open(LOG, "a") as out:
         proc = subprocess.Popen(args, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
     time.sleep(0.5)
-    print(f"started pid {proc.pid} pm={pm_a.get('name') or pm_pane} ({pm_pane}) session={pm_session} fallback interval={a.interval}s mem>{a.mem}GB cpu>{a.cpu:.0f}% ctx>{a.ctx} pm-ctx>{a.pm_ctx}")
+    print(f"started pid {proc.pid} pm={pm_a.get('name') or pm_pane} ({pm_pane}) session={pm_session} fallback interval={a.interval}s mem>{a.mem}GB ctx>{a.ctx} pm-ctx>{a.pm_ctx}")
 
 
 main()

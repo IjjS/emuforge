@@ -285,14 +285,15 @@ flow step 1:
 | `EVENT tokens over …` | open no new pane; let running panes finish their turn; tell the owner in one line only if work is now waiting |
 | `EVENT tokens ok …` | resume queued `pm-pane new` calls |
 | `EVENT ready <pane> BLOCKED memory` | nothing until `EVENT mem ok`; then prompt the pane to retry |
-| `EVENT ready <pane> BLOCKED cpu` | nothing until `EVENT cpu ok`; if none is pending (`pm-mem` shows the CPU under 90%), prompt the pane to retry now |
+| `EVENT ready <pane> BLOCKED thermal` | wait for `EVENT thermal ok`, or prompt the pane to retry if `pm-mem` already shows nominal or fair |
 | `EVENT blocked <pane>` | `herdr agent read <pane> --lines 200`; a permission prompt for the pane's own worktree is answered `y` via `herdr agent send-keys`; anything destructive or outside the worktree goes to the owner |
 | `EVENT ctx <pane> <n>K` | read the pane's state file first (a plan's `state-plan.md`, a harness-engineer's `output/state.md` in its worktree); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes (a plan's long life survives it: it resumes from `state-plan.md`) |
 | `EVENT ctx pm <n>K` | write `state.md` for every open issue, then ask the owner in one line to clear your context; resume from the state files |
 | `EVENT mem … top=<pane> <GB>,…` | prompt the top pane in one line to stop its running process; start nothing new until `EVENT mem ok` |
 | `EVENT mem ok …` | prompt every pane that reported `BLOCKED memory` to retry; resume queued `pm-pane new` calls |
-| `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` answers a pane `WAIT` and `pm-watchd` tells it when there is room) |
-| `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
+| `EVENT thermal serious` | defer new tests while active tests finish. `pm-check` and `pm-test` enforce thermal admission |
+| `EVENT thermal critical checks=… top=…` | reduce active heavy work. From main, use `pm-check <worktree> --stop` for an active check confirmed in that worktree's `output/checks/running.json`, or ask the owning lead to stop its direct task through the tool that started it. `pm-test list` identifies holders of manual tickets. Ask the holder to return a ticket after its task and children stop. Start new tests once thermal admission clears |
+| `EVENT thermal ok …` | prompt panes that reported `BLOCKED thermal` to retry |
 | `EVENT silent <pane>` | a plan's or a harness-engineer's turn ended with no typed line (`references/pane-mode.md`, Reporting lines): `herdr agent read <pane> --lines 80` and its state file; stopped mid-work, prompt it in one line to go on; finished or waiting, prompt it to end its turn with its typed line; silent twice in a row with no progress, `pm-pane reset <pane>` |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
@@ -302,12 +303,17 @@ flow step 1:
 | `EVENT unregistered <pane> <pane id>` | herdr runs that pane but the registry lost it, so its lines reach nobody: register it with `pm-pane new <id> <role> [--unit <u>] --cwd <its cwd> --kind <its kind> --brief <its brief> --adopt` (cwd and kind from `herdr agent list`; the brief is recorded, not sent again), then `pm-pane list`; `pm-report` refused its lines while it was lost, so read its screen (`herdr agent read <pane> --lines 80`) for a typed line that reached nobody and handle it as its event. A pane that never got its brief (it printed none of its steps) gets it by hand with the `herdr agent prompt` line `--adopt` prints |
 
 The events of a plan's worker, rev and crit panes go to the plan (`lead.md`, Events), all but a dialog
-(`EVENT blocked`) and a `BLOCKED … memory`, `cpu` or `depends emulator image` line. You hear the plans, the
+(`EVENT blocked`) and a `BLOCKED … memory`, `thermal` or `depends emulator image` line. You hear the plans, the
 harness-engineers, those lines, the machine and every pane of an issue with no live plan. Every turn of a pane ends
 with a typed line (`references/pane-mode.md`, Reporting lines, which gives each type its handling): `STAGE READY`,
 `UNIT READY`, `ISSUE READY`, `DONE` and `BLOCKED` lines wake you; `WAITING`, `REVIEWED` and `RESET READY` lines are
 logged in `.pm/run/events.log` and never delivered; a turn with none wakes you as `EVENT silent <pane>`. Talk to a pane with
 `herdr agent prompt <pane> "<one line>"`.
+
+For the issue 640 rollout, restart `pm-watchd` from main and tell live leads to use the main checkout's
+`pm-test` entry point for direct tests. Account for direct suites started before rollout by letting them finish
+before granting new launches of their suite. Shared admission counts registered pre-rollout `pm-check` runs with a
+current or pending suite until those runs advance beyond it.
 
 ## Read first
 
@@ -340,7 +346,8 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main`; a plan runs the first two for its own issue, into `feat/<id>` only; the review it asks follows the issue's `lead` |
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |
-| `pm-mem`, `pm-quota` | memory and CPU against the limits (`--check`, `--wait`), Codex quota |
+| `pm-mem`, `pm-quota` | memory, swap and thermal state (`--check`, `--wait`), informational CPU, Codex quota |
+| `pm-test` | direct local test slots through `acquire` and `release`, or `run <suite> -- <command>`. See [pane mode](references/pane-mode.md#local-test-slots) |
 
 `pm-check` and `pm-emulator-image` try cache maintenance after cleanup (issue 593). It runs at idle against
 the machine's default builder and counts both private and shared records toward the 20,000,000,000-byte cap.

@@ -47,7 +47,7 @@ def record(path):
             rec = json.load(f)
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict):
+    if not isinstance(rec, dict) or rec.get("waiting"):
         return None
     pid, step, started = rec.get("pm_check_pid"), rec.get("step"), rec.get("started")
     if type(pid) is not int or pid <= 1:

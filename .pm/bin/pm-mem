@@ -1,15 +1,14 @@
 #!/usr/bin/env -S python3 -I
-"""Memory and CPU of the machine against the harness limits.
+"""Memory, swap and thermal state of the machine. CPU is informational.
 
-  pm-mem                      -> "used 14.4GB swap 6.8/8.0GB cpu 43%"
-  pm-mem --check [GB] [CPU%]  exit 1 when used > GB (default 22.5), swap free < 256 MB or cpu > CPU% (default 90)
-  pm-mem --wait [SECONDS]     like --check, but waits up to SECONDS (default 300) for the CPU to drop first.
-                              Memory over the limit fails at once: it does not go away by waiting.
+  pm-mem                      -> "used 14.4GB swap 6.8/8.0GB thermal fair cpu 43%"
+  pm-mem --check [GB]          exit 1 when used > GB (default 22.5), swap free < 256 MB, or thermal state is serious or critical
+  pm-mem --wait [SECONDS]      like --check, but waits up to SECONDS (default 300) for thermal state to clear.
+                              Memory and swap fail at once, including during the wait.
   pm-mem --json
 
 Memory is active + wired + compressed pages. CPU is what all cores used over one second (100 - idle).
-Run --check (or --wait) before cargo build, Playwright, a dev server or an emulator. pm-check waits for the CPU
-by itself, so nothing is needed before it.
+Run --check (or --wait) before cargo build, Playwright, a dev server or an emulator. pm-check has its own admission.
 """
 import json
 import os
@@ -17,7 +16,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import LIMITS, cpu_pct, mem_gb
+from _pmlib import LIMITS, cpu_pct, mem_gb, memory_room, thermal_room, thermal_state
 
 
 def main():
@@ -26,35 +25,26 @@ def main():
     if mode in ("-h", "--help"):
         print(__doc__)
         return 0
-    used, su, st = mem_gb()
     cpu = cpu_pct()
-    free_mb = (st - su) * 1024
-    line = lambda: f"used {used:.1f}GB swap {su:.1f}/{st:.1f}GB cpu {'?' if cpu is None else f'{cpu:.0f}'}%"
+    limit = float(args[1]) if mode == "--check" and len(args) > 1 else LIMITS["mem_gb"]
+    deadline = time.monotonic() + (float(args[1]) if mode == "--wait" and len(args) > 1 else 300)
+    while True:
+        mem, thermal = mem_gb(), thermal_state()
+        memory_limit = memory_room(mem, limit)
+        heat_limit = thermal_room(thermal)
+        if mode != "--wait" or memory_limit or not heat_limit or time.monotonic() >= deadline:
+            break
+        time.sleep(min(10, max(0, deadline - time.monotonic())))
+    used, su, st = mem
     if mode == "--json":
         print(json.dumps(dict(used_gb=round(used, 1), swap_used_gb=round(su, 1), swap_total_gb=round(st, 1),
-                              swap_free_mb=round(free_mb), cpu_pct=cpu)))
+                              swap_free_mb=round((st - su) * 1024), thermal_state=thermal, cpu_pct=cpu)))
         return 0
-    if mode not in ("--check", "--wait"):
-        print(line())
-        return 0
-    nums = [float(x) for x in args[1:]]
-    mem_lim = nums[0] if mode == "--check" and nums else LIMITS["mem_gb"]
-    cpu_lim = nums[1] if mode == "--check" and len(nums) > 1 else LIMITS["cpu_pct"]
-    deadline = time.time() + (nums[0] if mode == "--wait" and nums else 300 if mode == "--wait" else 0)
-    mem_over = used > mem_lim or (st and free_mb < 256)
-    while not mem_over and cpu is not None and cpu > cpu_lim and time.time() < deadline:
-        time.sleep(10)
-        cpu = cpu_pct()
-    print(line())
-    over = []
-    if used > mem_lim:
-        over.append(f"memory {used:.1f}GB > {mem_lim}GB")
-    if st and free_mb < 256:
-        over.append(f"swap free {free_mb:.0f}MB < 256MB")
-    if cpu is not None and cpu > cpu_lim:
-        over.append(f"cpu {cpu:.0f}% > {cpu_lim:.0f}%")
-    if over:
-        print("OVER limit: " + "; ".join(over))
+    cpu_display = f"{cpu:.0f}%" if cpu is not None else "?"
+    print(f"used {used:.1f}GB swap {su:.1f}/{st:.1f}GB thermal {thermal or '?'} cpu {cpu_display}")
+    why = memory_limit or heat_limit
+    if mode in ("--check", "--wait") and why:
+        print("OVER limit: " + why)
         return 1
     return 0
 

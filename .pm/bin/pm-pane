@@ -33,7 +33,7 @@ is remembered in .pm/run/waiting.json and pm-watchd prompts it `EVENT room <plan
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
 Limits (enforced unless --no-limit): worker panes per side (studio 8, engine 8, tests 8, harness 8), total live panes 24,
-memory 22.5 GB, swap free 256 MB, CPU 90%, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
+memory 22.5 GB, swap free 256 MB, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
 Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start).
 Effort: --effort goes to the agent as the model does (claude --effort <level>, after the -- of herdr agent start);
 a plan may pass it for its own panes. A pane opened again under a name it had (a rev opened for each review round,
@@ -272,7 +272,7 @@ def new(a, name):
     if not a.no_limit:
         why = room(a.role, side, a.issue, alive=live(reg))
         if why:
-            queue(asker, a, side, why, "; close or wait (EVENT mem ok, cpu ok, tokens ok), then retry")
+            queue(asker, a, side, why, "; close or wait (EVENT mem ok, tokens ok), then retry")
     info = load(PMINFO, {})
     workspace = info.get("workspace") or os.environ.get("HERDR_WORKSPACE_ID")
     if a.adopt:
