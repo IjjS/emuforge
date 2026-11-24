@@ -81,10 +81,11 @@ import {
   TERMINATE,
   textAt,
   typeInMultiselect,
-  valuePartsOf,
   VIEW_INSTANCES,
   world,
 } from './services/ec2/ec2';
+
+import { detailValueParts, tagRows } from './services/ec2/instance-changes';
 
 const NONE = '-';
 
@@ -184,11 +185,11 @@ test('studio.ec2-instances-made-elsewhere-are-shown', async ({ ctx, page }) => {
       const reported = (await instanceDirect(ctx, port, a))!;
       await expectValueIs(page, 'Instance ID', a);
       await expectValue(page, 'State', 'running');
-      await expectValueIs(page, 'Type', reported.type);
+      await expect.poll(() => detailValueParts(page, 'Type')).toEqual([reported.type]);
       await expectValueIs(page, 'Image ID', reported.imageId);
       await expectValueIs(page, 'Key pair', key);
       await expectValueIs(page, 'Architecture', reported.architecture ?? NONE);
-      await expectValueIs(page, 'Termination protection', 'Off');
+      await expect.poll(() => detailValueParts(page, 'Termination protection')).toEqual(['Off']);
       await expectValueIs(page, 'Availability Zone', 'us-east-1b');
       await expectValueIs(page, 'Subnet ID', w.subnet['us-east-1b']!);
       await expectValueIs(page, 'VPC ID', w.defaultVpc);
@@ -207,7 +208,7 @@ test('studio.ec2-instances-made-elsewhere-are-shown', async ({ ctx, page }) => {
           'Deleted on termination': v.deleteOnTermination === 'true' ? 'Yes' : 'No',
         })),
       );
-      const tags = await rowsOf(tableOf(main, 'Tags'));
+      const tags = await tagRows(page);
       expect(tags, 'the tags').toEqual(
         expect.arrayContaining([
           { Key: 'Name', Value: `${p}-App` },
@@ -556,7 +557,7 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
       await open(page, instancePath(prot), `${p}-p`);
       // The value is "On"; below it, as a part of its own, how the protection is changed.
       await expect
-        .poll(() => valuePartsOf(main, 'Termination protection'), {
+        .poll(() => detailValueParts(page, 'Termination protection'), {
           message: '"Termination protection" reads "On"',
           timeout: 30_000,
         })

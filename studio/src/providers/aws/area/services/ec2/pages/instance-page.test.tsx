@@ -5,12 +5,16 @@ import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { RequestError, requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { nameOf } from '../../../lib/ec2-client';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { modifyInstanceAttribute } from '../instance-attribute-api';
+import { changeInstanceContent, getInstanceUserData } from '../instance-content-api';
+import { EC2_KEYS, useInstanceListing } from '../queries';
 import { getVolume } from '../volume-api';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
@@ -27,6 +31,17 @@ vi.mock('../api', async (importOriginal) => {
   };
 });
 
+vi.mock('../instance-attribute-api', async (original) => ({
+  ...(await original<typeof import('../instance-attribute-api')>()),
+  modifyInstanceAttribute: vi.fn(),
+}));
+
+vi.mock('../instance-content-api', async (original) => ({
+  ...(await original<typeof import('../instance-content-api')>()),
+  changeInstanceContent: vi.fn(),
+  getInstanceUserData: vi.fn(),
+}));
+
 vi.mock('../volume-api', async (original) => ({
   ...(await original<typeof import('../volume-api')>()),
   getVolume: vi.fn(),
@@ -36,7 +51,7 @@ vi.mock('../volume-api', async (original) => ({
 // The area as Studio's frame renders it.
 
 class Connection {
-  value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  value: AreaConnection & { targetGeneration?: number } = { result: undefined, engineOrigin: undefined };
   private readonly listeners = new Set<() => void>();
 
   readonly subscribe = (listener: () => void) => {
@@ -47,6 +62,11 @@ class Connection {
   };
 
   readonly get = () => this.value;
+
+  changeTarget() {
+    this.value = { ...this.value, targetGeneration: (this.value.targetGeneration ?? 0) + 1 };
+    for (const listener of this.listeners) listener();
+  }
 }
 
 const EMULATOR = { port: 9309, endpoint: 'https://127.0.0.1:9309' };
@@ -78,6 +98,7 @@ function AreaWithStudioProps() {
       onContentTarget={() => undefined}
       routeChanges={changes}
       connection={current}
+      targetGeneration={current.targetGeneration}
     />
   );
 }
@@ -103,7 +124,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path: string) {
+function ListingObserver() {
+  const listing = useInstanceListing(ENGINE, { state: '', name: '' });
+  return (
+    <output aria-label="Observed instance list">{listing.items?.map(({ tags }) => nameOf(tags)).join(', ')}</output>
+  );
+}
+
+function open(
+  path: string,
+  observeList = false,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -111,10 +143,10 @@ function open(path: string) {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
+      {observeList && <ListingObserver />}
     </QueryClientProvider>,
   );
   return router;
@@ -187,7 +219,10 @@ function pairs(): Record<string, string> {
   const result: Record<string, string> = {};
   for (const group of PAGE.findAllKeyValuePairs()) {
     for (const item of group.findItems()) {
-      result[text(item.findLabel()?.getElement())] = text(item.findValue()?.getElement());
+      const value = item.findValue()?.getElement().cloneNode(true) as HTMLElement | undefined;
+      value?.querySelectorAll('[data-testid="instance-attribute-action"]').forEach((action) => action.remove());
+      const label = text(item.findLabel()?.getElement());
+      result[label] = text(value);
     }
   }
   return result;
@@ -195,11 +230,18 @@ function pairs(): Record<string, string> {
 
 /** A table of the page by its heading, as rows of cell texts, or its empty text. */
 function tableOf(heading: string) {
-  const found = PAGE.findAllTables().find((table) => text(table.findHeaderSlot()?.getElement()).startsWith(heading));
+  const found = PAGE.findAllTables().find((table) =>
+    text(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).startsWith(heading),
+  );
   expect(found, heading).toBeDefined();
   const table = found as NonNullable<typeof found>;
   return {
-    rows: (table.findRows() ?? []).map((row) => [...row.getElement().querySelectorAll('td, th')].map(text)),
+    rows: table
+      .findRows()
+      .map((_, row) =>
+        table.findColumnHeaders().map((_, column) => text(table.findBodyCell(row + 1, column + 1)?.getElement())),
+      ),
+    wrapper: table,
     empty: text(table.findEmptySlot()?.getElement()),
     element: table.getElement(),
   };
@@ -284,6 +326,7 @@ describe("an instance's page", () => {
       ?.findValue()
       ?.getElement() as HTMLElement;
     const lines = [...value.querySelectorAll('*')]
+      .filter((node) => node.closest('[data-testid="instance-attribute-action"]') === null)
       .filter((node) => node.children.length === 0)
       .map((node) => node.textContent);
     expect(lines).toEqual(['On', CHANGED]);
@@ -364,6 +407,7 @@ describe("an instance's page", () => {
       'Key pair': 'dev-key',
       Architecture: 'x86_64',
       Platform: 'Linux/UNIX',
+      'User data': 'Edit user dataStop the instance to edit user data.',
       'Termination protection': PROTECTED,
       'Availability Zone': 'us-east-1a',
       'Subnet ID': 'subnet-1',
@@ -395,8 +439,8 @@ describe("an instance's page", () => {
       ['/dev/xvdb', 'vol-2', 'No'],
     ]);
     expect(tableOf('Tags').rows).toEqual([
-      ['Name', 'web-1'],
-      ['env', 'dev'],
+      ['NameEdit tagDelete tag', 'web-1'],
+      ['envEdit tagDelete tag', 'dev'],
     ]);
     expect(screen.getByRole('link', { name: 'dev-key' })).toHaveAttribute('href', '/aws/ec2/key-pairs');
     const link = within(groups.element).getByRole('link', { name: 'web-group' });
@@ -627,11 +671,13 @@ describe("an instance's page", () => {
     expect(isDisabled(stateItem('Stop'))).toBe(true);
     expect(isDisabled(stateItem('Reboot'))).toBe(true);
     choose('Terminate');
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('web-1 is terminated in the local emulator.');
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'terminate' } });
+    const dialog = await modalWithTitle('Terminate instance?');
+    expect(dialog.findContent().getElement()).toHaveTextContent('web-1 is terminated in the local emulator.');
+    const input = dialog.findContent().findInput()?.findNativeInput().getElement();
+    if (input === undefined) throw new Error('Missing termination confirmation input');
+    fireEvent.change(input, { target: { value: 'terminate' } });
     vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: full({ state: 'terminated' }) });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Terminate' }));
+    primaryModalAction(dialog, 'Terminate').click();
     await waitFor(() => {
       expect(screen.getByText('Terminating i-0full')).toBeInTheDocument();
     });
@@ -657,7 +703,7 @@ describe("an instance's page", () => {
     holding(full({ tags: [{ key: 'note', value: '<b>bold</b><img src=x onerror=alert(1)>' }] }));
     open(pathOf('i-0full'));
     await loaded();
-    expect(tableOf('Tags').rows).toEqual([['note', '<b>bold</b><img src=x onerror=alert(1)>']]);
+    expect(tableOf('Tags').rows).toEqual([['noteEdit tagDelete tag', '<b>bold</b><img src=x onerror=alert(1)>']]);
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
 
@@ -718,5 +764,521 @@ describe("an instance's page", () => {
     expect(pairs()['State']).toBe('running');
     expect(pairs()['Private IPv4']).toBe('10.0.0.2');
     expect(pairs()['Termination protection']).toBe(PROTECTED);
+  });
+});
+
+describe('instance setting actions', () => {
+  async function changeProtection() {
+    const action = await screen.findByRole('button', { name: 'Change termination protection' });
+    await waitFor(() => expect(isDisabled(action)).toBe(false));
+    fireEvent.click(action);
+    const modal = await waitFor(() => {
+      const wrapper = PAGE.findModal();
+      if (wrapper === null) throw new Error('Missing termination protection modal');
+      expect(wrapper.findHeader().getElement()).toHaveTextContent('Change termination protection');
+      return wrapper;
+    });
+    modal.findContent().findToggle()?.findNativeInput().click();
+    const save = modal.findFooter()?.findAllButtons()[1];
+    expect(save?.getElement()).toHaveAccessibleName('Save changes');
+    save?.click();
+  }
+
+  function holdAttributeWrite() {
+    let resolve: () => void = () => undefined;
+    let reject: (error: Error) => void = () => undefined;
+    vi.mocked(modifyInstanceAttribute).mockImplementationOnce(
+      () =>
+        new Promise<void>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        }),
+    );
+    return { resolve: () => resolve(), reject: (error: Error) => reject(error) };
+  }
+
+  it('explains the stopped requirement and makes groups and protection editable on a running instance', async () => {
+    holding(full());
+    open(pathOf('i-0full'));
+    await loaded();
+    const type = screen.getByRole('button', { name: 'Change instance type' });
+    expect(isDisabled(type)).toBe(true);
+    expect(reasonOf(type)).toBe('Stop the instance to change its type.');
+    expect(isDisabled(screen.getByRole('button', { name: 'Change security groups' }))).toBe(false);
+    await waitFor(() => {
+      expect(isDisabled(screen.getByRole('button', { name: 'Change termination protection' }))).toBe(false);
+    });
+  });
+
+  it.each(['detail', 'protection'] as const)('keeps the result when the %s refresh finishes first', async (first) => {
+    const nextProtection = first === 'detail';
+    const client = new QueryClient();
+    holding(full(), !nextProtection);
+    vi.mocked(modifyInstanceAttribute).mockResolvedValue(undefined);
+    open(pathOf('i-0full'), false, client);
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe(nextProtection ? 'Off' : PROTECTED);
+    });
+    let finishDetail: (read: api.InstanceRead) => void = () => undefined;
+    let finishProtection: (enabled: boolean) => void = () => undefined;
+    vi.mocked(api.getInstance).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDetail = resolve;
+        }),
+    );
+    vi.mocked(api.getTerminationProtection).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProtection = resolve;
+        }),
+    );
+    await changeProtection();
+    const flash = await waitFor(() => {
+      const item = PAGE.findFlashbar()?.findItemsByType('success')[0];
+      expect(item?.findContent()?.getElement()).toHaveTextContent('Termination protection updated.');
+      return item?.getElement();
+    });
+    expect(vi.mocked(modifyInstanceAttribute)).toHaveBeenCalledWith(
+      ENGINE,
+      'i-0full',
+      { kind: 'protection', enabled: nextProtection },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => {
+      expect(api.getInstance).toHaveBeenCalledTimes(2);
+      expect(api.getTerminationProtection).toHaveBeenCalledTimes(2);
+    });
+
+    const detail = () => finishDetail({ found: true, instance: full({ privateIp: '10.0.0.2' }) });
+    const protection = () => finishProtection(nextProtection);
+    await act(first === 'detail' ? detail : protection);
+    await waitFor(() => expect(client.isFetching()).toBe(1));
+    await act(first === 'detail' ? protection : detail);
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe(nextProtection ? PROTECTED : 'Off');
+      expect(terminate()).toBe(nextProtection ? 'Termination protection is on.' : 'available');
+      expect(pairs()['Private IPv4']).toBe('10.0.0.2');
+    });
+    expect(PAGE.findFlashbar()?.findItemsByType('success')[0]?.getElement()).toBe(flash);
+    expect(flash).toBeVisible();
+  });
+
+  it.each(['success', 'error'] as const)('publishes a pending write’s %s after detail disappears', async (outcome) => {
+    const client = new QueryClient();
+    holding(full());
+    const write = holdAttributeWrite();
+    open(pathOf('i-0full'), false, client);
+    await changeProtection();
+    const signal = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(undefined);
+    await act(() => client.invalidateQueries({ queryKey: EC2_KEYS.instance('i-0full') }));
+    await waitFor(() => {
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found');
+      expect(PAGE.findModal()).toBeNull();
+    });
+    expect(signal?.aborted).toBe(false);
+
+    const reason = 'The local policy denied the protection change.';
+    await act(() => {
+      if (outcome === 'success') write.resolve();
+      else {
+        write.reject(
+          new RequestError(
+            requestFailure('ModifyInstanceAttribute', {
+              Code: 'AccessDeniedException',
+              message: reason,
+              $fault: 'client',
+              $metadata: { httpStatusCode: 403 },
+            }),
+          ),
+        );
+      }
+    });
+    await waitFor(() => {
+      const item = PAGE.findFlashbar()?.findItemsByType(outcome)[0];
+      expect(item?.findContent()?.getElement()).toHaveTextContent(
+        outcome === 'success' ? 'Termination protection updated.' : `AccessDeniedException: ${reason}`,
+      );
+      if (outcome === 'error') {
+        expect(item?.getElement()).toHaveAttribute('role', 'alert');
+      }
+    });
+  });
+
+  it('cancels a pending attribute write when visiting another instance', async () => {
+    holding(full());
+    const write = holdAttributeWrite();
+    const router = open(pathOf('i-0full'));
+    await changeProtection();
+    const signal = vi.mocked(modifyInstanceAttribute).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(full({ id: 'i-next', tags: [] }));
+    await act(() => router.navigate(pathOf('i-next')));
+    expect(signal?.aborted).toBe(true);
+    await act(write.resolve);
+    expect(PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      'i-next',
+    );
+    expect(PAGE.findFlashbar()).toBeNull();
+  });
+
+  it('shows a failed protection read without offering an editable Off value', async () => {
+    holding(
+      full(),
+      new RequestError({
+        kind: 'other',
+        operation: 'DescribeInstanceAttribute',
+        code: 'InternalError',
+        message: 'Protection read failed',
+      }),
+    );
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => expect(pairs()['Termination protection']).toContain('InternalError: Protection read failed'));
+    expect(pairs()['Termination protection']).not.toContain('Off');
+    const edit = screen.getByRole('button', { name: 'Change termination protection' });
+    expect(isDisabled(edit)).toBe(true);
+    fireEvent.click(edit);
+    expect(PAGE.findModal()).toBeNull();
+    expect(modifyInstanceAttribute).not.toHaveBeenCalled();
+  });
+});
+
+function tagButton(action: 'edit' | 'delete') {
+  const button = tableOf('Tags').wrapper.findBodyCell(1, 1)?.findAllButtons()[action === 'edit' ? 0 : 1];
+  if (button === undefined) throw new Error(`Missing ${action} action for the Name tag`);
+  expect(button.getElement()).toHaveAccessibleName(action === 'edit' ? 'Edit tag Name' : 'Delete tag Name');
+  return button.getElement();
+}
+
+function detailHeading() {
+  return PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+}
+
+function flashItem(type: 'success' | 'error') {
+  return PAGE.findFlashbar()?.findItemsByType(type)[0];
+}
+
+function modalWithTitle(title: string) {
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error(`Missing ${title} dialog`);
+    expect(modal.findHeader().getElement()).toHaveTextContent(title);
+    return modal;
+  });
+}
+
+function primaryModalAction(modal: NonNullable<ReturnType<typeof PAGE.findModal>>, name: string) {
+  const button = modal.findFooter()?.findAllButtons()[1];
+  if (button === undefined) throw new Error(`Missing ${name} footer button`);
+  expect(button.getElement()).toHaveAccessibleName(name);
+  return button;
+}
+
+async function editContent(editor: 'tags' | 'user-data', value: string) {
+  const userData = editor === 'user-data';
+  fireEvent.click(userData ? screen.getByRole('button', { name: 'Edit user data' }) : tagButton('edit'));
+  const modal = await modalWithTitle(userData ? 'Edit user data' : 'Edit tag');
+  const field = await waitFor(() => {
+    const content = modal.findContent();
+    const input = userData ? content.findTextarea()?.findNativeTextarea() : content.findInput()?.findNativeInput();
+    if (input === undefined) throw new Error('Missing editor field');
+    return input.getElement();
+  });
+  fireEvent.change(field, { target: { value } });
+  primaryModalAction(modal, 'Save changes').click();
+}
+
+function held<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (error: Error) => void = () => undefined;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('instance tags and user data', () => {
+  it('explains the stopped requirement while keeping tags editable', async () => {
+    holding(full());
+    open(pathOf('i-0full'));
+    await loaded();
+    const userData = screen.getByRole('button', { name: 'Edit user data' });
+    expect(isDisabled(userData)).toBe(true);
+    expect(reasonOf(userData)).toBe('Stop the instance to edit user data.');
+    expect(document.getElementById(userData.getAttribute('aria-describedby') ?? '')).toBeVisible();
+    expect(isDisabled(screen.getByRole('button', { name: 'Add tag' }))).toBe(false);
+    expect(isDisabled(tagButton('edit'))).toBe(false);
+    expect(isDisabled(tagButton('delete'))).toBe(false);
+  });
+
+  it('keeps the user-data draft and explains why Save is disabled after a running state refresh', async () => {
+    const id = 'i-0full';
+    const client = new QueryClient();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'original' });
+    open(pathOf(id), false, client);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit user data' }));
+    const modal = await modalWithTitle('Edit user data');
+    const textarea = await waitFor(() => {
+      const field = modal.findContent().findTextarea()?.findNativeTextarea();
+      if (field === undefined) throw new Error('Missing user data field');
+      return field.getElement();
+    });
+    const draft = 'changed\nuser data';
+    fireEvent.change(textarea, { target: { value: draft } });
+    const save = primaryModalAction(modal, 'Save changes').getElement();
+    expect(save).toBeEnabled();
+
+    const queryKey = EC2_KEYS.instance(id, ENGINE);
+    holding(full({ state: 'running' }));
+    await act(() => client.invalidateQueries({ queryKey }));
+    await waitFor(() => {
+      expect(PAGE.findModal()?.findContent().findAlert()?.getElement()).toHaveTextContent(
+        'Stop the instance to edit user data.',
+      );
+      expect(save).toBeDisabled();
+    });
+    expect(textarea).toHaveValue(draft);
+    fireEvent.click(save);
+    expect(changeInstanceContent).not.toHaveBeenCalled();
+
+    holding(full({ state: 'stopped' }));
+    await act(() => client.invalidateQueries({ queryKey }));
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(PAGE.findModal()?.findContent().findAlert()).toBeNull();
+    expect(PAGE.findModal()?.findContent().findTextarea()?.findNativeTextarea().getElement()).toHaveValue(draft);
+  });
+
+  it.each(['detail', 'list'] as const)(
+    'updates the Name and keeps the flash when the %s refresh finishes first',
+    async (first) => {
+      const initial = full();
+      const client = new QueryClient();
+      const updated = full({
+        tags: [
+          { key: 'Name', value: 'new-name' },
+          { key: 'env', value: 'dev' },
+        ],
+      });
+      holding(initial);
+      vi.mocked(api.listInstances).mockResolvedValue({ instances: [initial] });
+      vi.mocked(changeInstanceContent).mockResolvedValue(undefined);
+      const router = open(pathOf(initial.id), true, client);
+      await loaded();
+      const list = screen.getByLabelText('Observed instance list');
+      await waitFor(() => expect(list).toHaveTextContent('web-1'));
+
+      let detail: (read: api.InstanceRead) => void = () => undefined;
+      let listing: (read: { instances: api.Instance[] }) => void = () => undefined;
+      vi.mocked(api.getInstance).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            detail = resolve;
+          }),
+      );
+      vi.mocked(api.listInstances).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            listing = resolve;
+          }),
+      );
+      await editContent('tags', 'new-name');
+      const flash = await waitFor(() => {
+        const item = flashItem('success');
+        if (item === undefined) throw new Error('Missing tag update notification');
+        return item.getElement();
+      });
+      await waitFor(() => {
+        expect(api.getInstance).toHaveBeenCalledTimes(2);
+        expect(api.listInstances).toHaveBeenCalledTimes(2);
+      });
+      const detailRead = () => detail({ found: true, instance: updated });
+      const listRead = () => listing({ instances: [updated] });
+      await act(first === 'detail' ? detailRead : listRead);
+      await waitFor(() => expect(client.isFetching()).toBe(1));
+      await act(first === 'detail' ? listRead : detailRead);
+
+      await waitFor(() => {
+        expect(list).toHaveTextContent('new-name');
+        expect(detailHeading()).toHaveTextContent('new-name');
+        expect(tableOf('Tags').wrapper.findBodyCell(1, 2)?.getElement()).toHaveTextContent('new-name');
+      });
+      expect(flashItem('success')?.getElement()).toBe(flash);
+      expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
+      expect(flash).toBeVisible();
+
+      vi.mocked(api.listInstances).mockResolvedValue({ instances: [updated] });
+      await act(() => router.navigate('/aws/ec2/instances'));
+      await waitFor(() => expect(PAGE.findTable()?.findRows()[0]?.getElement()).toHaveTextContent('new-name'));
+    },
+  );
+
+  it.each([true, false])('preserves the refusal after an in-flight detail read finishes (found=%s)', async (found) => {
+    const initial = full();
+    const client = new QueryClient();
+    holding(initial);
+    vi.mocked(changeInstanceContent).mockRejectedValueOnce(
+      new RequestError(
+        requestFailure('CreateTags', {
+          Code: 'AccessDeniedException',
+          message: 'Editing the Name tag was refused by the service.',
+          $fault: 'client',
+          $metadata: { httpStatusCode: 403 },
+        }),
+      ),
+    );
+    let finish: (read: api.InstanceRead) => void = () => undefined;
+    const reread = new Promise<api.InstanceRead>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(api.getInstance).mockResolvedValueOnce({ found: true, instance: initial }).mockReturnValueOnce(reread);
+    open(pathOf(initial.id), false, client);
+    await loaded();
+    act(() => {
+      void client.invalidateQueries({ queryKey: EC2_KEYS.instance(initial.id) });
+    });
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    await editContent('tags', 'denied');
+    const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
+    const flash = () => flashItem('error')?.findContent()?.getElement();
+    await waitFor(() => expect(flash()).toHaveTextContent(message));
+    const dialog = PAGE.findModal();
+    expect(dialog?.findContent().findAlert()?.getElement()).toHaveTextContent(message);
+    await act(async () => {
+      finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
+      await reread;
+    });
+    if (found) {
+      await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
+      expect(tableOf('Tags').rows[0]).toEqual(['NameEdit tagDelete tag', 'web-1']);
+      expect(dialog?.findContent().findInput()?.findNativeInput().getElement()).toHaveValue('denied');
+    } else {
+      await waitFor(() =>
+        expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found'),
+      );
+      expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
+      expect(PAGE.findModal()).toBeNull();
+    }
+    expect(flash()).toHaveTextContent(message);
+    expect(flashItem('success')).toBeUndefined();
+  });
+
+  it('keeps the success result after the refreshed detail disappears before the list read finishes', async () => {
+    const initial = full();
+    holding(initial);
+    vi.mocked(api.listInstances).mockResolvedValue({ instances: [initial] });
+    vi.mocked(changeInstanceContent).mockResolvedValue(undefined);
+    open(pathOf(initial.id), true);
+    await loaded();
+    const list = screen.getByLabelText('Observed instance list');
+    await waitFor(() => expect(list).toHaveTextContent('web-1'));
+
+    let finishList: (read: { instances: api.Instance[] }) => void = () => undefined;
+    vi.mocked(api.listInstances).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishList = resolve;
+        }),
+    );
+    vi.mocked(api.getInstance).mockResolvedValueOnce({ found: false });
+    await editContent('tags', 'new-name');
+    await waitFor(() =>
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found'),
+    );
+    expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
+    expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit user data' })).toBeNull();
+    await act(() => finishList({ instances: [] }));
+    await waitFor(() => expect(list).toBeEmptyDOMElement());
+    expect(flashItem('success')?.findContent()?.getElement()).toHaveTextContent('Tag updated.');
+    expect(PAGE.findModal()).toBeNull();
+  });
+
+  it.each([
+    ['tags', 'success'],
+    ['tags', 'error'],
+    ['user-data', 'success'],
+    ['user-data', 'error'],
+  ] as const)('delivers a pending %s write’s %s after detail removes the dialog', async (editor, outcome) => {
+    const id = 'i-0full';
+    const client = new QueryClient();
+    const write = held<undefined>();
+    const detail = held<api.InstanceRead>();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
+    vi.mocked(changeInstanceContent).mockReturnValueOnce(write.promise);
+    open(pathOf(id), false, client);
+    await loaded();
+    vi.mocked(api.getInstance).mockReturnValueOnce(detail.promise);
+    act(() => {
+      void client.invalidateQueries({ queryKey: EC2_KEYS.instance(id) });
+    });
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    await editContent(editor, 'replacement');
+    const signal = vi.mocked(changeInstanceContent).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+
+    holding(undefined);
+    await act(() => detail.resolve({ found: false }));
+    await waitFor(() => {
+      expect(PAGE.findContentLayout()?.findContent().getElement()).toHaveTextContent('Instance not found');
+      expect(PAGE.findModal()).toBeNull();
+    });
+    expect(signal?.aborted).toBe(false);
+
+    const reason = 'The service denied the submitted change.';
+    const operation = editor === 'tags' ? 'CreateTags' : 'ModifyInstanceAttribute';
+    await act(() => {
+      if (outcome === 'success') write.resolve(undefined);
+      else
+        write.reject(
+          new RequestError(
+            requestFailure(operation, {
+              Code: 'AccessDeniedException',
+              message: reason,
+              $fault: 'client',
+              $metadata: { httpStatusCode: 403 },
+            }),
+          ),
+        );
+    });
+    const message =
+      outcome === 'error'
+        ? `AccessDeniedException: ${reason}`
+        : editor === 'tags'
+          ? 'Tag updated.'
+          : 'User data updated.';
+    await waitFor(() => expect(flashItem(outcome)?.findContent()?.getElement()).toHaveTextContent(message));
+    if (outcome === 'error') expect(flashItem(outcome)?.getElement()).toHaveAttribute('role', 'alert');
+  });
+
+  it.each(['route', 'target'] as const)('cancels a pending content write on %s departure', async (departure) => {
+    const write = held<undefined>();
+    holding(full({ state: 'stopped' }));
+    vi.mocked(getInstanceUserData).mockResolvedValue({ kind: 'text', text: 'initial' });
+    vi.mocked(changeInstanceContent).mockReturnValueOnce(write.promise);
+    const router = open(pathOf('i-0full'));
+    await loaded();
+    await editContent(departure === 'route' ? 'tags' : 'user-data', 'replacement');
+    const signal = vi.mocked(changeInstanceContent).mock.lastCall?.[3];
+    expect(signal?.aborted).toBe(false);
+    if (departure === 'route') {
+      holding(full({ id: 'i-next', tags: [] }));
+      await act(() => router.navigate(pathOf('i-next')));
+      await waitFor(() => expect(detailHeading()).toHaveTextContent('i-next'));
+    } else {
+      await act(() => connection.changeTarget());
+    }
+    expect(signal?.aborted).toBe(true);
+    await act(() => write.resolve(undefined));
+    expect(flashItem('success')).toBeUndefined();
+    expect(flashItem('error')).toBeUndefined();
   });
 });

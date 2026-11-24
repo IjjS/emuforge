@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|ec2.instance-change|not-built
-Issue-Check-Ids:
+Issue-Check-Ids: 561
 Issue-Commit: 9bb0a6c407d4ad2dac9aaa256bd8789cb6fa5ee5
 
 # Let a developer change an EC2 instance: type, groups, termination protection, tags, user data

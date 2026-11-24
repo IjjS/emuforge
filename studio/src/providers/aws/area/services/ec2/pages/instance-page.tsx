@@ -11,19 +11,26 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useCallback, useState, type ReactNode } from 'react';
 
+import { reportedNotImplementedMessage } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { nameOf, type Tag } from '../../../lib/ec2-client';
+import { nameOf } from '../../../lib/ec2-client';
 import type { ScreenPageProps } from '../../../screens';
 import type { BlockDevice, Instance, InstanceGroup } from '../api';
 import { InstanceActions } from '../components/instance-actions';
+import { InstanceAttributeEditor } from '../components/instance-attribute-editor';
 import { InstanceStateValue } from '../components/instance-state';
+import { InstanceTagEditor } from '../components/instance-tag-editor';
+import { InstanceUserDataEditor } from '../components/instance-user-data-editor';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
+import { useInstanceAttributeWrites, type InstanceAttributeWrites } from '../instance-attribute-queries';
+import { useInstanceContentChange, type InstanceContentWrites } from '../instance-content-queries';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 import { volumeHref } from '../volume-format';
 
@@ -40,17 +47,24 @@ function Pairs({ label, items }: { label: string; items: { label: string; value:
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
 }
 
-/** Under "On": the emulator's operation that changes it; Studio has no screen for it yet (critique r3 P2 2, issue 561). */
+/** Under "On": the emulator operation that changes termination protection. */
 const PROTECTION_CHANGED = 'Changed with ModifyInstanceAttribute.';
 
 /** "Termination protection": "On", "Off", loading in that value alone, or its read's failure in that value alone. */
 function Protection({ read, connection }: { read: Ec2Read<boolean>; connection: AreaConnection }) {
   if (read.failure !== undefined) {
     const state = readFailureState(read.failure, connection, 'termination protection');
+    const message = reportedNotImplementedMessage(read.failure);
     return (
       <SpaceBetween size="xxs">
         <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
         {state.detail !== undefined && <Box variant="small">{state.detail}</Box>}
+        {message !== undefined && <ValueText kind="text" value={message} />}
+        {read.failure.kind !== 'not-implemented' && (
+          <Button variant="inline-link" onClick={read.refresh}>
+            Retry termination protection
+          </Button>
+        )}
       </SpaceBetween>
     );
   }
@@ -81,7 +95,19 @@ function KeyPair({ name }: { name: string | undefined }) {
   );
 }
 
-function Details({ instance, protection }: { instance: Instance; protection: ReactNode }) {
+function Details({
+  instance,
+  protection,
+  connection,
+  attributeWrites,
+  contentWrites,
+}: {
+  instance: Instance;
+  protection: Ec2Read<boolean>;
+  connection: AreaConnection;
+  attributeWrites: InstanceAttributeWrites;
+  contentWrites: InstanceContentWrites;
+}) {
   return (
     <Container header={<Header variant="h2">Instance details</Header>}>
       <Pairs
@@ -97,13 +123,45 @@ function Details({ instance, protection }: { instance: Instance; protection: Rea
               </SpaceBetween>
             ),
           },
-          { label: 'Termination protection', value: protection },
-          { label: 'Type', value: <ValueText kind="fixed" value={instance.type} none={NONE} /> },
+          {
+            label: 'Termination protection',
+            value: (
+              <SpaceBetween size="xxs">
+                <Protection read={protection} connection={connection} />
+                <InstanceAttributeEditor
+                  kind="protection"
+                  instance={instance}
+                  connection={connection}
+                  writes={attributeWrites}
+                  value={protection.value}
+                  readFailure={protection.failure}
+                />
+              </SpaceBetween>
+            ),
+          },
+          {
+            label: 'Type',
+            value: (
+              <SpaceBetween size="xxs">
+                <ValueText kind="fixed" value={instance.type} none={NONE} />
+                <InstanceAttributeEditor
+                  kind="type"
+                  instance={instance}
+                  connection={connection}
+                  writes={attributeWrites}
+                />
+              </SpaceBetween>
+            ),
+          },
           { label: 'Image ID', value: <Copy label="Image ID" value={instance.imageId} /> },
           { label: 'Launched', value: <ValueText kind="fixed" value={creationDateText(instance.launchTime)} /> },
           { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
           { label: 'Architecture', value: <ValueText kind="fixed" value={instance.architecture} none={NONE} /> },
           { label: 'Platform', value: <ValueText kind="fixed" value={instance.platform} none={NONE} /> },
+          {
+            label: 'User data',
+            value: <InstanceUserDataEditor instance={instance} connection={connection} writes={contentWrites} />,
+          },
         ]}
       />
     </Container>
@@ -145,7 +203,15 @@ function Empty({ children }: { children: string }) {
   );
 }
 
-function Groups({ groups }: { groups: InstanceGroup[] }) {
+function Groups({
+  instance,
+  connection,
+  attributeWrites,
+}: {
+  instance: Instance;
+  connection: AreaConnection;
+  attributeWrites: InstanceAttributeWrites;
+}) {
   const handleFollow = useFollow();
   const columns: TableProps.ColumnDefinition<InstanceGroup>[] = [
     {
@@ -163,8 +229,22 @@ function Groups({ groups }: { groups: InstanceGroup[] }) {
   return (
     <Table<InstanceGroup>
       variant="container"
-      header={<Header variant="h2">Security groups</Header>}
-      items={groups}
+      header={
+        <Header
+          variant="h2"
+          actions={
+            <InstanceAttributeEditor
+              kind="groups"
+              instance={instance}
+              connection={connection}
+              writes={attributeWrites}
+            />
+          }
+        >
+          Security groups
+        </Header>
+      }
+      items={instance.groups}
       trackBy="id"
       columnDefinitions={columns}
       wrapLines
@@ -231,24 +311,6 @@ function Volumes({ volumes }: { volumes: BlockDevice[] }) {
   );
 }
 
-function Tags({ tags }: { tags: Tag[] }) {
-  const columns: TableProps.ColumnDefinition<Tag>[] = [
-    { id: 'key', header: 'Key', isRowHeader: true, cell: (tag) => <ValueText kind="name" value={tag.key} /> },
-    { id: 'value', header: 'Value', cell: (tag) => <ValueText kind="text" value={tag.value} none={NONE} /> },
-  ];
-  return (
-    <Table<Tag>
-      variant="container"
-      header={<Header variant="h2">Tags</Header>}
-      items={tags}
-      trackBy="key"
-      columnDefinitions={columns}
-      wrapLines
-      empty={<Empty>No tags</Empty>}
-    />
-  );
-}
-
 /** "Instance not found", with Cloudscape's empty-state pattern, in the place of the sections. */
 function NotFound() {
   const handleFollow = useFollow();
@@ -279,6 +341,14 @@ function NotFound() {
 export function InstancePage({ connection, params }: ScreenPageProps) {
   useShowsResources(INSTANCES_WORD);
   const id = params['id'] ?? '';
+  return <InstanceVisit key={JSON.stringify([id, connection.engineOrigin])} connection={connection} id={id} />;
+}
+
+function InstanceVisit({ connection, id }: { connection: AreaConnection; id: string }) {
+  // The area also remounts this visit when the emulator target changes.
+  const pageSignal = usePageSignal();
+  const attributeWrites = useInstanceAttributeWrites(connection.engineOrigin, id, pageSignal);
+  const contentWrites = useInstanceContentChange(connection.engineOrigin, id, pageSignal);
   const [announcement, announce] = useAnnouncer();
   const reading = useInstance(connection.engineOrigin, id);
   const protection = useTerminationProtection(connection.engineOrigin, id);
@@ -335,12 +405,18 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
     content = <NotFound />;
   } else {
     content = (
-      <SpaceBetween size="l">
-        <Details instance={instance} protection={<Protection read={protection} connection={connection} />} />
+      <SpaceBetween size="l" key={instance.id}>
+        <Details
+          instance={instance}
+          protection={protection}
+          connection={connection}
+          attributeWrites={attributeWrites}
+          contentWrites={contentWrites}
+        />
         <Network instance={instance} />
-        <Groups groups={instance.groups} />
+        <Groups instance={instance} connection={connection} attributeWrites={attributeWrites} />
         <Volumes volumes={instance.volumes} />
-        <Tags tags={instance.tags} />
+        <InstanceTagEditor tags={instance.tags} endpoint={connection.engineOrigin} writes={contentWrites} />
       </SpaceBetween>
     );
   }
