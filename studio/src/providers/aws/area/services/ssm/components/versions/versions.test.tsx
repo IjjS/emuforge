@@ -179,6 +179,37 @@ function enterRemoval(dialog: HTMLElement, labels: string[]) {
 }
 
 describe('Parameter Store values and versions', () => {
+  it('places the current value reveal before the metadata fields', async () => {
+    open();
+    const current = await currentRegion();
+    expect(within(current).getByRole('button', { name: 'Show value' })).toBeVisible();
+    expect(current.compareDocumentPosition(screen.getByText('ARN'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(getParameter).not.toHaveBeenCalled();
+  });
+
+  it('omits pagination when all versions are on one page', async () => {
+    open();
+    const table = await openHistory();
+    expect(await within(table).findByText('stable')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the previous page available on the final page', async () => {
+    getHistory
+      .mockReturnValueOnce(history([first], 'page-two'))
+      .mockReturnValueOnce(history([second]))
+      .mockReturnValueOnce(history([first], 'page-two'));
+    open();
+    const table = await openHistory();
+    expect(await within(table).findByText('stable')).toBeVisible();
+    click('Next page');
+    expect(await within(table).findByText('latest')).toBeVisible();
+    click('Previous page');
+    expect(await within(table).findByText('stable')).toBeVisible();
+    expect(getHistory).toHaveBeenLastCalledWith({ Name: NAME, WithDecryption: false, MaxResults: 50 });
+  });
+
   it('V1 requests only the explicitly revealed current or selected version value and hides it', async () => {
     open();
     const current = await currentRegion();

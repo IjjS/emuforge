@@ -56,8 +56,8 @@ function Metadata({ parameter, children }: { parameter: ParameterMetadata; child
   return (
     <Container header={<Header variant="h2">Parameter details</Header>}>
       <SpaceBetween size="m">
-        <KeyValuePairs columns={2} items={metadata} />
         {children}
+        <KeyValuePairs columns={2} items={metadata} />
         {(parameter.Policies?.length ?? 0) > 0 && (
           <>
             <Box variant="h3">Parameter policies</Box>
