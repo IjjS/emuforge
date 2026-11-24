@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,7 @@ import { KEY_CREATE_PATH } from './create';
 
 const KEY_ID = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
 const DESCRIPTION = 'Local payments key';
+const ALIAS = 'alias/local-payments';
 const PAGE = createWrapper(document.body);
 let nextPort = 8760;
 
@@ -99,7 +100,9 @@ function openCreate(handler?: Handler) {
 }
 
 function descriptionField() {
-  const field = PAGE.findAllFormFields().find((item) => item.findLabel()?.getElement().textContent === 'Description');
+  const field = area()
+    ?.findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === 'Description');
   const control = field?.findControl()?.findTextarea()?.findNativeTextarea();
   if (!control) throw new Error('Missing description field');
   return control.getElement();
@@ -111,14 +114,15 @@ function enterDescription(value: string) {
 
 async function click(name: string) {
   const control = await waitFor(() => {
-    const modal = screen.queryByRole('dialog');
-    return within(modal ?? document.body).getByRole('button', { name });
+    const scope = PAGE.findModal()?.findFooter() ?? area();
+    if (!scope) throw new Error('Missing action area');
+    return within(scope.getElement()).getByRole('button', { name });
   });
   fireEvent.click(control);
 }
 
 async function expectList(router: ReturnType<typeof openCreate>['router']) {
-  await screen.findByRole('heading', { name: 'Customer managed keys', level: 1 });
+  await waitFor(() => expect(heading('Customer managed keys')).toBeVisible());
   expect(router.state.location.pathname).toBe(KEYS_PATH);
 }
 
@@ -135,9 +139,27 @@ function successText() {
   );
 }
 
+function heading(label: string) {
+  return area()
+    ?.findAllHeaders()
+    .map((header) => header.findHeadingText().getElement())
+    .find((heading) => heading.textContent === label);
+}
+
 function expectField(label: string, value: string) {
-  const term = screen.getByText(label, { selector: 'dt *, dt' }).closest('dt');
-  expect(term?.nextElementSibling).toHaveTextContent(value);
+  const field = area()
+    ?.findTabs()
+    ?.findTabContent()
+    ?.findAllKeyValuePairs()
+    .flatMap((pairs) => pairs.findItems())
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  expect(field?.findValue()?.getElement()).toHaveTextContent(value);
+}
+
+function selectTab(id: string) {
+  const tab = area()?.findTabs()?.findTabLinkById(id);
+  if (!tab) throw new Error(`Missing tab ${id}`);
+  fireEvent.click(tab.getElement());
 }
 
 function deferredReply() {
@@ -151,31 +173,37 @@ function deferredReply() {
 describe('Create key', () => {
   it('opens the returned key with Key created. when its alias read answers before its metadata', async () => {
     const detail = deferredReply();
-    let aliasesRead = false;
     const { calls, count, router } = openCreate((operation) => {
       if (operation === 'CreateKey') return { body: metadata() };
       if (operation === 'DescribeKey') return detail.promise;
-      if (operation === 'ListAliases') {
-        aliasesRead = true;
-        return undefined;
-      }
+      if (operation === 'ListAliases') return { body: { Aliases: [{ AliasName: ALIAS, TargetKeyId: KEY_ID }] } };
     });
-    await screen.findByRole('heading', { name: 'Create key', level: 1 });
+    await waitFor(() => expect(heading('Create key')).toBeVisible());
 
     await click('Create key');
 
     await waitFor(() => expect(router.state.location.pathname).toBe(keyPath(KEY_ID)));
-    await waitFor(() => expect(aliasesRead).toBe(true));
+    await waitFor(() => expect(calls).toHaveBeenCalledWith('DescribeKey', { KeyId: KEY_ID }));
     await waitFor(() => expect(successText()).toEqual(['Key created.']));
-    expect(screen.queryByRole('heading', { name: 'Key metadata' })).toBeNull();
-
-    await act(async () => {
-      detail.resolve({ body: metadata() });
+    expect(heading('Key metadata')).toBeUndefined();
+    selectTab('labels');
+    await waitFor(() => {
+      const rows = area()?.findTabs()?.findTabContent()?.findTable()?.findRows();
+      const aliasRow = rows?.find((row) => row.getElement().textContent?.includes(ALIAS));
+      expect(aliasRow?.getElement()).toBeVisible();
     });
 
-    await screen.findByRole('heading', { name: 'Key metadata' });
+    await act(async () => {
+      detail.resolve({
+        body: { KeyMetadata: { ...metadata().KeyMetadata, Description: 'Description returned by DescribeKey' } },
+      });
+    });
+
+    selectTab('details');
+    await waitFor(() => expect(heading('Key metadata')).toBeVisible());
     expectField('Key ID', KEY_ID);
     expectField('Status', 'Enabled');
+    expectField('Description', 'Description returned by DescribeKey');
     expect(successText()).toEqual(['Key created.']);
     expect(count('CreateKey')).toBe(1);
     expect(calls).toHaveBeenCalledWith('CreateKey', {
@@ -192,46 +220,74 @@ describe('Create key', () => {
     const { router, count } = openCreate((operation) =>
       operation === 'CreateKey' ? { body: { __type: 'ValidationException', message: reason }, status: 400 } : undefined,
     );
-    await screen.findByRole('heading', { name: 'Create key', level: 1 });
+    await waitFor(() => expect(heading('Create key')).toBeVisible());
     enterDescription(DESCRIPTION);
 
     await click('Create key');
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Key creation failed');
-    expect(alert).toHaveTextContent('ValidationException');
-    expect(alert).toHaveTextContent(reason);
+    await waitFor(() => {
+      const notice = area()?.findFlashbar()?.findItemsByType('error')[0];
+      expect(notice?.findHeader()?.getElement()).toHaveTextContent('Key creation failed');
+      expect(notice?.findContent()?.getElement()).toHaveTextContent('ValidationException');
+      expect(notice?.findContent()?.getElement()).toHaveTextContent(reason);
+    });
     expect(descriptionField()).toHaveValue(DESCRIPTION);
     expect(router.state.location.pathname).toBe(KEY_CREATE_PATH);
     expect(count('CreateKey')).toBe(1);
     expect(successText()).toEqual([]);
   });
 
+  it('reports CreateKey returning 501 in the area flash and keeps the draft and disabled action', async () => {
+    const { router, count } = openCreate((operation) =>
+      operation === 'CreateKey' ? { body: { __type: 'NotImplemented' }, status: 501 } : undefined,
+    );
+    await waitFor(() => expect(heading('Create key')).toBeVisible());
+    enterDescription(DESCRIPTION);
+
+    await click('Create key');
+
+    await waitFor(() => {
+      const notice = area()?.findFlashbar()?.findItemsByType('info')[0];
+      expect(notice?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(notice?.findContent()?.getElement()).toHaveTextContent('CreateKey');
+    });
+    const submit = area()
+      ?.findAllButtons()
+      .find((button) => button.findTextRegion()?.getElement().textContent === 'Create key');
+    expect(submit?.getElement()).toBeVisible();
+    expect(submit?.isDisabled()).toBe(true);
+    expect(descriptionField()).toHaveValue(DESCRIPTION);
+    await click('Create key');
+    expect(count('CreateKey')).toBe(1);
+    expect(router.state.location.pathname).toBe(KEY_CREATE_PATH);
+    expect(successText()).toEqual([]);
+  });
+
   it('returns to the key list without creating a key when an untouched form is canceled', async () => {
     const { router, count } = openCreate();
-    await screen.findByRole('heading', { name: 'Create key', level: 1 });
+    await waitFor(() => expect(heading('Create key')).toBeVisible());
 
     await click('Cancel');
 
     await expectList(router);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(count('CreateKey')).toBe(0);
   });
 
   it('asks before discarding an edited form, keeps it on Keep editing and leaves on Discard', async () => {
     const { router, count } = openCreate();
-    await screen.findByRole('heading', { name: 'Create key', level: 1 });
+    await waitFor(() => expect(heading('Create key')).toBeVisible());
     enterDescription(DESCRIPTION);
 
     await click('Cancel');
-    await screen.findByRole('dialog');
+    await waitFor(() => expect(PAGE.findModal()?.getElement()).toBeVisible());
     await click('Keep editing');
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
     expect(descriptionField()).toHaveValue(DESCRIPTION);
     expect(router.state.location.pathname).toBe(KEY_CREATE_PATH);
 
     await click('Cancel');
-    await screen.findByRole('dialog');
+    await waitFor(() => expect(PAGE.findModal()?.getElement()).toBeVisible());
     await click('Discard');
 
     await expectList(router);

@@ -7,7 +7,6 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea from '@cloudscape-design/components/textarea';
 import { useState } from 'react';
 
-import type { AreaConnection } from '../../../../components/emulator-line';
 import { ValueText } from '../../../../components/value-text';
 import {
   cancelKeyDeletion,
@@ -20,7 +19,7 @@ import {
   type LifecycleOperation,
 } from '../../lifecycle-api';
 import { LifecycleDialog } from './lifecycle-dialog';
-import { useLifecycleAction } from './use-lifecycle-action';
+import type { LifecycleAction } from './use-lifecycle-action';
 
 type Dialog = 'describe' | 'disable' | 'schedule' | 'cancel';
 
@@ -38,15 +37,14 @@ function KeyName({ keyId }: { keyId: string }) {
 }
 
 export interface LifecycleProps {
-  connection: AreaConnection;
+  action: LifecycleAction;
   metadata: KeyMetadata & { KeyId: string };
 }
 
 /** The lifecycle actions of a key, offered by the state DescribeKey last returned. */
-export function Lifecycle({ connection, metadata }: LifecycleProps) {
+export function Lifecycle({ action, metadata }: LifecycleProps) {
   const keyId = metadata.KeyId;
   const state = metadata.KeyState;
-  const action = useLifecycleAction(connection, keyId);
   const [dialog, setDialog] = useState<Dialog>();
   const [description, setDescription] = useState('');
   const [days, setDays] = useState(String(DELETION_WINDOW.max));
