@@ -24,6 +24,7 @@ interface DialogProps {
 
 interface IdentifierDialogProps extends DialogProps {
   onSubmit: (identifier: string) => void;
+  initialIdentifier?: string | undefined;
 }
 
 function SnapshotIdentifierDialog({
@@ -35,8 +36,16 @@ function SnapshotIdentifierDialog({
   header,
   label,
   targetLabel,
-}: IdentifierDialogProps & { action: string; header: string; label: string; targetLabel: string }) {
-  const [identifier, setIdentifier] = useState('');
+  initialIdentifier = '',
+  description,
+}: IdentifierDialogProps & {
+  action: string;
+  header: string;
+  label: string;
+  targetLabel: string;
+  description?: string;
+}) {
+  const [identifier, setIdentifier] = useState(initialIdentifier);
   const [edited, setEdited] = useState(false);
   const error = identifierError(identifier);
 
@@ -73,7 +82,12 @@ function SnapshotIdentifierDialog({
         <Box variant="p">
           {targetLabel} <ValueText kind="name" value={target} />
         </Box>
-        <FormField label={label} constraintText={IDENTIFIER_CONSTRAINT} errorText={edited ? error : undefined}>
+        <FormField
+          label={label}
+          description={description}
+          constraintText={IDENTIFIER_CONSTRAINT}
+          errorText={edited ? error : undefined}
+        >
           <Input
             value={identifier}
             invalid={edited && error !== undefined}
@@ -100,7 +114,8 @@ export function TakeSnapshotAction({
   disabled: boolean;
   endpoint: string | undefined;
 }) {
-  const [target, setTarget] = useState<string>();
+  const [target, setTarget] = useState<{ id: string; initialIdentifier?: string | undefined }>();
+  const [retry, setRetry] = useState<{ sourceId: string; identifier: string }>();
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const inFlight = useRef(false);
@@ -114,7 +129,7 @@ export function TakeSnapshotAction({
     inFlight.current = true;
     setPending(true);
     try {
-      const createdId = await create(target, id, signal);
+      const createdId = await create(target.id, id, signal);
       if (!signal.aborted) {
         flash.handOver(CLUSTER_SNAPSHOTS_PATH, [
           { type: 'success', content: `Creating DB cluster snapshot ${createdId}` },
@@ -125,7 +140,11 @@ export function TakeSnapshotAction({
       const failure = failureOf(error, SNAPSHOT_OPERATIONS.create);
       const subject = `Create DB cluster snapshot ${id}`;
       const item = actionFailureItem(failure, subject, endpoint);
-      if (failure.kind === 'not-implemented') setUnavailable(true);
+      if (failure.kind === 'not-implemented') {
+        setUnavailable(true);
+      } else {
+        setRetry({ sourceId: target.id, identifier: id });
+      }
       flash.show([
         failure.kind === 'other' || failure.kind === 'not-implemented'
           ? item
@@ -153,7 +172,9 @@ export function TakeSnapshotAction({
         <Button
           disabled={disabled || pending || unavailable}
           onClick={() => {
-            setTarget(sourceId);
+            const initialIdentifier = retry?.sourceId === sourceId ? retry.identifier : undefined;
+            if (initialIdentifier !== undefined) setRetry(undefined);
+            setTarget({ id: sourceId, initialIdentifier });
           }}
         >
           Take snapshot
@@ -165,7 +186,8 @@ export function TakeSnapshotAction({
           header="Take DB cluster snapshot"
           label="DB cluster snapshot identifier"
           targetLabel="Source DB cluster"
-          target={target}
+          target={target.id}
+          initialIdentifier={target.initialIdentifier}
           pending={pending}
           onDismiss={() => {
             setTarget(undefined);
@@ -186,6 +208,7 @@ export function RestoreSnapshotDialog(props: IdentifierDialogProps) {
       action="Restore"
       header="Restore DB cluster from snapshot"
       label="DB cluster identifier"
+      description="Restore creates a new DB cluster with this identifier."
       targetLabel="Source snapshot"
     />
   );
