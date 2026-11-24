@@ -34,11 +34,12 @@ interface RotationProps {
   connection: AreaConnection;
   keyId: string;
   keySpec?: KeyMetadata['KeySpec'];
+  writesEnabled?: boolean;
 }
 
 let visits = 0;
 
-function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
+function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: RotationProps) {
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
@@ -76,12 +77,12 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   const period = status.data?.RotationPeriodInDays;
   const nextDate = creationDateText(status.data?.NextRotationDate);
   const toggleAction = enabled === true ? 'disable' : 'enable';
-  const offline = engineOrigin === undefined || statusOffline !== undefined;
+  const writeBlocked = !writesEnabled || engineOrigin === undefined || statusOffline !== undefined;
   const toggleReason = unavailable[toggleAction] ? `${reasonId}-automatic` : undefined;
   const rotateReason = unavailable.rotate ? `${reasonId}-on-demand` : undefined;
 
   const handleAction = async (action: RotationAction) => {
-    if (offline || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
+    if (writeBlocked || engineOrigin === undefined || unavailable[action] || inFlight.current) return;
     const initiatingFocus = document.activeElement;
     const showResult = (item: FlashItem) => {
       if (document.activeElement !== initiatingFocus) {
@@ -160,7 +161,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                 <Button
                   disabled={
                     pending !== toggleAction &&
-                    (offline ||
+                    (writeBlocked ||
                       pending !== undefined ||
                       enabled === undefined ||
                       statusFailure !== undefined ||
@@ -173,7 +174,9 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
                   {enabled === true ? 'Disable automatic rotation' : 'Enable automatic rotation'}
                 </Button>
                 <Button
-                  disabled={pending !== 'rotate' && (offline || pending !== undefined || rotateReason !== undefined)}
+                  disabled={
+                    pending !== 'rotate' && (writeBlocked || pending !== undefined || rotateReason !== undefined)
+                  }
                   {...(rotateReason === undefined ? {} : { ariaDescribedby: rotateReason })}
                   loading={pending === 'rotate'}
                   onClick={() => void handleAction('rotate')}
@@ -237,7 +240,7 @@ function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   );
 }
 
-export function Rotation({ connection, keyId, keySpec }: RotationProps) {
+export function Rotation({ connection, keyId, keySpec, writesEnabled = true }: RotationProps) {
   // The AWS area remounts the page on a target change. A health poll alone must not replace this visit.
   return (
     <RotationVisit
@@ -245,6 +248,7 @@ export function Rotation({ connection, keyId, keySpec }: RotationProps) {
       connection={connection}
       keyId={keyId}
       keySpec={keySpec}
+      writesEnabled={writesEnabled}
     />
   );
 }
