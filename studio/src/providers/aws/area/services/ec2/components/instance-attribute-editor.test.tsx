@@ -244,10 +244,12 @@ describe('instance attribute editor', () => {
       sdkRefusal(MODIFY_INSTANCE_ATTRIBUTE, code, message, label === PROTECTION ? 403 : 400),
     );
     fireEvent.click(saveButton(dialog));
-    expect(await within(dialog).findByText(message)).toBeVisible();
-    expect(createWrapper(dialog).findAlert()?.getElement()).toHaveTextContent(`${code}: ${message}`);
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toBeVisible();
+    expect(alert).toHaveTextContent(`${code}: ${message}`);
     const flash = PAGE.findFlashbar()?.getElement();
     expect(flash).toHaveTextContent(`${code}: ${message}`);
+    expect(flash?.querySelector('[role="alert"]')).toBeNull();
     expect(flash).not.toHaveTextContent(/updated\./);
     expect(isDisabled(saveButton(dialog))).toBe(false);
     if (label === PROTECTION) expect(screen.getByText('Off')).toBeVisible();
