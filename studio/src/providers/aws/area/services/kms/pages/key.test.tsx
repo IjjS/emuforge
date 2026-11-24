@@ -108,7 +108,7 @@ describe('key details', () => {
   it('offers a way back to the list when the key does not exist', async () => {
     send.mockImplementation((command: unknown) => {
       if (command instanceof ListKeysCommand) return Promise.resolve({ Keys: [] });
-      throw new NotFoundException({ $metadata: { httpStatusCode: 400 } });
+      throw new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } });
     });
     open('absent');
 
