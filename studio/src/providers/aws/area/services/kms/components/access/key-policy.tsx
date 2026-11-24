@@ -87,6 +87,8 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true, keyMissing 
   const [syntaxError, setSyntaxError] = useState<{ message: string }>();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const textarea = useRef<TextareaProps.Ref>(null);
+  const discardOpener = useRef<Element | null>(null);
+  const restoreEditorFocus = useRef(false);
   const pending = action.pending === putPolicy;
 
   if (keyMissing) {
@@ -97,6 +99,14 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true, keyMissing 
   useLayoutEffect(() => {
     if (syntaxError !== undefined) textarea.current?.focus();
   }, [syntaxError]);
+
+  useLayoutEffect(() => {
+    if (confirmDiscard || !restoreEditorFocus.current) return;
+    restoreEditorFocus.current = false;
+    // The alert's focus target loses its tabindex when the discard dialog takes focus.
+    const focused = document.activeElement;
+    if (focused === document.body || focused !== discardOpener.current) textarea.current?.focus();
+  }, [confirmDiscard]);
 
   function handleSave() {
     if (draft === undefined) return;
@@ -122,6 +132,7 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true, keyMissing 
 
   function handleDismiss() {
     if (draft?.text !== draft?.original) {
+      discardOpener.current = document.activeElement;
       setConfirmDiscard(true);
     } else {
       setDraft(undefined);
@@ -210,6 +221,7 @@ export function KeyPolicy({ connection, keyId, writesEnabled = true, keyMissing 
       <DiscardDialog
         visible={!keyMissing && confirmDiscard}
         onAnswer={(answer) => {
+          restoreEditorFocus.current = answer === 'keep';
           setConfirmDiscard(false);
           if (answer === 'discard') setDraft(undefined);
         }}
