@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|worker-pane-admission|shared-sixteen
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 2cff9665d5107361a32422403902c4e0b9575710
 
 # Share sixteen worker pane slots across all work areas

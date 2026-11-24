@@ -32,7 +32,7 @@ pane of its own issue other than itself (by name). Every other pane is refused a
 is remembered in .pm/run/waiting.json and pm-watchd prompts it `EVENT room <plan> pane <role> <side>` once there is room.
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
-Limits (enforced unless --no-limit): worker panes per side (studio 8, engine 8, tests 8, harness 8), total live panes 24,
+Limits (enforced unless --no-limit): 16 worker panes shared across all sides, 24 total live panes,
 memory 22.5 GB, swap free 256 MB, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
 Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start).
 Effort: --effort goes to the agent as the model does (claude --effort <level>, after the -- of herdr agent start);
@@ -46,9 +46,10 @@ trust dialog, or one the registry lost: EVENT unregistered); its --brief is reco
 already runs, and the line it prints says how to send it by hand when the agent never got it.
 The registry (.pm/run/panes.json) and pm.json are changed only under their lock (_pmlib.update), each change applied
 to the file as it is at that moment, so pm-pane calls at the same moment, from any process, lose no pane (issue 504).
+New and close also share an admission lock across the room decision and the slot being taken or freed.
 While new starts an agent and until its entry is in, and while close takes entries out and closes their panes, the
 pane's name is marked as being opened or closed (.pm/run/pane-ops/<name>), so pm-watchd does not tell it as
-unregistered; the mark goes, and pm-watchd is woken, when the command ends however it ends. herdr lists a closed
+unregistered; the mark goes, and pm-watchd is woken, when the marked operation ends however it ends. herdr lists a closed
 pane's agent for a moment after the close, so close keeps its marks until herdr lists no agent in the panes it closed,
 at most 5 s, and logs each agent herdr still lists then (issue 510).
 """
@@ -60,9 +61,10 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (LIMITS, MODEL_IDS, PANE_ROLES, PANES, PANES_HISTORY, PLAN_OPENS, PMINFO, ROOT, agent_by_name, cpu_pct,
-                    find_key, guard, herdr, herdr_text, load, log, mark_resetting, mem_gb, now, pane_op, panes, reported_after,
-                    reports_size, reset_marker_seen, room, side_of, state_note, tabs, update, wait_for_room)
+from _pmlib import (LIMITS, MODEL_IDS, PANE_ADMISSION, PANE_ROLES, PANES, PANES_HISTORY, PLAN_OPENS, PMINFO, ROOT,
+                    agent_by_name, cpu_pct, find_key, guard, herdr, herdr_text, load, locked, log, mark_resetting,
+                    mem_gb, now, pane_op, panes, reported_after, reports_size, reset_marker_seen, room, side_of,
+                    state_note, tabs, update, wait_for_room)
 from _pmorphans import line, sweep, worktree_paths
 
 
@@ -71,7 +73,7 @@ CLOSE_SETTLE = 5  # seconds a close waits for herdr to stop listing the closed p
 
 def registry():
     """Registry with entries whose pane disappeared marked gone (the daemon reports them; close removes them). herdr
-    is asked first; the marks are set under the registry's lock on the registry as it is then (issue 504)."""
+    is asked first; callers hold the admission lock so a pane cannot register after that snapshot and be marked gone."""
     plist = panes()
     if plist is None:  # herdr did not answer: judge nothing
         return load(PANES, [])
@@ -233,8 +235,21 @@ def cmd_new(a):
     """Open a pane. From before the agent starts until its entry is in the registry, the pane's name is marked as being
     opened (_pmlib.pane_op), so pm-watchd does not take it for a pane the registry lost."""
     name = f"i{a.issue}-{a.role}" + (f"-{a.unit}" if a.unit else "")
-    with pane_op(name):
-        new(a, name)
+    with locked(PANE_ADMISSION), pane_op(name):
+        entry = new(a, name)
+    text = a.text
+    if a.brief and not a.adopt:
+        text = brief_text(entry) + (f" {a.text}" if a.text else "")
+    elif a.brief:  # an adopted agent already runs (issue 504): its brief is recorded, not sent again
+        print(f"brief recorded, not sent: {name} already runs; if it never got it: herdr agent prompt {name} \"{brief_text(entry)}\"")
+    print(f"{name} {entry['pane_id']} tab={entry['tab_id']} kind={entry['kind']} model={entry['model']} "
+          f"effort={entry['effort']} session={entry['session']}")
+    if text:
+        herdr("agent", "wait", name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
+        if herdr("agent", "prompt", name, text, check=False) is None:
+            ag = agent_by_name(name) or {}
+            sys.exit(f"BRIEF NOT SENT: {name} is {ag.get('agent_status')} (a trust or setup dialog?); "
+                     f"inspect with herdr agent read {name}, then herdr agent prompt {name} \"{text}\"")
 
 
 def new(a, name):
@@ -270,7 +285,7 @@ def new(a, name):
         if p_old and not p_old.get("agent"):
             reuse = old["pane_id"]
     if not a.no_limit:
-        why = room(a.role, side, a.issue, alive=live(reg))
+        why = room(a.role, a.issue, alive=live(reg))
         if why:
             queue(asker, a, side, why, "; close or wait (EVENT mem ok, tokens ok), then retry")
     info = load(PMINFO, {})
@@ -303,8 +318,7 @@ def new(a, name):
     entry = dict(name=name, issue=str(a.issue), role=a.role, unit=a.unit, kind=a.kind, model=model, effort=effort, side=side,
                  pane_id=pane_id, tab_id=tab_id, cwd=cwd, brief=(os.path.abspath(a.brief) if a.brief else None),
                  started=now(), session=session_of(name, tries=3), gone=False, resets=0)
-    # added to the registry as it is now, not to the list read before the start: other pm-pane calls may have
-    # added or closed panes meanwhile (issue 504)
+    # Keep registry updates that do not use the admission lock, such as a reset's session record.
     with update(PANES, []) as now_reg:
         now_reg[:] = [r for r in now_reg if r.get("name") != name] + [entry]
     record_history(entry)
@@ -315,18 +329,7 @@ def new(a, name):
             if str(a.issue) not in lst:
                 lst.append(str(a.issue))
     log(f"pane new {name} {pane_id} {a.kind} {model} effort={effort} cwd={cwd}")
-    text = a.text
-    if a.brief and not a.adopt:
-        text = brief_text(entry) + (f" {a.text}" if a.text else "")
-    elif a.brief:  # an adopted agent already runs (issue 504): its brief is recorded, not sent again
-        print(f"brief recorded, not sent: {name} already runs; if it never got it: herdr agent prompt {name} \"{brief_text(entry)}\"")
-    print(f"{name} {pane_id} tab={tab_id} kind={a.kind} model={model} effort={effort} session={entry['session']}")
-    if text:
-        herdr("agent", "wait", name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
-        if herdr("agent", "prompt", name, text, check=False) is None:
-            ag = agent_by_name(name) or {}
-            sys.exit(f"BRIEF NOT SENT: {name} is {ag.get('agent_status')} (a trust or setup dialog?); "
-                     f"inspect with herdr agent read {name}, then herdr agent prompt {name} \"{text}\"")
+    return entry
 
 
 def issue_of(name):
@@ -359,7 +362,8 @@ def cmd_reset(a):
         sys.exit("--wait takes a number of seconds, 1 or more")
     asker = guard(f"pm-pane reset {a.name}", issue=issue_of(a.name), plan_may=True)
     own_pane(asker, a.name, load(PANES, []))
-    reg = registry()
+    with locked(PANE_ADMISSION):
+        reg = registry()
     entry = next((r for r in live(reg) if r["name"] == a.name), None)
     if not entry:
         sys.exit(f"no live pane {a.name}")
@@ -420,15 +424,15 @@ def cmd_close(a):
     else:
         asker = guard(f"pm-pane close {a.name}", issue=issue_of(a.name), plan_may=True)
         own_pane(asker, a.name, load(PANES, []))
-    reg = registry()
-    targets = [r for r in reg if (a.name and r["name"] == a.name) or (a.issue and r["issue"] == str(a.issue))]
-    if not targets:
-        sys.exit("nothing to close")
-    names = {r["name"] for r in targets}
-    with contextlib.ExitStack() as marks:
-        for n_ in sorted(names):  # marked as being closed, so pm-watchd takes none for a pane the registry lost
-            marks.enter_context(pane_op(n_))
-        # first, so the daemon never reports a deliberate close as gone; the registry as it is now (issue 504)
+    with locked(PANE_ADMISSION), contextlib.ExitStack() as marks:
+        reg = registry()
+        targets = [r for r in reg if (a.name and r["name"] == a.name) or (a.issue and r["issue"] == str(a.issue))]
+        if not targets:
+            sys.exit("nothing to close")
+        names = {r["name"] for r in targets}
+        for name in sorted(names):  # marked as being closed, so pm-watchd takes none for a pane the registry lost
+            marks.enter_context(pane_op(name))
+        # Remove entries first so the daemon never reports a deliberate close as gone.
         with update(PANES, []) as now_reg:
             now_reg[:] = [r for r in now_reg if r.get("name") not in names]
         for r in targets:
@@ -469,7 +473,8 @@ def settle_close(closed, bound=None):
 
 
 def cmd_list(a):
-    reg = registry()
+    with locked(PANE_ADMISSION):
+        reg = registry()
     ags = {x.get("name"): x for x in (herdr("agent", "list", check=False) or {}).get("agents", [])}
     used, su, st = mem_gb()
     print(f"mem used {used:.1f}GB swap {su:.1f}/{st:.1f}GB cpu {cpu_pct()}%; live panes {len(live(reg))}/{LIMITS['total']}")
