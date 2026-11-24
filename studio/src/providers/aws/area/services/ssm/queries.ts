@@ -9,6 +9,7 @@ import { usePageFlash } from '../../components/page-flash';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
 import {
+  deleteResourcePolicy,
   GET_RESOURCE_POLICIES,
   LIST_TAGS,
   listParameterTags,
@@ -279,6 +280,19 @@ export function useParameterPolicyWrite(connection: AreaConnection, name: string
               policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
                 ? { PolicyId, PolicyHash, Policy: document }
                 : policy,
+            ),
+          );
+        },
+      ),
+    remove: (revision: PolicyRevision, onClose: () => void) =>
+      write.run(
+        (endpoint, signal) => deleteResourcePolicy(endpoint, arn, revision, signal),
+        `Resource policy ${revision.PolicyId} deleted from ${name}.`,
+        onClose,
+        () => {
+          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
+            policies?.filter(
+              (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
             ),
           );
         },

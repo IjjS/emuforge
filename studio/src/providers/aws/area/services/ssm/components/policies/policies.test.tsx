@@ -484,6 +484,79 @@ describe('Parameter resource policies', () => {
     ]);
   });
 
+  it('removes only the confirmed deleted policy when the resource policy read is refused', async () => {
+    const ops = openDetail();
+    const otherName = '/app/database/port';
+    const otherArn = 'arn:aws:ssm:us-east-1:000000000000:parameter/app/database/port';
+    ops.DescribeParameters.mockImplementation(({ ParameterFilters }) =>
+      ParameterFilters?.[0]?.Values?.[0] === otherName
+        ? answer({ Parameters: [{ Name: otherName, ARN: otherArn, Tier: 'Advanced' }] })
+        : metadata(),
+    );
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]))
+      .mockImplementationOnce(() => list([POLICY, SECOND]))
+      .mockImplementationOnce(notImplemented);
+    await ops.navigateTo(otherName);
+    await expand();
+    await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
+    await ops.navigateTo(NAME);
+    await expand();
+    await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
+    fireEvent.click(panelButton('Refresh resource policies'));
+    await expectReadUnavailable();
+
+    ops.DeleteResourcePolicy.mockImplementationOnce(() => denied('Policy deletion denied'));
+    const dialog = await policyDialog(deleteName, 'Delete resource policy');
+    change(dialog, 'Confirmation', 'delete');
+    const confirm = button('Delete resource policy', dialog);
+    fireEvent.click(confirm);
+    expect(await within(dialog.findContent().getElement()).findByText(/Policy deletion denied/)).toBeVisible();
+    expect(policies().getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    expect(flash(deleted)).toBeUndefined();
+
+    const metadataRefresh = deferredResponse();
+    ops.DescribeParameters.mockReturnValueOnce(metadataRefresh.response);
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(flash(deleted)).toBeVisible();
+      expect(policies().queryByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeNull();
+      expect(policies().queryByRole('button', { name: editName })).toBeNull();
+      expect(policies().queryByRole('button', { name: deleteName })).toBeNull();
+    });
+    expect(button(`Edit resource policy ${SECOND.PolicyId}`)).toBeEnabled();
+    expect(button(`Delete resource policy ${SECOND.PolicyId}`)).toBeEnabled();
+    await expectReadUnavailable();
+    expect(ops.DeleteResourcePolicy).toHaveBeenNthCalledWith(2, {
+      ResourceArn: ARN,
+      PolicyId: POLICY.PolicyId,
+      PolicyHash: POLICY.PolicyHash,
+    });
+    await metadataRefresh.finish(metadata());
+
+    await ops.navigateTo(otherName);
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    await ops.navigateTo(NAME);
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().queryByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeNull();
+    expect(button(`Delete resource policy ${SECOND.PolicyId}`)).toBeEnabled();
+    expect(ops.GetResourcePolicies.mock.calls).toEqual([
+      [{ ResourceArn: otherArn }],
+      [{ ResourceArn: ARN }],
+      [{ ResourceArn: ARN }],
+    ]);
+
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
+    ops.switchTarget('another-target');
+    await expand();
+    expect(await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    expect(button(deleteName)).toBeEnabled();
+    expect(panelButton('Refresh resource policies')).toBeEnabled();
+    expect(ops.GetResourcePolicies).toHaveBeenCalledTimes(4);
+  });
+
   it('retains the saved policy revision through section reopen and detail revisit after a read 501', async () => {
     const ops = openDetail();
     const savedRevision = { PolicyId: 'policy-after-edit', PolicyHash: 'hash-after-edit' };
