@@ -13,10 +13,11 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AreaConnection } from '../../../../components/emulator-line';
 import { creationDateText } from '../../../../components/format-date';
 import { PageFlashContext, type FlashItem, type FlashResult } from '../../../../components/page-flash';
 import { Rotation } from './rotation';
@@ -26,12 +27,24 @@ vi.mock('../../../../../../../lib/aws/client-factory', () => ({ createAwsClient:
 
 const keyId = 'local-key';
 const connection = { engineOrigin: 'http://127.0.0.1:8310', result: undefined };
+const offlineConnection: AreaConnection = {
+  ...connection,
+  result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9310 },
+};
+const reconnected: AreaConnection = {
+  ...connection,
+  result: {
+    kind: 'connected',
+    checkedAt: 2,
+    emulator: { port: 9310, endpoint: 'https://127.0.0.1:9310' },
+  },
+};
 const nextDate = new Date('2026-05-16T12:35:00Z');
 const rotationDate = new Date('2026-02-04T14:15:00Z');
 const enabledSettings = { KeyRotationEnabled: true, RotationPeriodInDays: 90, NextRotationDate: nextDate };
 const page = createWrapper();
 
-function RotationPage({ keySpec }: { keySpec?: KeyMetadata['KeySpec'] }) {
+function RotationPage(props: ComponentProps<typeof Rotation>) {
   const [flash, setFlash] = useState<FlashResult>();
   return (
     <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
@@ -45,19 +58,22 @@ function RotationPage({ keySpec }: { keySpec?: KeyMetadata['KeySpec'] }) {
           })) ?? []
         }
       />
-      <Rotation connection={connection} keyId={keyId} keySpec={keySpec} />
+      <Rotation {...props} />
     </PageFlashContext.Provider>
   );
 }
 
 function open(keySpec?: KeyMetadata['KeySpec']) {
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const client = new QueryClient();
+  const view = (currentConnection: AreaConnection, currentKey: string) => (
+    <QueryClientProvider client={client}>
       <MemoryRouter>
-        <RotationPage keySpec={keySpec} />
+        <RotationPage connection={currentConnection} keyId={currentKey} keySpec={keySpec} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(view(connection, keyId));
+  return (currentConnection: AreaConnection, currentKey = keyId) => rerender(view(currentConnection, currentKey));
 }
 
 function click(name: string) {
@@ -321,5 +337,89 @@ describe('Key rotation', () => {
     expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
     expect(screen.getByText('The emulator does not implement RotateKeyOnDemand.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
+  });
+
+  it.each(['success', '501'] as const)(
+    'preserves a held on-demand rotation across a same-target outage and reports its %s result',
+    async (result) => {
+      const reply = pendingAnswer<undefined>();
+      const write = vi.fn<(signal: AbortSignal) => void>();
+      send.mockImplementation(async (command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => {
+        if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
+        if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+        write(abortSignal);
+        await reply.promise;
+        if (result === '501') throw { $metadata: { httpStatusCode: 501 } };
+        return {};
+      });
+      const update = open();
+      await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+      const rotate = screen.getByRole('button', { name: 'Rotate now' });
+      rotate.focus();
+      fireEvent.click(rotate);
+      const signal = write.mock.calls[0]?.[0];
+      expect(signal?.aborted).toBe(false);
+
+      update(offlineConnection);
+      expect(rotate).toHaveFocus();
+      expect(rotate).toHaveAttribute('aria-disabled', 'true');
+      expect(signal?.aborted).toBe(false);
+      fireEvent.click(rotate);
+      fireEvent.click(screen.getByRole('button', { name: /automatic rotation/ }));
+      expect(write).toHaveBeenCalledTimes(1);
+
+      await act(() => reply.resolve(undefined));
+      if (result === 'success') {
+        expectSuccess('On-demand rotation requested.');
+      } else {
+        expect(flashItem('info')?.findContent()?.getElement()).toHaveTextContent(
+          '501 Not Implemented for RotateKeyOnDemand',
+        );
+      }
+      expect(rotate).toBeDisabled();
+      fireEvent.click(rotate);
+      fireEvent.click(screen.getByRole('button', { name: /automatic rotation/ }));
+      expect(write).toHaveBeenCalledTimes(1);
+
+      update(reconnected);
+      await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+      expect(signal?.aborted).toBe(false);
+      if (result === 'success') {
+        expect(rotate).toBeEnabled();
+        expectSuccess('On-demand rotation requested.');
+      } else {
+        expect(rotate).toBeDisabled();
+        expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
+      }
+      expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
+      expect(write).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ['key', connection, 'other-key'],
+    ['engine origin', { ...connection, engineOrigin: 'http://127.0.0.1:8311' }, keyId],
+  ] as const)('aborts a held rotation when the %s changes', async (_identity, nextConnection, nextKey) => {
+    const reply = pendingAnswer<undefined>();
+    const write = vi.fn<(signal: AbortSignal) => void>();
+    send.mockImplementation(async (command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => {
+      if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      write(abortSignal);
+      await reply.promise;
+      return {};
+    });
+    const update = open();
+    await waitFor(() => expectField('Automatic rotation', 'Enabled'));
+    click('Rotate now');
+    const signal = write.mock.calls[0]?.[0];
+    expect(signal?.aborted).toBe(false);
+
+    update(nextConnection, nextKey);
+
+    expect(signal?.aborted).toBe(true);
+    expect(screen.getByRole('button', { name: 'Rotate now' })).toBeEnabled();
+    await act(() => reply.resolve(undefined));
+    expect(flashItem('success')).toBeUndefined();
   });
 });
