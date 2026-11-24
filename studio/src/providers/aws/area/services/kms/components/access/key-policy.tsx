@@ -5,7 +5,7 @@ import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { TextareaProps } from '@cloudscape-design/components/textarea';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLayoutEffect, useRef, useState } from 'react';
 
 import { DiscardDialog } from '../../../../components/discard-dialog';
@@ -23,19 +23,23 @@ import { useAccessAction } from './use-access-action';
 const { listPolicies, getPolicy, putPolicy } = ACCESS_OPERATIONS;
 
 function useDefaultPolicy(connection: AreaConnection, keyId: string) {
+  const client = useQueryClient();
   const [attemptedRetry, setAttemptedRetry] = useState(false);
   const endpoint = connection.engineOrigin;
   const offline = connectionFailure(connection, listPolicies);
+  if (offline === undefined && attemptedRetry) setAttemptedRetry(false);
   const enabled = endpoint !== undefined && (offline === undefined || attemptedRetry);
+  const namesKey = ['kms', 'policy-names', endpoint, keyId];
+  const policyKey = ['kms', 'default-policy', endpoint, keyId];
   const names = useQuery({
-    queryKey: ['kms', 'policy-names', endpoint, keyId],
+    queryKey: namesKey,
     queryFn: ({ signal }) => hasDefaultPolicy(endpoint ?? noEndpoint(), keyId, signal),
     enabled,
     retry: false,
     gcTime: 0,
   });
   const policy = useQuery({
-    queryKey: ['kms', 'default-policy', endpoint, keyId],
+    queryKey: policyKey,
     queryFn: ({ signal }) => getDefaultPolicy(endpoint ?? noEndpoint(), keyId, signal),
     enabled: enabled && names.data === true,
     retry: false,
@@ -51,11 +55,13 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
         : offline;
 
   function refresh() {
-    setAttemptedRetry(true);
-    if (enabled) {
-      void names.refetch();
-      if (names.data === true) void policy.refetch();
-    }
+    void client.invalidateQueries({ queryKey: namesKey, exact: true });
+    void client.invalidateQueries({ queryKey: policyKey, exact: true });
+  }
+
+  function retry() {
+    if (offline !== undefined) setAttemptedRetry(true);
+    refresh();
   }
 
   return {
@@ -64,12 +70,13 @@ function useDefaultPolicy(connection: AreaConnection, keyId: string) {
     loading: names.data === undefined || (names.data && policy.data === undefined),
     failure,
     refresh,
+    retry,
   };
 }
 
-export function KeyPolicy({ connection, keyId }: AccessProps) {
+export function KeyPolicy({ connection, keyId, writesEnabled = true }: AccessProps) {
   const policy = useDefaultPolicy(connection, keyId);
-  const action = useAccessAction(connection);
+  const action = useAccessAction(connection, writesEnabled);
   const [draft, setDraft] = useState<{ original: string; text: string }>();
   const [syntaxError, setSyntaxError] = useState<{ message: string }>();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -154,7 +161,7 @@ export function KeyPolicy({ connection, keyId }: AccessProps) {
                 ? `default key policy (${policy.failure.operation})`
                 : 'default key policy',
             )}
-            onRetry={policy.refresh}
+            onRetry={policy.retry}
           />
         ) : policy.loading ? (
           <StatusIndicator type="loading">Loading key policy…</StatusIndicator>
