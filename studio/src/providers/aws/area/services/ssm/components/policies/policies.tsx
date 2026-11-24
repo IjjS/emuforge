@@ -20,7 +20,6 @@ import { ValueText } from '../../../../components/value-text';
 import { useParameterPolicyWrite, useParameterResourcePolicies, useUnsupportedOperation } from '../../queries';
 import {
   DELETE_RESOURCE_POLICY,
-  deleteResourcePolicy,
   GET_RESOURCE_POLICIES,
   PUT_RESOURCE_POLICY,
   putResourcePolicy,
@@ -180,19 +179,19 @@ function PolicyDialog({
   const handleSubmit = () => {
     if (deleting) {
       if (confirmation !== 'delete' || !revision) return;
-      void write.run(
-        (endpoint, signal) => deleteResourcePolicy(endpoint, arn, revision, signal),
-        `Resource policy ${revision.PolicyId} deleted from ${name}.`,
-        onClose,
-      );
-    } else {
-      if (document.trim() === '' || (action.mode === 'edit' && !revision)) return;
-      void write.run(
-        (endpoint, signal) => putResourcePolicy(endpoint, arn, document, revision, signal),
-        `Resource policy ${action.mode === 'edit' ? 'updated' : 'created'} for ${name}.`,
-        onClose,
-      );
+      void write.remove(revision, onClose);
+      return;
     }
+    if (document.trim() === '') return;
+    if (action.mode === 'edit') {
+      if (revision) void write.edit(document, revision, onClose);
+      return;
+    }
+    void write.run(
+      (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
+      `Resource policy created for ${name}.`,
+      onClose,
+    );
   };
 
   return (

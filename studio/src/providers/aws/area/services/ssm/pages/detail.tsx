@@ -89,12 +89,15 @@ function Metadata({ parameter, children }: { parameter: ParameterMetadata; child
 function ParameterDetail({ connection, name }: { connection: AreaConnection; name: string }) {
   const follow = useFollow();
   const flash = usePageFlash();
-  const { metadata, loading, failure, refresh, disconnected, rememberFailure } = useParameterMetadata(connection, name);
+  const { metadata, retainedMetadata, loading, failure, refresh, disconnected, rememberFailure } = useParameterMetadata(
+    connection,
+    name,
+  );
   useEffect(() => {
     if (failure?.kind === 'not-implemented') rememberFailure(failure);
   }, [failure, rememberFailure]);
   const state = failure === undefined ? undefined : readFailureState(failure, connection, 'parameter');
-  const parameter = metadata ?? undefined;
+  const parameter = metadata ?? retainedMetadata ?? undefined;
   const valuesKey = JSON.stringify([
     connection.engineOrigin,
     connection.result && targetOf(connection.result),
@@ -114,7 +117,7 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
               disabled={disconnected || parameter === undefined}
               onDeleted={(_, result) => flash.handOver(PARAMETER_STORE_PATH, [result])}
             />
-            <Button href={parameterEditPath(name)} onFollow={follow} disabled={disconnected || parameter === undefined}>
+            <Button href={parameterEditPath(name)} onFollow={follow} disabled={disconnected || !metadata}>
               Edit parameter
             </Button>
           </SpaceBetween>
@@ -128,7 +131,11 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
             <Box textAlign="center">
               <SpaceBetween size="xs">
                 <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
-                <Box variant="p">{state.detail}</Box>
+                <Box variant="p">
+                  {retainedMetadata
+                    ? `The emulator answered 501 Not Implemented for ${failure.operation}. Showing the last confirmed parameter details.`
+                    : state.detail}
+                </Box>
                 <Button disabled>Retry</Button>
               </SpaceBetween>
             </Box>
@@ -136,7 +143,8 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
             <ReadFailure state={state} onRetry={refresh} />
           )}
         </Container>
-      ) : parameter !== undefined ? (
+      ) : null}
+      {parameter !== undefined ? (
         <>
           <Metadata parameter={parameter}>
             {!disconnected && (
@@ -155,13 +163,13 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
           </Metadata>
           {!disconnected && (
             <VersionHistory
-              key={valuesKey}
+              key={`history:${valuesKey}`}
               connection={connection}
               name={name}
               secure={parameter.Type === 'SecureString'}
             />
           )}
-          {!disconnected && <ParameterTags key={valuesKey} connection={connection} name={name} />}
+          {!disconnected && <ParameterTags key={`tags:${valuesKey}`} connection={connection} name={name} />}
           {!disconnected && parameter.Tier === 'Advanced' && parameter.ARN && (
             <ParameterResourcePolicies
               key={JSON.stringify([valuesKey, parameter.ARN])}
@@ -171,7 +179,7 @@ function ParameterDetail({ connection, name }: { connection: AreaConnection; nam
             />
           )}
         </>
-      ) : loading ? (
+      ) : state !== undefined ? null : loading ? (
         <StatusIndicator type="loading">Loading parameter…</StatusIndicator>
       ) : (
         <Container>
