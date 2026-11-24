@@ -56,21 +56,25 @@ test('studio.sns-change-topic-tags', async ({ ctx, page }) => {
   await ui.field('Value').fill('dev');
   await ui.save.click(ACTION);
   const added = { ...initial, stage: 'dev' };
-  await expect(flashItems(page, 'success')).toHaveText(['Tag saved.']);
+  const success = flashItems(page, 'success');
+  await expect(success).toHaveText(['Tag saved.']);
+  await expect(success).toBeVisible();
   await ui.expectTags(added);
   expect(await topic.tags()).toEqual(added);
+  await ui.dismissSuccess.click(ACTION);
+  await expect(success).toHaveCount(0);
 
   await ui.button('Edit tag color').click(ACTION);
   await ui.field('Value').fill('blue');
   await ui.save.click(ACTION);
   const edited = { ...added, color: 'blue' };
-  await expect(flashItems(page, 'success')).toHaveText(['Tag saved.']);
+  await expect(success).toHaveText(['Tag saved.']);
+  await expect(success).toBeVisible();
   await ui.expectTags(edited);
   expect(await topic.tags()).toEqual(edited);
 
   await ui.button('Remove tag stage').click(ACTION);
   await ui.confirmRemoval();
-  const success = flashItems(page, 'success');
   await expect(success).toHaveText(['Tag removed.']);
   await expect(success).toBeVisible();
   const remaining = { keep: 'first', color: 'blue' };

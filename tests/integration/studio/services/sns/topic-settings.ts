@@ -59,19 +59,30 @@ export async function openSettings(page: Page, arn: string) {
   const wrapper = createWrapper();
   const button = (name: string) => page.getByRole('button', { name, exact: true });
   const field = (name: string) => page.getByRole('textbox', { name });
-  const rows = page.locator(wrapper.findTable().findRows().toSelector());
+  const table = wrapper.findTable();
+  const rows = page.locator(table.findRows().toSelector());
   return {
     button, field, save: button('Save changes'),
     async expectTags(tags: Record<string, string>) {
-      // Each tag occupies one data cell containing its key and its value.
-      await expect.poll(() => rows.evaluateAll(nodes => nodes.map(row => [
-        row.querySelector('.aws-area-value-name')?.textContent,
-        row.querySelector('.aws-area-value-text')?.textContent,
-      ]).sort()), { timeout: 15_000 }).toEqual(Object.entries(tags).sort());
+      const entries = Object.entries(tags);
+      await expect(rows).toHaveCount(entries.length);
+      const cells = entries.map((_, index) => page.locator(table.findBodyCell(index + 1, 1).toSelector()));
+      for (const [key, value] of entries) {
+        // SNS can return the keys in any order. Both values must appear in the same cell.
+        await expect.poll(async () => {
+          for (const cell of cells) {
+            if (await cell.getByText(key, { exact: true }).isVisible()
+              && await cell.getByText(value, { exact: true }).isVisible()) return true;
+          }
+          return false;
+        }, { message: `tag ${key} has visible value ${value}`, timeout: 15_000 }).toBe(true);
+      }
     },
+    dismissSuccess: page.locator(wrapper.findFlashbar().findItemsByType('success').get(1).findDismissButton().toSelector()),
     async confirmRemoval() {
       const modal = wrapper.findModal();
-      await page.locator(modal.findContent().toSelector()).getByRole('textbox').fill('remove');
+      const content = createWrapper(modal.findContent().toSelector());
+      await page.locator(content.findInput().findNativeInput().toSelector()).fill('remove');
       await page.locator(modal.findFooter().toSelector()).getByRole('button', { name: 'Remove' }).click(ACTION);
     },
   };
