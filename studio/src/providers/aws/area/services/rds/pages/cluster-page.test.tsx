@@ -250,7 +250,12 @@ async function confirmDelete() {
 const PATH = '/aws/rds/clusters/cluster/app-aur';
 
 async function loaded() {
-  await screen.findByText('DB cluster details');
+  await waitFor(() => {
+    const details = PAGE.findContentLayout()?.findContent().findAllContainers()[1];
+    expect(details?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      /^DB cluster details$/,
+    );
+  });
 }
 
 function answer(read: clusterApi.ClusterRead, members: api.DbInstance[] = []) {
