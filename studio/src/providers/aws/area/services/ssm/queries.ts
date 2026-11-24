@@ -222,7 +222,7 @@ function useResourceRead<T>(
     if (failure?.kind === 'not-implemented') markUnsupported(failure);
   }, [failure, markUnsupported]);
   return {
-    items: failure ? undefined : query.data,
+    items: failure === undefined || failure.kind === 'not-implemented' ? query.data : undefined,
     failure,
     loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
     retry: () => {

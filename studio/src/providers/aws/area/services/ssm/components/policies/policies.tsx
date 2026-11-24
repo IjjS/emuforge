@@ -90,7 +90,7 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
         <ReadFailure state={readFailureState(failure, connection, 'resource policy list')} onRetry={retry} />
       )}
       {loading && items === undefined && <StatusIndicator type="loading">Loading resource policies…</StatusIndicator>}
-      {items?.length === 0 && <Box textAlign="center">No resource policies</Box>}
+      {!failure && items?.length === 0 && <Box textAlign="center">No resource policies</Box>}
       {items?.map(({ PolicyId, PolicyHash, Policy }, index) => (
         <Container
           key={PolicyId ?? index}
