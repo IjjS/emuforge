@@ -283,21 +283,48 @@ function expectDescribeRefusal() {
   expect(feedback.getElement()).toHaveTextContent(/501 Not Implemented for DescribeParameters/);
 }
 
-async function refuseNext(parameters: ReturnType<typeof parameter>[], names: string[]) {
+function expectRefusedReadControls() {
+  for (const name of ['Refresh', 'Retry']) {
+    expect(button(name)).toBeDisabled();
+    fireEvent.click(button(name));
+  }
+  for (const name of ['Previous page', 'Next page', 'Page 1']) {
+    expect(button(name)).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(button(name));
+  }
+}
+
+const refusalActions = ['Next page', 'Refresh'] as const;
+type RefusalAction = (typeof refusalActions)[number];
+const firstPageRequest = { MaxResults: 50 };
+const nextPageRequest = { MaxResults: 50, NextToken: 'next' };
+const refusalRequests = {
+  'Next page': [firstPageRequest, nextPageRequest],
+  Refresh: [firstPageRequest, nextPageRequest, firstPageRequest],
+};
+
+async function refuseRead(action: RefusalAction, parameters: ReturnType<typeof parameter>[], names: string[]) {
+  const earlier = parameter('/app/earlier');
+  if (action === 'Refresh') read.mockReturnValueOnce(page([earlier.Name], 'next'));
   read
-    .mockReturnValueOnce(answer({ Parameters: parameters, NextToken: 'next' }))
+    .mockReturnValueOnce(
+      answer({ Parameters: parameters, NextToken: action === 'Refresh' ? 'after-confirmed' : 'next' }),
+    )
     .mockReturnValueOnce(answer({ __type: 'NotImplemented' }, 501));
   const view = open();
+  if (action === 'Refresh') {
+    await waitFor(() => expectSettledRows([earlier]));
+    fireEvent.click(button('Next page'));
+  }
   await waitFor(() => expectSettledRows(parameters));
   for (const name of names) fireEvent.click(rowCheckbox(name));
-  fireEvent.click(button('Next page'));
+  fireEvent.click(button(action));
   await waitFor(expectDescribeRefusal);
   expectSettledRows(parameters);
   for (const name of names) expect(rowCheckbox(name)).toBeChecked();
+  expectRefusedReadControls();
   return view;
 }
-
-const refusedNextRequests = [{ MaxResults: 50 }, { MaxResults: 50, NextToken: 'next' }];
 
 describe('Parameter Store list', () => {
   it('L1 shows loading, then the empty title and guidance', async () => {
@@ -382,68 +409,78 @@ describe('Parameter Store list', () => {
     await row(FIRST);
     fireEvent.click(button('Next page'));
     await waitFor(expectDescribeRefusal);
-    for (const name of ['Refresh', 'Retry']) {
-      expect(button(name)).toBeDisabled();
-      fireEvent.click(button(name));
-    }
-    for (const name of ['Previous page', 'Next page', 'Page 1']) {
-      expect(button(name)).toHaveAttribute('aria-disabled', 'true');
-      fireEvent.click(button(name));
-    }
+    expectRefusedReadControls();
     expect(read).toHaveBeenCalledTimes(2);
   });
 
-  it('deletes a selected parameter from the last confirmed page after Next returns 501', async () => {
-    const selected = parameter(FIRST, 2, 'SecureString');
-    const sibling = parameter(SECOND, 4, 'StringList', modified + 3600);
-    const { connect } = await refuseNext([selected, sibling], [FIRST]);
-    confirm(await openDeleteDialog(1), FIRST);
-    await waitFor(() => {
-      expectSettledRows([sibling]);
-      const result = ui.findFlashbar()?.findItemsByType('success')[0];
-      expect(result?.findContent()?.getElement()).toHaveTextContent(`Parameter ${FIRST} deleted.`);
-    });
-    expectDescribeRefusal();
-    expect(remove.mock.calls).toEqual([[{ Name: FIRST }, 'DeleteParameter']]);
-    expect(read.mock.calls.map(([input]) => input)).toEqual(refusedNextRequests);
+  it.each(refusalActions)(
+    'deletes a selected parameter from the last confirmed page after %s returns 501',
+    async (action) => {
+      const selected = parameter(FIRST, 2, 'SecureString');
+      const sibling = parameter(SECOND, 4, 'StringList', modified + 3600);
+      const { connect } = await refuseRead(action, [selected, sibling], [FIRST]);
+      confirm(await openDeleteDialog(1), FIRST);
+      await waitFor(() => {
+        expectSettledRows([sibling]);
+        const result = ui.findFlashbar()?.findItemsByType('success')[0];
+        expect(result?.findContent()?.getElement()).toHaveTextContent(`Parameter ${FIRST} deleted.`);
+      });
+      expectDescribeRefusal();
+      expect(remove.mock.calls).toEqual([[{ Name: FIRST }, 'DeleteParameter']]);
+      expect(read.mock.calls.map(([input]) => input)).toEqual(refusalRequests[action]);
 
-    const otherPage = deferred();
-    read.mockReturnValueOnce(otherPage.promise);
-    connect({ ...connected, target: 'other', checkedAt: 2 });
-    await waitFor(() => {
-      expect(table()?.findLoadingText()?.getElement()).toBeVisible();
-      expect(table()?.findRows()).toHaveLength(0);
-    });
-    const other = parameter(FIRST, 7, 'String', modified + 7200);
-    otherPage.resolve(answer({ Parameters: [other] }));
-    await waitFor(() => expectSettledRows([other]));
-    expect(rowCheckbox(FIRST)).not.toBeChecked();
-    expect(button('Refresh')).toBeEnabled();
-    expect(read.mock.calls.map(([input]) => input)).toEqual([...refusedNextRequests, { MaxResults: 50 }]);
-  });
+      if (action === 'Refresh') {
+        connect({ ...connected, kind: 'emulator-unreachable', reason: 'not_started', message: '', checkedAt: 2 });
+        expectSettledRows([]);
+        expect(button('Delete')).toBeDisabled();
+        connect({ ...connected, checkedAt: 3 });
+        await waitFor(expectDescribeRefusal);
+        expectSettledRows([]);
+        expect(button('Delete')).toBeDisabled();
+        expect(read.mock.calls.map(([input]) => input)).toEqual(refusalRequests[action]);
+      }
 
-  it('reconciles only confirmed bulk deletions on the last confirmed page after Next returns 501', async () => {
-    const deleted = parameter(FIRST, 2, 'SecureString');
-    const rejected = parameter(SECOND, 3, 'StringList', modified + 3600);
-    const unconfirmed = parameter('/app/unconfirmed', 4, 'String', modified + 7200);
-    const sibling = parameter('/app/sibling', 5, 'SecureString', modified + 10800);
-    const names = [deleted.Name, rejected.Name, unconfirmed.Name];
-    remove.mockReturnValueOnce(answer({ DeletedParameters: [deleted.Name], InvalidParameters: [rejected.Name] }));
-    await refuseNext([deleted, rejected, unconfirmed, sibling], [deleted.Name, rejected.Name]);
-    expect(rowCheckbox(unconfirmed.Name)).not.toBeChecked();
-    fireEvent.click(rowCheckbox(unconfirmed.Name));
-    expect(rowCheckbox(unconfirmed.Name)).toBeChecked();
-    confirm(await openDeleteDialog(names.length), 'delete');
-    await waitFor(() => {
-      expectSettledRows([rejected, unconfirmed, sibling]);
-      expectResultNames('Deleted parameters', [deleted.Name]);
-      expectResultNames('Rejected parameters', [rejected.Name]);
-      expectResultNames('Deletion not confirmed', [unconfirmed.Name]);
-    });
-    expectDescribeRefusal();
-    expect(remove.mock.calls).toEqual([[{ Names: names }, 'DeleteParameters']]);
-    expect(read.mock.calls.map(([input]) => input)).toEqual(refusedNextRequests);
-  });
+      const otherPage = deferred();
+      read.mockReturnValueOnce(otherPage.promise);
+      connect({ ...connected, target: 'other', checkedAt: 4 });
+      await waitFor(() => {
+        expect(table()?.findLoadingText()?.getElement()).toBeVisible();
+        expect(table()?.findRows()).toHaveLength(0);
+      });
+      const other = parameter(FIRST, 7, 'String', modified + 7200);
+      otherPage.resolve(answer({ Parameters: [other] }));
+      await waitFor(() => expectSettledRows([other]));
+      expect(rowCheckbox(FIRST)).not.toBeChecked();
+      expect(button('Refresh')).toBeEnabled();
+      expect(read.mock.calls.map(([input]) => input)).toEqual([...refusalRequests[action], firstPageRequest]);
+    },
+  );
+
+  it.each(refusalActions)(
+    'reconciles only confirmed bulk deletions on the last confirmed page after %s returns 501',
+    async (action) => {
+      const deleted = parameter(FIRST, 2, 'SecureString');
+      const rejected = parameter(SECOND, 3, 'StringList', modified + 3600);
+      const unconfirmed = parameter('/app/unconfirmed', 4, 'String', modified + 7200);
+      const sibling = parameter('/app/sibling', 5, 'SecureString', modified + 10800);
+      const names = [deleted.Name, rejected.Name, unconfirmed.Name];
+      remove.mockReturnValueOnce(answer({ DeletedParameters: [deleted.Name], InvalidParameters: [rejected.Name] }));
+      await refuseRead(action, [deleted, rejected, unconfirmed, sibling], [deleted.Name, rejected.Name]);
+      expect(rowCheckbox(unconfirmed.Name)).not.toBeChecked();
+      fireEvent.click(rowCheckbox(unconfirmed.Name));
+      expect(rowCheckbox(unconfirmed.Name)).toBeChecked();
+      confirm(await openDeleteDialog(names.length), 'delete');
+      await waitFor(() => {
+        expectSettledRows([rejected, unconfirmed, sibling]);
+        expectResultNames('Deleted parameters', [deleted.Name]);
+        expectResultNames('Rejected parameters', [rejected.Name]);
+        expectResultNames('Deletion not confirmed', [unconfirmed.Name]);
+      });
+      expectDescribeRefusal();
+      expect(remove.mock.calls).toEqual([[{ Names: names }, 'DeleteParameters']]);
+      expect(read.mock.calls.map(([input]) => input)).toEqual(refusalRequests[action]);
+    },
+  );
 
   it('L6 lists the selected names and requires exact confirmation before sending a delete', async () => {
     open();
