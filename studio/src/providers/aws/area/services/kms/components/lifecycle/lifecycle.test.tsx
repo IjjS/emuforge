@@ -604,6 +604,73 @@ describe('Key lifecycle', () => {
     expect(flashText()).toContain('Key disabled.');
   });
 
+  it('blocks all lifecycle writes until Retry confirms the state after scheduling deletion', async () => {
+    const readback = deferred<unknown>();
+    const retry = deferred<unknown>();
+    let reads = 0;
+    emulate(key('Enabled'), (command) => {
+      if (!(command instanceof DescribeKeyCommand)) return undefined;
+      reads += 1;
+      if (reads === 2) return readback.promise;
+      return reads === 3 ? retry.promise : undefined;
+    });
+    open();
+    await expectStatus('Enabled');
+    await opened('Schedule key deletion');
+    confirm('Schedule deletion');
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+
+    const expectWriteLock = () => {
+      for (const name of ['Edit description', 'Disable key', 'Schedule key deletion']) {
+        const button = within(lifecycle()).getByRole('button', { name });
+        expect(usable(button)).toBe(false);
+        expect(button).toHaveAccessibleDescription('Wait for Studio to confirm the current key state.');
+        fireEvent.click(button);
+      }
+      expect(PAGE.findModal()).toBeNull();
+      expect(sent(ScheduleKeyDeletionCommand)).toHaveLength(1);
+      expect(sent(UpdateKeyDescriptionCommand)).toHaveLength(0);
+      expect(sent(DisableKeyCommand)).toHaveLength(0);
+      expect(sent(EnableKeyCommand)).toHaveLength(0);
+      expect(sent(CancelKeyDeletionCommand)).toHaveLength(0);
+      expect(field('Status')).toHaveTextContent('Enabled');
+      expect(flashText()).toContain('Key deletion scheduled.');
+    };
+    expectWriteLock();
+
+    await act(async () =>
+      readback.reject({
+        name: 'DependencyTimeoutException',
+        message: 'DescribeKey readback failed.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 500 },
+      }),
+    );
+    const recovery = await waitFor(() => {
+      const content = PAGE.findContentLayout()?.findContent().findContainer()?.findContent().getElement();
+      if (!content) throw new Error('Missing metadata recovery');
+      expect(content).toHaveTextContent('DescribeKey readback failed.');
+      return content;
+    });
+    expectWriteLock();
+
+    const retryButton = within(recovery).getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeVisible();
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(3));
+    expectWriteLock();
+
+    await act(async () => retry.resolve({ KeyMetadata: key('PendingDeletion', { DeletionDate: deletionDate }) }));
+    await expectStatus('PendingDeletion');
+    await expectActions(['Cancel key deletion']);
+    expect(field('Deletion date')).toHaveTextContent(creationDateText(deletionDate));
+    expect(retryButton).not.toBeInTheDocument();
+    expect(flashText()).toContain('Key deletion scheduled.');
+    expect(sent(ScheduleKeyDeletionCommand)).toHaveLength(1);
+    expect(sent(CancelKeyDeletionCommand)).toHaveLength(0);
+  });
+
   it('schedules deletion of a disabled key, shows the date and then offers only cancellation', async () => {
     const emulator = emulate(key('Disabled'));
     open();
