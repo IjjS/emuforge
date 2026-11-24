@@ -116,6 +116,15 @@ function change(dialog: HTMLElement, name: string, value: string) {
 
 const DOCUMENT = '{"Statement":[{"Action":"ssm:GetParameter"}]}';
 const UPDATED = '{"Statement":[{"Action":"ssm:GetParameters"}]}';
+const DISPLAY_DOCUMENT = `{
+  "Statement": [
+    {
+      "Action": "ssm:GetParameter"
+    }
+  ]
+}`;
+const DISPLAY_UPDATED = DISPLAY_DOCUMENT.replace('ssm:GetParameter', 'ssm:GetParameters');
+const POLICY_TEXT = { selector: 'pre span', normalizer: (text: string) => text };
 const POLICY = { PolicyId: 'policy-1', PolicyHash: 'hash-1', Policy: DOCUMENT };
 const UPDATED_POLICY = { PolicyId: POLICY.PolicyId, PolicyHash: 'hash-2', Policy: UPDATED };
 const SECOND = { PolicyId: 'policy-2', PolicyHash: 'hash-3', Policy: '{"Statement":[]}' };
@@ -161,8 +170,19 @@ describe('Parameter resource policies', () => {
     fireEvent.click(button('Cancel', dialog));
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     fireEvent.click(button('Refresh resource policies'));
-    expect(await screen.findByText(DOCUMENT, { selector: 'pre span' })).toBeVisible();
+    expect(await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
     expect(screen.getByText(lifetimePolicy)).toBeVisible();
+  });
+
+  it('shows the original policy text when JSON formatting fails', async () => {
+    const ops = openDetail();
+    const original = '  { invalid policy\n  text  ';
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([{ ...POLICY, Policy: original }]));
+    await expand('Resource policies');
+    expect(await screen.findByText(original, POLICY_TEXT)).toBeVisible();
+
+    const edit = await policyDialog(editName, 'Edit resource policy');
+    expect(within(edit).getByRole('textbox', { name: 'Policy document' })).toHaveValue(original);
   });
 
   it('P2 creates and updates the same policy, retaining its document and result across metadata refresh', async () => {
@@ -176,7 +196,7 @@ describe('Parameter resource policies', () => {
     const create = await policyDialog('Create resource policy');
     change(create, 'Policy document', DOCUMENT);
     fireEvent.click(button('Save resource policy', create));
-    expect(await screen.findByText(DOCUMENT, { selector: 'pre span' })).toBeVisible();
+    expect(await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
     expect(screen.getByText(created)).toBeVisible();
     await afterCreate.finish(metadata('Advanced', 'Metadata after create'));
     await screen.findByText('Metadata after create');
@@ -189,11 +209,11 @@ describe('Parameter resource policies', () => {
     expect(within(edit).getByRole('textbox', { name: 'Policy document' })).toHaveValue(DOCUMENT);
     change(edit, 'Policy document', UPDATED);
     fireEvent.click(button('Save resource policy', edit));
-    expect(await screen.findByText(UPDATED, { selector: 'pre span' })).toBeVisible();
+    expect(await screen.findByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
     expect(ops.DescribeParameters).toHaveBeenCalledTimes(3);
     await afterUpdate.finish(metadata('Advanced', 'Metadata after update'));
     await screen.findByText('Metadata after update');
-    expect(screen.getByText(UPDATED)).toBeVisible();
+    expect(screen.getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
     expect(screen.getByText(updated)).toBeVisible();
     expect(ops.PutResourcePolicy.mock.calls).toEqual([
       [{ ResourceArn: ARN, Policy: DOCUMENT }],
@@ -205,7 +225,7 @@ describe('Parameter resource policies', () => {
     const ops = openDetail();
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     await expand('Resource policies');
-    await screen.findByText(DOCUMENT);
+    await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
     const canceled = await policyDialog(deleteName, 'Delete resource policy');
     expect(within(canceled).getByText(POLICY.PolicyId)).toBeVisible();
     expect(canceled).toHaveTextContent(
@@ -219,11 +239,11 @@ describe('Parameter resource policies', () => {
     expect(confirm).toBeEnabled();
     fireEvent.click(button('Cancel', canceled));
     expect(ops.DeleteResourcePolicy).not.toHaveBeenCalled();
-    expect(screen.getByText(DOCUMENT)).toBeVisible();
+    expect(screen.getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
 
     ops.GetResourcePolicies.mockImplementationOnce(() => list([UPDATED_POLICY]));
     fireEvent.click(button('Refresh resource policies'));
-    await screen.findByText(UPDATED);
+    await screen.findByText(DISPLAY_UPDATED, POLICY_TEXT);
     const delayed = deferredResponse();
     ops.DescribeParameters.mockReturnValueOnce(delayed.response);
     const dialog = await policyDialog(deleteName, 'Delete resource policy');
@@ -256,7 +276,7 @@ describe('Parameter resource policies', () => {
     change(dialog, 'Policy document', UPDATED);
     fireEvent.click(button('Save resource policy', dialog));
     expect(await screen.findByText(created)).toBeVisible();
-    expect(await screen.findByText(UPDATED, { selector: 'pre span' })).toBeVisible();
+    expect(await screen.findByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
     expect(ops.PutResourcePolicy).toHaveBeenLastCalledWith({ ResourceArn: ARN, Policy: UPDATED });
   });
 
@@ -278,7 +298,7 @@ describe('Parameter resource policies', () => {
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     ops[operation].mockImplementationOnce(notImplemented);
     await expand('Resource policies');
-    await screen.findByText(DOCUMENT);
+    await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
     const dialog = await policyDialog(action, title);
     if (operation === 'DeleteResourcePolicy') change(dialog, 'Confirmation', 'delete');
     fireEvent.click(button(submit, dialog));
@@ -286,7 +306,7 @@ describe('Parameter resource policies', () => {
     expect(button(action)).toBeDisabled();
     expect(button(other)).toBeEnabled();
     expect(button('Refresh resource policies')).toBeEnabled();
-    expect(screen.getByText(DOCUMENT)).toBeVisible();
+    expect(screen.getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
   });
 
   it('P6 retries a failed continuation from the first page and reports the service reason', async () => {
@@ -297,9 +317,9 @@ describe('Parameter resource policies', () => {
     await expand('Resource policies');
     expect(await screen.findByText(/Policy page unavailable/)).toBeVisible();
     expect(screen.queryByText('No resource policies')).toBeNull();
-    expect(screen.queryByText(DOCUMENT)).toBeNull();
+    expect(screen.queryByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeNull();
     fireEvent.click(button('Retry'));
-    expect(await screen.findByText(SECOND.Policy)).toBeVisible();
+    expect(await screen.findByText('{\n  "Statement": []\n}', POLICY_TEXT)).toBeVisible();
     expect(ops.GetResourcePolicies).toHaveBeenLastCalledWith({ ResourceArn: ARN });
   });
 
@@ -308,12 +328,12 @@ describe('Parameter resource policies', () => {
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     ops.DeleteResourcePolicy.mockImplementationOnce(() => denied('Policy deletion denied'));
     await expand('Resource policies');
-    await screen.findByText(DOCUMENT);
+    await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
     const dialog = await policyDialog(deleteName, 'Delete resource policy');
     change(dialog, 'Confirmation', 'delete');
     fireEvent.click(button('Delete resource policy', dialog));
     expect(await within(dialog).findByText(/Policy deletion denied/)).toBeVisible();
-    expect(screen.getByText(DOCUMENT)).toBeInTheDocument();
+    expect(screen.getByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeInTheDocument();
     expect(screen.queryByText(deleted)).toBeNull();
     expect(button('Delete resource policy', dialog)).toBeEnabled();
     fireEvent.click(button('Delete resource policy', dialog));
@@ -328,8 +348,8 @@ describe('Parameter resource policies', () => {
       list([SECOND]),
     );
     await expand('Resource policies');
-    expect(await screen.findByText(DOCUMENT, { selector: 'pre span' })).toBeVisible();
-    expect(screen.getByText(SECOND.Policy)).toBeVisible();
+    expect(await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
+    expect(screen.getByText('{\n  "Statement": []\n}', POLICY_TEXT)).toBeVisible();
     expect(ops.GetResourcePolicies.mock.calls).toEqual([
       [{ ResourceArn: ARN }],
       [{ ResourceArn: ARN, NextToken: 'next' }],

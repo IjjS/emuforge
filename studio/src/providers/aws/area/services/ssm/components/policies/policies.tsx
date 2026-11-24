@@ -34,6 +34,15 @@ interface PoliciesProps {
 type PolicyAction =
   { mode: 'create' } | { mode: 'edit'; policy: GetResourcePoliciesResponseEntry } | { mode: 'delete'; id: string };
 
+function formatPolicyDocument(document: string | undefined) {
+  if (document === undefined) return undefined;
+  try {
+    return JSON.stringify(JSON.parse(document), null, 2);
+  } catch {
+    return document;
+  }
+}
+
 export function ParameterResourcePolicies(props: PoliciesProps) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -111,7 +120,7 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
           }
         >
           <Box variant="pre" nativeAttributes={{ style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
-            <ValueText kind="name" value={Policy} none="Policy document unavailable" />
+            <ValueText kind="name" value={formatPolicyDocument(Policy)} none="Policy document unavailable" />
           </Box>
         </Container>
       ))}
