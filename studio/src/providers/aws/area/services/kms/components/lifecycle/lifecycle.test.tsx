@@ -90,7 +90,9 @@ function Page({ observeList, keyId, target }: { observeList: boolean; keyId: str
         <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
           <Flashbar items={flash ? [...flash] : []} />
           {observeList && <ListObserver />}
-          <KeyPage connection={target} params={{ keyid: keyId }} />
+          <main>
+            <KeyPage connection={target} params={{ keyid: keyId }} />
+          </main>
         </PageFlashContext.Provider>
       </div>
     </AreaRootContext.Provider>
@@ -616,10 +618,13 @@ describe('Key lifecycle', () => {
     });
     open();
     await expectStatus('Enabled');
+    const opener = within(lifecycle()).getByRole('button', { name: 'Schedule key deletion' });
     await opened('Schedule key deletion');
+    dialogButton('Schedule deletion').focus();
     confirm('Schedule deletion');
     await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
     await waitFor(() => expect(PAGE.findModal()).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
 
     const expectWriteLock = () => {
       for (const name of ['Edit description', 'Disable key', 'Schedule key deletion']) {
@@ -638,6 +643,7 @@ describe('Key lifecycle', () => {
       expect(flashText()).toContain('Key deletion scheduled.');
     };
     expectWriteLock();
+    expect(field('Status')).toHaveTextContent('Last known. Confirming current state…');
 
     await act(async () =>
       readback.reject({
@@ -654,16 +660,32 @@ describe('Key lifecycle', () => {
       return content;
     });
     expectWriteLock();
+    expect(field('Status')).toHaveTextContent('Last known. Studio could not confirm the current state.');
 
     const retryButton = within(recovery).getByRole('button', { name: 'Retry' });
     expect(retryButton).toBeVisible();
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    const breadcrumbs = document.createElement('nav');
+    breadcrumbs.setAttribute('aria-label', 'Breadcrumbs');
+    breadcrumbs.style.position = 'sticky';
+    screen.getByRole('main').prepend(breadcrumbs);
+    vi.spyOn(breadcrumbs, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 40));
+    vi.spyOn(refresh, 'getBoundingClientRect').mockReturnValue(new DOMRect(16, 83, 40, 32));
+    const revealRefresh = vi.fn();
+    Object.defineProperty(refresh, 'scrollIntoView', { value: revealRefresh });
+    retryButton.focus();
     fireEvent.click(retryButton);
     await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(3));
     expectWriteLock();
+    expect(field('Status')).toHaveTextContent('Last known. Confirming current state…');
+    expect(revealRefresh).not.toHaveBeenCalled();
 
     await act(async () => retry.resolve({ KeyMetadata: key('PendingDeletion', { DeletionDate: deletionDate }) }));
     await expectStatus('PendingDeletion');
     await expectActions(['Cancel key deletion']);
+    expect(field('Status')).not.toHaveTextContent('Last known');
+    expect(refresh).toHaveFocus();
+    expect(revealRefresh).toHaveBeenCalledExactlyOnceWith({ block: 'center', inline: 'nearest' });
     expect(field('Deletion date')).toHaveTextContent(creationDateText(deletionDate));
     expect(retryButton).not.toBeInTheDocument();
     expect(flashText()).toContain('Key deletion scheduled.');

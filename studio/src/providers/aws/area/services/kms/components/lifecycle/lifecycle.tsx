@@ -66,14 +66,18 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
 
   useEffect(() => {
     if (restoreTo === undefined) return;
-    // Wait for the modal's focus lock to release and the opener's disabled reason to be committed.
+    // Let the modal release focus before checking whether the opener needs to be restored.
     const frame = requestAnimationFrame(() => {
       const group = controls.current;
-      const opener = group?.querySelector<HTMLButtonElement>(
-        `button[data-lifecycle-operation="${restoreTo}"]:not(:disabled)`,
-      );
-      const sibling = group?.querySelector<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])');
-      (opener ?? sibling ?? group)?.focus();
+      if (group && group.ownerDocument.activeElement === group.ownerDocument.body) {
+        const opener = group.querySelector<HTMLButtonElement>(
+          `button[data-lifecycle-operation="${restoreTo}"]:not(:disabled)`,
+        );
+        const sibling = group.querySelector<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])');
+        const target = opener ?? sibling ?? group;
+        target.focus();
+        target.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+      }
       setRestoreTo(undefined);
     });
     return () => cancelAnimationFrame(frame);
@@ -85,10 +89,10 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     if (next === 'schedule') setDays(String(DELETION_WINDOW.max));
     setDialog(next);
   };
-  const close = (unavailableOperation?: LifecycleOperation) => {
+  const close = (operation?: LifecycleOperation) => {
     action.clearFailure();
     setDialog(undefined);
-    if (unavailableOperation !== undefined) setRestoreTo(unavailableOperation);
+    if (operation !== undefined) setRestoreTo(operation);
   };
 
   const unavailableReason = (operation: LifecycleOperation) =>
