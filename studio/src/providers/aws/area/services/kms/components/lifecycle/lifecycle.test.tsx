@@ -1145,7 +1145,7 @@ describe('Key lifecycle', () => {
     await expectStatus('PendingDeletion');
     await expectActions(['Cancel key deletion']);
     expect(flashText()).toContain('Key deletion scheduled.');
-    expect(flashText('info')).toBe('');
+    await waitFor(() => expect(flashText('info')).toBe(''));
     const retainedEnable = within(lifecycle()).getByRole('button', { name: 'Enable key' });
     expect(retainedEnable).toBeVisible();
     expect(usable(retainedEnable)).toBe(false);
