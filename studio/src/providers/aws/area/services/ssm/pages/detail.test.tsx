@@ -1,4 +1,5 @@
 import type { DescribeParametersCommandInput } from '@aws-sdk/client-ssm';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useEffect, useState } from 'react';
@@ -111,18 +112,54 @@ function open(waitForList?: () => Promise<unknown>) {
 }
 
 const parameterFilters = [{ Key: 'Name', Option: 'Equals', Values: [NAME] }];
-const deleteButton = () => screen.getByRole('button', { name: 'Delete' });
-const details = () => screen.findByRole('heading', { name: 'Parameter details' });
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Expected ${label}`);
+  return value;
+}
+
+const ui = createWrapper();
+const detailHeader = () =>
+  ui.findAllHeaders().find((header) => header.findHeadingText().getElement().textContent === NAME);
+const actions = () => detailHeader()?.findActions()?.getElement();
+const deleteButton = () => within(required(actions(), 'detail actions')).getByRole('button', { name: 'Delete' });
+
+const detailSection = () =>
+  ui
+    .findAllContainers()
+    .find(
+      (container) =>
+        container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Parameter details',
+    );
+const details = () =>
+  waitFor(() => {
+    const heading = detailSection()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toBeVisible();
+    return required(heading, 'Parameter details heading');
+  });
+
+const flash = (type: 'success' | 'info') => ui.findFlashbar()?.findItemsByType(type)[0];
 
 async function openDelete() {
   await details();
   fireEvent.click(deleteButton());
-  return within(await screen.findByRole('dialog', { name: 'Delete parameter' }));
+  return waitFor(() => {
+    const dialog = ui.findModal();
+    if (dialog === null) throw new Error('Expected the delete confirmation dialog');
+    expect(dialog.findHeader().getElement()).toHaveTextContent(/^Delete parameter$/);
+    return dialog;
+  });
 }
 
-function confirm(dialog: ReturnType<typeof within>, text: string) {
-  fireEvent.change(dialog.getByRole('textbox'), { target: { value: text } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+type DeleteDialog = Awaited<ReturnType<typeof openDelete>>;
+
+const dialogButton = (dialog: DeleteDialog, name: string) =>
+  within(required(dialog.findFooter(), 'dialog footer').getElement()).getByRole('button', { name });
+const confirmationInput = (dialog: DeleteDialog) =>
+  required(dialog.findContent().findInput(), 'confirmation input').findNativeInput().getElement();
+
+function confirm(dialog: DeleteDialog, text: string) {
+  fireEvent.change(confirmationInput(dialog), { target: { value: text } });
+  fireEvent.click(dialogButton(dialog, 'Delete'));
 }
 
 describe('Parameter Store detail', () => {
@@ -133,8 +170,18 @@ describe('Parameter Store detail', () => {
       }),
     );
     open();
-    expect(await screen.findByRole('heading', { level: 1, name: NAME })).toBeVisible();
+    await waitFor(() => {
+      const heading = detailHeader()?.findHeadingText().getElement();
+      expect(heading).toBeVisible();
+      expect(
+        within(required(detailHeader(), 'parameter heading').getElement()).getByRole('heading', {
+          level: 1,
+          name: NAME,
+        }),
+      ).toBeVisible();
+    });
     await details();
+    const metadata = within(required(detailSection(), 'details section').findContent().getElement());
     expect(describeParameters.mock.calls).toEqual([[{ ParameterFilters: parameterFilters }]]);
     for (const value of [
       'SecureString',
@@ -146,12 +193,14 @@ describe('Parameter Store detail', () => {
       'Expiration',
       'Pending',
     ]) {
-      expect(screen.getByText(value)).toBeVisible();
+      expect(metadata.getByText(value)).toBeVisible();
     }
-    expect(screen.getByText(JSON.stringify(JSON.parse(POLICY), null, 2), { normalizer: (text) => text })).toBeVisible();
+    expect(
+      metadata.getByText(JSON.stringify(JSON.parse(POLICY), null, 2), { normalizer: (text) => text }),
+    ).toBeVisible();
     for (const value of [ARN, USER, 'alias/app-key', creationDateText(new Date(MODIFIED * 1000))]) {
       expect(
-        screen.getByText((_, element) =>
+        metadata.getByText((_, element) =>
           Boolean(element?.classList.contains('aws-area-value') && element.textContent === value),
         ),
       ).toBeVisible();
@@ -166,7 +215,12 @@ describe('Parameter Store detail', () => {
       answer({ Parameters: [{ ...PARAMETER, Policies: [{ ...PARAMETER.Policies[0], PolicyText: policyText }] }] }),
     );
     open();
-    expect(await screen.findByText(policyText, { normalizer: (text) => text })).toBeVisible();
+    await details();
+    expect(
+      within(required(detailSection(), 'details section').findContent().getElement()).getByText(policyText, {
+        normalizer: (text) => text,
+      }),
+    ).toBeVisible();
   });
 
   it('D2 shows a name-specific missing state and each connection recovery path', async () => {
@@ -202,11 +256,15 @@ describe('Parameter Store detail', () => {
     });
     const { router } = open(() => navigation);
     const dialog = await openDelete();
-    expect(dialog.getByText(/removes this parameter and its versions from your local emulator/)).toBeVisible();
-    expect(dialog.getByText(`To confirm, type “${NAME}” in the field.`)).toBeVisible();
+    expect(dialog.findContent().getElement()).toHaveTextContent(
+      /removes this parameter and its versions from your local emulator/,
+    );
+    expect(dialog.findContent().findFormField()?.findLabel()?.getElement()).toHaveTextContent(
+      `To confirm, type “${NAME}” in the field.`,
+    );
     confirm(dialog, NAME.slice(1));
     expect(deleteParameter).not.toHaveBeenCalled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
     expect(await details()).toBeVisible();
     expect(deleteParameter).not.toHaveBeenCalled();
 
@@ -218,8 +276,17 @@ describe('Parameter Store detail', () => {
     ).toBeVisible();
     expect(router.state.location.pathname).not.toBe(PARAMETER_STORE_PATH);
     await act(async () => finishNavigation(null));
-    expect(await screen.findByRole('heading', { name: 'Parameter Store', level: 1 })).toBeVisible();
-    expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent(`Parameter ${NAME} deleted.`);
+    await waitFor(() => {
+      const header = ui.findTable()?.findHeaderSlot()?.findHeader();
+      expect(header?.findHeadingText().getElement()).toHaveTextContent('Parameter Store');
+      expect(
+        within(required(header, 'Parameter Store header').getElement()).getByRole('heading', {
+          name: 'Parameter Store',
+          level: 1,
+        }),
+      ).toBeVisible();
+    });
+    expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(`Parameter ${NAME} deleted.`);
     expect(deleteParameter.mock.calls).toEqual([[{ Name: NAME }]]);
   });
 
@@ -227,19 +294,61 @@ describe('Parameter Store detail', () => {
     deleteParameter
       .mockReturnValueOnce(answer({ __type: 'AccessDeniedException', message: 'Denied for this parameter.' }, 403))
       .mockReturnValueOnce(answer({ __type: 'NotImplemented' }, 501));
-    open();
+    const { router } = open();
     const dialog = await openDelete();
     confirm(dialog, NAME);
-    expect(await dialog.findByText(/Denied for this parameter/)).toBeVisible();
-    expect(dialog.getByRole('textbox')).toHaveValue(NAME);
-    const retry = dialog.getByRole('button', { name: 'Delete' });
+    expect(await within(dialog.findContent().getElement()).findByText(/Denied for this parameter/)).toBeVisible();
+    expect(confirmationInput(dialog)).toHaveValue(NAME);
+    const retry = dialogButton(dialog, 'Delete');
     expect(retry).toBeEnabled();
     fireEvent.click(retry);
-    expect(await screen.findByText('The emulator answered 501 Not Implemented for DeleteParameter.')).toBeVisible();
-    expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
-    expect(deleteButton()).toBeDisabled();
+    const message = 'The emulator answered 501 Not Implemented for DeleteParameter.';
+    await waitFor(() => {
+      expect(flash('info')?.findContent()?.getElement()).toHaveTextContent(message);
+      expect(flash('info')?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(deleteButton()).toBeDisabled();
+    });
+    expect(deleteButton()).toHaveAccessibleDescription(expect.stringContaining(message));
+    fireEvent.click(required(flash('info')?.findDismissButton(), 'dismiss button').getElement());
+    await waitFor(() => expect(flash('info')).toBeUndefined());
+    expect(actions()).toHaveTextContent(message);
     expect(await details()).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Copy ARN' })).toBeEnabled();
+    expect(
+      within(required(detailSection(), 'details section').findContent().getElement()).getByRole('button', {
+        name: 'Copy ARN',
+      }),
+    ).toBeEnabled();
+
+    const otherName = '/app/other';
+    describeParameters.mockImplementation(({ ParameterFilters }) =>
+      answer({ Parameters: ParameterFilters ? [PARAMETER] : [PARAMETER, { ...PARAMETER, Name: otherName }] }),
+    );
+    await act(() => router.navigate(PARAMETER_STORE_PATH));
+    const table = await waitFor(() => {
+      const list = ui.findTable();
+      expect(list?.findRows()).toHaveLength(2);
+      return required(list, 'parameter table');
+    });
+    const listActions = table.findHeaderSlot()?.findHeader()?.findActions()?.getElement();
+    const listDelete = within(required(listActions, 'list actions')).getByRole('button', { name: 'Delete' });
+    for (const [index, name] of [NAME, otherName].entries()) {
+      fireEvent.click(
+        within(required(table.findRows()[index], `row for ${name}`).getElement()).getByRole('checkbox', {
+          name: `Select ${name}`,
+        }),
+      );
+      if (index === 0) {
+        expect(listDelete).toBeDisabled();
+        expect(listActions).toHaveTextContent(message);
+      }
+    }
+    expect(listDelete).toBeEnabled();
+    expect(listActions).not.toHaveTextContent(message);
+
+    await act(() => router.navigate(parameterPath(NAME)));
+    await details();
+    expect(deleteButton()).toBeDisabled();
+    expect(actions()).toHaveTextContent(message);
     expect(deleteParameter).toHaveBeenCalledTimes(2);
   });
 
@@ -259,7 +368,10 @@ describe('Parameter Store detail', () => {
       ]),
     );
     expect(screen.queryByText(/was not found/)).toBeNull();
-    expect(screen.getByText('Loading parameter…')).toBeVisible();
+    const loading = ui
+      .findAllStatusIndicators()
+      .find((status) => status.getElement().textContent === 'Loading parameter…');
+    expect(loading?.getElement()).toBeVisible();
     finishPage(answer({ Parameters: [PARAMETER] }));
     expect(await details()).toBeVisible();
   });
