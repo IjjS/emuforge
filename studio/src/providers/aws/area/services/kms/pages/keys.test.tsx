@@ -251,13 +251,20 @@ describe('customer managed keys', () => {
     await AWS_PROVIDER.loadArea();
     renderApp(KEYS_PATH);
 
-    const frame = await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 });
+    const frame = createWrapper(
+      await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
+    );
+    const expectChecking = () => {
+      const indicator = frame.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent('Checking');
+    };
     await waitFor(() => {
       const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
       expect(indicator).toBeVisible();
       expect(indicator).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
     });
-    expect(within(frame).getByText('Checking')).toBeVisible();
+    expectChecking();
     const empty = withinEmptySlot();
     const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
     expect(connectionStatus).toBeVisible();
@@ -271,7 +278,7 @@ describe('customer managed keys', () => {
     fireEvent.click(retry);
     const row = await expectRow('recovered');
     expect(row).toHaveTextContent('Description of recovered');
-    expect(within(frame).getByText('Checking')).toBeVisible();
+    expectChecking();
     expect(engine.healths).toHaveLength(1);
     expect(engine.healths[0]?.aborted()).toBe(false);
   }, 15_000);
