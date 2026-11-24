@@ -27,6 +27,7 @@ vi.mock('../cluster-snapshot-api', async (importOriginal) => {
   };
 });
 
+const PAGE = createWrapper(document.body);
 const PATH = '/aws/rds/cluster-snapshots';
 const ENGINE = 'http://127.0.0.1:8573';
 const CONNECTION: AreaConnection = {
@@ -60,9 +61,8 @@ function AreaWithStudioProps() {
   );
 }
 
-function open() {
+function open(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const router = createMemoryRouter([{ path: '/aws/*', element: <AreaWithStudioProps /> }], { initialEntries: [PATH] });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -75,16 +75,45 @@ function action(name: string) {
   return screen.getByRole('button', { name });
 }
 
+function tableOf(title = 'DB cluster snapshots') {
+  return PAGE.findAllTables().find((table) => {
+    const slot = table.findHeaderSlot();
+    return slot?.findHeader()?.findHeadingText().getElement().textContent === title;
+  });
+}
+
+function rowIndex(id: string) {
+  const table = tableOf();
+  if (table === undefined) return -1;
+  return table.findRows().findIndex((_, index) => table.findBodyCell(index + 1, 2)?.getElement().textContent === id);
+}
+
 async function select(snapshot = ORPHAN) {
-  const row = await screen.findByRole('row', { name: new RegExp(snapshot.id) });
-  fireEvent.click(within(row).getByRole('radio', { name: snapshot.id }));
-  return row;
+  const area = await waitFor(() => {
+    const area = tableOf()?.findRowSelectionArea(rowIndex(snapshot.id) + 1);
+    if (area == null) throw new Error(`Missing selection control for ${snapshot.id}.`);
+    return area.getElement();
+  });
+  fireEvent.click(within(area).getByRole('radio', { name: snapshot.id }));
+}
+
+async function modalOf(title: string) {
+  return waitFor(() => {
+    const dialog = PAGE.findModal();
+    if (dialog === null) throw new Error(`Missing dialog: ${title}.`);
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  });
+}
+
+function flashOf(type: 'success' | 'info' | 'error') {
+  return PAGE.findFlashbar()?.findItemsByType(type)[0];
 }
 
 async function openRestore() {
   await select();
   fireEvent.click(action('Restore'));
-  return within(await screen.findByRole('dialog', { name: 'Restore DB cluster from snapshot' }));
+  return within((await modalOf('Restore DB cluster from snapshot')).getElement());
 }
 
 async function submitRestore(id: string) {
@@ -96,11 +125,11 @@ async function submitRestore(id: string) {
 async function openDelete() {
   await select();
   fireEvent.click(action('Delete'));
-  return within(await screen.findByRole('dialog', { name: 'Delete DB cluster snapshot?' }));
+  return modalOf('Delete DB cluster snapshot?');
 }
 
 async function submitDelete() {
-  const dialog = await openDelete();
+  const dialog = within((await openDelete()).getElement());
   fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'delete' } });
   fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
 }
@@ -149,13 +178,19 @@ describe('DB cluster snapshots', () => {
     );
     open();
 
-    await screen.findByRole('row', { name: /other-snap/ });
+    await waitFor(() => expect(rowIndex(OTHER.id)).toBe(0));
     fireEvent.click(action('Next page'));
-    const row = within(await screen.findByRole('row', { name: /orphan-snap/ }));
-    for (const value of [ORPHAN.id, ORPHAN.sourceId, ORPHAN.engine, ORPHAN.status]) {
-      expect(row.getByText(value)).toBeInTheDocument();
-    }
-    expect(screen.queryByRole('row', { name: /other-snap/ })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(tableOf()?.findRows()).toHaveLength(1);
+      for (const [index, value] of [ORPHAN.id, ORPHAN.sourceId, ORPHAN.engine, ORPHAN.status].entries()) {
+        expect(
+          tableOf()
+            ?.findBodyCell(1, index + 2)
+            ?.getElement(),
+        ).toHaveTextContent(value);
+      }
+    });
+    expect(rowIndex(OTHER.id)).toBe(-1);
     expect(snapshots.listClusterSnapshots).toHaveBeenNthCalledWith(1, ENGINE, undefined, expect.any(AbortSignal));
     expect(snapshots.listClusterSnapshots).toHaveBeenNthCalledWith(2, ENGINE, MARKER, expect.any(AbortSignal));
   });
@@ -166,21 +201,28 @@ describe('DB cluster snapshots', () => {
       .mockRejectedValueOnce(rejected('DescribeDBClusterSnapshots', 'InternalFailure', 'Snapshot read failed.'));
     open();
 
-    expect(await screen.findByText('No DB cluster snapshots')).toBeInTheDocument();
-    const guidance = screen.getByText(/select an Aurora DB cluster and choose Take snapshot/);
-    expect(within(guidance).getByRole('link', { name: 'DB clusters' })).toHaveAttribute('href', '/aws/rds/clusters');
+    const empty = await waitFor(() => {
+      const slot = tableOf()?.findEmptySlot()?.getElement();
+      expect(slot).toHaveTextContent('No DB cluster snapshots');
+      expect(slot).toHaveTextContent('open an Aurora DB cluster and choose Take snapshot.');
+      return slot as HTMLElement;
+    });
+    expect(within(empty).getByRole('link', { name: 'DB clusters' })).toHaveAttribute('href', '/aws/rds/clusters');
     fireEvent.click(action('Refresh'));
-    expect(await screen.findByText(/Snapshot read failed/)).toBeInTheDocument();
+    await waitFor(() => expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('Snapshot read failed.'));
     fireEvent.click(action('Retry'));
-    expect(await screen.findByRole('row', { name: /orphan-snap/ })).toBeInTheDocument();
+    await waitFor(() => expect(rowIndex(ORPHAN.id)).toBe(0));
   });
 
   it('shows the operation that is unsupported when DescribeDBClusterSnapshots returns 501', async () => {
     vi.mocked(snapshots.listClusterSnapshots).mockRejectedValueOnce(unsupported('DescribeDBClusterSnapshots'));
     open();
 
-    expect(await screen.findAllByText('Not implemented by the emulator')).not.toHaveLength(0);
-    expect(screen.getByText(/501 Not Implemented for DescribeDBClusterSnapshots/)).toBeInTheDocument();
+    await waitFor(() => {
+      const empty = tableOf()?.findEmptySlot()?.getElement();
+      expect(empty).toHaveTextContent('Not implemented by the emulator');
+      expect(empty).toHaveTextContent('501 Not Implemented for DescribeDBClusterSnapshots');
+    });
   });
 
   it('restores an available orphaned snapshot and shows the complete destination read and result', async () => {
@@ -193,14 +235,16 @@ describe('DB cluster snapshots', () => {
 
     await select(CREATING);
     expect(action('Restore')).toBeDisabled();
-    const status = screen.getByText('Selected snapshot status:');
-    const reason = screen.getByText('Restore requires an available snapshot.');
-    expect(status).toHaveTextContent('creating');
-    expect(reason.closest('table')).toBeNull();
-    expect(action('Restore')).toHaveAccessibleDescription(expect.stringContaining(reason.textContent ?? ''));
+    const status = tableOf()?.findHeaderSlot()?.findHeader()?.findDescription()?.getElement();
+    expect(status).toHaveTextContent('Selected snapshot status: creating');
+    expect(status).toHaveTextContent('Restore requires an available snapshot.');
+    expect(status?.closest('table')).toBeNull();
+    expect(action('Restore')).toHaveAccessibleDescription(
+      expect.stringContaining('Restore requires an available snapshot.'),
+    );
     await select();
-    expect(status).toHaveTextContent('available');
-    expect(reason).not.toBeInTheDocument();
+    expect(status).toHaveTextContent('Selected snapshot status: available');
+    expect(status).not.toHaveTextContent('Restore requires an available snapshot.');
     await submitRestore('requested-cluster');
 
     expect(snapshots.restoreClusterSnapshot).toHaveBeenCalledWith(
@@ -210,8 +254,6 @@ describe('DB cluster snapshots', () => {
       'requested-cluster',
       expect.any(AbortSignal),
     );
-    expect(await screen.findByText('Restoring DB cluster restored-cluster')).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/aws/rds/clusters/cluster/restored-cluster');
     await waitFor(() => {
       expect(clusters.getCluster).toHaveBeenCalledWith(ENGINE, 'restored-cluster', expect.any(AbortSignal));
       expect(clusters.listMembers).toHaveBeenCalledWith(ENGINE, 'restored-cluster', expect.any(AbortSignal));
@@ -232,16 +274,25 @@ describe('DB cluster snapshots', () => {
       });
       await cluster.promise;
     });
-    expect(screen.queryByText('No DB instances')).not.toBeInTheDocument();
     await act(async () => {
       members.resolve([]);
       await members.promise;
     });
 
-    expect(await screen.findByText('No DB instances')).toBeInTheDocument();
-    expect(screen.getByText('available')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'restored-cluster', level: 1 })).toBeInTheDocument();
-    expect(screen.getByText('Restoring DB cluster restored-cluster')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(tableOf('DB instances')?.findEmptySlot()?.getElement()).toHaveTextContent('No DB instances');
+      const status = PAGE.findAllKeyValuePairs()
+        .flatMap((group) => group.findItems())
+        .find((item) => item.findLabel()?.getElement().textContent === 'Status');
+      expect(status?.findValue()?.getElement()).toHaveTextContent('available');
+      expect(PAGE.findAllHeaders().map((header) => header.findHeadingText().getElement().textContent)).toContain(
+        'restored-cluster',
+      );
+      expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
+        'Restoring DB cluster restored-cluster',
+      );
+    });
+    expect(router.state.location.pathname).toBe('/aws/rds/clusters/cluster/restored-cluster');
     expect(screen.getAllByRole('link', { name: 'Add DB instance' })[0]).toHaveAttribute(
       'href',
       '/aws/rds/clusters/cluster/restored-cluster/add-instance',
@@ -255,10 +306,12 @@ describe('DB cluster snapshots', () => {
     const router = open();
     await submitRestore('existing-cluster');
 
-    expect(
-      await screen.findByText('Restore DB cluster existing-cluster from snapshot orphan-snap failed'),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/A cluster with this identifier exists/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashOf('error')?.findHeader()?.getElement()).toHaveTextContent(
+        'Restore DB cluster existing-cluster from snapshot orphan-snap failed',
+      );
+      expect(flashOf('error')?.findContent()?.getElement()).toHaveTextContent('A cluster with this identifier exists.');
+    });
     expect(router.state.location.pathname).toBe(PATH);
 
     const dialog = await openRestore();
@@ -271,7 +324,11 @@ describe('DB cluster snapshots', () => {
     vi.mocked(clusters.listMembers).mockResolvedValue([]);
     fireEvent.change(input, { target: { value: 'restored-cluster' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
-    expect(await screen.findByText('Restoring DB cluster restored-cluster')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
+        'Restoring DB cluster restored-cluster',
+      );
+    });
     expect(snapshots.restoreClusterSnapshot).toHaveBeenLastCalledWith(
       ENGINE,
       ORPHAN.id,
@@ -283,8 +340,9 @@ describe('DB cluster snapshots', () => {
 
   it('requires the exact confirmation word and leaves the snapshot when cancelled', async () => {
     open();
-    const dialog = await openDelete();
-    expect(dialog.getByText(/Delete orphan-snap from the local emulator/)).toBeInTheDocument();
+    const modal = await openDelete();
+    expect(modal.findContent().getElement()).toHaveTextContent('Delete orphan-snap from the local emulator');
+    const dialog = within(modal.getElement());
     const confirm = dialog.getByRole('button', { name: 'Delete' });
     const input = dialog.getByRole('textbox');
 
@@ -295,25 +353,51 @@ describe('DB cluster snapshots', () => {
     expect(confirm).toBeEnabled();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('row', { name: /orphan-snap/ })).toBeInTheDocument();
+    expect(PAGE.findModal()).toBeNull();
+    expect(rowIndex(ORPHAN.id)).toBe(0);
     expect(snapshots.deleteClusterSnapshot).not.toHaveBeenCalled();
   });
 
   it('keeps the deletion result when the refreshed list has already dropped the selected row', async () => {
-    let deleted = false;
-    vi.mocked(snapshots.listClusterSnapshots).mockImplementation(async () => ({ items: deleted ? [] : [ORPHAN] }));
-    vi.mocked(snapshots.deleteClusterSnapshot).mockImplementationOnce(async () => {
-      deleted = true;
-    });
-    open();
+    const mutation = deferred<undefined>();
+    const list = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
+    vi.mocked(snapshots.deleteClusterSnapshot).mockReturnValueOnce(mutation.promise);
+    vi.mocked(snapshots.listClusterSnapshots)
+      .mockResolvedValueOnce({ items: [ORPHAN] })
+      .mockReturnValueOnce(list.promise)
+      .mockResolvedValue({ items: [] });
+    const client = new QueryClient();
+    open(client);
     await submitDelete();
 
     expect(snapshots.deleteClusterSnapshot).toHaveBeenCalledWith(ENGINE, ORPHAN.id, expect.any(AbortSignal));
-    expect(await screen.findByText('No DB cluster snapshots')).toBeInTheDocument();
-    expect(screen.queryByRole('row', { name: /orphan-snap/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByText('DB cluster snapshot orphan-snap deleted')).toBeInTheDocument();
+    // An independent refetch can observe the deletion before its response reaches the page.
+    act(() => {
+      void client.invalidateQueries();
+    });
+    await waitFor(() => expect(snapshots.listClusterSnapshots).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      list.resolve({ items: [] });
+      await list.promise;
+    });
+    await waitFor(() => {
+      expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots');
+      expect(tableOf()?.findSelectedRows()).toHaveLength(0);
+    });
+    expect(rowIndex(ORPHAN.id)).toBe(-1);
+    expect(flashOf('success')).toBeUndefined();
+
+    await act(async () => {
+      mutation.resolve(undefined);
+      await mutation.promise;
+    });
+    await waitFor(() => {
+      expect(PAGE.findModal()).toBeNull();
+      expect(rowIndex(ORPHAN.id)).toBe(-1);
+      expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
+        'DB cluster snapshot orphan-snap deleted',
+      );
+    });
   });
 
   it('allows returning to the preceding page after deleting the last row on a later page', async () => {
@@ -329,14 +413,18 @@ describe('DB cluster snapshots', () => {
       deleted = true;
     });
     open();
-    await screen.findByRole('row', { name: /other-snap/ });
+    await waitFor(() => expect(rowIndex(OTHER.id)).toBe(0));
     fireEvent.click(action('Next page'));
     await submitDelete();
 
-    expect(await screen.findByText('No DB cluster snapshots on this page')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots on this page');
+    });
     fireEvent.click(action('Previous page'));
-    expect(await screen.findByRole('row', { name: /other-snap/ })).toBeInTheDocument();
-    expect(screen.getByText('DB cluster snapshot orphan-snap deleted')).toBeInTheDocument();
+    await waitFor(() => expect(rowIndex(OTHER.id)).toBe(0));
+    expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
+      'DB cluster snapshot orphan-snap deleted',
+    );
   });
 
   it('shows the selected identifier and service refusal for an already removed snapshot', async () => {
@@ -346,8 +434,12 @@ describe('DB cluster snapshots', () => {
     open();
     await submitDelete();
 
-    expect(await screen.findByText('Delete DB cluster snapshot orphan-snap failed')).toBeInTheDocument();
-    expect(screen.getByText(/The snapshot no longer exists/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flashOf('error')?.findHeader()?.getElement()).toHaveTextContent(
+        'Delete DB cluster snapshot orphan-snap failed',
+      );
+      expect(flashOf('error')?.findContent()?.getElement()).toHaveTextContent('The snapshot no longer exists.');
+    });
   });
 
   it('keeps Restore visible and disabled after RestoreDBClusterFromSnapshot returns 501', async () => {
@@ -355,10 +447,12 @@ describe('DB cluster snapshots', () => {
     open();
     await submitRestore('restored-cluster');
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(createWrapper(document.body).findFlashbar()?.findItemsByType('info')[0]?.getElement()).toHaveTextContent(
-      '501 Not Implemented for RestoreDBClusterFromSnapshot',
-    );
+    await waitFor(() => {
+      expect(flashOf('info')?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(flashOf('info')?.findContent()?.getElement()).toHaveTextContent(
+        '501 Not Implemented for RestoreDBClusterFromSnapshot',
+      );
+    });
     expect(action('Restore')).toBeDisabled();
     expect(action('Delete')).toBeEnabled();
   });
@@ -368,10 +462,12 @@ describe('DB cluster snapshots', () => {
     open();
     await submitDelete();
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(createWrapper(document.body).findFlashbar()?.findItemsByType('info')[0]?.getElement()).toHaveTextContent(
-      '501 Not Implemented for DeleteDBClusterSnapshot',
-    );
+    await waitFor(() => {
+      expect(flashOf('info')?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(flashOf('info')?.findContent()?.getElement()).toHaveTextContent(
+        '501 Not Implemented for DeleteDBClusterSnapshot',
+      );
+    });
     expect(action('Delete')).toBeDisabled();
     expect(action('Restore')).toBeEnabled();
   });
