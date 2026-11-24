@@ -379,19 +379,22 @@ describe('Parameter tags', () => {
     change(add, 'Value', TAG.Value);
     fireEvent.click(button('Add tag', add));
     await waitFor(() => expect(flash(saved)).toBeVisible());
+    await waitFor(() => expectTag(TAG.Value));
     expect(ops.AddTagsToResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, Tags: [TAG] });
 
     await expand();
     await expand();
     await expectReadUnavailable();
+    expectTag(TAG.Value);
     expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
   });
 
   it('T3 keeps confirmed tags and independent writes after reopening and revisiting a refused read', async () => {
     const ops = openDetail();
-    ops.ListTagsForResource.mockImplementationOnce(() => list(TAG)).mockImplementationOnce(notImplemented);
+    const sibling = { Key: 'owner', Value: 'database' };
+    ops.ListTagsForResource.mockImplementationOnce(() => list(TAG, sibling)).mockImplementationOnce(notImplemented);
     await expand();
-    await waitFor(() => expectTag(TAG.Value));
+    await waitFor(() => expect(tagTable()?.findRows()).toHaveLength(2));
 
     fireEvent.click(panelButton('Refresh tags'));
     await expectReadUnavailable();
@@ -399,7 +402,7 @@ describe('Parameter tags', () => {
     expect(screen.queryByRole('button', { name: editName })).toBeNull();
     await expand();
     await expectReadUnavailable();
-    expectTag(TAG.Value);
+    expect(tagTable()?.findBodyCell(1, 2)?.getElement().textContent).toBe(TAG.Value);
     const actions = tagTable()?.findBodyCell(1, 3);
     expect(actions?.findButton('[aria-label="Edit tag stage"]')?.getElement()).toBeEnabled();
     expect(actions?.findButton('[aria-label="Remove tag stage"]')?.getElement()).toBeEnabled();
@@ -416,12 +419,23 @@ describe('Parameter tags', () => {
     expect(screen.queryByRole('button', { name: removeName })).toBeNull();
     await expand();
     await expectReadUnavailable();
-    expect(button(editName)).toBeEnabled();
-    expect(button(removeName)).toBeEnabled();
+    expect(tagTable()?.findRows()).toHaveLength(2);
+    expect(tagTable()?.findBodyCell(1, 2)?.getElement().textContent).toBe(REPLACEMENT.Value);
+    expect(tagTable()?.findBodyCell(1, 3)?.findButton('[aria-label="Edit tag stage"]')?.getElement()).toBeEnabled();
+    expect(tagTable()?.findBodyCell(1, 3)?.findButton('[aria-label="Remove tag stage"]')?.getElement()).toBeEnabled();
 
     const remove = await tagDialog(removeName, 'Remove tag');
     fireEvent.click(button('Remove tag', remove));
     await waitFor(() => expect(flash(removed)).toBeVisible());
+    expect(tagTable()?.findRows()).toHaveLength(1);
+    expect(tagTable()?.findBodyCell(1, 1)?.getElement().textContent).toBe(sibling.Key);
+    expect(tagTable()?.findBodyCell(1, 2)?.getElement().textContent).toBe(sibling.Value);
+    const retainedActions = tagTable()?.findBodyCell(1, 3);
+    expect(retainedActions?.findButton('[aria-label="Edit tag stage"]')).toBeNull();
+    expect(retainedActions?.findButton('[aria-label="Remove tag stage"]')).toBeNull();
+    expect(retainedActions?.findButton('[aria-label="Edit tag owner"]')?.getElement()).toBeEnabled();
+    expect(retainedActions?.findButton('[aria-label="Remove tag owner"]')?.getElement()).toBeEnabled();
+    await expectReadUnavailable();
     expect(ops.RemoveTagsFromResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, TagKeys: [KEY] });
     expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
   });

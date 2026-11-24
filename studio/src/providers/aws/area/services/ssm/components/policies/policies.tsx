@@ -18,12 +18,7 @@ import type { AreaConnection } from '../../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState } from '../../../../components/failure-states';
 import { ValueText } from '../../../../components/value-text';
 import { useParameterPolicyWrite, useParameterResourcePolicies, useUnsupportedOperation } from '../../queries';
-import {
-  DELETE_RESOURCE_POLICY,
-  GET_RESOURCE_POLICIES,
-  PUT_RESOURCE_POLICY,
-  putResourcePolicy,
-} from '../../resource-api';
+import { DELETE_RESOURCE_POLICY, GET_RESOURCE_POLICIES, PUT_RESOURCE_POLICY } from '../../resource-api';
 
 interface PoliciesProps {
   connection: AreaConnection;
@@ -187,11 +182,7 @@ function PolicyDialog({
       if (revision) void write.edit(document, revision, onClose);
       return;
     }
-    void write.run(
-      (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
-      `Resource policy created for ${name}.`,
-      onClose,
-    );
+    void write.create(document, onClose);
   };
 
   return (

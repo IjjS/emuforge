@@ -1,4 +1,4 @@
-import type { GetResourcePoliciesResponseEntry, ParameterMetadata } from '@aws-sdk/client-ssm';
+import type { GetResourcePoliciesResponseEntry, ParameterMetadata, Tag } from '@aws-sdk/client-ssm';
 import { skipToken, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -9,12 +9,14 @@ import { usePageFlash } from '../../components/page-flash';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
 import {
+  addParameterTag,
   deleteResourcePolicy,
   GET_RESOURCE_POLICIES,
   LIST_TAGS,
   listParameterTags,
   listResourcePolicies,
   putResourcePolicy,
+  removeParameterTag,
   type PolicyRevision,
 } from './resource-api';
 import { GET_PARAMETER_HISTORY, getParameterHistory } from './version-api';
@@ -253,23 +255,67 @@ export function useParameterResourcePolicies(connection: AreaConnection, arn: st
 }
 
 export function useParameterTagWrite(connection: AreaConnection, name: string, operation: string) {
-  return useParameterResourceWrite(connection, name, tagKey(name), operation);
+  const client = useQueryClient();
+  const key = tagKey(name);
+  const queryKey = [...targetKey(connection), ...key];
+  const { run, ...write } = useParameterResourceWrite(connection, name, key, operation);
+  return {
+    ...write,
+    save: (tag: Tag, message: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => addParameterTag(endpoint, name, tag, signal),
+        message,
+        onClose,
+        (_, readBlocked) => {
+          if (!readBlocked) return;
+          client.setQueryData<Tag[]>(queryKey, (tags = []) =>
+            tags.some(({ Key }) => Key === tag.Key)
+              ? tags.map((existing) => (existing.Key === tag.Key ? tag : existing))
+              : [...tags, tag],
+          );
+        },
+      ),
+    remove: (keyToRemove: string, message: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => removeParameterTag(endpoint, name, keyToRemove, signal),
+        message,
+        onClose,
+        (_, readBlocked) => {
+          if (!readBlocked) return;
+          client.setQueryData<Tag[]>(queryKey, (tags) => tags?.filter(({ Key }) => Key !== keyToRemove));
+        },
+      ),
+  };
 }
 
 export function useParameterPolicyWrite(connection: AreaConnection, name: string, arn: string, operation: string) {
   const client = useQueryClient();
   const key = policyKey(arn);
-  const write = useParameterResourceWrite(connection, name, key, operation);
+  const queryKey = [...targetKey(connection), ...key];
+  const { run, ...write } = useParameterResourceWrite(connection, name, key, operation);
   return {
     ...write,
+    create: (document: string, onClose: () => void) =>
+      run(
+        (endpoint, signal) => putResourcePolicy(endpoint, arn, document, undefined, signal),
+        `Resource policy created for ${name}.`,
+        onClose,
+        ({ PolicyId, PolicyHash }, readBlocked) => {
+          if (!readBlocked || !PolicyId || !PolicyHash) return;
+          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies = []) => [
+            ...policies.filter((policy) => policy.PolicyId !== PolicyId),
+            { PolicyId, PolicyHash, Policy: document },
+          ]);
+        },
+      ),
     edit: (document: string, revision: PolicyRevision, onClose: () => void) =>
-      write.run(
+      run(
         (endpoint, signal) => putResourcePolicy(endpoint, arn, document, revision, signal),
         `Resource policy updated for ${name}.`,
         onClose,
         ({ PolicyId, PolicyHash }) => {
           if (!PolicyId || !PolicyHash) return;
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
+          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies) =>
             policies?.map((policy) =>
               policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
                 ? { PolicyId, PolicyHash, Policy: document }
@@ -279,12 +325,12 @@ export function useParameterPolicyWrite(connection: AreaConnection, name: string
         },
       ),
     remove: (revision: PolicyRevision, onClose: () => void) =>
-      write.run(
+      run(
         (endpoint, signal) => deleteResourcePolicy(endpoint, arn, revision, signal),
         `Resource policy ${revision.PolicyId} deleted from ${name}.`,
         onClose,
         () => {
-          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
+          client.setQueryData<GetResourcePoliciesResponseEntry[]>(queryKey, (policies) =>
             policies?.filter(
               (policy) => policy.PolicyId !== revision.PolicyId || policy.PolicyHash !== revision.PolicyHash,
             ),
@@ -316,7 +362,7 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
     write: (endpoint: string, signal: AbortSignal) => Promise<T>,
     message: string,
     onClose: () => void,
-    onSuccess?: (result: T) => void,
+    onSuccess?: (result: T, readBlocked: boolean) => void,
   ) {
     if (disabled || request.current) return;
     const controller = new AbortController();
@@ -329,9 +375,10 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
       if (controller.signal.aborted) return;
       const resource = { queryKey: [...targetKey(connection), ...key] };
       void client.cancelQueries(resource);
-      onSuccess?.(result);
-      const blockedRead = client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]);
-      void client.invalidateQueries({ ...resource, refetchType: blockedRead === undefined ? 'active' : 'none' });
+      const readBlocked =
+        client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]) !== undefined;
+      onSuccess?.(result, readBlocked);
+      void client.invalidateQueries({ ...resource, refetchType: readBlocked ? 'none' : 'active' });
       flash.show([{ type: 'success', content: message }]);
       refresh([name]);
       onClose();
