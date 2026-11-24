@@ -124,7 +124,9 @@ async function submitRestore(id: string) {
 
 async function openDelete() {
   await select();
-  fireEvent.click(action('Delete'));
+  const opener = action('Delete');
+  opener.focus();
+  fireEvent.click(opener);
   return modalOf('Delete DB cluster snapshot?');
 }
 
@@ -338,7 +340,7 @@ describe('DB cluster snapshots', () => {
     );
   });
 
-  it('requires the exact confirmation word and leaves the snapshot when cancelled', async () => {
+  it.each(['Cancel', 'Escape'])('requires the exact word and returns focus to Delete on %s', async (dismissal) => {
     open();
     const modal = await openDelete();
     expect(modal.findContent().getElement()).toHaveTextContent('Delete orphan-snap from the local emulator');
@@ -351,55 +353,73 @@ describe('DB cluster snapshots', () => {
     expect(confirm).toBeDisabled();
     fireEvent.change(input, { target: { value: 'delete' } });
     expect(confirm).toBeEnabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    input.focus();
+    if (dismissal === 'Cancel') {
+      fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    } else {
+      fireEvent.keyDown(input, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    }
 
     expect(PAGE.findModal()).toBeNull();
+    expect(action('Delete')).toHaveFocus();
     expect(rowIndex(ORPHAN.id)).toBe(0);
     expect(snapshots.deleteClusterSnapshot).not.toHaveBeenCalled();
   });
 
-  it('keeps the deletion result when the refreshed list has already dropped the selected row', async () => {
-    const mutation = deferred<undefined>();
-    const list = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
-    vi.mocked(snapshots.deleteClusterSnapshot).mockReturnValueOnce(mutation.promise);
-    vi.mocked(snapshots.listClusterSnapshots)
-      .mockResolvedValueOnce({ items: [ORPHAN] })
-      .mockReturnValueOnce(list.promise)
-      .mockResolvedValue({ items: [] });
-    const client = new QueryClient();
-    open(client);
-    await submitDelete();
+  it.each(['lost', 'on another control'])(
+    'keeps the deletion result when the row disappears before the response and focus is %s',
+    async (focus) => {
+      const mutation = deferred<undefined>();
+      const list = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
+      vi.mocked(snapshots.deleteClusterSnapshot).mockReturnValueOnce(mutation.promise);
+      vi.mocked(snapshots.listClusterSnapshots)
+        .mockResolvedValueOnce({ items: [ORPHAN] })
+        .mockReturnValueOnce(list.promise)
+        .mockResolvedValue({ items: [] });
+      const client = new QueryClient();
+      open(client);
+      const elsewhere = screen.getByRole('link', { name: 'EmuForge' });
+      await submitDelete();
+      if (focus === 'on another control') {
+        elsewhere.focus();
+        expect(elsewhere).toHaveFocus();
+      }
 
-    expect(snapshots.deleteClusterSnapshot).toHaveBeenCalledWith(ENGINE, ORPHAN.id, expect.any(AbortSignal));
-    // An independent refetch can observe the deletion before its response reaches the page.
-    act(() => {
-      void client.invalidateQueries();
-    });
-    await waitFor(() => expect(snapshots.listClusterSnapshots).toHaveBeenCalledTimes(2));
-    await act(async () => {
-      list.resolve({ items: [] });
-      await list.promise;
-    });
-    await waitFor(() => {
-      expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots');
-      expect(tableOf()?.findSelectedRows()).toHaveLength(0);
-      expect(rowIndex(ORPHAN.id)).toBe(-1);
-      expect(PAGE.findModal()).toBeNull();
-    });
-    expect(flashOf('success')).toBeUndefined();
+      expect(snapshots.deleteClusterSnapshot).toHaveBeenCalledWith(ENGINE, ORPHAN.id, expect.any(AbortSignal));
+      // An independent refetch can observe the deletion before its response reaches the page.
+      act(() => {
+        void client.invalidateQueries();
+      });
+      await waitFor(() => expect(snapshots.listClusterSnapshots).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        list.resolve({ items: [] });
+        await list.promise;
+      });
+      await waitFor(() => {
+        expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots');
+        expect(tableOf()?.findSelectedRows()).toHaveLength(0);
+        expect(rowIndex(ORPHAN.id)).toBe(-1);
+        expect(PAGE.findModal()).toBeNull();
+      });
+      expect(flashOf('success')).toBeUndefined();
+      expect(focus === 'lost' ? action('Refresh') : elsewhere).toHaveFocus();
 
-    await act(async () => {
-      mutation.resolve(undefined);
-      await mutation.promise;
-    });
-    await waitFor(() => {
-      expect(PAGE.findModal()).toBeNull();
-      expect(rowIndex(ORPHAN.id)).toBe(-1);
-      expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
-        'DB cluster snapshot orphan-snap deleted',
-      );
-    });
-  });
+      elsewhere.focus();
+      expect(elsewhere).toHaveFocus();
+      await act(async () => {
+        mutation.resolve(undefined);
+        await mutation.promise;
+      });
+      await waitFor(() => {
+        expect(PAGE.findModal()).toBeNull();
+        expect(rowIndex(ORPHAN.id)).toBe(-1);
+        expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(
+          'DB cluster snapshot orphan-snap deleted',
+        );
+      });
+      expect(elsewhere).toHaveFocus();
+    },
+  );
 
   it('allows returning to the preceding page after deleting the last row on a later page', async () => {
     let deleted = false;
@@ -421,6 +441,7 @@ describe('DB cluster snapshots', () => {
     await waitFor(() => {
       expect(tableOf()?.findEmptySlot()?.getElement()).toHaveTextContent('No DB cluster snapshots on this page');
     });
+    expect(action('Refresh')).toHaveFocus();
     fireEvent.click(action('Previous page'));
     await waitFor(() => expect(rowIndex(OTHER.id)).toBe(0));
     expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent(

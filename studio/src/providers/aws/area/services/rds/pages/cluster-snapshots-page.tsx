@@ -1,11 +1,11 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useId, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState, useAnnouncer } from '../../../components/failure-states';
@@ -78,6 +78,8 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState<ReadonlySet<SnapshotAction>>(() => new Set());
   const inFlight = useRef(false);
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const wasDeleteOpen = useRef(false);
 
   const failureState =
     failure === undefined ? undefined : readFailureState(failure, connection, 'DB cluster snapshot list');
@@ -109,6 +111,19 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
   const reason = restoreReason(selected, unavailable.has('restore'));
   const canRestore = !pending && reason === undefined;
   const canDelete = !pending && !unavailable.has('delete') && selected !== undefined;
+
+  const deleteOpen = dialog?.kind === 'delete';
+  useLayoutEffect(() => {
+    const closed = wasDeleteOpen.current && !deleteOpen;
+    wasDeleteOpen.current = deleteOpen;
+    if (!closed || canDelete) return;
+
+    // Cloudscape has tried to restore the opener during unmount. Move focus only if it was lost.
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) {
+      refreshButton.current?.focus();
+    }
+  }, [canDelete, deleteOpen]);
 
   const handleDismiss = () => {
     setDialog(undefined);
@@ -229,7 +244,13 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
             }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" loading={loading} onClick={refresh} />
+                <Button
+                  ref={refreshButton}
+                  iconName="refresh"
+                  ariaLabel="Refresh"
+                  loading={loading}
+                  onClick={refresh}
+                />
                 <Button
                   disabled={!canRestore}
                   ariaDescribedby={selectionStatusId}
