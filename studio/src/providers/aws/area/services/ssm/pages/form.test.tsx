@@ -324,7 +324,7 @@ describe('Parameter Store forms', () => {
     expect(screen.getByText(description)).toBeVisible();
     expect(screen.getByText('2', { exact: true })).toBeVisible();
     expect(screen.getByText('[a-z0-9]+')).toBeVisible();
-    expect(screen.getByText(JSON.stringify(NEXT_POLICY))).toBeVisible();
+    expect(screen.getByText(JSON.stringify(NEXT_POLICY, null, 2), { normalizer: (text) => text })).toBeVisible();
     expect(where()).toBe(parameterPath(NAME));
     expect(putParameter).toHaveBeenCalledExactlyOnceWith({
       Name: NAME,
