@@ -167,6 +167,8 @@ describe('DB cluster snapshots', () => {
     open();
 
     expect(await screen.findByText('No DB cluster snapshots')).toBeInTheDocument();
+    const guidance = screen.getByText(/select an Aurora DB cluster and choose Take snapshot/);
+    expect(within(guidance).getByRole('link', { name: 'DB clusters' })).toHaveAttribute('href', '/aws/rds/clusters');
     fireEvent.click(action('Refresh'));
     expect(await screen.findByText(/Snapshot read failed/)).toBeInTheDocument();
     fireEvent.click(action('Retry'));
@@ -191,6 +193,14 @@ describe('DB cluster snapshots', () => {
 
     await select(CREATING);
     expect(action('Restore')).toBeDisabled();
+    const status = screen.getByText('Selected snapshot status:');
+    const reason = screen.getByText('Restore requires an available snapshot.');
+    expect(status).toHaveTextContent('creating');
+    expect(reason.closest('table')).toBeNull();
+    expect(action('Restore')).toHaveAccessibleDescription(expect.stringContaining(reason.textContent ?? ''));
+    await select();
+    expect(status).toHaveTextContent('available');
+    expect(reason).not.toBeInTheDocument();
     await submitRestore('requested-cluster');
 
     expect(snapshots.restoreClusterSnapshot).toHaveBeenCalledWith(
@@ -238,7 +248,7 @@ describe('DB cluster snapshots', () => {
     );
   });
 
-  it('shows the target and service refusal for a duplicate restore identifier', async () => {
+  it('shows the duplicate restore refusal and reopens the draft for correction', async () => {
     vi.mocked(snapshots.restoreClusterSnapshot).mockRejectedValueOnce(
       rejected('RestoreDBClusterFromSnapshot', 'DBClusterAlreadyExistsFault', 'A cluster with this identifier exists.'),
     );
@@ -250,6 +260,25 @@ describe('DB cluster snapshots', () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/A cluster with this identifier exists/)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(PATH);
+
+    const dialog = await openRestore();
+    const input = dialog.getByRole('textbox', { name: 'DB cluster identifier' });
+    expect(input).toHaveAccessibleDescription(
+      expect.stringContaining('Restore creates a new DB cluster with this identifier.'),
+    );
+    expect(input).toHaveValue('existing-cluster');
+    vi.mocked(clusters.getCluster).mockResolvedValue({ found: false });
+    vi.mocked(clusters.listMembers).mockResolvedValue([]);
+    fireEvent.change(input, { target: { value: 'restored-cluster' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
+    expect(await screen.findByText('Restoring DB cluster restored-cluster')).toBeInTheDocument();
+    expect(snapshots.restoreClusterSnapshot).toHaveBeenLastCalledWith(
+      ENGINE,
+      ORPHAN.id,
+      ORPHAN.engine,
+      'restored-cluster',
+      expect.any(AbortSignal),
+    );
   });
 
   it('requires the exact confirmation word and leaves the snapshot when cancelled', async () => {

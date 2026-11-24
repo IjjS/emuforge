@@ -1097,7 +1097,7 @@ describe('taking a DB cluster snapshot', () => {
     expect(screen.getByText('Creating DB cluster snapshot app-snap')).toBeInTheDocument();
   }, 10_000);
 
-  it('shows the duplicate snapshot refusal and stays on the cluster', async () => {
+  it('shows the duplicate snapshot refusal and reopens the draft for correction', async () => {
     vi.mocked(snapshots.createClusterSnapshot).mockRejectedValueOnce(
       new RequestError({
         kind: 'other',
@@ -1114,6 +1114,21 @@ describe('taking a DB cluster snapshot', () => {
     expect(screen.getByText(/This snapshot already exists/)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(PATH);
     expect(flashes('success')).toEqual([]);
+
+    vi.mocked(snapshots.createClusterSnapshot).mockResolvedValueOnce('corrected-snap');
+    fireEvent.click(control('Take snapshot'));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Take DB cluster snapshot' }));
+    const input = dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' });
+    expect(input).toHaveValue('existing-snap');
+    fireEvent.change(input, { target: { value: 'corrected-snap' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+    expect(await screen.findByText('Creating DB cluster snapshot corrected-snap')).toBeInTheDocument();
+    expect(snapshots.createClusterSnapshot).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      'corrected-snap',
+      expect.any(AbortSignal),
+    );
   });
 
   it('disables Take snapshot after CreateDBClusterSnapshot returns 501', async () => {

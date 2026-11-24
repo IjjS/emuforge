@@ -1,22 +1,24 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
+import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState, useAnnouncer } from '../../../components/failure-states';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { SNAPSHOT_OPERATIONS, type ClusterSnapshot } from '../cluster-snapshot-api';
 import { useClusterSnapshotActions, useClusterSnapshotListing } from '../cluster-snapshot-queries';
 import { DeleteSnapshotDialog, RestoreSnapshotDialog } from '../components/cluster-snapshot-dialogs';
 import { StatusValue } from '../components/status';
-import { clusterHref, CLUSTER_SNAPSHOTS_TITLE, NONE } from '../format';
+import { clusterHref, CLUSTER_SNAPSHOTS_TITLE, CLUSTERS_PATH, NONE } from '../format';
 
 const columns: TableProps.ColumnDefinition<ClusterSnapshot>[] = [
   {
@@ -46,8 +48,18 @@ const columns: TableProps.ColumnDefinition<ClusterSnapshot>[] = [
 ];
 
 type SnapshotAction = 'restore' | 'delete';
-type SnapshotDialog = { kind: 'restore'; id: string; engine: string } | { kind: 'delete'; id: string };
+type SnapshotDialog =
+  | { kind: 'restore'; id: string; engine: string; initialIdentifier?: string | undefined }
+  | { kind: 'delete'; id: string };
 type SnapshotRequest = { kind: 'restore'; id: string; engine: string; newId: string } | { kind: 'delete'; id: string };
+
+function restoreReason(snapshot: ClusterSnapshot | undefined, unsupported: boolean): string | undefined {
+  if (unsupported) return 'The emulator does not implement RestoreDBClusterFromSnapshot.';
+  if (snapshot === undefined) return 'Select a DB cluster snapshot.';
+  if (snapshot.status !== 'available') return 'Restore requires an available snapshot.';
+  if (snapshot.engine === undefined) return 'Restore requires the snapshot’s engine.';
+  return undefined;
+}
 
 export function ClusterSnapshotsPage({ connection }: { connection: AreaConnection }) {
   useShowsResources(CLUSTER_SNAPSHOTS_TITLE);
@@ -56,10 +68,13 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
   const { items, failure, loading, refresh, goToPage, currentPage, openEnd, pagesCount, pastEnd } = listing;
   const { remove, restore } = useClusterSnapshotActions(engineOrigin);
   const flash = usePageFlash();
+  const handleFollow = useFollow();
+  const selectionStatusId = useId();
   const pageSignal = usePageSignal();
   const [announcement, announce] = useAnnouncer();
   const [selectedId, setSelectedId] = useState<string>();
   const [dialog, setDialog] = useState<SnapshotDialog>();
+  const [retry, setRetry] = useState<{ snapshotId: string; identifier: string }>();
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState<ReadonlySet<SnapshotAction>>(() => new Set());
   const inFlight = useRef(false);
@@ -87,8 +102,8 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
   const rows = items ?? [];
   const selected = rows.find((row) => row.id === selectedId);
   const engine = selected?.engine;
-  const canRestore =
-    !pending && !unavailable.has('restore') && selected?.status === 'available' && engine !== undefined;
+  const reason = restoreReason(selected, unavailable.has('restore'));
+  const canRestore = !pending && reason === undefined;
   const canDelete = !pending && !unavailable.has('delete') && selected !== undefined;
 
   const handleDismiss = () => {
@@ -121,7 +136,11 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
           ? `Restore DB cluster ${action.newId} from snapshot ${action.id}`
           : `Delete DB cluster snapshot ${action.id}`;
       const item = actionFailureItem(failure, subject, engineOrigin);
-      if (failure.kind === 'not-implemented') setUnavailable((current) => new Set([...current, action.kind]));
+      if (failure.kind === 'not-implemented') {
+        setUnavailable((current) => new Set([...current, action.kind]));
+      } else if (action.kind === 'restore') {
+        setRetry({ snapshotId: action.id, identifier: action.newId });
+      }
       flash.show([
         failure.kind === 'other' || failure.kind === 'not-implemented'
           ? item
@@ -148,9 +167,20 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
       <ReadFailure state={failureState} onRetry={refresh} />
     ) : (
       <Box textAlign="center" color="inherit">
-        <Box variant="strong" color="inherit">
-          {pastEnd ? 'No DB cluster snapshots on this page' : 'No DB cluster snapshots'}
-        </Box>
+        <SpaceBetween size="xxs">
+          <Box variant="strong" color="inherit">
+            {pastEnd ? 'No DB cluster snapshots on this page' : 'No DB cluster snapshots'}
+          </Box>
+          {!pastEnd && (
+            <Box variant="p" color="inherit">
+              In{' '}
+              <Link href={CLUSTERS_PATH} onFollow={handleFollow}>
+                DB clusters
+              </Link>
+              , select an Aurora DB cluster and choose Take snapshot.
+            </Box>
+          )}
+        </SpaceBetween>
       </Box>
     );
 
@@ -178,13 +208,32 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
           <Header
             variant="awsui-h1-sticky"
             counter={items === undefined ? undefined : `(${String(items.length)}${openEnd ? '+' : ''})`}
+            description={
+              <span id={selectionStatusId} aria-live="polite">
+                {selected !== undefined && (
+                  <>
+                    Selected snapshot status: <StatusValue status={selected.status} />
+                    {reason !== undefined && (
+                      <>
+                        <br />
+                        <span>{reason}</span>
+                      </>
+                    )}
+                  </>
+                )}
+              </span>
+            }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" loading={loading} onClick={refresh} />
                 <Button
                   disabled={!canRestore}
+                  ariaDescribedby={selectionStatusId}
                   onClick={() => {
-                    if (canRestore) setDialog({ kind: 'restore', id: selected.id, engine });
+                    if (!canRestore || selected === undefined || engine === undefined) return;
+                    const initialIdentifier = retry?.snapshotId === selected.id ? retry.identifier : undefined;
+                    if (initialIdentifier !== undefined) setRetry(undefined);
+                    setDialog({ kind: 'restore', id: selected.id, engine, initialIdentifier });
                   }}
                 >
                   Restore
@@ -224,6 +273,7 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
       {dialog?.kind === 'restore' && (
         <RestoreSnapshotDialog
           target={dialog.id}
+          initialIdentifier={dialog.initialIdentifier}
           pending={pending}
           onDismiss={handleDismiss}
           onSubmit={(id) => {
