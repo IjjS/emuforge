@@ -76,7 +76,10 @@ export function readFailureState(failure: RequestFailure, connection: AreaConnec
     if (failure.kind === 'emulator-did-not-answer') {
       return areaReadFailureState(
         failure,
-        { ...connection, result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message } },
+        {
+          ...connection,
+          result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message },
+        },
         thing,
       );
     }

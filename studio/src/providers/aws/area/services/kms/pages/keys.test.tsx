@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AreaConnection } from '../../../components/emulator-line';
 import { KEY_PAGE_SIZE } from '../api';
 import { KeysPage } from './keys';
 
@@ -14,13 +15,15 @@ vi.mock('../../../../../../lib/aws/client-factory', () => ({
 }));
 
 const endpoint = 'http://127.0.0.1:8311';
+const emulator = { port: 9311, endpoint: 'https://127.0.0.1:9311' };
+const online = { engineOrigin: endpoint, result: { kind: 'connected', checkedAt: 0, emulator } } as const;
 const page = createWrapper(document.body);
 
-function open() {
+function open(connection: AreaConnection = { engineOrigin: endpoint, result: undefined }) {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <KeysPage connection={{ engineOrigin: endpoint, result: undefined }} params={{}} />
+        <KeysPage connection={connection} params={{}} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -189,6 +192,41 @@ describe('customer managed keys', () => {
     expect(empty.queryByText('No customer managed keys')).toBeNull();
     click('Retry');
     await expectRow('owned');
+  });
+
+  it.each([
+    {
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+    },
+    {
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: `Not answering at ${emulator.endpoint}`,
+    },
+  ])('shows $status when ListKeys fails while the frame is connected', async ({ failure, status }) => {
+    send.mockRejectedValue(failure);
+    open(online);
+
+    await waitFor(() => {
+      const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(status);
+    });
+    const empty = withinEmptySlot();
+    const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
+    expect(connectionStatus).toBeVisible();
+    expect(connectionStatus).toHaveAttribute('href', '/');
+    const retry = empty.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
+
+    send.mockResolvedValue({ Keys: [] });
+    fireEvent.click(retry);
+    await waitFor(() => expect(withinEmptySlot().getByText('No customer managed keys')).toBeVisible());
   });
 
   it('names ListKeys when the emulator returns 501', async () => {

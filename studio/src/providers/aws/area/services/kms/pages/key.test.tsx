@@ -121,6 +121,40 @@ describe('key details', () => {
     expect(heading).toHaveTextContent('Customer managed keys');
   });
 
+  it.each([
+    {
+      failure: new TypeError('Failed to fetch'),
+      status: `The EmuForge engine at ${endpoint} is not answering`,
+    },
+    {
+      failure: {
+        name: 'EmulatorTimeout',
+        message: 'The emulator did not answer in time.',
+        $fault: 'server',
+        $metadata: { httpStatusCode: 504 },
+      },
+      status: `Not answering at ${emulator.endpoint}`,
+    },
+  ])('shows $status when DescribeKey fails while the frame is connected', async ({ failure, status }) => {
+    send.mockRejectedValue(failure);
+    open(metadata.KeyId, online);
+
+    await waitFor(() => {
+      const indicator = page.findContainer()?.findContent().findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(status);
+    });
+    const connectionStatus = screen.getByRole('link', { name: 'Connection status' });
+    expect(connectionStatus).toBeVisible();
+    expect(connectionStatus).toHaveAttribute('href', '/');
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
+
+    send.mockResolvedValue({ KeyMetadata: metadata });
+    fireEvent.click(retry);
+    await waitFor(() => expect(metadataHeading()).toBeVisible());
+  });
+
   it('shows distinct engine and emulator recovery states and retries the key read', async () => {
     const showConnection = open(metadata.KeyId, {
       engineOrigin: endpoint,
