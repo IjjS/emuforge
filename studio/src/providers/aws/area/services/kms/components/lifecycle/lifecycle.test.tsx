@@ -9,6 +9,7 @@ import {
   type KeyMetadata,
 } from '@aws-sdk/client-kms';
 import Flashbar from '@cloudscape-design/components/flashbar';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
@@ -32,6 +33,7 @@ const connection = {
 } as const;
 const deletionDate = new Date('2026-12-01T09:30:00Z');
 const NOT_IMPLEMENTED = { name: 'NotImplemented', $fault: 'server', $metadata: { httpStatusCode: 501 } };
+const PAGE = createWrapper(document.body);
 
 function key(state: string, extra: Partial<KeyMetadata> = {}): KeyMetadata {
   return {
@@ -127,8 +129,13 @@ async function expectStatus(state: string) {
 }
 
 function field(label: string) {
-  const term = screen.getByText(label, { selector: 'dt *, dt' }).closest('dt');
-  return term?.nextElementSibling as HTMLElement;
+  return PAGE.findTabs()
+    ?.findTabContent()
+    ?.findAllKeyValuePairs()
+    .flatMap((pairs) => pairs.findItems())
+    .find((item) => item.findLabel()?.getElement().textContent === label)
+    ?.findValue()
+    ?.getElement();
 }
 
 function action(name: string) {
@@ -136,20 +143,28 @@ function action(name: string) {
 }
 
 function dialog() {
-  return screen.getByRole('dialog');
+  const modal = PAGE.findModal();
+  if (!modal) throw new Error('Missing lifecycle dialog');
+  return modal;
 }
 
 async function opened(name: string) {
   action(name);
-  await screen.findByRole('dialog');
+  await waitFor(() => expect(dialog().findHeader().getElement()).toHaveTextContent(name));
+}
+
+function dialogButton(name: string) {
+  const footer = dialog().findFooter();
+  if (!footer) throw new Error('Missing lifecycle dialog footer');
+  return within(footer.getElement()).getByRole('button', { name });
 }
 
 function confirm(name: string) {
-  fireEvent.click(within(dialog()).getByRole('button', { name }));
+  fireEvent.click(dialogButton(name));
 }
 
-function flashText() {
-  return document.querySelector('[class*="awsui_flashbar"]')?.textContent ?? '';
+function flashText(type: 'success' | 'info' = 'success') {
+  return PAGE.findFlashbar()?.findItemsByType(type)[0]?.getElement().textContent ?? '';
 }
 
 function sent<T>(type: new (...args: never[]) => T) {
@@ -183,7 +198,7 @@ describe('Key lifecycle', () => {
     expect(sent(DisableKeyCommand)).toEqual([
       [expect.objectContaining({ input: { KeyId: KEY_ID } }), { abortSignal: expect.any(AbortSignal) }],
     ]);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(flashText()).toContain('Key disabled.');
   });
 
@@ -193,7 +208,7 @@ describe('Key lifecycle', () => {
     await expectActions(['Edit description', 'Enable key', 'Schedule key deletion']);
 
     await opened('Schedule key deletion');
-    fireEvent.change(within(dialog()).getByRole('spinbutton'), { target: { value: '7' } });
+    fireEvent.change(within(dialog().findContent().getElement()).getByRole('spinbutton'), { target: { value: '7' } });
     emulator.metadata = key('PendingDeletion', { DeletionDate: deletionDate });
     confirm('Schedule deletion');
 
@@ -211,7 +226,7 @@ describe('Key lifecycle', () => {
 
     await expectStatus('Disabled');
     await expectActions(['Edit description', 'Enable key', 'Schedule key deletion']);
-    expect(screen.queryByText('Deletion date')).toBeNull();
+    expect(field('Deletion date')).toBeUndefined();
     expect(sent(CancelKeyDeletionCommand)).toHaveLength(1);
   });
 
@@ -227,7 +242,9 @@ describe('Key lifecycle', () => {
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
 
     await opened('Edit description');
-    fireEvent.change(within(dialog()).getByRole('textbox'), { target: { value: 'Local invoices' } });
+    fireEvent.change(within(dialog().findContent().getElement()).getByRole('textbox'), {
+      target: { value: 'Local invoices' },
+    });
     saved = true;
     emulator.metadata = key('Enabled', { Description: 'Local invoices' });
     confirm('Save');
@@ -253,11 +270,13 @@ describe('Key lifecycle', () => {
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
 
     await opened('Disable key');
-    expect(dialog()).toHaveTextContent(KEY_ID);
-    expect(dialog()).toHaveTextContent("The key's state becomes Disabled in your local emulator.");
+    expect(dialog().findContent().getElement()).toHaveTextContent(KEY_ID);
+    expect(dialog().findContent().getElement()).toHaveTextContent(
+      "The key's state becomes Disabled in your local emulator.",
+    );
     confirm('Cancel');
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
     expect(sent(DisableKeyCommand)).toHaveLength(0);
     expect(field('Status')).toHaveTextContent('Enabled');
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
@@ -268,20 +287,26 @@ describe('Key lifecycle', () => {
     open();
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
     await opened('Schedule key deletion');
-    const days = within(dialog()).getByRole('spinbutton');
-    const submit = () => within(dialog()).getByRole('button', { name: 'Schedule deletion' });
+    const waitingPeriod = dialog().findContent().findFormField();
+    if (!waitingPeriod) throw new Error('Missing waiting period field');
+    const control = waitingPeriod.findControl();
+    if (!control) throw new Error('Missing waiting period control');
+    const days = within(control.getElement()).getByRole('spinbutton');
+    const submit = () => dialogButton('Schedule deletion');
 
     for (const value of ['6', '31']) {
       fireEvent.change(days, { target: { value } });
       await waitFor(() => expect(usable(submit())).toBe(false));
-      expect(dialog()).toHaveTextContent('Enter a whole number of days. From 7 to 30 days.');
+      expect(waitingPeriod.findError()?.getElement()).toHaveTextContent(
+        'Enter a whole number of days. From 7 to 30 days.',
+      );
       fireEvent.click(submit());
     }
     expect(sent(ScheduleKeyDeletionCommand)).toHaveLength(0);
 
     fireEvent.change(days, { target: { value: '30' } });
     await waitFor(() => expect(usable(submit())).toBe(true));
-    expect(dialog()).toHaveTextContent('From 7 to 30 days.');
+    expect(waitingPeriod.findConstraint()?.getElement()).toHaveTextContent('From 7 to 30 days.');
   });
 
   it('keeps the result and the returned state when the detail is read again before the list', async () => {
@@ -301,7 +326,7 @@ describe('Key lifecycle', () => {
     confirm('Cancel deletion');
 
     await expectStatus('Disabled');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(screen.getByLabelText('List read')).toHaveAttribute('aria-busy', 'true');
     expect(flashText()).toContain('Key deletion canceled.');
 
@@ -313,8 +338,44 @@ describe('Key lifecycle', () => {
     expect(field('Status')).toHaveTextContent('Disabled');
   });
 
+  it('keeps an in-flight lifecycle write and its result when Refresh starts an older detail read', async () => {
+    const write = deferred<unknown>();
+    const refresh = deferred<unknown>();
+    let holdRefresh = false;
+    const emulator = emulate(key('Disabled'), (command) => {
+      if (command instanceof EnableKeyCommand) return write.promise;
+      if (command instanceof DescribeKeyCommand && holdRefresh) {
+        holdRefresh = false;
+        return refresh.promise;
+      }
+      return undefined;
+    });
+    open();
+    await expectActions(['Edit description', 'Enable key', 'Schedule key deletion']);
+    action('Enable key');
+    await waitFor(() => expect(sent(EnableKeyCommand)).toHaveLength(1));
+    const writeOptions = sent(EnableKeyCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+
+    holdRefresh = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    expect(field('Status')).toHaveTextContent('Disabled');
+    expect(usable(within(lifecycle()).getByRole('button', { name: 'Enable key' }))).toBe(false);
+    expect(writeOptions?.abortSignal.aborted).toBe(false);
+
+    emulator.metadata = key('Enabled');
+    await act(async () => write.resolve({}));
+    await expectStatus('Enabled');
+    expect(flashText()).toContain('Key enabled.');
+
+    await act(async () => refresh.resolve({ KeyMetadata: key('Disabled') }));
+    expect(field('Status')).toHaveTextContent('Enabled');
+    expect(flashText()).toContain('Key enabled.');
+    expect(sent(EnableKeyCommand)).toHaveLength(1);
+  });
+
   it('names EnableKey when it is not implemented and keeps enabling on the page as unavailable', async () => {
-    emulate(key('Disabled'), (command) => {
+    const emulator = emulate(key('Disabled'), (command) => {
       if (command instanceof EnableKeyCommand) throw NOT_IMPLEMENTED;
       return undefined;
     });
@@ -323,12 +384,24 @@ describe('Key lifecycle', () => {
 
     action('Enable key');
 
-    await waitFor(() => expect(flashText()).toContain('Not implemented by the emulator'));
-    expect(flashText()).toContain('EnableKey');
+    await waitFor(() => expect(flashText('info')).toContain('Not implemented by the emulator'));
+    expect(flashText('info')).toContain('EnableKey');
     const enable = within(lifecycle()).getByRole('button', { name: 'Enable key' });
     expect(enable).toBeVisible();
     expect(usable(enable)).toBe(false);
     await expectActions(['Edit description', 'Schedule key deletion']);
+    expect(sent(EnableKeyCommand)).toHaveLength(1);
+
+    emulator.metadata = key('Disabled', { Description: 'Refreshed externally' });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(field('Description')).toHaveTextContent('Refreshed externally'));
+    await expectActions(['Edit description', 'Schedule key deletion']);
+    const refreshedEnable = within(lifecycle()).getByRole('button', { name: 'Enable key' });
+    expect(refreshedEnable).toBeVisible();
+    expect(usable(refreshedEnable)).toBe(false);
+    expect(flashText('info')).toContain('Not implemented by the emulator');
+    expect(flashText('info')).toContain('EnableKey');
+    action('Enable key');
     expect(sent(EnableKeyCommand)).toHaveLength(1);
   });
 });
