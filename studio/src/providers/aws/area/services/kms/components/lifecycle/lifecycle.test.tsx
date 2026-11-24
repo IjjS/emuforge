@@ -403,8 +403,10 @@ describe('Key lifecycle', () => {
         emulator: connection.result.emulator,
       },
     });
-    expect(screen.getByText('Not answering at')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    const recovery = PAGE.findContentLayout()?.findContent().findContainer()?.findContent().getElement();
+    if (!recovery) throw new Error('Missing metadata recovery');
+    expect(recovery).toHaveTextContent(`Not answering at ${connection.result.emulator.endpoint}`);
+    expect(within(recovery).getByRole('button', { name: 'Retry' })).toBeVisible();
     expect(field('Status')).toHaveTextContent('Disabled');
     await expectActions([]);
     expect(options?.abortSignal.aborted).toBe(false);
@@ -419,7 +421,7 @@ describe('Key lifecycle', () => {
     showTarget(KEY_ID, { ...connection, result: { ...connection.result, checkedAt: 2 } });
     await expectStatus('Enabled');
     await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
-    expect(screen.queryByText('Not answering at')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(flashText()).toContain('Key enabled.');
     expect(options?.abortSignal.aborted).toBe(false);
   });
