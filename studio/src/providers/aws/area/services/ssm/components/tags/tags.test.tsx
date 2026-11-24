@@ -387,13 +387,17 @@ describe('Parameter tags', () => {
     expect(ops.ListTagsForResource.mock.calls).toEqual([[TAG_RESOURCE], [TAG_RESOURCE]]);
   });
 
-  it('T3 keeps existing tag writes available after Refresh returns 501', async () => {
+  it('T3 keeps confirmed tags and independent writes after reopening and revisiting a refused read', async () => {
     const ops = openDetail();
     ops.ListTagsForResource.mockImplementationOnce(() => list(TAG)).mockImplementationOnce(notImplemented);
     await expand();
     await waitFor(() => expectTag(TAG.Value));
 
     fireEvent.click(panelButton('Refresh tags'));
+    await expectReadUnavailable();
+    await expand();
+    expect(screen.queryByRole('button', { name: editName })).toBeNull();
+    await expand();
     await expectReadUnavailable();
     expectTag(TAG.Value);
     const actions = tagTable()?.findBodyCell(1, 3);
@@ -406,6 +410,14 @@ describe('Parameter tags', () => {
     fireEvent.click(button('Save tag', edit));
     await waitFor(() => expect(flash(updated)).toBeVisible());
     expect(ops.AddTagsToResource).toHaveBeenCalledExactlyOnceWith({ ...TAG_RESOURCE, Tags: [REPLACEMENT] });
+
+    await ops.navigateTo('/app/database/port');
+    await ops.navigateTo(NAME);
+    expect(screen.queryByRole('button', { name: removeName })).toBeNull();
+    await expand();
+    await expectReadUnavailable();
+    expect(button(editName)).toBeEnabled();
+    expect(button(removeName)).toBeEnabled();
 
     const remove = await tagDialog(removeName, 'Remove tag');
     fireEvent.click(button('Remove tag', remove));

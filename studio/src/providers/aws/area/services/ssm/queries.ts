@@ -1,4 +1,4 @@
-import type { ParameterMetadata } from '@aws-sdk/client-ssm';
+import type { GetResourcePoliciesResponseEntry, ParameterMetadata } from '@aws-sdk/client-ssm';
 import { skipToken, useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -8,7 +8,14 @@ import type { AreaConnection } from '../../components/emulator-line';
 import { usePageFlash } from '../../components/page-flash';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_PARAMETERS, describeParameters, findParameter } from './api';
-import { GET_RESOURCE_POLICIES, LIST_TAGS, listParameterTags, listResourcePolicies } from './resource-api';
+import {
+  GET_RESOURCE_POLICIES,
+  LIST_TAGS,
+  listParameterTags,
+  listResourcePolicies,
+  putResourcePolicy,
+  type PolicyRevision,
+} from './resource-api';
 import { GET_PARAMETER_HISTORY, getParameterHistory } from './version-api';
 
 const SERVICE_KEY = ['aws', 'ssm'] as const;
@@ -199,30 +206,36 @@ export function useRefreshParameterLabels(connection: AreaConnection) {
 const tagKey = (name: string) => ['tags', name] as const;
 const policyKey = (arn: string) => ['resource-policies', arn] as const;
 type ResourceKey = ReturnType<typeof tagKey> | ReturnType<typeof policyKey>;
+const resourceReadOperation = { tags: LIST_TAGS, 'resource-policies': GET_RESOURCE_POLICIES } as const;
 
 function useResourceRead<T>(
   connection: AreaConnection,
   key: ResourceKey,
-  operation: string,
   read: (endpoint: string, id: string, signal: AbortSignal) => Promise<T>,
 ) {
   const endpoint = connection.engineOrigin;
+  const operation = resourceReadOperation[key[0]];
   const unsupported = useUnsupportedOperation(connection, operation);
   const query = useQuery({
     queryKey: [...targetKey(connection), ...key],
     queryFn: endpoint === undefined ? skipToken : ({ signal }) => read(endpoint, key[1], signal),
     enabled: endpoint !== undefined && unsupported.failure === undefined,
     retry: false,
-    gcTime: 0,
+    // A refused read cannot restore confirmed rows after the observer unmounts.
+    ...(unsupported.failure ? { gcTime: Infinity } : {}),
     refetchOnMount: 'always',
   });
-  const failure = unsupported.failure ?? (query.isError ? failureOf(query.error, operation) : undefined);
+  const failure =
+    unsupported.failure ?? (query.isError && query.isFetchedAfterMount ? failureOf(query.error, operation) : undefined);
   const { markUnsupported } = unsupported;
   useEffect(() => {
     if (failure?.kind === 'not-implemented') markUnsupported(failure);
   }, [failure, markUnsupported]);
   return {
-    items: failure === undefined || failure.kind === 'not-implemented' ? query.data : undefined,
+    items:
+      failure?.kind === 'not-implemented' || (failure === undefined && query.isFetchedAfterMount)
+        ? query.data
+        : undefined,
     failure,
     loading: endpoint !== undefined && !failure && (query.isPending || query.isFetching),
     retry: () => {
@@ -232,11 +245,11 @@ function useResourceRead<T>(
 }
 
 export function useParameterTags(connection: AreaConnection, name: string) {
-  return useResourceRead(connection, tagKey(name), LIST_TAGS, listParameterTags);
+  return useResourceRead(connection, tagKey(name), listParameterTags);
 }
 
 export function useParameterResourcePolicies(connection: AreaConnection, arn: string) {
-  return useResourceRead(connection, policyKey(arn), GET_RESOURCE_POLICIES, listResourcePolicies);
+  return useResourceRead(connection, policyKey(arn), listResourcePolicies);
 }
 
 export function useParameterTagWrite(connection: AreaConnection, name: string, operation: string) {
@@ -244,7 +257,28 @@ export function useParameterTagWrite(connection: AreaConnection, name: string, o
 }
 
 export function useParameterPolicyWrite(connection: AreaConnection, name: string, arn: string, operation: string) {
-  return useParameterResourceWrite(connection, name, policyKey(arn), operation);
+  const client = useQueryClient();
+  const key = policyKey(arn);
+  const write = useParameterResourceWrite(connection, name, key, operation);
+  return {
+    ...write,
+    edit: (document: string, revision: PolicyRevision, onClose: () => void) =>
+      write.run(
+        (endpoint, signal) => putResourcePolicy(endpoint, arn, document, revision, signal),
+        `Resource policy updated for ${name}.`,
+        onClose,
+        ({ PolicyId, PolicyHash }) => {
+          if (!PolicyId || !PolicyHash) return;
+          client.setQueryData<GetResourcePoliciesResponseEntry[]>([...targetKey(connection), ...key], (policies) =>
+            policies?.map((policy) =>
+              policy.PolicyId === revision.PolicyId && policy.PolicyHash === revision.PolicyHash
+                ? { PolicyId, PolicyHash, Policy: document }
+                : policy,
+            ),
+          );
+        },
+      ),
+  };
 }
 
 function useParameterResourceWrite(connection: AreaConnection, name: string, key: ResourceKey, operation: string) {
@@ -265,10 +299,11 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
   );
 
   const disabled = endpoint === undefined || pending || unsupported.failure !== undefined;
-  async function run(
-    write: (endpoint: string, signal: AbortSignal) => Promise<unknown>,
+  async function run<T>(
+    write: (endpoint: string, signal: AbortSignal) => Promise<T>,
     message: string,
     onClose: () => void,
+    onSuccess?: (result: T) => void,
   ) {
     if (disabled || request.current) return;
     const controller = new AbortController();
@@ -277,12 +312,14 @@ function useParameterResourceWrite(connection: AreaConnection, name: string, key
     setPending(true);
     setFailure(undefined);
     try {
-      await write(endpoint, controller.signal);
+      const result = await write(endpoint, controller.signal);
       if (controller.signal.aborted) return;
-      flash.show([{ type: 'success', content: message }]);
       const resource = { queryKey: [...targetKey(connection), ...key] };
       void client.cancelQueries(resource);
-      void client.invalidateQueries(resource);
+      onSuccess?.(result);
+      const blockedRead = client.getQueryData([...targetKey(connection), 'unsupported', resourceReadOperation[key[0]]]);
+      void client.invalidateQueries({ ...resource, refetchType: blockedRead === undefined ? 'active' : 'none' });
+      flash.show([{ type: 'success', content: message }]);
       refresh([name]);
       onClose();
     } catch (error) {

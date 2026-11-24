@@ -445,7 +445,7 @@ describe('Parameter resource policies', () => {
     expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
   });
 
-  it('P5 keeps existing policy writes available with the latest read revision after Refresh returns 501', async () => {
+  it('P5 edits with the last read revision and deletes with the returned revision after a 501', async () => {
     const ops = openDetail();
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]))
       .mockImplementationOnce(() => list([UPDATED_POLICY]))
@@ -462,6 +462,8 @@ describe('Parameter resource policies', () => {
     expect(row?.findButton('[aria-label="Edit resource policy policy-1"]')?.getElement()).toBeEnabled();
     expect(row?.findButton('[aria-label="Delete resource policy policy-1"]')?.getElement()).toBeEnabled();
 
+    const savedRevision = { PolicyId: UPDATED_POLICY.PolicyId, PolicyHash: 'hash-after-edit' };
+    ops.PutResourcePolicy.mockImplementationOnce(() => answer(savedRevision));
     const edit = await policyDialog(editName, 'Edit resource policy');
     expect(policyInput(edit, 'Policy document')).toHaveValue(UPDATED);
     change(edit, 'Policy document', DOCUMENT);
@@ -474,12 +476,59 @@ describe('Parameter resource policies', () => {
     change(remove, 'Confirmation', 'delete');
     fireEvent.click(button('Delete resource policy', remove));
     await waitFor(() => expect(flash(deleted)).toBeVisible());
-    expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith(revision);
+    expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, ...savedRevision });
     expect(ops.GetResourcePolicies.mock.calls).toEqual([
       [{ ResourceArn: ARN }],
       [{ ResourceArn: ARN }],
       [{ ResourceArn: ARN }],
     ]);
+  });
+
+  it('retains the saved policy revision through section reopen and detail revisit after a read 501', async () => {
+    const ops = openDetail();
+    const savedRevision = { PolicyId: 'policy-after-edit', PolicyHash: 'hash-after-edit' };
+    const savedEdit = `Edit resource policy ${savedRevision.PolicyId}`;
+    const savedDelete = `Delete resource policy ${savedRevision.PolicyId}`;
+    ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY])).mockImplementationOnce(notImplemented);
+    ops.PutResourcePolicy.mockImplementationOnce(() => answer(savedRevision));
+    await expand();
+    await policies().findByText(DISPLAY_DOCUMENT, POLICY_TEXT);
+
+    const edit = await policyDialog(editName, 'Edit resource policy');
+    change(edit, 'Policy document', UPDATED);
+    fireEvent.click(button('Save resource policy', edit));
+    await waitFor(() => expect(flash(updated)).toBeVisible());
+    await expectReadUnavailable();
+    expect(ops.PutResourcePolicy).toHaveBeenCalledExactlyOnceWith({
+      ResourceArn: ARN,
+      PolicyId: POLICY.PolicyId,
+      PolicyHash: POLICY.PolicyHash,
+      Policy: UPDATED,
+    });
+
+    await expand();
+    expect(screen.queryByRole('button', { name: savedEdit })).toBeNull();
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+    expect(button(savedEdit)).toBeEnabled();
+    expect(button(savedDelete)).toBeEnabled();
+
+    await ops.navigateTo('/app/database/port');
+    await ops.navigateTo(NAME);
+    expect(screen.queryByRole('button', { name: savedDelete })).toBeNull();
+    await expand();
+    await expectReadUnavailable();
+    expect(policies().getByText(DISPLAY_UPDATED, POLICY_TEXT)).toBeVisible();
+    expect(button(savedEdit)).toBeEnabled();
+    expect(button(savedDelete)).toBeEnabled();
+
+    const remove = await policyDialog(savedDelete, 'Delete resource policy');
+    change(remove, 'Confirmation', 'delete');
+    fireEvent.click(button('Delete resource policy', remove));
+    await waitFor(() => expect(flash(`Resource policy ${savedRevision.PolicyId} deleted from ${NAME}.`)).toBeVisible());
+    expect(ops.DeleteResourcePolicy).toHaveBeenCalledExactlyOnceWith({ ResourceArn: ARN, ...savedRevision });
+    expect(ops.GetResourcePolicies.mock.calls).toEqual([[{ ResourceArn: ARN }], [{ ResourceArn: ARN }]]);
   });
 
   it.each(['resource', 'target'] as const)('P5 isolates retained policies when switching %s', async (scope) => {
