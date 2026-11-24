@@ -12,6 +12,7 @@ import { creationDateText, NO_DATE } from '../../../../components/format-date';
 import type { TokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { readFailureState } from '../../queries';
+import { useRotationRetryFocus } from './use-rotation-retry-focus';
 
 function typeLabel(rotationType: RotationsListEntry['RotationType']) {
   switch (rotationType) {
@@ -33,8 +34,13 @@ interface RotationHistoryProps {
 
 export function RotationHistory({ connection, history, failure, onRetry }: RotationHistoryProps) {
   const section = useRef<HTMLDivElement>(null);
+  const { heading, retryRegion } = useRotationRetryFocus();
   const [overflows, setOverflows] = useState(false);
   const hasRows = failure === undefined && (history.items?.length ?? 0) > 0;
+  const recovery =
+    failure === undefined
+      ? undefined
+      : readFailureState(failure, connection, `rotation history (${failure.operation})`);
 
   useEffect(() => {
     const table = section.current?.querySelector('table');
@@ -51,11 +57,16 @@ export function RotationHistory({ connection, history, failure, onRetry }: Rotat
 
   return (
     <div ref={section}>
+      <div className="aws-area-announcer" role="status" aria-label="Rotation history read status" aria-atomic="true">
+        {recovery === undefined ? '' : `${recovery.firstText}.`}
+      </div>
       <Table
         ariaLabels={{ tableLabel: 'Rotation history' }}
         header={
           <Header variant="h2" description={hasRows && overflows ? 'Scroll sideways to see both columns.' : undefined}>
-            Rotation history
+            <span ref={heading} tabIndex={-1}>
+              Rotation history
+            </span>
           </Header>
         }
         wrapLines
@@ -78,13 +89,12 @@ export function RotationHistory({ connection, history, failure, onRetry }: Rotat
         loading={failure === undefined && history.loading}
         loadingText="Loading rotation history…"
         empty={
-          failure === undefined ? (
+          recovery === undefined ? (
             <Box textAlign="center">{history.pastEnd ? 'No more rotations' : 'No completed rotations'}</Box>
           ) : (
-            <ReadFailure
-              state={readFailureState(failure, connection, `rotation history (${failure.operation})`)}
-              onRetry={onRetry}
-            />
+            <div ref={retryRegion}>
+              <ReadFailure state={recovery} onRetry={onRetry} />
+            </div>
           )
         }
         pagination={
