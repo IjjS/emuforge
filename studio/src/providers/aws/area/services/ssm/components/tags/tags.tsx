@@ -114,6 +114,7 @@ function TagDialog({ connection, name, action, onClose }: TagsProps & { action: 
   const removing = action.mode === 'remove';
   const title = removing ? 'Remove tag' : action.mode === 'edit' ? 'Edit tag' : 'Add tag';
   const submit = action.mode === 'edit' ? 'Save tag' : title;
+  const result = removing ? 'removed from' : action.mode === 'edit' ? 'updated for' : 'saved for';
   const [key, setKey] = useState(action.mode === 'add' ? '' : (action.tag.Key ?? ''));
   const [value, setValue] = useState(action.mode === 'add' ? '' : (action.tag.Value ?? ''));
   const write = useParameterTagWrite(connection, name, removing ? REMOVE_TAGS : ADD_TAGS);
@@ -137,14 +138,14 @@ function TagDialog({ connection, name, action, onClose }: TagsProps & { action: 
             <Button
               variant="primary"
               loading={write.pending}
-              disabled={write.disabled || key.trim() === ''}
+              disabled={write.disabled || key === ''}
               onClick={() =>
                 void write.run(
                   (endpoint, signal) =>
                     removing
                       ? removeParameterTag(endpoint, name, key, signal)
                       : addParameterTag(endpoint, name, { Key: key, Value: value }, signal),
-                  `Tag ${key} ${removing ? 'removed from' : 'saved for'} ${name}.`,
+                  `Tag ${key} ${result} ${name}.`,
                   onClose,
                 )
               }

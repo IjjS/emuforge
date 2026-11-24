@@ -31,7 +31,8 @@ interface PoliciesProps {
   arn: string;
 }
 
-type PolicyAction = { mode: 'create' } | { mode: 'edit' | 'delete'; id: string };
+type PolicyAction =
+  { mode: 'create' } | { mode: 'edit'; policy: GetResourcePoliciesResponseEntry } | { mode: 'delete'; id: string };
 
 export function ParameterResourcePolicies(props: PoliciesProps) {
   const [expanded, setExpanded] = useState(false);
@@ -88,7 +89,7 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
                     ariaLabel={`Edit resource policy ${PolicyId ?? ''}`}
                     disabled={!PolicyId || !PolicyHash || put.failure !== undefined}
                     onClick={() => {
-                      if (PolicyId) setAction({ mode: 'edit', id: PolicyId });
+                      setAction({ mode: 'edit', policy: { PolicyId, PolicyHash, Policy } });
                     }}
                   >
                     Edit
@@ -109,7 +110,7 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
             </Header>
           }
         >
-          <Box variant="pre">
+          <Box variant="pre" nativeAttributes={{ style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
             <ValueText kind="name" value={Policy} none="Policy document unavailable" />
           </Box>
         </Container>
@@ -120,7 +121,13 @@ function PoliciesList({ connection, name, arn }: PoliciesProps) {
           name={name}
           arn={arn}
           action={action}
-          policy={action.mode === 'create' ? undefined : items?.find(({ PolicyId }) => PolicyId === action.id)}
+          policy={
+            action.mode === 'delete'
+              ? items?.find(({ PolicyId }) => PolicyId === action.id)
+              : action.mode === 'edit'
+                ? action.policy
+                : undefined
+          }
           onClose={() => setAction(undefined)}
         />
       )}
