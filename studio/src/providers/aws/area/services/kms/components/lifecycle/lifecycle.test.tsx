@@ -284,11 +284,12 @@ describe('Key detail panel lifetime', () => {
     await waitFor(() => expect(usable(opener)).toBe(true));
     opener.focus();
     await user.keyboard('{Enter}');
-    const modal = await screen.findByRole('dialog', { name: scenario.openerName });
-    fireEvent.change(within(modal).getByRole('textbox', { name: scenario.fieldName }), {
+    await waitFor(() => expect(dialog().findHeader().getElement()).toHaveTextContent(scenario.openerName));
+    const content = dialog().findContent();
+    fireEvent.change(within(content.getElement()).getByRole('textbox', { name: scenario.fieldName }), {
       target: { value: scenario.draft },
     });
-    const submit = within(modal).getByRole('button', { name: scenario.submitName });
+    const submit = dialogButton(scenario.submitName);
     submit.focus();
     await user.keyboard('{Enter}');
     const writes = () => send.mock.calls.filter(([command]) => command instanceof scenario.commandType);
@@ -659,6 +660,123 @@ describe('Key detail panel lifetime', () => {
 });
 
 describe('Key lifecycle', () => {
+  const disableRefusal = {
+    name: 'KMSInvalidStateException',
+    message: 'The key cannot be disabled now.',
+    $fault: 'client',
+    $metadata: { httpStatusCode: 400 },
+  };
+
+  async function holdDisableDuringRefresh() {
+    const readback = deferred<unknown>();
+    const write = deferred<unknown>();
+    const published = vi.fn<(result: FlashResult) => void>();
+    let reads = 0;
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof DescribeKeyCommand) {
+        if (++reads === 2) return readback.promise;
+        return { KeyMetadata: key('Enabled', { KeyId: command.input.KeyId ?? KEY_ID }) };
+      }
+      if (command instanceof DisableKeyCommand) return write.promise;
+      return undefined;
+    });
+    const changeIdentity = open(false, new QueryClient(), connection, published);
+    const user = userEvent.setup();
+    await expectStatus('Enabled');
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    fireEvent.click(refresh);
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    const opener = within(lifecycle()).getByRole('button', { name: 'Disable key' });
+    opener.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(dialog().findHeader().getElement()).toHaveTextContent('Disable key'));
+    const submit = dialogButton('Disable key');
+    submit.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(sent(DisableKeyCommand)).toHaveLength(1));
+    const options = sent(DisableKeyCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    if (!options) throw new Error('Missing lifecycle request signal');
+    return {
+      changeIdentity,
+      refresh,
+      write,
+      published,
+      signal: options.abortSignal,
+      async reportMissing() {
+        await act(async () =>
+          readback.reject(new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } })),
+        );
+        expect(await screen.findByText('Key not found')).toBeVisible();
+        const back = screen.getByRole('link', { name: 'View customer managed keys' });
+        expect(back).toHaveAttribute('href', KEYS_PATH);
+        await waitFor(() => expect(back).toHaveFocus());
+        expect(PAGE.findModal()).toBeNull();
+        await user.tab({ shift: true });
+        expect(refresh).toHaveFocus();
+        await user.tab();
+        expect(back).toHaveFocus();
+        expect(options.abortSignal.aborted).toBe(false);
+        return back;
+      },
+    };
+  }
+
+  it.each([false, true])(
+    'announces one late DisableKey refusal after the modal closes (key recovered: %s)',
+    async (recover) => {
+      const { refresh, write, published, signal, reportMissing } = await holdDisableDuringRefresh();
+      const back = await reportMissing();
+      if (recover) {
+        fireEvent.click(refresh);
+        await expectStatus('Enabled');
+        expect(PAGE.findModal()).toBeNull();
+        expect(screen.queryByText('Key not found')).toBeNull();
+      }
+      await act(async () => write.reject(disableRefusal));
+      const notice = await screen.findByRole('alert');
+      expect(notice).toHaveTextContent('DisableKey failed');
+      expect(notice).toHaveTextContent(disableRefusal.message);
+      expect(screen.getAllByRole('alert')).toEqual([notice]);
+      expect(published).toHaveBeenCalledTimes(1);
+      expect(published.mock.calls[0]?.[0][0]).not.toHaveProperty('announcedInDialog');
+      expect(signal.aborted).toBe(false);
+      expect(PAGE.findModal()).toBeNull();
+      expect(sent(DisableKeyCommand)).toHaveLength(1);
+      if (!recover) expect(back).toHaveFocus();
+    },
+  );
+
+  it('announces a DisableKey refusal in the original dialog while it remains open', async () => {
+    const { write, published, signal } = await holdDisableDuringRefresh();
+    await act(async () => write.reject(disableRefusal));
+    const content = dialog().findContent().getElement();
+    const notice = await within(content).findByRole('alert');
+    expect(notice).toHaveTextContent('DisableKey failed');
+    expect(notice).toHaveTextContent(disableRefusal.message);
+    expect(screen.getAllByRole('alert')).toEqual([notice]);
+    expect(published).toHaveBeenCalledTimes(1);
+    expect(published.mock.calls[0]?.[0][0]).toHaveProperty('announcedInDialog', true);
+    expect(signal.aborted).toBe(false);
+    expect(sent(DisableKeyCommand)).toHaveLength(1);
+  });
+
+  it.each([
+    { change: 'key', keyId: 'different-key', target: connection },
+    { change: 'target', keyId: KEY_ID, target: { ...connection, engineOrigin: 'http://127.0.0.1:8313' } },
+  ])('aborts a pending DisableKey on $change change after the key goes missing', async ({ keyId, target }) => {
+    const { changeIdentity, write, published, signal, reportMissing } = await holdDisableDuringRefresh();
+    await reportMissing();
+    changeIdentity(keyId, target);
+    await waitFor(() => expect(field('Key ID')).toHaveTextContent(keyId));
+    expect(signal.aborted).toBe(true);
+
+    await act(async () => write.reject(disableRefusal));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(published).not.toHaveBeenCalled();
+    expect(PAGE.findModal()).toBeNull();
+    expect(sent(DisableKeyCommand)).toHaveLength(1);
+  });
+
   it('keeps an open draft offline, blocks its submission, and preserves a later pending save during an outage', async () => {
     const write = deferred<unknown>();
     const emulator = emulate(key('Enabled'), (command) =>

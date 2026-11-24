@@ -28,10 +28,11 @@ export function LifecycleDialog({
   blockedReason: string | undefined;
   failure: FlashItem | undefined;
   onDismiss: () => void;
-  onSubmit: () => void;
+  onSubmit: (isOpen: () => boolean) => void;
   children: ReactNode;
 }) {
   const failureRef = useRef<AlertProps.Ref>(null);
+  const announcement = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (failure !== undefined) failureRef.current?.focus();
   }, [failure]);
@@ -40,7 +41,9 @@ export function LifecycleDialog({
     if (!pending) onDismiss();
   };
   const handleSubmit = () => {
-    if (!pending && !disabled && blockedReason === undefined) onSubmit();
+    if (pending || disabled || blockedReason !== undefined) return;
+    const original = announcement.current;
+    onSubmit(() => original !== null && announcement.current === original && original.isConnected);
   };
   const notice = pending ? undefined : blockedReason;
 
@@ -79,7 +82,7 @@ export function LifecycleDialog({
           </div>
         )}
       </SpaceBetween>
-      <div role="status" aria-atomic="true">
+      <div ref={announcement} role="status" aria-atomic="true">
         {notice !== undefined && (
           <Box margin={{ top: 'm' }}>
             <StatusIndicator type="warning">{notice}</StatusIndicator>
