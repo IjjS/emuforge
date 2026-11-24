@@ -11,7 +11,7 @@ export const button = (root: Page | Locator, name: string) => root.getByRole('bu
 export const rows = (page: Page) => page.locator(ui.findTable().findRows().toSelector());
 export const rowWith = (page: Page, name: string) => rows(page).filter({ has: page.getByText(name, { exact: true }) });
 export const keyLink = (page: Page, id: string) => rows(page).getByRole('link', { name: id, exact: true });
-export const empty = (page: Page) => page.locator(ui.findTable().findEmptySlot().toSelector());
+export const empty = (page: Page) => page.getByRole('table', { name: /^Customer managed keys/ }).locator(ui.findTable().findEmptySlot().toSelector().split(' ').at(-1)!);
 export const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true });
 export const modal = (page: Page) => page.locator(ui.findModal().toSelector());
 export const content = (page: Page) => page.locator(ui.findModal().findContent().toSelector());
@@ -22,7 +22,7 @@ export async function openModal(page: Page, action: string, title = action) {
   await expect(page.locator(ui.findModal().findHeader().toSelector())).toHaveText(title);
 }
 export async function flash(page: Page, message: string) {
-  await expect(page.locator(ui.findFlashbar().findItemsByType('success').toSelector())).toContainText(message);
+  await expect(page.locator(ui.findFlashbar().findItemsByType('success').toSelector())).toHaveText([message]);
 }
 export async function submit(page: Page, action: string, message: string) {
   await button(footer(page), action).click();

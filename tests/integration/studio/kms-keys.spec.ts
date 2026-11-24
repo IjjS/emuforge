@@ -11,11 +11,11 @@ test.use({ timezoneId: SEOUL.timeZone });
 
 async function metadata(page: Page, key: KeyMetadata) {
   const box = page.locator(ui.findContainer().toSelector()).filter({ has: button(page, 'Edit description') });
-  for (const value of [key.KeyId, key.Arn, key.KeyState, key.KeySpec, key.KeyUsage, key.Origin, key.Description, dateText(key.CreationDate!)]) {
-    expect(value).toBeTruthy();
-    await expect(box.getByText(value!, { exact: true })).toBeVisible();
-  }
-  if (key.DeletionDate) await expect(box.getByText(dateText(key.DeletionDate), { exact: true })).toBeVisible();
+  const values = ui.findKeyValuePairs().findItems().map(item => item.findValue());
+  const expected = [key.KeyId!, key.Arn!, key.KeyState!, key.KeySpec!, key.KeyUsage!, key.Origin!, dateText(key.CreationDate!)];
+  if (key.DeletionDate) expected.push(dateText(key.DeletionDate));
+  expected.push(key.Description!);
+  await expect(box.locator(values.toSelector().replace(/^body /, ''))).toHaveText(expected);
 }
 
 test('studio.kms-find-external-keys', async ({ ctx, page }) => {
@@ -77,7 +77,7 @@ test('studio.kms-missing-key', async ({ ctx, page }) => {
 test('studio.kms-key-lifecycle', async ({ ctx, page }) => {
   const f = await fixture(ctx);
   await page.goto(list);
-  await button(page, 'Create key').click();
+  await page.getByRole('link', { name: 'Create key', exact: true }).click();
   await page.getByRole('textbox', { name: 'Description' }).fill(f.prefix);
   await button(page, 'Create key').click();
   await flash(page, 'Key created.');
