@@ -119,6 +119,7 @@ export function useParameterMetadata(connection: AreaConnection, name: string) {
     unsupported.failure ?? scope.failure ?? (query.isError ? failureOf(query.error, DESCRIBE_PARAMETERS) : undefined);
   return {
     metadata: failure === undefined ? query.data : undefined,
+    metadataUpdatedAt: query.dataUpdatedAt,
     failure,
     rememberFailure: unsupported.markUnsupported,
     disconnected: scope.disconnected,

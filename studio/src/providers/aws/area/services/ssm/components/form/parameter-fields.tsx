@@ -32,7 +32,7 @@ export function ParameterFields({
   metadata?: ParameterMetadata | undefined;
   errors: ParameterErrors;
   disabled: boolean;
-  onChange: (draft: ParameterDraft) => void;
+  onChange: <Field extends keyof ParameterDraft>(field: Field, value: ParameterDraft[Field]) => void;
 }) {
   const secure = draft.type === 'SecureString';
   const advanced = draft.tier === 'Advanced';
@@ -52,7 +52,7 @@ export function ParameterFields({
               <FormField label="Name" errorText={errors.name}>
                 <Input
                   value={draft.name}
-                  onChange={({ detail }) => onChange({ ...draft, name: detail.value })}
+                  onChange={({ detail }) => onChange('name', detail.value)}
                   autoComplete={false}
                   disabled={disabled}
                 />
@@ -63,7 +63,7 @@ export function ParameterFields({
                   options={TYPES.map((type) => ({ value: type, label: type }))}
                   onChange={({ detail }) => {
                     const type = TYPES.find((type) => type === detail.selectedOption.value);
-                    if (type !== undefined) onChange({ ...draft, type });
+                    if (type !== undefined) onChange('type', type);
                   }}
                   disabled={disabled}
                 />
@@ -87,7 +87,7 @@ export function ParameterFields({
             <FormField label="KMS key ID" description="Optional. Leave blank to use the default key.">
               <Input
                 value={draft.keyId}
-                onChange={({ detail }) => onChange({ ...draft, keyId: detail.value })}
+                onChange={({ detail }) => onChange('keyId', detail.value)}
                 disabled={disabled}
               />
             </FormField>
@@ -99,7 +99,7 @@ export function ParameterFields({
           >
             <Textarea
               value={draft.value}
-              onChange={({ detail }) => onChange({ ...draft, value: detail.value })}
+              onChange={({ detail }) => onChange('value', detail.value)}
               autoComplete={false}
               spellcheck={false}
               disabled={disabled}
@@ -116,7 +116,7 @@ export function ParameterFields({
                 options={TIERS.map((tier) => ({ value: tier, label: tier }))}
                 onChange={({ detail }) => {
                   const tier = TIERS.find((tier) => tier === detail.selectedOption.value);
-                  if (tier !== undefined) onChange({ ...draft, tier });
+                  if (tier !== undefined) onChange('tier', tier);
                 }}
                 disabled={disabled}
               />
@@ -125,7 +125,7 @@ export function ParameterFields({
           <FormField label="Description" constraintText="Optional">
             <Textarea
               value={draft.description}
-              onChange={({ detail }) => onChange({ ...draft, description: detail.value })}
+              onChange={({ detail }) => onChange('description', detail.value)}
               disabled={disabled}
             />
           </FormField>
@@ -135,7 +135,7 @@ export function ParameterFields({
           >
             <Input
               value={draft.pattern}
-              onChange={({ detail }) => onChange({ ...draft, pattern: detail.value })}
+              onChange={({ detail }) => onChange('pattern', detail.value)}
               disabled={disabled}
             />
           </FormField>
@@ -145,7 +145,7 @@ export function ParameterFields({
               description="Optional. Enter a JSON array of policy objects."
               value={draft.policies}
               errorText={errors.policies}
-              onChange={(policies) => onChange({ ...draft, policies })}
+              onChange={(policies) => onChange('policies', policies)}
               disabled={disabled}
               rows={8}
             />
