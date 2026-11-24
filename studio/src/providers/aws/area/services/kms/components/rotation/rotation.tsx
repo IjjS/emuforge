@@ -23,6 +23,7 @@ import {
   type RotationAction,
 } from '../../rotation-api';
 import { RotationHistory } from './rotation-history';
+import { useRotationRetryFocus } from './use-rotation-retry-focus';
 
 const successMessage = {
   enable: 'Automatic rotation enabled.',
@@ -43,6 +44,7 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const { heading, retryRegion } = useRotationRetryFocus();
   const reasonId = useId();
   const [visit] = useState(() => (visits += 1));
   const [revision, setRevision] = useState(0);
@@ -74,6 +76,10 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
       ? undefined
       : statusOffline;
   const historyFailure = history.failure ?? (historyRetry ? undefined : historyOffline);
+  const statusRecovery =
+    statusFailure === undefined
+      ? undefined
+      : readFailureState(statusFailure, connection, `rotation settings (${statusFailure.operation})`);
   const enabled = status.data?.KeyRotationEnabled;
   // A failed refresh changes the read state, while the disabled toggle keeps its last confirmed action.
   if (status.isSuccess && enabled !== undefined && lastEnabled !== enabled) setLastEnabled(enabled);
@@ -189,18 +195,25 @@ function RotationVisit({ connection, keyId, keySpec, writesEnabled = true }: Rot
               </SpaceBetween>
             }
           >
-            Key rotation
+            <span ref={heading} tabIndex={-1}>
+              Key rotation
+            </span>
           </Header>
         }
       >
-        {statusFailure !== undefined ? (
-          <ReadFailure
-            state={readFailureState(statusFailure, connection, `rotation settings (${statusFailure.operation})`)}
-            onRetry={() => {
-              setStatusRetry(true);
-              void status.refetch();
-            }}
-          />
+        <div className="aws-area-announcer" role="status" aria-label="Rotation settings read status" aria-atomic="true">
+          {statusRecovery !== undefined && <span key={status.errorUpdateCount}>{statusRecovery.firstText}.</span>}
+        </div>
+        {statusRecovery !== undefined ? (
+          <div ref={retryRegion}>
+            <ReadFailure
+              state={statusRecovery}
+              onRetry={() => {
+                setStatusRetry(true);
+                void status.refetch();
+              }}
+            />
+          </div>
         ) : status.data === undefined ? (
           <StatusIndicator type="loading">Loading rotation settings…</StatusIndicator>
         ) : (
