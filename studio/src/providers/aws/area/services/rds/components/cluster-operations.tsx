@@ -28,18 +28,16 @@ interface OperationControlsProps {
   pending: boolean;
   reading: boolean;
   unavailable: ReadonlySet<ClusterAction>;
-  onSubmit: (id: string, action: ClusterOperation) => void;
+  onSubmit: (id: string, action: ClusterOperation) => Promise<'retain-draft' | 'discard-draft'>;
 }
 
 type Dialog = { kind: 'modify' | 'failover'; cluster: DbCluster };
+type DialogOperation = Extract<ClusterOperation, { kind: Dialog['kind'] }>;
+type Drafts = { [Kind in Dialog['kind']]?: Extract<DialogOperation, { kind: Kind }> | undefined };
 
 export function ClusterOperationControls({ cluster, pending, reading, unavailable, onSubmit }: OperationControlsProps) {
   const [dialog, setDialog] = useState<Dialog>();
-  const [wasPending, setWasPending] = useState(pending);
-  if (wasPending !== pending) {
-    setWasPending(pending);
-    if (!pending) setDialog(undefined);
-  }
+  const [drafts, setDrafts] = useState<Drafts>({});
 
   const reason = (action: ClusterAction) =>
     unavailable.has(action)
@@ -47,6 +45,15 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
       : clusterActionReason(action, cluster);
 
   const handleDismiss = () => {
+    if (dialog !== undefined) {
+      setDrafts((current) => ({ ...current, [dialog.kind]: undefined }));
+    }
+    setDialog(undefined);
+  };
+
+  const handleSubmit = async (id: string, action: DialogOperation) => {
+    const outcome = await onSubmit(id, action);
+    setDrafts((current) => ({ ...current, [action.kind]: outcome === 'retain-draft' ? action : undefined }));
     setDialog(undefined);
   };
 
@@ -68,7 +75,7 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
           if (kind === 'modify' || kind === 'failover') {
             setDialog({ kind, cluster });
           } else {
-            onSubmit(cluster.id, { kind });
+            void onSubmit(cluster.id, { kind });
           }
         }}
       >
@@ -77,20 +84,22 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
       {dialog?.kind === 'modify' && (
         <ModifyDialog
           cluster={dialog.cluster}
+          draft={drafts.modify?.changes}
           pending={pending}
           onDismiss={handleDismiss}
           onSave={(changes) => {
-            onSubmit(dialog.cluster.id, { kind: 'modify', changes });
+            void handleSubmit(dialog.cluster.id, { kind: 'modify', changes });
           }}
         />
       )}
       {dialog?.kind === 'failover' && (
         <FailoverDialog
           cluster={dialog.cluster}
+          draft={drafts.failover?.target}
           pending={pending}
           onDismiss={handleDismiss}
           onFailover={(target) => {
-            onSubmit(dialog.cluster.id, { kind: 'failover', target });
+            void handleSubmit(dialog.cluster.id, { kind: 'failover', target });
           }}
         />
       )}
@@ -106,14 +115,16 @@ interface DialogProps {
 
 function ModifyDialog({
   cluster,
+  draft,
   pending,
   onDismiss,
   onSave,
-}: DialogProps & { onSave: (changes: ClusterChanges) => void }) {
-  const originalRetention = cluster.backupRetentionPeriod?.toString() ?? '';
-  const [retention, setRetention] = useState(originalRetention);
+}: DialogProps & { draft: ClusterChanges | undefined; onSave: (changes: ClusterChanges) => void }) {
+  const [retention, setRetention] = useState(
+    (draft?.backupRetentionPeriod ?? cluster.backupRetentionPeriod)?.toString() ?? '',
+  );
   const [retentionEdited, setRetentionEdited] = useState(false);
-  const [protection, setProtection] = useState(cluster.deletionProtection);
+  const [protection, setProtection] = useState(draft?.deletionProtection ?? cluster.deletionProtection);
 
   const days = retentionDays(retention);
   const error = retentionEdited && days === undefined ? 'Enter a whole number from 1 to 35.' : undefined;
@@ -163,12 +174,14 @@ function ModifyDialog({
 
 function FailoverDialog({
   cluster,
+  draft,
   pending,
   onDismiss,
   onFailover,
-}: DialogProps & { onFailover: (target: string) => void }) {
-  const [target, setTarget] = useState('');
+}: DialogProps & { draft: string | undefined; onFailover: (target: string) => void }) {
+  const [target, setTarget] = useState(draft ?? '');
   const options = clusterReaders(cluster).map((id) => ({ label: id, value: id }));
+  const selected = options.find(({ value }) => value === target);
 
   return (
     <OperationDialog
@@ -178,14 +191,14 @@ function FailoverDialog({
       onDismiss={onDismiss}
       submitLabel="Fail over"
       pendingLabel="Requesting failover"
-      canSubmit={target !== ''}
+      canSubmit={selected !== undefined}
       onSubmit={() => {
         onFailover(target);
       }}
     >
       <FormField label="Target DB instance" description="The selected reader becomes the writer.">
         <Select
-          selectedOption={options.find(({ value }) => value === target) ?? null}
+          selectedOption={selected ?? null}
           options={options}
           placeholder="Select a reader DB instance"
           disabled={pending}
