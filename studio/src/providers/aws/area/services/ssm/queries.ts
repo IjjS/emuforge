@@ -176,12 +176,11 @@ export function useRefreshParameterSave(connection: AreaConnection) {
   };
 }
 
-export function useParameterHistory(connection: AreaConnection, name: string) {
-  const unsupported = useUnsupportedOperation(connection, GET_PARAMETER_HISTORY);
-  const listing = useTokenListing({
+export function useParameterHistory(connection: AreaConnection, name: string, enabled: boolean) {
+  return useTokenListing({
     key: [...targetKey(connection), 'history', name],
     endpoint: connection.engineOrigin,
-    enabled: unsupported.failure === undefined,
+    enabled,
     operation: GET_PARAMETER_HISTORY,
     read: async (endpoint, token, signal) => {
       const page = await getParameterHistory(endpoint, name, token, signal);
@@ -189,11 +188,6 @@ export function useParameterHistory(connection: AreaConnection, name: string) {
       return page;
     },
   });
-  return {
-    ...listing,
-    failure: unsupported.failure ?? listing.failure,
-    rememberFailure: unsupported.markUnsupported,
-  };
 }
 
 export function useRefreshParameterLabels(connection: AreaConnection) {

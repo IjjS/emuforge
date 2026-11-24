@@ -27,12 +27,14 @@ export function LabelDialog({
   name,
   version,
   mode,
+  onApplied,
   onClose,
 }: {
   connection: AreaConnection;
   name: string;
   version: HistoryVersion;
   mode: 'add' | 'remove';
+  onApplied: (version: number, labels: string[]) => void;
   onClose: () => void;
 }) {
   const adding = mode === 'add';
@@ -101,6 +103,7 @@ export function LabelDialog({
           ),
         },
       ]);
+      if (changed) onApplied(result.version, result.applied);
       refresh(name);
       onClose();
     } catch (error) {

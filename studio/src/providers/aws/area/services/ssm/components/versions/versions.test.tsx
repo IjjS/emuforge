@@ -270,7 +270,14 @@ describe('Parameter Store values and versions', () => {
     open();
     const current = await currentRegion();
     expect(namedButton('Show value', current)).toBeVisible();
-    expect(current.compareDocumentPosition(screen.getByText('ARN'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    const arnLabel = page
+      .findKeyValuePairs()
+      ?.findItems()
+      .find((item) => item.findLabel()?.getElement().textContent === 'ARN')
+      ?.findLabel()
+      ?.getElement();
+    assert(arnLabel);
+    expect(current.compareDocumentPosition(arnLabel)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(getParameter).not.toHaveBeenCalled();
   });
 
@@ -605,6 +612,14 @@ describe('Parameter Store values and versions', () => {
     assert(selection);
     expect(within(selection).getByRole('radio', { name: 'Version 1' })).toBeChecked();
 
+    toggleHistory();
+    expect(versionTable()).toBeUndefined();
+    await openHistory();
+    expect(await screen.findByText(refusal)).toBeVisible();
+    expectLabels(1, 'stable, release');
+    expect(versionTable()?.findRows()).toHaveLength(1);
+    await selectVersion();
+
     const retry = namedButton('Retry', document.body);
     expect(retry).toBeDisabled();
     expect(pagination()?.findPreviousPageButton().getElement()).toHaveAttribute('aria-disabled', 'true');
@@ -628,6 +643,7 @@ describe('Parameter Store values and versions', () => {
     await waitFor(() =>
       expect(flashContent('success')).toHaveTextContent(`Added labels for ${NAME}, version 1: candidate.`),
     );
+    expectLabels(1, 'stable, release, candidate');
     expect(addLabels.mock.calls).toEqual([
       [{ Name: NAME, ParameterVersion: 1, Labels: ['release'] }],
       [{ Name: NAME, ParameterVersion: 1, Labels: ['candidate'] }],
@@ -656,6 +672,64 @@ describe('Parameter Store values and versions', () => {
     expect(screen.queryByRole('region', { name: 'Version 1 actions' })).not.toBeInTheDocument();
     expect(getHistory).toHaveBeenCalledTimes(4);
     expect(getHistory).toHaveBeenLastCalledWith({ Name: NAME, WithDecryption: false, MaxResults: 50 });
+  });
+
+  it('applies only acknowledged labels to the retained row and removal choices', async () => {
+    getHistory.mockReturnValueOnce(history([{ ...first, Labels: [] }, second])).mockReturnValueOnce(notImplemented());
+    addLabels.mockReturnValueOnce(answer({ ParameterVersion: 1, InvalidLabels: ['reserved'] }));
+    removeLabels.mockReturnValueOnce(answer({ RemovedLabels: ['release'], InvalidLabels: ['candidate'] }));
+    open();
+    await openHistory();
+    const version = await selectVersion();
+    expectLabels(1, '-');
+    expect(namedButton('Remove labels', version)).toBeDisabled();
+
+    const add = await labelDialog('Add labels');
+    fireEvent.change(labelInput(add), { target: { value: 'release, reserved' } });
+    submitLabels(add, 'Add labels');
+    expect(await screen.findByText('The emulator answered 501 Not Implemented for GetParameterHistory.')).toBeVisible();
+    expectLabels(1, 'release');
+    expectLabels(2, 'latest');
+    expect(flashContent('warning')).toHaveTextContent('Rejected labels: reserved.');
+    expect(namedButton('Remove labels', versionRegion(1))).toBeEnabled();
+
+    const addAgain = await labelDialog('Add labels');
+    fireEvent.change(labelInput(addAgain), { target: { value: 'candidate' } });
+    submitLabels(addAgain, 'Add labels');
+    await waitFor(() => expectLabels(1, 'release, candidate'));
+
+    const remove = await labelDialog('Remove labels');
+    expect(
+      remove
+        .findContent()
+        .findAllCheckboxes()
+        .map((choice) => choice.findLabel().getElement().textContent),
+    ).toEqual(['release', 'candidate']);
+    enterRemoval(remove, ['release', 'candidate']);
+    submitLabels(remove, 'Remove labels');
+    await waitFor(() => expectLabels(1, 'candidate'));
+    expect(flashContent('warning')).toHaveTextContent('Rejected labels: candidate.');
+    expectLabels(2, 'latest');
+
+    const removeAgain = await labelDialog('Remove labels');
+    expect(
+      removeAgain
+        .findContent()
+        .findAllCheckboxes()
+        .map((choice) => choice.findLabel().getElement().textContent),
+    ).toEqual(['candidate']);
+    enterRemoval(removeAgain, ['candidate']);
+    submitLabels(removeAgain, 'Remove labels');
+    await waitFor(() => expectLabels(1, '-'));
+    expect(namedButton('Remove labels', versionRegion(1))).toBeDisabled();
+    expect(removeLabels.mock.calls).toEqual([
+      [{ Name: NAME, ParameterVersion: 1, Labels: ['release', 'candidate'] }],
+      [{ Name: NAME, ParameterVersion: 1, Labels: ['candidate'] }],
+    ]);
+    expect(getHistory.mock.calls).toEqual([
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50 }],
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50 }],
+    ]);
   });
 
   it('V10 retains the label input after a refusal and allows a corrected submission', async () => {

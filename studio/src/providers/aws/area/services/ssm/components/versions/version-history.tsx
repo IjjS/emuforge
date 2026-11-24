@@ -12,7 +12,12 @@ import { actionFailureItem, ReadFailure, readFailureState } from '../../../../co
 import { creationDateText } from '../../../../components/format-date';
 import { ValueText } from '../../../../components/value-text';
 import { useParameterHistory, useUnsupportedOperation } from '../../queries';
-import { LABEL_PARAMETER_VERSION, UNLABEL_PARAMETER_VERSION, type HistoryVersion } from '../../version-api';
+import {
+  GET_PARAMETER_HISTORY,
+  LABEL_PARAMETER_VERSION,
+  UNLABEL_PARAMETER_VERSION,
+  type HistoryVersion,
+} from '../../version-api';
 import { LabelDialog } from './label-dialog';
 import { ValueReveal } from './value-reveal';
 
@@ -22,8 +27,11 @@ interface HistoryProps {
   secure: boolean;
 }
 
+type LabelMode = 'add' | 'remove';
+
 export function VersionHistory(props: HistoryProps) {
   const [expanded, setExpanded] = useState(false);
+  const unsupported = useUnsupportedOperation(props.connection, GET_PARAMETER_HISTORY);
   return (
     <ExpandableSection
       variant="container"
@@ -31,25 +39,36 @@ export function VersionHistory(props: HistoryProps) {
       expanded={expanded}
       onChange={({ detail }) => setExpanded(detail.expanded)}
     >
-      {expanded && <HistoryTable {...props} />}
+      {(expanded || unsupported.failure !== undefined) && (
+        <HistoryTable {...props} expanded={expanded} unsupported={unsupported} />
+      )}
     </ExpandableSection>
   );
 }
 
-function HistoryTable({ connection, name, secure }: HistoryProps) {
-  const listing = useParameterHistory(connection, name);
-  const { failure, rememberFailure } = listing;
+function HistoryTable({
+  connection,
+  name,
+  secure,
+  expanded,
+  unsupported,
+}: HistoryProps & { expanded: boolean; unsupported: ReturnType<typeof useUnsupportedOperation> }) {
+  const { failure: refusalFailure, markUnsupported } = unsupported;
+  const listing = useParameterHistory(connection, name, refusalFailure === undefined);
+  const failure = refusalFailure ?? listing.failure;
   useEffect(() => {
-    if (failure?.kind === 'not-implemented') rememberFailure(failure);
-  }, [failure, rememberFailure]);
+    if (failure?.kind === 'not-implemented') markUnsupported(failure);
+  }, [failure, markUnsupported]);
   const [selectedVersion, setSelectedVersion] = useState<number>();
-  const [confirmedItems, setConfirmedItems] = useState<HistoryVersion[]>();
-  // The detail keys this table's lifetime to the parameter and connection.
-  if (listing.items !== undefined && listing.items !== confirmedItems) {
-    setConfirmedItems(listing.items);
+  const [confirmedPage, setConfirmedPage] = useState<{ read: HistoryVersion[]; items: HistoryVersion[] }>();
+  // A new read replaces the snapshot. Acknowledged writes revise its rows until that read arrives.
+  if (listing.items !== undefined && listing.items !== confirmedPage?.read) {
+    setConfirmedPage({ read: listing.items, items: listing.items });
   }
+  if (!expanded) return null;
+
   const unavailable = failure?.kind === 'not-implemented';
-  const items = (unavailable ? confirmedItems : listing.items) ?? [];
+  const items = (unavailable ? confirmedPage?.items : listing.items) ?? [];
   const version = items.find(({ Version }) => Version === selectedVersion);
   const feedback = unavailable && actionFailureItem(failure, 'Loading version history', connection.engineOrigin);
   const refusal = feedback && (
@@ -59,6 +78,22 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
       <Button disabled>Retry</Button>
     </SpaceBetween>
   );
+
+  function handleLabelsApplied(version: number, mode: LabelMode, applied: string[]) {
+    setConfirmedPage((page) => {
+      if (page === undefined) return page;
+      return {
+        ...page,
+        items: page.items.map((item) => {
+          if (item.Version !== version) return item;
+          const labels = item.Labels ?? [];
+          const Labels =
+            mode === 'add' ? [...new Set([...labels, ...applied])] : labels.filter((label) => !applied.includes(label));
+          return { ...item, Labels };
+        }),
+      };
+    });
+  }
 
   return (
     <SpaceBetween size="m">
@@ -104,7 +139,7 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
               onChange={({ detail }) => {
                 if (unavailable || listing.loading) return;
                 setSelectedVersion(undefined);
-                setConfirmedItems(undefined);
+                setConfirmedPage(undefined);
                 listing.goToPage(detail.currentPageIndex);
               }}
             />
@@ -120,14 +155,30 @@ function HistoryTable({ connection, name, secure }: HistoryProps) {
         }
       />
       {version && (
-        <VersionActions key={version.Version} connection={connection} name={name} version={version} secure={secure} />
+        <VersionActions
+          key={version.Version}
+          connection={connection}
+          name={name}
+          version={version}
+          secure={secure}
+          onLabelsApplied={handleLabelsApplied}
+        />
       )}
     </SpaceBetween>
   );
 }
 
-function VersionActions({ connection, name, version, secure }: HistoryProps & { version: HistoryVersion }) {
-  const [mode, setMode] = useState<'add' | 'remove'>();
+function VersionActions({
+  connection,
+  name,
+  version,
+  secure,
+  onLabelsApplied,
+}: HistoryProps & {
+  version: HistoryVersion;
+  onLabelsApplied: (version: number, mode: LabelMode, labels: string[]) => void;
+}) {
+  const [mode, setMode] = useState<LabelMode>();
   const add = useUnsupportedOperation(connection, LABEL_PARAMETER_VERSION);
   const remove = useUnsupportedOperation(connection, UNLABEL_PARAMETER_VERSION);
 
@@ -165,6 +216,7 @@ function VersionActions({ connection, name, version, secure }: HistoryProps & { 
           name={name}
           version={version}
           mode={mode}
+          onApplied={(version, labels) => onLabelsApplied(version, mode, labels)}
           onClose={() => setMode(undefined)}
         />
       )}
