@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import type { RequestFailure } from '../../../../../lib/aws/request';
+import { reportedServiceCode, type RequestFailure } from '../../../../../lib/aws/request';
 import type { AreaConnection } from '../../components/emulator-line';
 import { readFailureState as areaReadFailureState } from '../../components/failure-states';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
@@ -81,14 +81,29 @@ export function readFailureState(failure: RequestFailure, connection: AreaConnec
     );
   }
   if (failure.kind === 'emulator-did-not-answer' && result?.kind === 'connected') {
-    return areaReadFailureState(
+    const reportedStartPort =
+      reportedServiceCode(failure) === 'EmulatorUnavailable'
+        ? /^the emulator at \S+ is not reachable \(not_started\): .*\bstart the emulator on port (\d{1,5})\b/.exec(
+            failure.message,
+          )?.[1]
+        : undefined;
+    const port = Number(reportedStartPort);
+    const notStarted = port > 0 && port <= 65_535;
+    const state = areaReadFailureState(
       failure,
       {
         ...connection,
-        result: { ...result, kind: 'emulator-unreachable', reason: 'timeout', message: failure.message },
+        result: {
+          ...result,
+          kind: 'emulator-unreachable',
+          reason: notStarted ? 'not_started' : 'timeout',
+          emulator: notStarted ? { ...result.emulator, port } : result.emulator,
+          message: failure.message,
+        },
       },
       thing,
     );
+    return notStarted ? { ...state, detail: failure.message } : state;
   }
   const state = areaReadFailureState(failure, connection, thing);
   // Before the first health result, only the engine's request diagnostic can name the emulator.
