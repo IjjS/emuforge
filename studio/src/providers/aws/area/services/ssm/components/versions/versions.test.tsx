@@ -621,6 +621,40 @@ describe('Parameter Store values and versions', () => {
     ]);
   });
 
+  it('keeps the selected version actions in the header of a full history page after a refused Next', async () => {
+    const rows = [first, second, ...Array.from({ length: 48 }, (_, index) => ({ ...first, Version: index + 3 }))];
+    getHistory.mockReturnValueOnce(history(rows, 'page-two')).mockReturnValueOnce(notImplemented());
+    open();
+    await openHistory();
+    await selectVersion();
+    changePage('next');
+    await expectRefusedHistory(1);
+    expect(versionTable()?.findRows()).toHaveLength(50);
+    expect(versionRadio(1)).toBeChecked();
+
+    const radio = versionRadio(2);
+    radio.focus();
+    fireEvent.click(radio);
+    expect(radio).toHaveFocus();
+    expect(radio).toBeChecked();
+
+    const header = versionTable()?.findHeaderSlot()?.getElement();
+    const actions = versionRegion(2);
+    expect(header).toContainElement(actions);
+    expect(screen.queryByRole('region', { name: 'Version 1 actions' })).not.toBeInTheDocument();
+    expect(namedButton('Add labels', actions)).toBeEnabled();
+    expect(namedButton('Remove labels', actions)).toBeEnabled();
+    expect(getParameter).not.toHaveBeenCalled();
+
+    click('Show value', actions);
+    expect(await within(actions).findByText(CURRENT)).toBeVisible();
+    expect(getParameter.mock.calls).toEqual([[{ Name: `${NAME}:2`, WithDecryption: true }]]);
+    expect(getHistory.mock.calls).toEqual([
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50 }],
+      [{ Name: NAME, WithDecryption: false, MaxResults: 50, NextToken: 'page-two' }],
+    ]);
+  });
+
   it('retains the selected history page when collapsed during a successful label write refresh that returns 501', async () => {
     const refresh = deferredResponse();
     getHistory

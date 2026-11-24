@@ -134,6 +134,18 @@ function HistoryTable({ connection, name, secure, expanded }: HistoryProps & { e
         onSelectionChange={({ detail }) => setSelectedVersion(detail.selectedItems[0]?.Version)}
         loading={!failure && listing.loading}
         loadingText="Loading version history…"
+        header={
+          version && (
+            <VersionActions
+              key={version.Version}
+              connection={connection}
+              name={name}
+              version={version}
+              secure={secure}
+              onLabelsApplied={handleLabelsApplied}
+            />
+          )
+        }
         pagination={
           (page.openEnd || page.pagesCount > 1) && (
             <Pagination
@@ -162,16 +174,6 @@ function HistoryTable({ connection, name, secure, expanded }: HistoryProps & { e
           ))
         }
       />
-      {version && (
-        <VersionActions
-          key={version.Version}
-          connection={connection}
-          name={name}
-          version={version}
-          secure={secure}
-          onLabelsApplied={handleLabelsApplied}
-        />
-      )}
     </SpaceBetween>
   );
 }
