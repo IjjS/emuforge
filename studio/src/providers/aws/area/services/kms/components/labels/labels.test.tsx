@@ -154,11 +154,19 @@ function clickButton(name: string) {
 async function submitLabel(name: string, field: string, value: string) {
   const opener = screen.getByRole('button', { name });
   await userEvent.click(opener);
-  const modal = await screen.findByRole('dialog', { name });
-  const dialog = within(modal);
-  fireEvent.change(dialog.getByRole('textbox', { name: field }), { target: { value } });
-  await userEvent.click(dialog.getByRole('button', { name }));
-  return { opener, modal };
+  const modal = await waitFor(() => {
+    const dialog = page.findModal();
+    if (!dialog?.isVisible()) throw new Error(`Missing ${name} modal`);
+    return dialog;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent(name);
+  expect(modal.getElement()).toHaveAccessibleName(name);
+  const footer = modal.findFooter();
+  if (!footer) throw new Error(`Missing ${name} modal footer`);
+  const input = within(modal.findContent().getElement()).getByRole('textbox', { name: field });
+  fireEvent.change(input, { target: { value } });
+  await userEvent.click(within(footer.getElement()).getByRole('button', { name }));
+  return { opener, modal: modal.getElement() };
 }
 
 function deferred<T>() {
