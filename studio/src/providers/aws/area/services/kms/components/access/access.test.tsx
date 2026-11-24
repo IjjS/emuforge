@@ -188,7 +188,7 @@ async function expectOpenRefusal(
   const alert = dialog.content.getByRole('alert');
   expect(alert).toHaveTextContent(`${operation} failed`);
   expect(alert).toContainElement(reason);
-  expect(alert).toContainElement(document.activeElement);
+  expect(alert.contains(document.activeElement)).toBe(true);
   expect(document.activeElement).toContainElement(reason);
   expect(published).toHaveBeenCalledTimes(1);
   expect(published.mock.calls[0]?.[0][0]).toHaveProperty('announcedInDialog', true);
