@@ -263,6 +263,39 @@ describe('Create key', () => {
     expect(successText()).toEqual([]);
   });
 
+  it.each([false, true])(
+    'keeps focus visible on failure when focus moved before the response: %s',
+    async (moveFocus) => {
+      const reply = deferredReply();
+      const { count } = openCreate((operation) => (operation === 'CreateKey' ? reply.promise : undefined));
+      await waitFor(() => expect(heading('Create key')).toBeVisible());
+      const submit = area()
+        ?.findAllButtons()
+        .find((button) => button.findTextRegion()?.getElement().textContent === 'Create key')
+        ?.getElement();
+      if (!submit) throw new Error('Missing Create key button');
+      const scroll = vi.fn();
+      Object.defineProperty(submit, 'scrollIntoView', { value: scroll });
+      submit.focus();
+      fireEvent.click(submit);
+      await waitFor(() => expect(count('CreateKey')).toBe(1));
+
+      const breadcrumb = PAGE.findBreadcrumbGroup()?.findBreadcrumbLink(1)?.getElement();
+      if (!breadcrumb) throw new Error('Missing breadcrumb link');
+      if (moveFocus) breadcrumb.focus();
+      const expectedFocus = moveFocus ? breadcrumb : submit;
+      expect(expectedFocus).toHaveFocus();
+
+      await act(async () => {
+        reply.resolve({ body: { __type: 'ValidationException', message: 'Create refused' }, status: 400 });
+      });
+
+      await waitFor(() => expect(area()?.findFlashbar()?.findItemsByType('error')[0]?.getElement()).toBeVisible());
+      expect(expectedFocus).toHaveFocus();
+      expect(scroll).toHaveBeenCalledTimes(moveFocus ? 0 : 1);
+    },
+  );
+
   it('returns to the key list without creating a key when an untouched form is canceled', async () => {
     const { router, count } = openCreate();
     await waitFor(() => expect(heading('Create key')).toBeVisible());

@@ -352,13 +352,27 @@ describe('Key lifecycle', () => {
     });
     open();
     await expectActions(['Edit description', 'Enable key', 'Schedule key deletion']);
-    action('Enable key');
+    const enable = within(lifecycle()).getByRole('button', { name: 'Enable key' });
+    enable.focus();
+    fireEvent.click(enable);
     await waitFor(() => expect(sent(EnableKeyCommand)).toHaveLength(1));
     const writeOptions = sent(EnableKeyCommand)[0]?.[1] as { abortSignal: AbortSignal } | undefined;
+    expect(enable).toHaveFocus();
+    expect(enable).not.toBeDisabled();
+    expect(enable).toHaveAttribute('aria-disabled', 'true');
+    expect(within(lifecycle()).getByRole('button', { name: 'Edit description' })).toBeDisabled();
+    expect(within(lifecycle()).getByRole('button', { name: 'Schedule key deletion' })).toBeDisabled();
+    fireEvent.click(enable);
+    expect(sent(EnableKeyCommand)).toHaveLength(1);
 
     holdRefresh = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const refreshButton = screen.getByRole('button', { name: 'Refresh' });
+    refreshButton.focus();
+    fireEvent.click(refreshButton);
     await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(2));
+    expect(refreshButton).toHaveFocus();
+    expect(refreshButton).not.toBeDisabled();
+    expect(refreshButton).toHaveAttribute('aria-disabled', 'true');
     expect(field('Status')).toHaveTextContent('Disabled');
     expect(usable(within(lifecycle()).getByRole('button', { name: 'Enable key' }))).toBe(false);
     expect(writeOptions?.abortSignal.aborted).toBe(false);
@@ -367,11 +381,33 @@ describe('Key lifecycle', () => {
     await act(async () => write.resolve({}));
     await expectStatus('Enabled');
     expect(flashText()).toContain('Key enabled.');
+    await waitFor(() => expect(refreshButton).not.toHaveAttribute('aria-disabled', 'true'));
+    expect(refreshButton).toHaveFocus();
 
     await act(async () => refresh.resolve({ KeyMetadata: key('Disabled') }));
     expect(field('Status')).toHaveTextContent('Enabled');
     expect(flashText()).toContain('Key enabled.');
     expect(sent(EnableKeyCommand)).toHaveLength(1);
+  });
+
+  it('returns focus to the unavailable opener when a lifecycle dialog closes after a 501', async () => {
+    emulate(key('Enabled'), (command) => {
+      if (command instanceof ScheduleKeyDeletionCommand) throw NOT_IMPLEMENTED;
+      return undefined;
+    });
+    open();
+    await expectActions(['Edit description', 'Disable key', 'Schedule key deletion']);
+    await opened('Schedule key deletion');
+    dialogButton('Schedule deletion').focus();
+    confirm('Schedule deletion');
+
+    const opener = within(lifecycle()).getByRole('button', { name: 'Schedule key deletion' });
+    await waitFor(() => expect(opener).toHaveFocus());
+    expect(PAGE.findModal()).toBeNull();
+    expect(opener).toHaveAttribute('aria-disabled', 'true');
+    expect(opener).toHaveAccessibleDescription('Not implemented by the emulator (ScheduleKeyDeletion)');
+    expect(flashText('info')).toContain('ScheduleKeyDeletion');
+    expect(sent(ScheduleKeyDeletionCommand)).toHaveLength(1);
   });
 
   it('names EnableKey when it is not implemented and keeps enabling on the page as unavailable', async () => {

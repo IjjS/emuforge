@@ -78,15 +78,21 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   const queryClient = useQueryClient();
   const action = useLifecycleAction(connection, keyId);
   const [attemptedRetry, setAttemptedRetry] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const offline = connectionFailure(connection, KMS_OPERATIONS.describeKey);
   const read = useKmsKey(connection.engineOrigin, keyId, offline === undefined || attemptedRetry);
   const failure = read.failure ?? (attemptedRetry ? undefined : offline);
   const handleRefresh = () => {
+    if (refreshing) return;
     setAttemptedRetry(true);
+    setRefreshing(true);
     const endpoint = connection.engineOrigin;
     // Keep the previous metadata mounted while this visit's query reads again.
     const detail = { queryKey: [...KMS_KEYS.detail(keyId), endpoint] };
-    void queryClient.cancelQueries(detail).then(() => queryClient.invalidateQueries(detail));
+    void queryClient
+      .cancelQueries(detail)
+      .then(() => queryClient.invalidateQueries(detail))
+      .finally(() => setRefreshing(false));
     const panelReads = [
       ['kms', 'aliases', keyId],
       ['kms', 'tags', keyId],
@@ -104,7 +110,18 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
   return (
     <ContentLayout
       header={
-        <Header variant="h1" actions={<Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />}>
+        <Header
+          variant="h1"
+          actions={
+            <Button
+              iconName="refresh"
+              ariaLabel="Refresh"
+              loading={refreshing}
+              loadingText="Refreshing key metadata"
+              onClick={handleRefresh}
+            />
+          }
+        >
           Key details
         </Header>
       }

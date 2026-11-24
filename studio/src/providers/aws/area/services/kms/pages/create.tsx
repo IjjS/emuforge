@@ -7,7 +7,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea from '@cloudscape-design/components/textarea';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
 import { DiscardDialog } from '../../../components/discard-dialog';
@@ -37,17 +37,28 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [failureFocus, setFailureFocus] = useState<{ element: HTMLElement }>();
   const endpoint = connection.engineOrigin;
   const connected = connection.result === undefined || connection.result.kind === 'connected';
+
+  useLayoutEffect(() => {
+    const element = failureFocus?.element;
+    if (element !== undefined && element.ownerDocument.activeElement === element) {
+      element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [failureFocus]);
 
   const handleCancel = () => {
     if (description !== '') setAsking(true);
     else void navigate(KEYS_PATH);
   };
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (endpoint === undefined || !connected || unavailable || inFlight.current) return;
+    const form = event.currentTarget;
+    const active = form.ownerDocument.activeElement;
+    const initiatingFocus = active instanceof HTMLElement && form.contains(active) ? active : undefined;
     const signal = signalForPage();
     inFlight.current = true;
     setPending(true);
@@ -59,6 +70,9 @@ export function CreateKeyPage({ connection }: ScreenPageProps) {
       const reason = failureOf(error, OPERATION);
       if (reason.kind === 'not-implemented') setUnavailable(true);
       flash.show([actionFailureItem(reason, 'Key creation', endpoint)]);
+      if (initiatingFocus !== undefined && form.ownerDocument.activeElement === initiatingFocus) {
+        setFailureFocus({ element: initiatingFocus });
+      }
       return;
     } finally {
       inFlight.current = false;

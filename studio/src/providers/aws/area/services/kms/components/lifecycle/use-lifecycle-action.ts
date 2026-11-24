@@ -24,8 +24,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
   const connected = connection.result === undefined || connection.result.kind === 'connected';
 
   const isUnavailable = (operation: LifecycleOperation) => unavailable.includes(operation);
-  const disabled = (operation: LifecycleOperation) =>
-    endpoint === undefined || !connected || pending !== undefined || isUnavailable(operation);
+  const disabled = (operation: LifecycleOperation) => endpoint === undefined || !connected || isUnavailable(operation);
 
   /**
    * Sends `request`. `close` ends the dialog that asked for it, if any: on success, and on a 501, whose action then
@@ -35,7 +34,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
     operation: LifecycleOperation,
     request: (endpoint: string, signal: AbortSignal) => Promise<unknown>,
     success: string,
-    close?: () => void,
+    close?: (unavailableOperation?: LifecycleOperation) => void,
   ) => {
     if (endpoint === undefined || disabled(operation) || inFlight.current) return;
     const signal = signalForPage();
@@ -50,7 +49,7 @@ export function useLifecycleAction(connection: AreaConnection, keyId: string) {
       const item = actionFailureItem(reason, operation, endpoint);
       if (reason.kind === 'not-implemented') {
         setUnavailable((operations) => [...operations, operation]);
-        close?.();
+        close?.(operation);
         flash.show([item]);
       } else if (close !== undefined) {
         setFailure(item);
