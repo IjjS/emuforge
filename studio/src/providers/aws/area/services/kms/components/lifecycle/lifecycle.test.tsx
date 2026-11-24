@@ -296,7 +296,9 @@ describe('Key detail panel lifetime', () => {
     const options = writes()[0]?.[1] as { abortSignal: AbortSignal } | undefined;
     if (!options) throw new Error('Missing panel request signal');
 
-    await act(async () => readback.reject(new NotFoundException({ message: 'Key not found', $metadata: {} })));
+    await act(async () =>
+      readback.reject(new NotFoundException({ message: 'Key not found', $metadata: { httpStatusCode: 400 } })),
+    );
     expect(await screen.findByText('Key not found')).toBeVisible();
     const back = screen.getByRole('link', { name: 'View customer managed keys' });
     expect(back).toHaveAttribute('href', KEYS_PATH);
@@ -333,7 +335,7 @@ describe('Key detail panel lifetime', () => {
     expect(options.abortSignal.aborted).toBe(false);
     expect(back).toHaveFocus();
     expect(PAGE.findModal()).toBeNull();
-    expect(opener).toBeDisabled();
+    expect(usable(opener)).toBe(false);
     fireEvent.click(opener);
     expect(writes()).toHaveLength(1);
   });
