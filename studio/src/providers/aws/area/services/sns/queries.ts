@@ -11,14 +11,18 @@ import {
   listFunctionChoices,
   listQueueChoices,
   listSubscriptions,
+  listTopicTags,
   listTopics,
   OPERATIONS,
   publish,
   readDelivery,
   readQueue,
   setSubscriptionSetting,
+  setTopicSetting,
   subscribe,
+  tagTopic,
   unsubscribe,
+  untagTopic,
   type AllowOutcome,
   type AllowTarget,
   type Delivery,
@@ -35,6 +39,7 @@ import {
   type SubscriptionSetting,
   type SubscriptionSettingsAttributes,
   type TopicRead,
+  type TopicTag,
 } from './api';
 
 // The TanStack Query hooks of SNS's screens (issue 536, design "States and reading again"). Every read is a request of
@@ -166,7 +171,7 @@ function usePagedListing<T>({ key, endpoint, enabled, operation, read }: PagedOp
       // read empty (its last row deleted, here or elsewhere) is never shown: the listing goes to its first page.
       setPosition((current) => {
         const at = current.listing === listing ? current : fresh(listing);
-        if (at.page !== page) {
+        if (signal.aborted || at.page !== page) {
           return current;
         }
         if (page > 0 && answer.items.length === 0) {
@@ -263,26 +268,62 @@ export interface SnsRead<T> {
   refresh: () => void;
 }
 
-/** S3's and S4's read of the topic `arn`: its attributes, or "not found". */
-export function useTopic(endpoint: string | undefined, arn: string): SnsRead<TopicRead> {
+function topicKey(endpoint: string | undefined, arn: string) {
+  return [...SNS_KEY, 'topic', arn, endpoint];
+}
+
+/** The topic's attributes, or "not found". */
+export function useTopic(endpoint: string | undefined, arn: string, enabled = true): SnsRead<TopicRead> {
   const [mount] = useState(() => (mounts += 1));
   const [generation, setGeneration] = useState(0);
   const query = useQuery({
-    queryKey: [...SNS_KEY, 'topic', arn, endpoint, mount, generation],
+    queryKey: [...topicKey(endpoint, arn), mount, generation],
     queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : getTopic(endpoint, arn, signal)),
-    enabled: endpoint !== undefined,
+    enabled: enabled && endpoint !== undefined,
     staleTime: 0,
     gcTime: 0,
     retry: false,
     structuralSharing: false,
   });
   const refresh = useCallback(() => {
-    setGeneration((current) => current + 1);
-  }, []);
+    if (enabled) {
+      setGeneration((current) => current + 1);
+    }
+  }, [enabled]);
   return {
     value: query.data,
     failure: query.isError ? failureOf(query.error, OPERATIONS.getTopicAttributes) : undefined,
-    loading: query.isFetching || endpoint === undefined,
+    loading: query.isFetching || (enabled && endpoint === undefined),
+    refresh,
+  };
+}
+
+function topicTagsKey(endpoint: string | undefined, arn: string) {
+  return [...SNS_KEY, 'topic-tags', arn, endpoint];
+}
+
+/** The selected topic's tags, read only while enabled. */
+export function useTopicTags(endpoint: string | undefined, arn: string, enabled = true): SnsRead<TopicTag[]> {
+  const canRead = enabled && endpoint !== undefined;
+  const query = useQuery({
+    queryKey: topicTagsKey(endpoint, arn),
+    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : listTopicTags(endpoint, arn, signal)),
+    enabled: canRead,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(() => {
+    if (canRead) {
+      void refetch();
+    }
+  }, [canRead, refetch]);
+  return {
+    value: query.isError ? undefined : query.data,
+    failure: query.isError ? failureOf(query.error, OPERATIONS.listTagsForResource) : undefined,
+    loading: query.isFetching || (enabled && endpoint === undefined),
     refresh,
   };
 }
@@ -493,6 +534,42 @@ export function useCreateTopic(
 /** "Delete" of a topic. */
 export function useDeleteTopic(endpoint: string | undefined): (arn: string, signal: AbortSignal) => Promise<void> {
   return useAction(endpoint, deleteTopic);
+}
+
+function useTopicWrite<Value>(
+  endpoint: string | undefined,
+  write: (endpoint: string, arn: string, value: Value, signal: AbortSignal) => Promise<void>,
+  refreshTags = false,
+) {
+  const client = useQueryClient();
+  const save = useAction(endpoint, write, false);
+  return useCallback(
+    async (arn: string, value: Value, signal: AbortSignal) => {
+      await save(arn, value, signal);
+      const keys = [topicKey(endpoint, arn), [...SNS_KEY, 'topics', endpoint]];
+      if (refreshTags) {
+        keys.push(topicTagsKey(endpoint, arn));
+      }
+      // Invalidating alone can reuse an in-flight initial read started before the write.
+      for (const queryKey of keys) {
+        void client.cancelQueries({ queryKey });
+        void client.invalidateQueries({ queryKey });
+      }
+    },
+    [client, endpoint, refreshTags, save],
+  );
+}
+
+export function useSetTopicSetting(endpoint: string | undefined) {
+  return useTopicWrite(endpoint, setTopicSetting);
+}
+
+export function useTagTopic(endpoint: string | undefined) {
+  return useTopicWrite(endpoint, tagTopic, true);
+}
+
+export function useUntagTopic(endpoint: string | undefined) {
+  return useTopicWrite(endpoint, untagTopic, true);
 }
 
 /** "Create subscription": the subscription's ARN. */

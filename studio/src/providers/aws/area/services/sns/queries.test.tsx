@@ -14,11 +14,14 @@ import {
   useFunctionChoices,
   useQueueChoices,
   useSetSubscriptionSetting,
+  useSetTopicSetting,
   useSubscribe,
   useSubscriptionListing,
   useSubscriptionSettings,
+  useTagTopic,
   useTopic,
   useTopicListing,
+  useTopicTags,
   useUnsubscribe,
 } from './queries';
 
@@ -32,6 +35,9 @@ vi.mock('./api', async (importOriginal) => {
     listTopics: vi.fn(),
     listSubscriptions: vi.fn(),
     getTopic: vi.fn(),
+    setTopicSetting: vi.fn(),
+    listTopicTags: vi.fn(),
+    tagTopic: vi.fn(),
     getSubscriptionSettings: vi.fn(),
     setSubscriptionSetting: vi.fn(),
     readDelivery: vi.fn(),
@@ -366,6 +372,121 @@ describe('the deliveries', () => {
       expect(result.current.map((read) => read.value)).toEqual([{ kind: 'allowed' }, { kind: 'allowed' }]);
     });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('topic settings', () => {
+  const oldTopic = {
+    found: true,
+    topic: { arn: TOPIC, displayName: 'Original', fifo: false, contentBasedDeduplication: false },
+  };
+  const newTopic = { ...oldTopic, topic: { ...oldTopic.topic, displayName: 'Updated' } };
+  const setting = { name: 'DisplayName', value: 'Updated' } as const;
+
+  it('shows only the current topic tags when the previous ARN answers late', async () => {
+    const tags = held(api.listTopicTags);
+    const { result, rerender } = renderHook(({ arn }) => useTopicTags(ENDPOINT, arn), {
+      wrapper,
+      initialProps: { arn: TOPIC },
+    });
+    const previous = await nth(tags, 0);
+    const nextArn = `${TOPIC}-next`;
+    rerender({ arn: nextArn });
+    const current = await nth(tags, 1);
+    expect(current.args.slice(0, 2)).toEqual([ENDPOINT, nextArn]);
+    expect(previous.signal.aborted).toBe(true);
+    const currentTags = [{ key: 'color', value: 'blue' }];
+    act(() => current.resolve(currentTags));
+    await waitFor(() => expect(result.current.value).toEqual(currentTags));
+    await act(async () => previous.resolve([{ key: 'color', value: 'red' }]));
+    expect(result.current.value).toEqual(currentTags);
+  });
+
+  it('keeps the new attributes when a read started before the write answers late', async () => {
+    const topics = held(api.getTopic);
+    const write = held(api.setTopicSetting);
+    const { result } = renderHook(() => ({ topic: useTopic(ENDPOINT, TOPIC), save: useSetTopicSetting(ENDPOINT) }), {
+      wrapper,
+    });
+    const previous = await nth(topics, 0);
+    const save = result.current.save(TOPIC, setting, new AbortController().signal);
+    const writeCall = await nth(write, 0);
+    await act(async () => {
+      writeCall.resolve(undefined);
+      await save;
+    });
+
+    const current = await nth(topics, 1);
+    expect(current.args.slice(0, 2)).toEqual([ENDPOINT, TOPIC]);
+    expect(previous.signal.aborted).toBe(true);
+    act(() => current.resolve(newTopic));
+    await waitFor(() => expect(result.current.topic.value).toEqual(newTopic));
+    await act(async () => previous.resolve(oldTopic));
+    expect(result.current.topic.value).toEqual(newTopic);
+  });
+
+  it('keeps the new tags when a read started before the write answers late', async () => {
+    const tags = held(api.listTopicTags);
+    const write = held(api.tagTopic);
+    const { result } = renderHook(() => ({ tags: useTopicTags(ENDPOINT, TOPIC), save: useTagTopic(ENDPOINT) }), {
+      wrapper,
+    });
+    const previous = await nth(tags, 0);
+    const tag = { key: 'color', value: 'blue' };
+    const save = result.current.save(TOPIC, tag, new AbortController().signal);
+    const writeCall = await nth(write, 0);
+    await act(async () => {
+      writeCall.resolve(undefined);
+      await save;
+    });
+
+    const current = await nth(tags, 1);
+    expect(current.args.slice(0, 2)).toEqual([ENDPOINT, TOPIC]);
+    expect(previous.signal.aborted).toBe(true);
+    act(() => current.resolve([tag]));
+    await waitFor(() => expect(result.current.tags.value).toEqual([tag]));
+    await act(async () => previous.resolve([{ key: 'color', value: 'red' }]));
+    expect(result.current.tags.value).toEqual([tag]);
+  });
+
+  it('refreshes the topic detail and list after a successful attribute write', async () => {
+    const topics = held(api.getTopic);
+    const lists = held(api.listTopics);
+    const write = held(api.setTopicSetting);
+    const { result } = renderHook(
+      () => ({ topic: useTopic(ENDPOINT, TOPIC), list: useTopicListing(ENDPOINT), save: useSetTopicSetting(ENDPOINT) }),
+      { wrapper },
+    );
+    const topic = await nth(topics, 0);
+    const list = await nth(lists, 0);
+    act(() => {
+      topic.resolve(oldTopic);
+      list.resolve({ arns: [TOPIC] });
+    });
+    await waitFor(() => {
+      expect(result.current.topic.value).toEqual(oldTopic);
+      expect(result.current.list.items).toEqual([TOPIC]);
+    });
+
+    const save = result.current.save(TOPIC, setting, new AbortController().signal);
+    const writeCall = await nth(write, 0);
+    expect(topics).toHaveLength(1);
+    expect(lists).toHaveLength(1);
+    await act(async () => {
+      writeCall.resolve(undefined);
+      await save;
+    });
+    const updatedTopic = await nth(topics, 1);
+    const updatedList = await nth(lists, 1);
+    const updatedArns = [TOPIC, `${TOPIC}-next`];
+    act(() => {
+      updatedTopic.resolve(newTopic);
+      updatedList.resolve({ arns: updatedArns });
+    });
+    await waitFor(() => {
+      expect(result.current.topic.value).toEqual(newTopic);
+      expect(result.current.list.items).toEqual(updatedArns);
+    });
   });
 });
 
