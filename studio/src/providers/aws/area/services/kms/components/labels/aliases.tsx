@@ -33,10 +33,12 @@ export function Aliases({
   connection,
   keyId,
   writesEnabled,
+  keyMissing,
 }: {
   connection: AreaConnection;
   keyId: string;
   writesEnabled: boolean;
+  keyMissing: boolean;
 }) {
   const [edit, setEdit] = useState<AliasEdit>();
   const [name, setName] = useState('');
@@ -53,7 +55,7 @@ export function Aliases({
   });
   const targets = useCustomerKeys(endpoint, targetsOpened, 0);
 
-  const action = useLabelAction(connection, writesEnabled, () => {
+  const action = useLabelAction(connection, writesEnabled, keyMissing, () => {
     setGeneration((current) => current + 1);
     void client.invalidateQueries({ queryKey: KMS_KEYS.list });
     void client.invalidateQueries({ queryKey: KMS_KEYS.detail(keyId) });
@@ -61,6 +63,7 @@ export function Aliases({
       void client.invalidateQueries({ queryKey: KMS_KEYS.detail(targetId) });
     }
   });
+  if (keyMissing && edit !== undefined) setEdit(undefined);
 
   const handleOpen = (next: AliasEdit) => {
     setName('');

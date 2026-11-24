@@ -4,6 +4,7 @@ import {
   ListAliasesCommand,
   ListKeysCommand,
   ListResourceTagsCommand,
+  TagResourceCommand,
   UntagResourceCommand,
   UpdateAliasCommand,
 } from '@aws-sdk/client-kms';
@@ -16,7 +17,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../../area-root';
-import { AreaFlash } from '../../../../components/area-flash';
+import { AreaFlash, FlashAnnouncer } from '../../../../components/area-flash';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useAreaFlash } from '../../../../components/use-area-flash';
@@ -44,6 +45,7 @@ interface LabelView {
   currentConnection?: AreaConnection;
   currentKey?: string;
   writesEnabled?: boolean;
+  keyMissing?: boolean;
   targetGeneration?: number;
 }
 
@@ -52,6 +54,7 @@ function open(initial: LabelView = {}) {
     currentConnection = connection,
     currentKey = keyId,
     writesEnabled = true,
+    keyMissing = false,
     targetGeneration = 0,
   }: LabelView) {
     const root = useRef<HTMLDivElement>(null);
@@ -60,13 +63,18 @@ function open(initial: LabelView = {}) {
       <AreaRootContext.Provider value={root}>
         <PageFlashContext.Provider value={flash.pageFlash}>
           <div ref={root}>
+            <FlashAnnouncer announcement={flash.announcement} />
             {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
-            <Labels
-              key={targetGeneration}
-              connection={currentConnection}
-              keyId={currentKey}
-              writesEnabled={writesEnabled}
-            />
+            {keyMissing && <a href="/aws/kms">View customer managed keys</a>}
+            <div hidden={keyMissing}>
+              <Labels
+                key={targetGeneration}
+                connection={currentConnection}
+                keyId={currentKey}
+                writesEnabled={writesEnabled}
+                keyMissing={keyMissing}
+              />
+            </div>
           </div>
         </PageFlashContext.Provider>
       </AreaRootContext.Provider>
@@ -141,6 +149,16 @@ function tagPage(name: string, value: string) {
 
 function clickButton(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
+}
+
+async function submitLabel(name: string, field: string, value: string) {
+  const opener = screen.getByRole('button', { name });
+  await userEvent.click(opener);
+  const modal = await screen.findByRole('dialog', { name });
+  const dialog = within(modal);
+  fireEvent.change(dialog.getByRole('textbox', { name: field }), { target: { value } });
+  await userEvent.click(dialog.getByRole('button', { name }));
+  return { opener, modal };
 }
 
 function deferred<T>() {
@@ -476,6 +494,93 @@ describe('key labels', () => {
     expect(create).toBeEnabled();
     expectFlash('success', /^Alias created\.$/);
   });
+
+  it.each([
+    { name: 'Create alias', field: 'Alias name', commandType: CreateAliasCommand, result: 'refusal', recovers: false },
+    { name: 'Create alias', field: 'Alias name', commandType: CreateAliasCommand, result: 'refusal', recovers: true },
+    { name: 'Add tag', field: 'Tag name', commandType: TagResourceCommand, result: 'success', recovers: false },
+  ] as const)(
+    'publishes the late $name $result once after the same key goes missing (recovers: $recovers)',
+    async ({ name, field, commandType, result, recovers }) => {
+      const save = deferred<object>();
+      let signal: AbortSignal | undefined;
+      send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+        if (!(command instanceof commandType)) return {};
+        signal = options.abortSignal;
+        return save.promise;
+      });
+      const update = open();
+
+      const { opener, modal } = await submitLabel(name, field, 'events');
+      expect(signal?.aborted).toBe(false);
+      update({ keyMissing: true });
+      expect(modal).not.toBeInTheDocument();
+      expect(signal?.aborted).toBe(false);
+      await userEvent.tab();
+      expect(screen.getByRole('link', { name: 'View customer managed keys' })).toHaveFocus();
+      expect(opener).toBeDisabled();
+      fireEvent.click(opener);
+      expect(send.mock.calls.filter(([command]) => command instanceof commandType)).toHaveLength(1);
+      expect(page.findFlashbar()?.findItems() ?? []).toHaveLength(0);
+
+      if (recovers) {
+        update({});
+        expect(opener).toBeDisabled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      }
+
+      await act(async () => {
+        if (result === 'refusal') {
+          save.reject({
+            name: 'AlreadyExistsException',
+            message: 'This alias already exists.',
+            $fault: 'client',
+            $metadata: { httpStatusCode: 400 },
+          });
+        } else {
+          save.resolve({});
+        }
+      });
+      if (result === 'refusal') {
+        expectFlash('error', /This alias already exists/);
+        const alerts = screen
+          .getAllByRole('alert')
+          .filter((alert) => alert.textContent?.includes('This alias already exists.'));
+        expect(alerts).toHaveLength(1);
+      } else {
+        expectFlash('success', /^Tag added\.$/);
+        expect(screen.getByRole('status')).toHaveTextContent(/^Success Tag added\.$/);
+      }
+      expect(page.findFlashbar()?.findItems()).toHaveLength(1);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      if (!recovers) expect(opener).toBeDisabled();
+    },
+  );
+
+  it.each([{ currentKey: targetId }, { targetGeneration: 1 }])(
+    'cancels a held alias after the missing-key transition when identity changes %o',
+    async (nextScope) => {
+      const save = deferred<object>();
+      let signal: AbortSignal | undefined;
+      send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+        if (!(command instanceof CreateAliasCommand)) return {};
+        signal = options.abortSignal;
+        return save.promise;
+      });
+      const update = open();
+      const { modal } = await submitLabel('Create alias', 'Alias name', 'events');
+
+      update({ keyMissing: true });
+      expect(modal).not.toBeInTheDocument();
+      expect(signal?.aborted).toBe(false);
+      update(nextScope);
+      expect(signal?.aborted).toBe(true);
+      await act(async () => save.resolve({}));
+      expect(page.findFlashbar()?.findItems() ?? []).toHaveLength(0);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create alias' })).toBeEnabled();
+    },
+  );
 
   it.each([{ currentKey: targetId }, { targetGeneration: 1 }])(
     'preserves a removal 501 across reconnect and clears it on scope change %o',
