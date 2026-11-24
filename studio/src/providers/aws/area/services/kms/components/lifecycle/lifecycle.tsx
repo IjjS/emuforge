@@ -22,6 +22,7 @@ import { LifecycleDialog } from './lifecycle-dialog';
 import type { LifecycleAction } from './use-lifecycle-action';
 
 type Dialog = 'describe' | 'disable' | 'schedule' | 'cancel';
+type KeyOperation = Exclude<LifecycleOperation, typeof LIFECYCLE_OPERATIONS.create>;
 
 const RANGE_TEXT = `From ${String(DELETION_WINDOW.min)} to ${String(DELETION_WINDOW.max)} days.`;
 
@@ -52,6 +53,14 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const controls = useRef<HTMLDivElement>(null);
   const usable = state === 'Enabled' || state === 'Disabled';
   const pendingDeletion = state === 'PendingDeletion';
+  const allowedByState: Record<KeyOperation, boolean> = {
+    [LIFECYCLE_OPERATIONS.describe]: usable,
+    [LIFECYCLE_OPERATIONS.disable]: state === 'Enabled',
+    [LIFECYCLE_OPERATIONS.enable]: state === 'Disabled',
+    [LIFECYCLE_OPERATIONS.schedule]: usable,
+    [LIFECYCLE_OPERATIONS.cancel]: pendingDeletion,
+  };
+  const canStart = (operation: KeyOperation) => allowedByState[operation] && !action.disabled(operation);
 
   useEffect(() => {
     if (restoreTo === undefined) return;
@@ -83,18 +92,12 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
   const unavailableReason = (operation: LifecycleOperation) =>
     action.isUnavailable(operation) ? `Not implemented by the emulator (${operation})` : undefined;
 
-  const control = (
-    operation: LifecycleOperation,
-    label: string,
-    allowed: boolean,
-    onClick: () => void,
-    stateReason?: string,
-  ) => {
+  const control = (operation: KeyOperation, label: string, onClick: () => void, stateReason?: string) => {
     const reason = unavailableReason(operation) ?? stateReason;
     const loading = dialog === undefined && action.pending === operation;
     return (
       <Button
-        disabled={!allowed || action.disabled(operation) || (action.pending !== undefined && !loading)}
+        disabled={!canStart(operation) || (action.pending !== undefined && !loading)}
         {...(reason === undefined ? {} : { disabledReason: reason })}
         loading={loading}
         {...(operation === LIFECYCLE_OPERATIONS.enable ? { loadingText: 'Enabling key' } : {})}
@@ -120,25 +123,13 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
     <>
       <div ref={controls} role="group" aria-label="Key lifecycle" tabIndex={-1}>
         <SpaceBetween direction="horizontal" size="xs">
-          {control(
-            LIFECYCLE_OPERATIONS.describe,
-            'Edit description',
-            usable,
-            () => open('describe'),
-            pendingDeletionReason,
-          )}
+          {control(LIFECYCLE_OPERATIONS.describe, 'Edit description', () => open('describe'), pendingDeletionReason)}
           {state === 'Disabled'
-            ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', true, handleEnable)
-            : control(
-                LIFECYCLE_OPERATIONS.disable,
-                'Disable key',
-                state === 'Enabled',
-                () => open('disable'),
-                pendingDeletionReason,
-              )}
+            ? control(LIFECYCLE_OPERATIONS.enable, 'Enable key', handleEnable)
+            : control(LIFECYCLE_OPERATIONS.disable, 'Disable key', () => open('disable'), pendingDeletionReason)}
           {pendingDeletion
-            ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', true, () => open('cancel'))
-            : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', usable, () => open('schedule'))}
+            ? control(LIFECYCLE_OPERATIONS.cancel, 'Cancel key deletion', () => open('cancel'))
+            : control(LIFECYCLE_OPERATIONS.schedule, 'Schedule key deletion', () => open('schedule'))}
         </SpaceBetween>
       </div>
 
@@ -147,7 +138,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Edit description"
           submitLabel="Save"
           pending={action.pending !== undefined}
-          disabled={description === (metadata.Description ?? '')}
+          disabled={!canStart(LIFECYCLE_OPERATIONS.describe) || description === (metadata.Description ?? '')}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -174,7 +165,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Disable key"
           submitLabel="Disable key"
           pending={action.pending !== undefined}
-          disabled={false}
+          disabled={!canStart(LIFECYCLE_OPERATIONS.disable)}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
@@ -198,7 +189,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           title="Schedule key deletion"
           submitLabel="Schedule deletion"
           pending={action.pending !== undefined}
-          disabled={scheduledDays === undefined}
+          disabled={!canStart(LIFECYCLE_OPERATIONS.schedule) || scheduledDays === undefined}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() => {
@@ -240,7 +231,7 @@ export function Lifecycle({ action, metadata }: LifecycleProps) {
           submitLabel="Cancel deletion"
           dismissLabel="Keep scheduled"
           pending={action.pending !== undefined}
-          disabled={false}
+          disabled={!canStart(LIFECYCLE_OPERATIONS.cancel)}
           failure={action.failure}
           onDismiss={close}
           onSubmit={() =>
