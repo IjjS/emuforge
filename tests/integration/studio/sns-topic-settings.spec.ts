@@ -70,7 +70,9 @@ test('studio.sns-change-topic-tags', async ({ ctx, page }) => {
 
   await ui.button('Remove tag stage').click(ACTION);
   await ui.confirmRemoval();
-  await expect(flashItems(page, 'success')).toHaveText(['Tag removed.']);
+  const success = flashItems(page, 'success');
+  await expect(success).toHaveText(['Tag removed.']);
+  await expect(success).toBeVisible();
   const remaining = { keep: 'first', color: 'blue' };
   await ui.expectTags(remaining);
   expect(await topic.tags()).toEqual(remaining);
