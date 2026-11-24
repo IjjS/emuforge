@@ -15,12 +15,17 @@ test("studio.ssm-parameter-save", async ({ ctx, page }) => {
   const key = await localKey(ctx, f.emulatorPort);
   await page.goto(list + "/parameters/create");
   await field(page, "Name").fill(f.name);
-  for (const [label, value] of [["Type", "SecureString"], ["Tier", "Advanced"]]) {
-    const select = ui.findSelect();
-    const group = page.locator(ui.findFormField().toSelector()).filter({ has: page.getByText(label, { exact: true }) });
-    const trigger = page.locator(select.findTrigger().toSelector()).and(group.locator("*"));
-    await trigger.click();
-    await page.locator(select.findDropdown().findOptionByValue(value).toSelector()).click();
+  const formField = ui.findFormField();
+  const fields = page.locator("form").locator(formField.toSelector());
+  for (const [index, label, value] of [
+    [1, "Type", "SecureString"],
+    [4, "Tier", "Advanced"],
+  ] as const) {
+    const descendants = fields.nth(index).locator("*");
+    await expect(page.locator(formField.findLabel().toSelector()).and(descendants)).toHaveText(label);
+    const select = formField.findControl().findSelect();
+    await page.locator(select.findTrigger().toSelector()).and(descendants).click();
+    await page.locator(select.findDropdown().findOptionByValue(value).toSelector()).and(descendants).click();
   }
   await field(page, "KMS key ID").fill(key);
   for (const version of [1, 2]) {
