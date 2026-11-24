@@ -145,10 +145,10 @@ describe('Parameter Store detail', () => {
       '[a-z]+',
       'Expiration',
       'Pending',
-      POLICY,
     ]) {
       expect(screen.getByText(value)).toBeVisible();
     }
+    expect(screen.getByText(JSON.stringify(JSON.parse(POLICY), null, 2), { normalizer: (text) => text })).toBeVisible();
     for (const value of [ARN, USER, 'alias/app-key', creationDateText(new Date(MODIFIED * 1000))]) {
       expect(
         screen.getByText((_, element) =>
@@ -158,6 +158,15 @@ describe('Parameter Store detail', () => {
     }
     expect(screen.queryByText(VALUE)).toBeNull();
     expect(screen.queryByText('Prefix match only')).toBeNull();
+  });
+
+  it('preserves the original parameter policy text when it is not valid JSON', async () => {
+    const policyText = '  {"Type":\n  Expiration}  ';
+    describeParameters.mockImplementation(() =>
+      answer({ Parameters: [{ ...PARAMETER, Policies: [{ ...PARAMETER.Policies[0], PolicyText: policyText }] }] }),
+    );
+    open();
+    expect(await screen.findByText(policyText, { normalizer: (text) => text })).toBeVisible();
   });
 
   it('D2 shows a name-specific missing state and each connection recovery path', async () => {
