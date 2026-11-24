@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AreaRootContext } from '../../../../area-root';
 import { PageFlashContext } from '../../../../components/page-flash';
 import { useKmsKey } from '../../queries';
-import { Access } from './access';
+import { Access, type AccessProps } from './access';
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../../../../../lib/aws/client-factory', () => ({ createAwsClient: () => ({ send }) }));
@@ -33,16 +33,20 @@ const online = {
   engineOrigin: 'http://127.0.0.1:8309',
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9309, endpoint: 'https://127.0.0.1:9309' } },
 } as const;
+const offline: AccessProps['connection'] = {
+  engineOrigin: online.engineOrigin,
+  result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: online.result.emulator.port },
+};
 
 function KeyDetails() {
   const { key } = useKmsKey(online.engineOrigin, KEY_ID, true);
   return key ? <h1>{key.Description}</h1> : null;
 }
 
-function open() {
+function open(initial: Partial<AccessProps> = {}) {
   const client = new QueryClient();
 
-  function Page() {
+  function Page(props: AccessProps) {
     const [items, setItems] = useState<FlashbarProps.MessageDefinition[]>([]);
     const rootRef = useRef<HTMLDivElement>(null);
     return (
@@ -51,20 +55,22 @@ function open() {
           <PageFlashContext.Provider value={{ show: (result) => setItems([...result]), handOver: vi.fn() }}>
             <Flashbar items={items} />
             <KeyDetails />
-            <Access connection={online} keyId={KEY_ID} />
+            <Access {...props} />
           </PageFlashContext.Provider>
         </AreaRootContext.Provider>
       </div>
     );
   }
 
-  render(
+  const page = (props: Partial<AccessProps>, targetGeneration = 0) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Page />
+        <Page key={targetGeneration} connection={online} keyId={KEY_ID} {...initial} {...props} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(page({}));
+  return (props: Partial<AccessProps>, targetGeneration?: number) => view.rerender(page(props, targetGeneration));
 }
 
 function fallback(command: unknown) {
@@ -357,5 +363,111 @@ describe('KMS key access', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(opener).toHaveFocus();
     expect(screen.getByText(OLD_POLICY)).toBeVisible();
+  });
+
+  it('keeps a pending policy save and announces its result across a same-target disconnect', async () => {
+    const response = deferred<object>();
+    let saveSignal: AbortSignal | undefined;
+    let policy = OLD_POLICY;
+    send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+      if (command instanceof PutKeyPolicyCommand) {
+        saveSignal = options.abortSignal;
+        const result = await response.promise;
+        policy = NEW_POLICY;
+        return result;
+      }
+      if (command instanceof GetKeyPolicyCommand) return { Policy: policy };
+      return fallback(command);
+    });
+    const update = open();
+    const dialog = await editPolicy();
+    await waitFor(() => expect(saveSignal).toBeInstanceOf(AbortSignal));
+
+    update({ connection: offline });
+    expect(saveSignal?.aborted).toBe(false);
+    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(NEW_POLICY);
+    expect(dialog.getByRole('button', { name: 'Save policy' })).toHaveAttribute('aria-disabled', 'true');
+    await act(async () => response.resolve({}));
+
+    expect(successFlash('Key policy saved.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    update({ connection: online });
+    expect(await screen.findByText(NEW_POLICY)).toBeVisible();
+    expect(successFlash('Key policy saved.')).toBeVisible();
+  });
+
+  it('gates Access writes before metadata and keeps a same-target grant dialog through connection changes', async () => {
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      return fallback(command);
+    });
+    const update = open({ writesEnabled: false });
+    expect(await screen.findByText(OLD_POLICY)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    const revoke = await screen.findByRole('button', { name: `Revoke grant ${grant.GrantId}` });
+    expect(revoke).toBeDisabled();
+
+    update({ writesEnabled: true });
+    const dialog = await openRevocation();
+    const confirmation = dialog.getByRole('textbox');
+    fireEvent.change(confirmation, { target: { value: 'revoke' } });
+    expect(dialog.getByRole('button', { name: 'Revoke grant' })).toBeEnabled();
+
+    update({ connection: offline, writesEnabled: true });
+    expect(confirmation).toHaveValue('revoke');
+    const submit = dialog.getByRole('button', { name: 'Revoke grant' });
+    expect(submit).toBeDisabled();
+    fireEvent.keyDown(confirmation, { key: 'Enter', keyCode: 13 });
+    expect(send.mock.calls.some(([command]) => command instanceof RevokeGrantCommand)).toBe(false);
+
+    update({ connection: online, writesEnabled: true });
+    expect(submit).toBeEnabled();
+  });
+
+  it('keeps a grant action 501 received while offline and clears it for another key or target', async () => {
+    const response = deferred<undefined>();
+    let revokeSignal: AbortSignal | undefined;
+    send.mockImplementation(async (command: unknown, options: { abortSignal: AbortSignal }) => {
+      if (command instanceof ListGrantsCommand) return { Grants: [grant] };
+      if (command instanceof RevokeGrantCommand) {
+        revokeSignal = options.abortSignal;
+        await response.promise;
+        throw { name: 'NotImplemented', $metadata: { httpStatusCode: 501 } };
+      }
+      return fallback(command);
+    });
+    const update = open();
+
+    async function startRevocation() {
+      revokeSignal = undefined;
+      const dialog = await openRevocation();
+      fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'revoke' } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Revoke grant' }));
+      await waitFor(() => expect(revokeSignal).toBeInstanceOf(AbortSignal));
+    }
+
+    const revokeName = `Revoke grant ${grant.GrantId}`;
+    const notice = 'The emulator answered 501 Not Implemented for RevokeGrant.';
+    await startRevocation();
+    update({ connection: offline });
+    expect(revokeSignal?.aborted).toBe(false);
+    await act(async () => response.resolve(undefined));
+    expect(grantsTable().findFooterSlot()?.getElement()).toHaveTextContent(notice);
+    update({ connection: online });
+    expect(await screen.findByRole('button', { name: revokeName })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeEnabled();
+
+    const nextKey = 'e89de8d1-a905-432b-adfd-c510da7413aa';
+    update({ keyId: nextKey });
+    expect(await screen.findByRole('button', { name: revokeName })).toBeEnabled();
+    await startRevocation();
+    await waitFor(() => expect(grantsTable().findFooterSlot()?.getElement()).toHaveTextContent(notice));
+    expect(screen.getByRole('button', { name: revokeName })).toBeDisabled();
+
+    // The AWS area's target generation remounts the page even when the engine origin and key ID are unchanged.
+    update({ keyId: nextKey }, 1);
+    expect(await screen.findByRole('button', { name: revokeName })).toBeEnabled();
   });
 });

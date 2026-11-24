@@ -6,7 +6,7 @@ import { actionFailureItem } from '../../../../components/failure-states';
 import { usePageFlash } from '../../../../components/page-flash';
 import { failureOf, usePageSignal } from '../../../../components/use-token-listing';
 
-export function useAccessAction(connection: AreaConnection) {
+export function useAccessAction(connection: AreaConnection, writesEnabled: boolean) {
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const busy = useRef(false);
@@ -15,6 +15,7 @@ export function useAccessAction(connection: AreaConnection) {
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
   const endpoint = connection.engineOrigin;
   const disabled = (operation: string) =>
+    !writesEnabled ||
     pending !== undefined ||
     endpoint === undefined ||
     connection.result?.kind !== 'connected' ||
