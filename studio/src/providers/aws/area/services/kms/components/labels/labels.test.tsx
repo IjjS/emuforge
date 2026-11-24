@@ -75,10 +75,12 @@ function clickButton(name: string) {
 
 function deferred<T>() {
   let resolve!: (answer: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -219,5 +221,116 @@ describe('key labels', () => {
 
     expect(await screen.findByText(/This key is pending deletion/)).toBeVisible();
     expect(screen.getByRole('cell', { name: 'development' })).toBeVisible();
+  });
+
+  it('keeps submit focused while saving, then focuses the refusal and lets Escape return to the opener', async () => {
+    const save = deferred<object>();
+    send.mockImplementation(async (command: unknown) => (command instanceof CreateAliasCommand ? save.promise : {}));
+    const user = userEvent.setup();
+    open();
+
+    await screen.findByText('No aliases');
+    const opener = screen.getByRole('button', { name: 'Create alias' });
+    await user.click(opener);
+    const modal = await screen.findByRole('dialog', { name: 'Create alias' });
+    const dialog = within(modal);
+    const name = dialog.getByRole('textbox', { name: 'Alias name' });
+    expect(name).toHaveAccessibleDescription(/letters, numbers.*alias\/aws\/ is reserved/);
+    await user.type(name, 'events');
+    const submit = dialog.getByRole('button', { name: 'Create alias' });
+    await user.click(submit);
+
+    expect(submit).toHaveFocus();
+    expect(submit).toHaveAttribute('aria-disabled', 'true');
+    await user.keyboard('{Enter}');
+    fireEvent.keyDown(submit, { key: 'Escape', keyCode: 27 });
+    expect(modal).toBeVisible();
+    expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(1);
+
+    await act(async () => {
+      save.reject({
+        name: 'AlreadyExistsException',
+        message: 'This alias already exists.',
+        $fault: 'client',
+        $metadata: { httpStatusCode: 400 },
+      });
+    });
+    const refusal = await dialog.findByRole('alert');
+    expect(refusal).toHaveFocus();
+    expect(name).toHaveValue('events');
+    fireEvent.keyDown(refusal, { key: 'Escape', keyCode: 27 });
+    expect(modal).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it.each([
+    { visibleWidth: 348, scrollWidth: 404, compact: true, overflows: true },
+    { visibleWidth: 348, scrollWidth: 348, compact: true, overflows: false },
+    { visibleWidth: 949, scrollWidth: 949, compact: false, overflows: false },
+  ])(
+    'prioritizes tag actions and reports actual overflow at table width $visibleWidth/$scrollWidth',
+    async ({ visibleWidth, scrollWidth, compact, overflows }) => {
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+        return this.querySelector(':scope > table') ? visibleWidth : 0;
+      });
+      vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+        return this.querySelector(':scope > table') ? scrollWidth : 0;
+      });
+      send.mockImplementation(async (command: unknown) =>
+        command instanceof ListResourceTagsCommand ? tagPage('environment', 'local development') : {},
+      );
+      open();
+
+      const value = await screen.findByRole('cell', { name: 'local development' });
+      const table = screen.getByRole('table', { name: /^Tags/ });
+      const hint = 'Scroll sideways to see more of the table.';
+      expect(table).toHaveAccessibleName(overflows ? `Tags. ${hint}` : 'Tags');
+      if (overflows) {
+        expect(screen.getByText(hint)).toBeVisible();
+      } else {
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
+      }
+      expect(
+        within(table)
+          .getAllByRole('columnheader')
+          .map((header) => header.textContent),
+      ).toEqual(compact ? ['Tag name', 'Actions', 'Value'] : ['Tag name', 'Value', 'Actions']);
+      expect(value).toHaveTextContent(/^local development$/);
+
+      const edit = within(table).getByRole('button', { name: 'Edit tag environment' });
+      edit.focus();
+      await userEvent.keyboard('{Enter}');
+      const dialog = within(await screen.findByRole('dialog', { name: 'Edit tag' }));
+      expect(dialog.getByRole('textbox', { name: 'Value' })).toHaveValue('local development');
+    },
+  );
+
+  it('shows aliases on the corresponding reassignment target option', async () => {
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof ListKeysCommand) return { Keys: [{ KeyId: keyId }, { KeyId: targetId }] };
+      if (command instanceof DescribeKeyCommand) {
+        return { KeyMetadata: { KeyId: command.input.KeyId, KeyManager: 'CUSTOMER' } };
+      }
+      if (command instanceof ListAliasesCommand) {
+        return command.input.KeyId === targetId
+          ? {
+              Aliases: [
+                { AliasName: 'alias/billing', TargetKeyId: targetId },
+                { AliasName: 'alias/invoices', TargetKeyId: targetId },
+              ],
+            }
+          : aliasPage(alias);
+      }
+      return {};
+    });
+    const user = userEvent.setup();
+    open();
+
+    await user.click(await screen.findByRole('button', { name: `Reassign alias ${alias}` }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Reassign alias' }));
+    await user.click(dialog.getByRole('button', { name: /Target key/ }));
+    const target = within(await dialog.findByRole('option', { name: new RegExp(targetId) }));
+    expect(target.getByText('alias/billing')).toBeVisible();
+    expect(target.getByText('alias/invoices')).toBeVisible();
   });
 });

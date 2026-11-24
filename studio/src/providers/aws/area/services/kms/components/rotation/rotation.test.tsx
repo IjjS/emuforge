@@ -5,11 +5,13 @@ import {
   ListKeyRotationsCommand,
   RotateKeyOnDemandCommand,
   type GetKeyRotationStatusCommandOutput,
+  type KeyMetadata,
   type ListKeyRotationsCommandOutput,
 } from '@aws-sdk/client-kms';
 import Flashbar from '@cloudscape-design/components/flashbar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,21 +29,30 @@ const nextDate = new Date('2026-05-16T12:35:00Z');
 const rotationDate = new Date('2026-02-04T14:15:00Z');
 const enabledSettings = { KeyRotationEnabled: true, RotationPeriodInDays: 90, NextRotationDate: nextDate };
 
-function RotationPage() {
+function RotationPage({ keySpec }: { keySpec?: KeyMetadata['KeySpec'] }) {
   const [flash, setFlash] = useState<FlashResult>();
   return (
     <PageFlashContext.Provider value={{ show: setFlash, handOver: () => undefined }}>
-      <Flashbar items={flash ? [...flash] : []} />
-      <Rotation connection={connection} keyId={keyId} />
+      <Flashbar
+        items={
+          flash?.map((item) => ({
+            ...item,
+            dismissible: true,
+            dismissLabel: 'Dismiss',
+            onDismiss: () => setFlash(undefined),
+          })) ?? []
+        }
+      />
+      <Rotation connection={connection} keyId={keyId} keySpec={keySpec} />
     </PageFlashContext.Provider>
   );
 }
 
-function open() {
+function open(keySpec?: KeyMetadata['KeySpec']) {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <RotationPage />
+        <RotationPage keySpec={keySpec} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -204,6 +215,29 @@ describe('Key rotation', () => {
     ]);
   });
 
+  it.each([
+    ['Enable automatic rotation', 'EnableKeyRotation'],
+    ['Rotate now', 'RotateKeyOnDemand'],
+  ])('adds the key spec when %s receives an unsupported operation refusal', async (button, operation) => {
+    const refusal = 'UnsupportedOperationException';
+    const message = 'Rotation is unavailable for this key.';
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) return { KeyRotationEnabled: false };
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      throw { name: refusal, message, $fault: 'client', $metadata: { httpStatusCode: 400 } };
+    });
+    open('RSA_2048');
+
+    expect(await screen.findByText('Disabled')).toBeVisible();
+    click(button);
+
+    expect(await screen.findByText(`${operation} failed`)).toBeVisible();
+    expect(screen.getByText(refusal).parentElement).toHaveTextContent(`${refusal}: ${message}`);
+    expect(screen.getByText('RSA_2048').parentElement).toHaveTextContent(
+      'The emulator does not support this rotation operation on this RSA_2048 key.',
+    );
+  });
+
   it('leaves an unimplemented action visible and disables it without disabling other operations', async () => {
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
@@ -217,6 +251,37 @@ describe('Key rotation', () => {
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(/501 Not Implemented for RotateKeyOnDemand/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Rotate now' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
+  });
+
+  it('retains keyboard focus during a pending rotation and explains the disabled action after dismissal', async () => {
+    const failure = { $metadata: { httpStatusCode: 501 } };
+    const reply = pendingAnswer<typeof failure>();
+    const user = userEvent.setup();
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
+      if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
+      throw await reply.promise;
+    });
+    open();
+
+    expect(await screen.findByText('Enabled')).toBeVisible();
+    const rotate = screen.getByRole('button', { name: 'Rotate now' });
+    rotate.focus();
+    await user.keyboard('{Enter}{Enter}');
+
+    expect(rotate).toHaveFocus();
+    expect(rotate).toHaveAttribute('aria-disabled', 'true');
+    expect(send.mock.calls.filter(([command]) => command instanceof RotateKeyOnDemandCommand)).toHaveLength(1);
+
+    await act(() => reply.resolve(failure));
+
+    expect(await screen.findByText('Not implemented by the emulator')).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Not implemented by the emulator')).toBeNull();
+    expect(rotate).toBeDisabled();
+    expect(rotate).toHaveAccessibleDescription('The emulator does not implement RotateKeyOnDemand.');
+    expect(screen.getByText('The emulator does not implement RotateKeyOnDemand.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Disable automatic rotation' })).toBeEnabled();
   });
 });

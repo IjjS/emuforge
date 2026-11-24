@@ -41,7 +41,7 @@ export function AccessDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={disabled} loading={pending} onClick={onSubmit}>
+            <Button variant="primary" disabled={!pending && disabled} loading={pending} onClick={onSubmit}>
               {submitLabel}
             </Button>
           </SpaceBetween>

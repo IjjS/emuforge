@@ -1,9 +1,11 @@
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import FormField from '@cloudscape-design/components/form-field';
+import Input from '@cloudscape-design/components/input';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../../components/area-modal';
 import type { AreaConnection } from '../../../../components/emulator-line';
@@ -60,6 +62,60 @@ export function UnavailableActions({ operations }: { operations: readonly string
   ));
 }
 
+export function LabelRowActions({ children }: { children: ReactNode }) {
+  return (
+    <div onFocus={({ target }) => target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}>
+      <SpaceBetween direction="horizontal" size="xs">
+        {children}
+      </SpaceBetween>
+    </div>
+  );
+}
+
+export function ConfirmLabelRemoval({
+  title,
+  body,
+  word,
+  pending,
+  onConfirm,
+  onDismiss,
+}: {
+  title: string;
+  body: ReactNode;
+  word: string;
+  pending: boolean;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const confirmed = typed === word;
+  const handleConfirm = () => {
+    if (confirmed && !pending) onConfirm();
+  };
+  return (
+    <LabelDialog
+      title={title}
+      submit={title}
+      disabled={!confirmed}
+      pending={pending}
+      onSubmit={handleConfirm}
+      onDismiss={onDismiss}
+    >
+      <Box variant="p">{body}</Box>
+      <FormField label={`To confirm, type “${word}” in the field.`}>
+        <Input
+          value={typed}
+          placeholder={word}
+          onChange={({ detail }) => setTyped(detail.value)}
+          onKeyDown={({ detail }) => {
+            if (detail.key === 'Enter') handleConfirm();
+          }}
+        />
+      </FormField>
+    </LabelDialog>
+  );
+}
+
 export function LabelDialog({
   title,
   submit,
@@ -92,7 +148,7 @@ export function LabelDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={disabled || pending} loading={pending} onClick={onSubmit}>
+            <Button variant="primary" disabled={!pending && disabled} loading={pending} onClick={onSubmit}>
               {submit}
             </Button>
           </SpaceBetween>
