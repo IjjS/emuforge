@@ -8,10 +8,12 @@ import {
 import {
   CreateTopicCommand,
   DeleteTopicCommand,
+  GetSubscriptionAttributesCommand,
   GetTopicAttributesCommand,
   ListSubscriptionsByTopicCommand,
   ListTopicsCommand,
   PublishCommand,
+  SetSubscriptionAttributesCommand,
   SNSClient,
   SubscribeCommand,
   UnsubscribeCommand,
@@ -41,6 +43,8 @@ export const OPERATIONS = {
   listTopics: 'ListTopics',
   getTopicAttributes: 'GetTopicAttributes',
   listSubscriptionsByTopic: 'ListSubscriptionsByTopic',
+  getSubscriptionAttributes: 'GetSubscriptionAttributes',
+  setSubscriptionAttributes: 'SetSubscriptionAttributes',
   createTopic: 'CreateTopic',
   deleteTopic: 'DeleteTopic',
   subscribe: 'Subscribe',
@@ -312,6 +316,61 @@ export async function listSubscriptions(
     page.nextToken = next;
   }
   return page;
+}
+
+/** Settings as the emulator returned them. An omitted attribute stays absent. */
+export interface SubscriptionSettingsAttributes {
+  FilterPolicy?: string;
+  FilterPolicyScope?: string;
+  RawMessageDelivery?: string;
+}
+
+export type SubscriptionSetting =
+  | { name: 'FilterPolicy'; value: string }
+  | { name: 'FilterPolicyScope'; value: 'MessageAttributes' | 'MessageBody' }
+  | { name: 'RawMessageDelivery'; value: 'true' | 'false' };
+
+export async function getSubscriptionSettings(
+  endpoint: string,
+  arn: string,
+  signal: AbortSignal,
+): Promise<SubscriptionSettingsAttributes> {
+  const output = await sendRequest(
+    OPERATIONS.getSubscriptionAttributes,
+    (abortSignal) =>
+      snsClient(endpoint).send(new GetSubscriptionAttributesCommand({ SubscriptionArn: arn }), { abortSignal }),
+    signal,
+  );
+  const attributes = output.Attributes;
+  const settings: SubscriptionSettingsAttributes = {};
+  for (const name of ['FilterPolicy', 'FilterPolicyScope', 'RawMessageDelivery'] as const) {
+    const value = attributes?.[name];
+    if (value !== undefined) {
+      settings[name] = value;
+    }
+  }
+  return settings;
+}
+
+export async function setSubscriptionSetting(
+  endpoint: string,
+  arn: string,
+  setting: SubscriptionSetting,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.setSubscriptionAttributes,
+    (abortSignal) =>
+      snsClient(endpoint).send(
+        new SetSubscriptionAttributesCommand({
+          SubscriptionArn: arn,
+          AttributeName: setting.name,
+          AttributeValue: setting.value,
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
 }
 
 /** The two protocols S4 subscribes, and whose delivery the subscriptions table reads. */

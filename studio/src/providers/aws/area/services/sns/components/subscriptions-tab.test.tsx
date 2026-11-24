@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,11 +14,21 @@ import * as api from '../api';
 // S3's "Subscriptions" tab rendered on the topic's page inside the area's layout, as Studio's frame renders it, with
 // the calls of `api.ts` answered by the case (`api.test.ts` proves the calls against a fake engine).
 
+function hold<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
   return {
     ...real,
     getTopic: vi.fn(),
+    getSubscriptionSettings: vi.fn(),
+    setSubscriptionSetting: vi.fn(),
     listSubscriptions: vi.fn(),
     readDelivery: vi.fn(),
     allowDelivery: vi.fn(),
@@ -186,8 +196,14 @@ function rows(): string[][] {
   );
 }
 
-function action(name: string): HTMLElement {
-  return within(table().getElement()).getByRole('button', { name });
+function action(name: 'Subscription settings' | 'Allow delivery' | 'Delete') {
+  const index = { 'Subscription settings': 0, 'Allow delivery': 1, Delete: 2 }[name];
+  const control = table().findHeaderSlot()?.findHeader()?.findActions()?.findAllButtons()[index]?.getElement();
+  if (!control) {
+    throw new Error(`Subscription action ${index} is missing`);
+  }
+  expect(control).toHaveTextContent(name);
+  return control;
 }
 
 function isDisabled(element: Element): boolean {
@@ -200,8 +216,32 @@ function disabledReason(element: HTMLElement): string {
   return ids.map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
 }
 
-function select(name: string) {
-  fireEvent.click(screen.getByRole('radio', { name }));
+function rowSelection(index: number) {
+  return table().findRowSelectionArea(index)?.find('input[type="radio"]');
+}
+
+function select(index: number) {
+  const radio = rowSelection(index);
+  if (!radio) {
+    throw new Error(`Subscription row ${index} is missing`);
+  }
+  radio.click();
+}
+
+async function confirmDelete() {
+  const dialog = await waitFor(() => {
+    const modal = PAGE.findModal();
+    expect(modal?.getElement()).toBeVisible();
+    return modal;
+  });
+  const input = dialog?.findContent().findInput()?.findNativeInput().getElement();
+  if (!input) {
+    throw new Error('Delete confirmation input is missing');
+  }
+  fireEvent.change(input, { target: { value: 'delete' } });
+  const confirm = dialog?.findFooter()?.findAllButtons()[1];
+  expect(confirm?.getElement()).toHaveTextContent('Delete');
+  confirm?.click();
 }
 
 async function expectRows(expected: string[][]) {
@@ -238,12 +278,13 @@ describe('the "Subscriptions" tab', () => {
         'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic deliver.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: queueArn('jobs') })).toHaveAttribute('href', '/aws/sqs/queues/queue/jobs');
-    expect(screen.getByRole('link', { name: functionArn('printer') })).toHaveAttribute(
-      'href',
-      '/aws/lambda/functions/function/printer',
-    );
-    expect(screen.queryByRole('link', { name: 'dev@example.com' })).toBeNull();
+    const queueLink = table().findBodyCell(1, 3)?.findLink();
+    const functionLink = table().findBodyCell(2, 3)?.findLink();
+    expect(queueLink?.getElement()).toHaveTextContent(queueArn('jobs'));
+    expect(queueLink?.getElement()).toHaveAttribute('href', '/aws/sqs/queues/queue/jobs');
+    expect(functionLink?.getElement()).toHaveTextContent(functionArn('printer'));
+    expect(functionLink?.getElement()).toHaveAttribute('href', '/aws/lambda/functions/function/printer');
+    expect(table().findBodyCell(3, 3)?.findLink()).toBeNull();
     expect(vi.mocked(api.readDelivery).mock.calls.map((call) => call[1])).toEqual(
       expect.arrayContaining([
         { topicArn: TOPIC_ARN, protocol: 'sqs', endpoint: queueArn('jobs') },
@@ -251,7 +292,7 @@ describe('the "Subscriptions" tab', () => {
       ]),
     );
     expect(vi.mocked(api.readDelivery).mock.calls.some((call) => call[1].endpoint === 'dev@example.com')).toBe(false);
-    fireEvent.click(screen.getByRole('link', { name: queueArn('jobs') }));
+    queueLink?.click();
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/sqs/queues/queue/jobs');
     });
@@ -264,10 +305,9 @@ describe('the "Subscriptions" tab', () => {
       expect(screen.getByText('No subscriptions')).toBeInTheDocument();
     });
     expect(screen.getByText('Nothing published to this topic is delivered anywhere yet.')).toBeInTheDocument();
-    const create = within(table().findEmptySlot()?.getElement() as HTMLElement).getByRole('link', {
-      name: 'Create subscription',
-    });
-    fireEvent.click(create);
+    const create = table().findEmptySlot()?.findButton();
+    expect(create?.getElement()).toHaveTextContent('Create subscription');
+    create?.click();
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(`/aws/sns/topics/topic/${encodeURIComponent(TOPIC_ARN)}/subscribe`);
     });
@@ -316,13 +356,14 @@ describe('the "Subscriptions" tab', () => {
       vi.mocked(api.listSubscriptions).mockRejectedValue(new RequestError(failure));
       holdDeliveries({});
       open();
-      const slot = () => table().findEmptySlot()?.getElement() as HTMLElement;
       await waitFor(() => {
-        expect(slot().textContent).toMatch(shown);
+        expect(table().findEmptySlot()?.getElement().textContent).toMatch(shown);
       });
       const calls = vi.mocked(api.listSubscriptions).mock.calls.length;
       holdSubscriptions({ '': { subscriptions: [sqs('back')] } });
-      fireEvent.click(within(slot()).getByRole('button', { name: 'Retry' }));
+      const retry = table().findEmptySlot()?.findButton();
+      expect(retry?.getElement()).toHaveTextContent('Retry');
+      retry?.click();
       await expectRows([['sqs', queueArn('back'), 'Confirmed', 'No permission']]);
       expect(vi.mocked(api.listSubscriptions).mock.calls.length).toBe(calls + 1);
     });
@@ -334,7 +375,7 @@ describe('the "Subscriptions" tab', () => {
     );
     open();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+      expect(table().findEmptySlot()?.findButton()?.getElement()).toHaveTextContent('Retry');
     });
     connection.set(notStartedResult());
     await waitFor(() => {
@@ -381,14 +422,14 @@ describe('the "Subscriptions" tab', () => {
     });
     const allow = action('Allow delivery');
     expect(isDisabled(allow)).toBe(true);
-    for (const name of [queueArn('allowed'), queueArn('denied'), queueArn('gone'), 'dev@example.com']) {
-      select(`${name === 'dev@example.com' ? 'email' : 'sqs'} ${name}`);
+    for (const index of [1, 2, 4, 5]) {
+      select(index);
       expect(isDisabled(action('Allow delivery'))).toBe(true);
     }
     expect(disabledReason(action('Allow delivery'))).toContain(
       'Select a subscription whose delivery says No permission.',
     );
-    select(`sqs ${queueArn('open')}`);
+    select(3);
     expect(isDisabled(action('Allow delivery'))).toBe(false);
     expect(api.allowDelivery).not.toHaveBeenCalled();
   });
@@ -404,7 +445,7 @@ describe('the "Subscriptions" tab', () => {
     open();
     await expectRows([['sqs', queueArn('jobs'), 'Confirmed', 'No permission']]);
     const reads = vi.mocked(api.readDelivery).mock.calls.length;
-    select(`sqs ${queueArn('jobs')}`);
+    select(1);
     fireEvent.click(action('Allow delivery'));
     await expectText('jobs may now receive from orders.');
     expect(vi.mocked(api.allowDelivery).mock.calls[0]?.[1]).toEqual({
@@ -432,7 +473,7 @@ describe('the "Subscriptions" tab', () => {
       open();
       await expectRows([['lambda', functionArn('printer'), 'Confirmed', 'No permission']]);
       const reads = vi.mocked(api.readDelivery).mock.calls.length;
-      select(`lambda ${functionArn('printer')}`);
+      select(1);
       fireEvent.click(action('Allow delivery'));
       await expectText(shown);
       await waitFor(() => {
@@ -449,7 +490,7 @@ describe('the "Subscriptions" tab', () => {
     );
     open();
     await expectRows([['sqs', queueArn('jobs'), 'Confirmed', 'No permission']]);
-    select(`sqs ${queueArn('jobs')}`);
+    select(1);
     fireEvent.click(action('Allow delivery'));
     await expectText('Allow delivery to jobs failed');
     expect(screen.getByText('InternalError')).toBeInTheDocument();
@@ -460,7 +501,7 @@ describe('the "Subscriptions" tab', () => {
     open();
     await expectRows([['email', 'dev@example.com', 'Pending confirmation', '-']]);
     expect(isDisabled(action('Delete'))).toBe(true);
-    select('email dev@example.com');
+    select(1);
     expect(isDisabled(action('Delete'))).toBe(true);
     expect(disabledReason(action('Delete'))).toContain(
       'A subscription that is pending confirmation has no ARN to delete it by.',
@@ -480,11 +521,9 @@ describe('the "Subscriptions" tab', () => {
       ['sqs', queueArn('jobs'), 'Confirmed', 'No permission'],
       ['sqs', queueArn('keep'), 'Confirmed', 'No permission'],
     ]);
-    select(`sqs ${queueArn('jobs')}`);
+    select(1);
     fireEvent.click(action('Delete'));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'delete' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await confirmDelete();
     await expectText('Deleted the subscription of jobs');
     expect(vi.mocked(api.unsubscribe).mock.calls[0]?.[1]).toBe(subscriptionArn('jobs'));
     await expectRows([['sqs', queueArn('keep'), 'Confirmed', 'No permission']]);
@@ -498,11 +537,9 @@ describe('the "Subscriptions" tab', () => {
     );
     open();
     await expectRows([['sqs', queueArn('jobs'), 'Confirmed', 'No permission']]);
-    select(`sqs ${queueArn('jobs')}`);
+    select(1);
     fireEvent.click(action('Delete'));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'delete' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await confirmDelete();
     await expectText('Delete the subscription of jobs failed');
     expect(rows()).toEqual([['sqs', queueArn('jobs'), 'Confirmed', 'No permission']]);
   });
@@ -541,7 +578,7 @@ describe('the "Subscriptions" tab', () => {
     });
     open();
     await expectRows([['sqs', queueArn('denied'), 'Confirmed', 'Cannot tell']]);
-    select(`sqs ${queueArn('denied')}`);
+    select(1);
     expect(isDisabled(action('Allow delivery'))).toBe(true);
     expect(disabledReason(action('Allow delivery'))).toContain(
       'The policy of denied is not one Studio evaluates: it has a Deny statement, which Studio does not evaluate.',
@@ -570,4 +607,165 @@ describe('the "Subscriptions" tab', () => {
     expect(last?.[1]).toBe(TOPIC_ARN);
     expect(last?.[2]).toBe('next-1');
   });
+});
+
+describe('the selected subscription settings', () => {
+  const first = sqs('jobs');
+  const second = sqs('archive');
+  const policy = '{"color":["red"]}';
+  const replacement = '{"color":["blue"]}';
+
+  function editor() {
+    return PAGE.findContainer('[data-testid="subscription-settings"]');
+  }
+
+  function expectOpenEditor() {
+    const settings = editor();
+    expect(settings?.getElement()).toBeVisible();
+    expect(settings?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      'Subscription settings',
+    );
+  }
+
+  function policyTextarea() {
+    return editor()?.findContent().findTextarea()?.findNativeTextarea().getElement();
+  }
+
+  function expectPolicy(value: string) {
+    const textarea = policyTextarea();
+    expect(textarea).toBeVisible();
+    expect(textarea).toHaveValue(value);
+  }
+
+  function expectSettingsFlash() {
+    const item = PAGE.findFlashbar()?.findItemsByType('success')[0];
+    expect(item?.getElement()).toBeVisible();
+    expect(item?.findHeader()?.getElement()).toHaveTextContent('Subscription settings updated');
+    expect(item?.findContent()?.getElement()).toHaveTextContent(first.arn);
+  }
+
+  function openSettings(index: number) {
+    select(index);
+    fireEvent.click(action('Subscription settings'));
+  }
+
+  it('gives the disabled reasons and identifies the confirmed subscription when opened', async () => {
+    const pending = email('dev@example.com');
+    holdSubscriptions({ '': { subscriptions: [first, pending] } });
+    holdDeliveries({});
+    vi.mocked(api.getSubscriptionSettings).mockResolvedValue({});
+    open();
+    await waitFor(() => expect(rowSelection(2)?.getElement()).toBeVisible());
+    const button = action('Subscription settings');
+    expect(isDisabled(button)).toBe(true);
+    expect(disabledReason(button)).toBe('Select a subscription.');
+    select(2);
+    expect(isDisabled(button)).toBe(true);
+    expect(disabledReason(button)).toBe('A pending subscription has no ARN.');
+    expect(api.getSubscriptionSettings).not.toHaveBeenCalled();
+    openSettings(1);
+    expectOpenEditor();
+    const details = editor()?.findContent().findKeyValuePairs()?.findItems();
+    const arn = details?.[0]?.findValue()?.find('.aws-area-value-address')?.getElement();
+    const endpoint = details?.[1]?.findValue()?.find('.aws-area-value-address')?.getElement();
+    expect(arn).toBeVisible();
+    expect(arn?.textContent).toBe(first.arn);
+    expect(endpoint).toBeVisible();
+    expect(endpoint?.textContent).toBe(first.endpoint);
+    expect(table().findSelectedRows()[0]?.find('.aws-area-value-address')?.getElement().textContent).toBe(
+      first.endpoint,
+    );
+  });
+
+  it('keeps the second subscription when the first subscription answers late', async () => {
+    const readFirst = hold<api.SubscriptionSettingsAttributes>();
+    const readSecond = hold<api.SubscriptionSettingsAttributes>();
+    holdSubscriptions({ '': { subscriptions: [first, second] } });
+    holdDeliveries({});
+    vi.mocked(api.getSubscriptionSettings)
+      .mockReturnValueOnce(readFirst.promise)
+      .mockReturnValueOnce(readSecond.promise);
+    open();
+    await waitFor(() => expect(rowSelection(1)?.getElement()).toBeVisible());
+    openSettings(1);
+    await waitFor(() => {
+      const loading = editor()
+        ?.findContent()
+        .find('[data-testid="subscription-settings-read-status"]')
+        ?.findStatusIndicator()
+        ?.getElement();
+      expect(loading).toHaveTextContent('Loading subscription settings');
+    });
+    select(2);
+    expect(editor()).toBeNull();
+    fireEvent.click(action('Subscription settings'));
+    readSecond.resolve({ FilterPolicy: replacement });
+    await waitFor(() => expectPolicy(replacement));
+    await act(async () => {
+      readFirst.resolve({ FilterPolicy: policy });
+    });
+    expectPolicy(replacement);
+    expect(policyTextarea()).not.toHaveValue(policy);
+    expect(editor()?.findContent().getElement()).not.toHaveTextContent(first.arn);
+  });
+
+  it.each(['detail first', 'list first'] as const)(
+    'keeps the write result when the follow-up reads resolve %s',
+    async (order) => {
+      const refreshedDetails = hold<api.SubscriptionSettingsAttributes>();
+      const refreshedList = hold<api.SubscriptionPage>();
+      vi.mocked(api.listSubscriptions)
+        .mockResolvedValueOnce({ subscriptions: [first] })
+        .mockReturnValueOnce(refreshedList.promise);
+      vi.mocked(api.getSubscriptionSettings)
+        .mockResolvedValueOnce({ FilterPolicy: policy })
+        .mockReturnValueOnce(refreshedDetails.promise);
+      vi.mocked(api.setSubscriptionSetting).mockResolvedValue(undefined);
+      holdDeliveries({});
+      open();
+      await waitFor(() => expect(rowSelection(1)?.getElement()).toBeVisible());
+      openSettings(1);
+      await waitFor(() => expectPolicy(policy));
+      const policyInput = policyTextarea();
+      if (!policyInput) {
+        throw new Error('Filter policy textarea is missing');
+      }
+      fireEvent.change(policyInput, { target: { value: replacement } });
+      const save = editor()?.findContent().findButton('[data-testid="subscription-settings-save-policy"]');
+      expect(save?.getElement()).toHaveTextContent('Save filter policy');
+      save?.click();
+      await waitFor(expectSettingsFlash);
+      await waitFor(() => {
+        expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2);
+        expect(api.listSubscriptions).toHaveBeenCalledTimes(2);
+      });
+      expectOpenEditor();
+      if (order === 'detail first') {
+        refreshedDetails.resolve({ FilterPolicy: replacement, RawMessageDelivery: 'true' });
+        await waitFor(() => {
+          const rawDelivery = editor()
+            ?.findContent()
+            .findFormField('[data-testid="subscription-raw-message-delivery"]');
+          expect(rawDelivery?.findControl()?.findSelect()?.findTrigger().getElement()).toHaveTextContent('On');
+        });
+        expectPolicy(replacement);
+        refreshedList.resolve({ subscriptions: [first] });
+        await waitFor(() => {
+          expect(isDisabled(action('Subscription settings'))).toBe(false);
+        });
+        expectOpenEditor();
+        expect(editor()?.findContent().find('.aws-area-value-address')?.getElement().textContent).toBe(first.arn);
+        expectSettingsFlash();
+      } else {
+        refreshedList.resolve({ subscriptions: [] });
+        await waitFor(() => {
+          expect(editor()).toBeNull();
+        });
+        await act(async () => {
+          refreshedDetails.resolve({ FilterPolicy: replacement });
+        });
+        expectSettingsFlash();
+      }
+    },
+  );
 });
