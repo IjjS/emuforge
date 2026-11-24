@@ -1,4 +1,8 @@
-import type { DescribeParametersCommandInput } from '@aws-sdk/client-ssm';
+import type {
+  AddTagsToResourceCommandInput,
+  DescribeParametersCommandInput,
+  GetParameterCommandInput,
+} from '@aws-sdk/client-ssm';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -37,6 +41,8 @@ const connected = { kind: 'connected', checkedAt: 1, target: 'local', emulator }
 
 const describeParameters = vi.fn<(input: DescribeParametersCommandInput) => Response | Promise<Response>>();
 const deleteParameter = vi.fn<(input: { Name: string }) => Response>();
+const addTags = vi.fn<(input: AddTagsToResourceCommandInput) => Response>();
+const getParameter = vi.fn<(input: GetParameterCommandInput) => Response>();
 let nextPort = 8850;
 let engineOrigin: string;
 
@@ -48,6 +54,8 @@ beforeEach(() => {
   engineOrigin = `http://127.0.0.1:${String(nextPort++)}`;
   describeParameters.mockReset().mockImplementation(() => answer({ Parameters: [PARAMETER] }));
   deleteParameter.mockReset().mockImplementation(() => answer({}));
+  addTags.mockReset().mockImplementation(() => answer({}));
+  getParameter.mockReset().mockImplementation(() => answer({ Parameter: { Value: VALUE } }));
   vi.stubGlobal('matchMedia', (media: string) => ({
     media,
     matches: false,
@@ -62,6 +70,12 @@ beforeEach(() => {
         return describeParameters((await request.json()) as DescribeParametersCommandInput);
       case 'DeleteParameter':
         return deleteParameter((await request.json()) as { Name: string });
+      case 'ListTagsForResource':
+        return answer({ TagList: [] });
+      case 'AddTagsToResource':
+        return addTags((await request.json()) as AddTagsToResourceCommandInput);
+      case 'GetParameter':
+        return getParameter((await request.json()) as GetParameterCommandInput);
       default:
         throw new Error('Unexpected AWS request');
     }
@@ -130,6 +144,8 @@ const detailSection = () =>
       (container) =>
         container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Parameter details',
     );
+const tagsSection = () =>
+  ui.findAllExpandableSections().find((section) => section.findHeaderText()?.getElement().textContent === 'Tags');
 const details = () =>
   waitFor(() => {
     const heading = detailSection()?.findHeader()?.findHeader()?.findHeadingText().getElement();
@@ -177,6 +193,63 @@ const confirmationInput = (dialog: DeleteDialog) =>
 function confirm(dialog: DeleteDialog, text: string) {
   fireEvent.change(confirmationInput(dialog), { target: { value: text } });
   fireEvent.click(dialogButton(dialog, 'Delete'));
+}
+
+async function saveTag(key: string) {
+  const add = within(required(tagsSection()?.findContent(), 'Tags panel').getElement()).getByRole('button', {
+    name: 'Add tag',
+  });
+  expect(add).toBeEnabled();
+  fireEvent.click(add);
+  const dialog = await waitFor(() => {
+    const modal = required(ui.findModal(), 'Add tag dialog');
+    expect(modal.findHeader().getElement()).toHaveTextContent(/^Add tag$/);
+    return modal;
+  });
+  const inputs = dialog.findContent().findAllInputs();
+  fireEvent.change(required(inputs[0], 'tag key').findNativeInput().getElement(), { target: { value: key } });
+  fireEvent.change(required(inputs[1], 'tag value').findNativeInput().getElement(), { target: { value: 'test' } });
+  fireEvent.click(dialogButton(dialog, 'Add tag'));
+  await waitFor(() =>
+    expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(`Tag ${key} saved for ${NAME}.`),
+  );
+}
+
+async function expectDescribeRefusal() {
+  return waitFor(() => {
+    const panel = ui
+      .findAllContainers()
+      .map((container) => container.findContent())
+      .find((content) => content.getElement().textContent?.includes('501 Not Implemented for DescribeParameters'));
+    const content = required(panel, 'metadata refusal panel');
+    const status = required(content.findStatusIndicator(), 'metadata refusal status').getElement();
+    expect(status).toBeVisible();
+    expect(status).toHaveTextContent('Not implemented by the emulator');
+    const retry = required(content.findButton(), 'metadata Retry button').getElement();
+    expect(retry).toHaveAccessibleName('Retry');
+    expect(retry).toBeDisabled();
+    return { content, retry };
+  });
+}
+
+async function refuseMetadataAfterTagWrite() {
+  describeParameters
+    .mockImplementationOnce(() => answer({ Parameters: [PARAMETER] }))
+    .mockImplementation(() => answer({ __type: 'NotImplemented' }, 501));
+  const view = open();
+  await details();
+  expect(describeParameters.mock.calls).toEqual([[{ ParameterFilters: parameterFilters }]]);
+  fireEvent.click(required(tagsSection(), 'Tags section').findExpandButton().getElement());
+  await saveTag('first');
+  const refusal = await expectDescribeRefusal();
+  expect(describeParameters.mock.calls).toEqual([
+    [{ ParameterFilters: parameterFilters }],
+    [{ ParameterFilters: parameterFilters }],
+  ]);
+  expect(addTags.mock.invocationCallOrder[0]).toBeLessThan(
+    required(describeParameters.mock.invocationCallOrder[1], 'refresh call order'),
+  );
+  return { ...view, ...refusal };
 }
 
 describe('Parameter Store detail', () => {
@@ -394,5 +467,72 @@ describe('Parameter Store detail', () => {
     expect(loading?.getElement()).toBeVisible();
     finishPage(answer({ Parameters: [PARAMETER] }));
     expect(await details()).toBeVisible();
+  });
+
+  it('retains confirmed metadata and independent actions when a successful tag write is followed by a 501', async () => {
+    const { router, content, retry } = await refuseMetadataAfterTagWrite();
+    expect(content.getElement()).toHaveTextContent('Showing the last confirmed parameter details.');
+    const metadata = required(detailSection(), 'details section').findContent();
+    const version = metadata
+      .findKeyValuePairs()
+      ?.findItems()
+      .find((item) => item.findLabel()?.getElement().textContent === 'Version');
+    expect(required(version?.findValue(), 'version').getElement()).toHaveTextContent(/^12$/);
+    expect(within(required(actions(), 'detail actions')).getByRole('link', { name: 'Edit parameter' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    fireEvent.click(retry);
+
+    const showValue = within(metadata.getElement()).getByRole('button', { name: 'Show value' });
+    expect(showValue).toBeEnabled();
+    fireEvent.click(showValue);
+    expect(await within(metadata.getElement()).findByText(VALUE)).toBeVisible();
+    expect(getParameter.mock.calls).toEqual([[{ Name: NAME, WithDecryption: true }]]);
+
+    await saveTag('second');
+    expect(addTags.mock.calls).toEqual(
+      ['first', 'second'].map((Key) => [
+        { ResourceId: NAME, ResourceType: 'Parameter', Tags: [{ Key, Value: 'test' }] },
+      ]),
+    );
+    expect(deleteButton()).toBeEnabled();
+    confirm(await openDelete(), NAME);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(PARAMETER_STORE_PATH);
+      expect(flash('success')?.findContent()?.getElement()).toHaveTextContent(`Parameter ${NAME} deleted.`);
+    });
+    expect(deleteParameter.mock.calls).toEqual([[{ Name: NAME }]]);
+    expect(describeParameters).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears retained metadata when the engine disconnects', async () => {
+    const { connect } = await refuseMetadataAfterTagWrite();
+    connect({ kind: 'engine-unreachable', checkedAt: 2, lastEmulatorPort: emulator.port });
+    expectDetailReadFailure(`The EmuForge engine at ${engineOrigin} is not answering`);
+    expect(detailSection()).toBeUndefined();
+    expect(tagsSection()).toBeUndefined();
+    expect(deleteButton()).toBeDisabled();
+    expect(describeParameters).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse refused metadata when opening another name on the same target', async () => {
+    const { router } = await refuseMetadataAfterTagWrite();
+    await act(() => router.navigate(parameterPath('/app/other')));
+    await expectDescribeRefusal();
+    expect(detailSection()).toBeUndefined();
+    expect(tagsSection()).toBeUndefined();
+    expect(describeParameters).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads the same name on the new target and does not reuse the old target’s metadata', async () => {
+    const { connect } = await refuseMetadataAfterTagWrite();
+    connect({ ...connected, checkedAt: 2, target: 'other' });
+    await waitFor(() => expect(describeParameters).toHaveBeenCalledTimes(3));
+    await expectDescribeRefusal();
+    expect(describeParameters).toHaveBeenLastCalledWith({ ParameterFilters: parameterFilters });
+    expect(detailSection()).toBeUndefined();
+    expect(tagsSection()).toBeUndefined();
+    expect(deleteButton()).toBeDisabled();
   });
 });
