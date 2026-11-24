@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -686,6 +687,55 @@ describe('Settings on a topic page', () => {
     await expectUnavailable(operation, true);
     expect(refresh).toHaveFocus();
   });
+
+  it.each([
+    { destination: 'Tags', moveOutside: false },
+    { destination: 'Refresh', moveOutside: true },
+  ])(
+    'keeps the focused Remove path stable through pending and 501, ending at $destination',
+    async ({ moveOutside }) => {
+      const response = hold<undefined>();
+      vi.mocked(api.untagTopic).mockReturnValueOnce(response.promise);
+      open(settingsPath);
+      const user = userEvent.setup();
+      const refresh = refreshButton();
+      await user.click(await screen.findByRole('button', { name: 'Remove tag color' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Remove tag' }));
+      const confirmation = dialog.getByRole('textbox');
+      await user.type(confirmation, 'remove');
+      await user.tab();
+      await user.tab();
+      const remove = dialog.getByRole('button', { name: 'Remove' });
+      expect(remove).toHaveFocus();
+
+      await user.keyboard('{Enter}');
+      expect(remove).toBeDisabled();
+      expect(remove).not.toHaveFocus();
+      expect(dialog.getByText(/from this topic/)).toHaveFocus();
+      await user.keyboard('{Enter}');
+      confirmation.focus();
+      await user.keyboard('{Enter}');
+      expect(api.untagTopic).toHaveBeenCalledExactlyOnceWith(ENGINE, ARN, 'color', expect.any(AbortSignal));
+
+      if (moveOutside) {
+        refresh.focus();
+        expect(refresh).toHaveFocus();
+      }
+      await act(async () => {
+        response.reject(unavailable('UntagResource'));
+      });
+      await expectUnavailable('UntagResource', true);
+      expect(screen.queryByRole('dialog', { name: 'Remove tag' })).not.toBeInTheDocument();
+      if (moveOutside) {
+        expect(refresh).toHaveFocus();
+      } else {
+        expect(screen.getByRole('heading', { name: 'Tags' }).contains(document.activeElement)).toBe(true);
+      }
+      expect(screen.getByRole('button', { name: 'Remove tag color' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Edit tag color' })).toBeEnabled();
+      expect(api.untagTopic).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('announces the first rejected write once in a mounted live region and keeps the draft and reason', async () => {
     const message = 'Invalid parameter: Policy Error: null';
