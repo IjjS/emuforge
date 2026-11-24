@@ -278,6 +278,7 @@ function TopicTags({
   const tagHeading = useRef<HTMLSpanElement>(null);
   const tagForm = useRef<HTMLFormElement>(null);
   const confirmBody = useRef<HTMLSpanElement>(null);
+  const submittingRemoval = useRef(false);
   const addTagButton = useRef<ButtonProps.Ref>(null);
   const editTagButtons = useRef(new Map<string, ButtonProps.Ref>());
   const returnFocus = useRef<{ key: string | undefined } | undefined>(undefined);
@@ -318,14 +319,25 @@ function TopicTags({
     }
   };
   const handleRemove = async () => {
-    if (removeKey === undefined) {
+    if (removeKey === undefined || submittingRemoval.current) {
       return;
     }
+    submittingRemoval.current = true;
+    // The pending dialog disables Remove, which would blur a focused button.
+    const body = confirmBody.current;
+    const active = body?.ownerDocument.activeElement;
+    if (active?.matches('button') && body?.closest('[role="dialog"]')?.contains(active)) {
+      body.focus({ preventScroll: true });
+    }
     setRemoveError(undefined);
-    const result = await onRemoveTag(removeKey);
-    setRemoveKey(undefined);
-    if (!result.saved) {
-      setRemoveError(result.error);
+    try {
+      const result = await onRemoveTag(removeKey);
+      setRemoveKey(undefined);
+      if (!result.saved) {
+        setRemoveError(result.error);
+      }
+    } finally {
+      submittingRemoval.current = false;
     }
   };
 
@@ -475,7 +487,7 @@ function TopicTags({
           visible={removeKey !== undefined && editable && !removeUnavailable}
           header="Remove tag"
           body={
-            <span ref={confirmBody}>
+            <span ref={confirmBody} tabIndex={-1}>
               Remove <ValueText kind="name" value={removeKey} /> from this topic?
             </span>
           }
