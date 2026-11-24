@@ -73,10 +73,11 @@ interface DeleteControlProps {
   names: string[];
   disabled?: boolean;
   onDeleted?: (name: string, result: FlashItem) => void;
+  onConfirmed?: (names: readonly string[]) => void;
   onSettled?: () => void;
 }
 
-export function DeleteControl({ connection, names, disabled, onDeleted, onSettled }: DeleteControlProps) {
+export function DeleteControl({ connection, names, disabled, onDeleted, onConfirmed, onSettled }: DeleteControlProps) {
   const endpoint = connection.engineOrigin;
   const flash = usePageFlash();
   const evict = useEvictDeletedParameterResources(connection);
@@ -90,6 +91,12 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
   const [error, setError] = useState<FlashItem>();
   const submitting = useRef(false);
   const name = targets.length === 1 ? targets[0] : undefined;
+
+  function reconcileDeleted(names: readonly string[]) {
+    if (names.length === 0) return;
+    evict(names);
+    onConfirmed?.(names);
+  }
 
   const handleOpen = () => {
     setError(undefined);
@@ -106,7 +113,7 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
       if (name !== undefined) {
         await deleteParameter(endpoint, name, signal);
         signal.throwIfAborted();
-        evict([name]);
+        reconcileDeleted([name]);
         const result: FlashItem = {
           type: 'success',
           content: (
@@ -118,7 +125,12 @@ export function DeleteControl({ connection, names, disabled, onDeleted, onSettle
         if (onDeleted === undefined) flash.show([result]);
         else onDeleted(name, result);
       } else {
-        const { deleted, rejected, unconfirmed, failure } = await removeParameters(endpoint, targets, signal, evict);
+        const { deleted, rejected, unconfirmed, failure } = await removeParameters(
+          endpoint,
+          targets,
+          signal,
+          reconcileDeleted,
+        );
         signal.throwIfAborted();
         const items: FlashItem[] = [];
         if (deleted.length)
