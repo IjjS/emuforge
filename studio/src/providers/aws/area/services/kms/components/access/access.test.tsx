@@ -217,6 +217,67 @@ describe('KMS key access', () => {
       expect(readCount).toBe(2);
       expect(send.mock.calls.filter(([command]) => command instanceof DescribeKeyCommand)).toHaveLength(1);
     });
+
+    it('announces each failed read once while leaving focus and recovery controls in place', async () => {
+      const initialResponse = deferred<undefined>();
+      const retryResponse = deferred<undefined>();
+      const responses = [initialResponse, retryResponse];
+      let readCount = 0;
+      send.mockImplementation(async (command: unknown) => {
+        if (command instanceof ReadCommand) {
+          const response = responses[readCount++];
+          if (response !== undefined) {
+            await response.promise;
+            throw new TypeError('Failed to fetch');
+          }
+        }
+        return fallback(command);
+      });
+      const update = open();
+      expect(await screen.findByRole('heading', { name: 'Key details' })).toBeVisible();
+      const policyPanel = ReadCommand === GetKeyPolicyCommand;
+      const scope = policyPanel
+        ? createWrapper().findContainer()?.findContent().getElement()
+        : screen.getByRole('region', { name: 'Grants' });
+      const region = scope?.querySelector('[role="status"][aria-atomic="true"]');
+      if (!region) throw new Error(`Expected the live region for ${operation}.`);
+      expect(region).toBeEmptyDOMElement();
+
+      const updates: string[] = [];
+      const observer = new MutationObserver(() => {
+        if (region.textContent) updates.push(region.textContent);
+      });
+      observer.observe(region, { childList: true, characterData: true, subtree: true });
+      const message = `${policyPanel ? 'Key policy' : 'Grants'}. The EmuForge engine at ${online.engineOrigin} is not answering`;
+      const focused = screen.getByRole('link', { name: 'Jump to grants' });
+      focused.focus();
+
+      try {
+        await act(async () => initialResponse.resolve(undefined));
+        await waitFor(() => expect(updates).toEqual([message]));
+        expect(focused).toHaveFocus();
+        expect(screen.getByText(`The ${panel} (${operation}) could not be read.`)).toBeVisible();
+        expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+        const retry = screen.getByRole('button', { name: 'Retry' });
+        expect(retry).toBeVisible();
+
+        update({ connection: { ...online, result: { ...online.result, checkedAt: 1 } } });
+        fireEvent.click(retry);
+        await waitFor(() => expect(readCount).toBe(2));
+        expect(updates).toEqual([message]);
+
+        await act(async () => retryResponse.resolve(undefined));
+        await waitFor(() => expect(updates).toEqual([message, message]));
+        expect(focused).toHaveFocus();
+        expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(region).toBeEmptyDOMElement());
+        expect(updates).toEqual([message, message]);
+      } finally {
+        observer.disconnect();
+      }
+    });
   });
 
   it('reads the default policy and keeps the edited document and refusal when a save fails', async () => {
