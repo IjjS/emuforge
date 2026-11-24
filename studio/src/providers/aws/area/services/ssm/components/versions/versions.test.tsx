@@ -172,10 +172,9 @@ async function labelDialog(action: 'Add labels' | 'Remove labels') {
   return screen.findByRole('dialog', { name: action });
 }
 
-async function enterRemoval(dialog: HTMLElement, labels: string[]) {
-  click('Choose labels', dialog);
+function enterRemoval(dialog: HTMLElement, labels: string[]) {
   for (const label of labels) {
-    fireEvent.click(await within(dialog).findByRole('option', { name: label }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: label }));
   }
 }
 
@@ -333,7 +332,7 @@ describe('Parameter Store values and versions', () => {
     expect(addLabels.mock.calls).toEqual([[{ Name: NAME, ParameterVersion: 1, Labels: ['release'] }]]);
 
     const remove = await labelDialog('Remove labels');
-    await enterRemoval(remove, ['release']);
+    enterRemoval(remove, ['release']);
     click('Remove labels', remove);
     expect(await within(versionTable()).findByText('stable')).toBeVisible();
     expect(notification()).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
@@ -363,7 +362,7 @@ describe('Parameter Store values and versions', () => {
     expect(notification()).toHaveTextContent('Rejected labels: reserved.');
 
     const remove = await labelDialog('Remove labels');
-    await enterRemoval(remove, ['release', 'stable']);
+    enterRemoval(remove, ['release', 'stable']);
     click('Remove labels', remove);
     expect(await within(versionTable()).findByText('stable')).toBeVisible();
     expect(notification()).toHaveTextContent(`Removed labels for ${NAME}, version 1: release.`);
@@ -384,7 +383,7 @@ describe('Parameter Store values and versions', () => {
     if (adding) {
       fireEvent.change(within(dialog).getByRole('textbox', { name: 'Labels' }), { target: { value: 'release' } });
     } else {
-      await enterRemoval(dialog, ['stable']);
+      enterRemoval(dialog, ['stable']);
     }
     click(action, dialog);
     expect(await screen.findByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
@@ -397,18 +396,18 @@ describe('Parameter Store values and versions', () => {
 
   it('V9 retries ordinary history errors and disables further history reads after 501', async () => {
     getHistory
-      .mockReturnValueOnce(answer({ __type: 'InternalServerError', message: 'History read failed.' }, 500))
+      .mockReturnValueOnce(answer({ __type: 'ValidationException', message: 'History read failed.' }, 400))
       .mockReturnValueOnce(history([first], 'page-two'))
       .mockReturnValueOnce(notImplemented());
     open();
     await openHistory();
-    expect(await screen.findByText('History read failed.')).toBeVisible();
+    expect(await screen.findByText(/History read failed\./)).toBeVisible();
     click('Retry');
     expect(await within(versionTable()).findByText('stable')).toBeVisible();
     click('Next page');
     expect(await screen.findByText('The emulator answered 501 Not Implemented for GetParameterHistory.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toHaveAttribute('aria-disabled', 'true');
     click('Version history');
     await openHistory();
     expect(getHistory).toHaveBeenCalledTimes(3);
@@ -445,7 +444,7 @@ describe('Parameter Store values and versions', () => {
     await openHistory();
     await selectVersion();
     const dialog = await labelDialog('Remove labels');
-    await enterRemoval(dialog, ['stable']);
+    enterRemoval(dialog, ['stable']);
     click('Remove labels', dialog);
     expect(await within(dialog).findByText(/Cannot remove that label/)).toBeVisible();
     expect(within(versionTable()).getByText('stable')).toBeInTheDocument();

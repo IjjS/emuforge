@@ -1,9 +1,9 @@
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import Checkbox from '@cloudscape-design/components/checkbox';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
-import Multiselect, { type MultiselectProps } from '@cloudscape-design/components/multiselect';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useLayoutEffect, useRef, useState } from 'react';
 
@@ -42,7 +42,7 @@ export function LabelDialog({
   const flash = usePageFlash();
   const refresh = useRefreshParameterLabels(connection);
   const [input, setInput] = useState('');
-  const [selected, setSelected] = useState<readonly MultiselectProps.Option[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
   const [failure, setFailure] = useState<RequestFailure>();
   const [pending, setPending] = useState(false);
   const request = useRef<AbortController | undefined>(undefined);
@@ -63,7 +63,7 @@ export function LabelDialog({
             .filter(Boolean),
         ),
       ]
-    : selected.flatMap(({ value }) => (value === undefined ? [] : [value]));
+    : selected;
   const endpoint = connection.engineOrigin;
   const disabled = endpoint === undefined || pending || labels.length === 0 || unsupported.failure !== undefined;
   const handleSubmit = async () => {
@@ -151,16 +151,23 @@ export function LabelDialog({
             <Input value={input} onChange={({ detail }) => setInput(detail.value)} disabled={pending} />
           </FormField>
         ) : (
-          <FormField label="Labels">
-            <Multiselect
-              placeholder="Choose labels"
-              options={version.Labels?.map((label) => ({ label, value: label })) ?? []}
-              selectedOptions={selected}
-              onChange={({ detail }) => setSelected(detail.selectedOptions)}
-              disabled={pending}
-              inlineTokens
-            />
-          </FormField>
+          <SpaceBetween size="xs">
+            <Box variant="strong">Select labels to remove</Box>
+            {version.Labels?.map((label) => (
+              <Checkbox
+                key={label}
+                checked={selected.includes(label)}
+                disabled={pending}
+                onChange={({ detail }) =>
+                  setSelected((current) =>
+                    detail.checked ? [...current, label] : current.filter((entry) => entry !== label),
+                  )
+                }
+              >
+                {label}
+              </Checkbox>
+            ))}
+          </SpaceBetween>
         )}
         {feedback && (
           <Alert type="error" header={feedback.header}>
