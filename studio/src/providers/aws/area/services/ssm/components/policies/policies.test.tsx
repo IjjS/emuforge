@@ -148,7 +148,14 @@ describe('Parameter resource policies', () => {
       metadata('Standard', 'Standard metadata', [{ PolicyType: 'Expiration', PolicyText: lifetimePolicy }]),
     );
     expect(await screen.findByText('Standard metadata')).toBeVisible();
-    expect(screen.getByText(lifetimePolicy)).toBeVisible();
+    expect(
+      screen.getByText(
+        '{\n  "Type": "Expiration",\n  "Attributes": {\n    "Timestamp": "2031-01-01T00:00:00Z"\n  }\n}',
+        {
+          normalizer: (text) => text,
+        },
+      ),
+    ).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Resource policies' })).toBeNull();
     expect(ops.GetResourcePolicies).not.toHaveBeenCalled();
   });
@@ -171,7 +178,7 @@ describe('Parameter resource policies', () => {
     ops.GetResourcePolicies.mockImplementationOnce(() => list([POLICY]));
     fireEvent.click(button('Refresh resource policies'));
     expect(await screen.findByText(DISPLAY_DOCUMENT, POLICY_TEXT)).toBeVisible();
-    expect(screen.getByText(lifetimePolicy)).toBeVisible();
+    expect(screen.getByText('{\n  "Type": "Expiration"\n}', { normalizer: (text) => text })).toBeVisible();
   });
 
   it('shows the original policy text when JSON formatting fails', async () => {
