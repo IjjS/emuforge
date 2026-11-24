@@ -12,6 +12,8 @@ import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
+import type { ClusterAction } from '../cluster-operations';
+import * as snapshots from '../cluster-snapshot-api';
 
 // S6 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -30,7 +32,13 @@ vi.mock('../cluster-api', async (importOriginal) => {
     listMembers: vi.fn(),
     deleteCluster: vi.fn(),
     addInstance: vi.fn(),
+    operateCluster: vi.fn(),
   };
+});
+
+vi.mock('../cluster-snapshot-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../cluster-snapshot-api')>();
+  return { ...real, createClusterSnapshot: vi.fn(), listClusterSnapshots: vi.fn() };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -144,6 +152,7 @@ const FULL: clusterApi.DbCluster = {
   parameterGroup: 'default.aurora-postgresql16',
   members: [],
   deletionProtection: false,
+  backupRetentionPeriod: 7,
   tags: [{ key: 'env', value: 'dev' }],
 };
 
@@ -197,8 +206,14 @@ function tableOf(heading: string) {
 }
 
 function memberRows(): string[][] {
-  return (tableOf('DB instances').findRows() ?? []).map((row) =>
-    [...row.getElement().querySelectorAll('td, th')].map(text),
+  const table = tableOf('DB instances');
+  const columns = table.findColumnHeaders();
+  return table.findRows().map((_, row) =>
+    columns.map((_, column) => {
+      const cell = table.findBodyCell(row + 1, column + 1);
+      if (cell === null) throw new Error('Missing DB instance cell.');
+      return text(cell.getElement());
+    }),
   );
 }
 
@@ -235,7 +250,12 @@ async function confirmDelete() {
 const PATH = '/aws/rds/clusters/cluster/app-aur';
 
 async function loaded() {
-  await screen.findByText('DB cluster details');
+  await waitFor(() => {
+    const details = PAGE.findContentLayout()?.findContent().findAllContainers()[1];
+    expect(details?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      /^DB cluster details$/,
+    );
+  });
 }
 
 function answer(read: clusterApi.ClusterRead, members: api.DbInstance[] = []) {
@@ -286,6 +306,7 @@ describe('a DB cluster', () => {
       'Security groups': 'sg-1sg-2',
       'Cluster parameter group': 'default.aurora-postgresql16',
       'Deletion protection': 'Off',
+      'Backup retention period (days)': '7',
     });
     // The ARN and the resource ID in a group of their own, as wide as the section.
     const identifiers = PAGE.findAllKeyValuePairs().find((pairs) =>
@@ -377,6 +398,50 @@ describe('a DB cluster', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/rds/instances/instance/app-aur-1');
     });
+  });
+
+  it('shows each status with its identifier on a narrow viewport and retains the member columns', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...matchMedia(query),
+      matches: query === '(width < 688px)',
+    }));
+    answer(
+      found({
+        members: [
+          { id: 'app-aur-1', writer: true },
+          { id: 'app-aur-2', writer: false },
+        ],
+      }),
+      [member('app-aur-1'), member('app-aur-2', { status: 'stopped', port: 5433 })],
+    );
+    open(PATH);
+    await loaded();
+
+    const table = tableOf('DB instances');
+    expect(table.findColumnHeaders().map((header) => text(header.getElement()))).toEqual([
+      'DB identifier',
+      'Role',
+      'Status',
+      'Class',
+      'Port',
+    ]);
+    expect(memberRows().map((row) => row.slice(1))).toEqual([
+      ['Writer', 'available', 'db.r6g.large', '5432'],
+      ['Reader', 'stopped', 'db.r6g.large', '5433'],
+    ]);
+    const expected = [
+      ['app-aur-1', 'available'],
+      ['app-aur-2', 'stopped'],
+    ] as const;
+    for (const [index, [id, status]] of expected.entries()) {
+      const cell = table.findBodyCell(index + 1, 1);
+      if (cell === null) throw new Error(`Missing identifier cell for ${id}`);
+      expect(cell.findStatusIndicator()?.getElement()).toHaveTextContent(status);
+      expect(within(cell.getElement()).getByRole('link', { name: id })).toHaveAttribute(
+        'href',
+        `/aws/rds/instances/instance/${id}`,
+      );
+    }
   });
 
   it('no member → "No DB instances" with "Add DB instance"; the section\'s own "Add DB instance" leads there too', async () => {
@@ -697,5 +762,513 @@ describe('a DB cluster', () => {
     answer(found());
     open(PATH);
     expect(await screen.findByText('These DB clusters are in your local emulator')).toBeInTheDocument();
+  });
+});
+
+function openActions() {
+  fireEvent.click(control('Actions'));
+  const menu = PAGE.findButtonDropdown();
+  if (menu === null) throw new Error('Missing cluster Actions dropdown.');
+  return menu;
+}
+
+function chooseAction(action: ClusterAction) {
+  const item = openActions().findItemById(action, { disabled: false });
+  expect(item).not.toBeNull();
+  if (item === null) throw new Error(`Unavailable cluster action: ${action}`);
+  fireEvent.click(item.getElement());
+}
+
+async function openOperationDialog(action: 'modify' | 'failover', heading: string) {
+  chooseAction(action);
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (modal === null) throw new Error(`Missing dialog: ${heading}`);
+    expect(modal.findHeader().getElement()).toHaveTextContent(heading);
+    return modal;
+  });
+}
+
+async function editCluster() {
+  const modal = await openOperationDialog('modify', 'Modify DB cluster');
+  return within(modal.getElement());
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
+function holdRound() {
+  const cluster = deferred<clusterApi.ClusterRead>();
+  const members = deferred<api.DbInstance[]>();
+  vi.mocked(clusterApi.getCluster).mockReturnValueOnce(cluster.promise);
+  vi.mocked(clusterApi.listMembers).mockReturnValueOnce(members.promise);
+  return { cluster, members };
+}
+
+const ROLES = [
+  { id: 'app-aur-1', writer: true },
+  { id: 'app-aur-2', writer: false },
+  { id: 'app-aur-3', writer: false },
+];
+
+function rowsAt(status = 'available') {
+  return ROLES.map(({ id }) => member(id, { status }));
+}
+
+async function editFailover() {
+  const modal = await openOperationDialog('failover', 'Fail over DB cluster');
+  const picker = modal.findContent().findSelect();
+  if (picker === null) throw new Error('Missing failover reader picker.');
+  return { picker, submit: within(modal.getElement()).getByRole('button', { name: 'Fail over' }) };
+}
+
+async function selectReader(target: string) {
+  const { picker, submit } = await editFailover();
+  picker.openDropdown();
+  await waitFor(() => {
+    const options = picker.findDropdown().findOptions();
+    expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['app-aur-2', 'app-aur-3']);
+  });
+  picker.selectOptionByValue(target);
+  return submit;
+}
+
+function rejectOperation(operation: string, message: string) {
+  vi.mocked(clusterApi.operateCluster).mockRejectedValueOnce(
+    new RequestError({ kind: 'other', operation, code: 'InvalidDBClusterStateFault', message }),
+  );
+}
+
+async function expectRefusal(message: string) {
+  await waitFor(() => {
+    expect(flashes('error')[0]).toContain('app-aur');
+    expect(flashes('error')[0]).toContain('InvalidDBClusterStateFault');
+    expect(flashes('error')[0]).toContain(message);
+  });
+  expect(flashes('success')).toEqual([]);
+}
+
+describe('Aurora cluster operations', () => {
+  beforeEach(() => {
+    vi.mocked(clusterApi.operateCluster).mockReset().mockResolvedValue(undefined);
+  });
+
+  it('offers Stop when available, Start when stopped and neither during a transition', async () => {
+    answer(found());
+    open(PATH);
+    await loaded();
+    for (const [status, stopDisabled, startDisabled] of [
+      ['available', false, true],
+      ['stopped', true, false],
+      ['stopping', true, true],
+    ] as const) {
+      if (status !== 'available') {
+        answer(found({ status }));
+        fireEvent.click(control('Refresh'));
+        await loaded();
+      }
+      const menu = openActions();
+      expect(menu.findItemById('stop', { disabled: stopDisabled })).not.toBeNull();
+      expect(menu.findItemById('start', { disabled: startDisabled })).not.toBeNull();
+      fireEvent.click(control('Actions'));
+    }
+  });
+
+  // Bound: Allow two real three-second polls, including a round with conflicting terminal statuses.
+  it.each([
+    ['stop', 'available', 'stopping', 'stopped', 'Stopping'],
+    ['start', 'stopped', 'starting', 'available', 'Starting'],
+  ] as const)(
+    'polls until the cluster and members agree after %s is accepted',
+    async (action, before, moving, final, verb) => {
+      answer(found({ status: before, members: ROLES }), rowsAt(before));
+      open(PATH);
+      await loaded();
+
+      answer(found({ status: moving, members: ROLES }), rowsAt(moving));
+      chooseAction(action);
+      await waitFor(() => expect(flashes('success')).toEqual([`${verb} DB cluster app-aur`]));
+      await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe(moving));
+      expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+        ENGINE,
+        'app-aur',
+        { kind: action },
+        expect.any(AbortSignal),
+      );
+
+      const next = holdRound();
+      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+      const settled = holdRound();
+      await act(async () => next.cluster.resolve(found({ status: final, members: ROLES })));
+      await act(async () => next.members.resolve(rowsAt(before)));
+      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(4), { timeout: 4_000 });
+      await act(async () => settled.cluster.resolve(found({ status: final, members: ROLES })));
+      await act(async () => settled.members.resolve(rowsAt(final)));
+      await waitFor(() => {
+        expect(pairsOf('DB cluster details')['Status']).toBe(final);
+        expect(memberRows().map((row) => row.slice(0, 3))).toEqual(
+          ROLES.map(({ id, writer }) => [id, writer ? 'Writer' : 'Reader', final]),
+        );
+      });
+      expect(flashes('success')).toEqual([`${verb} DB cluster app-aur`]);
+    },
+    11_000,
+  );
+
+  it.each([
+    ['stop', 'available', 'StopDBCluster'],
+    ['start', 'stopped', 'StartDBCluster'],
+  ] as const)('shows the service error when %s is refused after a state change', async (action, status, operation) => {
+    answer(found({ status }));
+    rejectOperation(operation, 'The DB cluster changed state.');
+    open(PATH);
+    await loaded();
+    chooseAction(action);
+    await expectRefusal('The DB cluster changed state.');
+  });
+
+  it('prefills Modify, sends only changed protection, and retains the result after both reads', async () => {
+    answer(found({ deletionProtection: true, members: ROLES }), rowsAt());
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    const protection = dialog.getByRole('checkbox', { name: 'Deletion protection' });
+    expect(protection).toBeChecked();
+    expect(dialog.getByRole('textbox', { name: 'Backup retention period (days)' })).toHaveValue('7');
+
+    const next = holdRound();
+    fireEvent.click(protection);
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(flashes('success')).toEqual(['DB cluster app-aur updated']));
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { deletionProtection: false } },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(2));
+    await act(async () => next.cluster.resolve(found({ members: ROLES })));
+    await act(async () => next.members.resolve(rowsAt()));
+    await waitFor(() => {
+      expect(pairsOf('DB cluster details')['Deletion protection']).toBe('Off');
+      expect(memberRows().map(([id]) => id)).toEqual(ROLES.map(({ id }) => id));
+    });
+    expect(reasonOf(control('Delete'))).toBe("Delete the cluster's DB instances first, each from its own page.");
+    expect(flashes('success')).toEqual(['DB cluster app-aur updated']);
+  });
+
+  it('sends only the new retention period and displays the value returned by the read', async () => {
+    answer(found({ deletionProtection: true }));
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    answer(found({ deletionProtection: true, backupRetentionPeriod: 35 }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Backup retention period (days)' }), {
+      target: { value: '35' },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { backupRetentionPeriod: 35 } },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(pairsOf('DB cluster details')['Backup retention period (days)']).toBe('35'));
+    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
+  });
+
+  it('blocks empty, fractional and out-of-range retention periods and accepts 1 and 35', async () => {
+    answer(found());
+    open(PATH);
+    await loaded();
+    const modal = await openOperationDialog('modify', 'Modify DB cluster');
+    const field = modal.findContent().findFormField();
+    expect(field?.findLabel()?.getElement()).toHaveTextContent('Backup retention period (days)');
+    const dialog = within(modal.getElement());
+    const retention = dialog.getByRole('textbox', { name: 'Backup retention period (days)' });
+    const save = dialog.getByRole('button', { name: 'Save changes' });
+    for (const value of ['', '1.5', '0', '36']) {
+      fireEvent.change(retention, { target: { value } });
+      expect(field?.findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 35.');
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+    }
+    expect(clusterApi.operateCluster).not.toHaveBeenCalled();
+
+    for (const value of ['1', '35']) {
+      fireEvent.change(retention, { target: { value } });
+      expect(field?.findError()).toBeNull();
+      expect(save).toBeEnabled();
+    }
+  });
+
+  it('shows a refused Modify on the page and prefills the draft when reopened', async () => {
+    answer(found({ deletionProtection: true }));
+    rejectOperation('ModifyDBCluster', 'The cluster cannot be modified now.');
+    open(PATH);
+    await loaded();
+    const dialog = await editCluster();
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Backup retention period (days)' }), {
+      target: { value: '14' },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    await expectRefusal('The cluster cannot be modified now.');
+    expect(pairsOf('DB cluster details')['Deletion protection']).toBe('OnChanged with ModifyDBCluster.');
+    expect(pairsOf('DB cluster details')['Backup retention period (days)']).toBe('7');
+
+    const reopened = await editCluster();
+    expect(reopened.getByRole('checkbox', { name: 'Deletion protection' })).not.toBeChecked();
+    const retention = reopened.getByRole('textbox', { name: 'Backup retention period (days)' });
+    expect(retention).toHaveValue('14');
+    fireEvent.change(retention, { target: { value: '21' } });
+    answer(found({ deletionProtection: false, backupRetentionPeriod: 21 }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(flashes('success')).toEqual(['DB cluster app-aur updated']));
+    expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'modify', changes: { deletionProtection: false, backupRetentionPeriod: 21 } },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('explains why a cluster without a reader cannot fail over', async () => {
+    answer(found({ members: ROLES.filter(({ writer }) => writer) }), [member('app-aur-1')]);
+    open(PATH);
+    await loaded();
+    const menu = openActions();
+    const failover = menu.findItemById('failover', { disabled: true });
+    if (failover === null) throw new Error('Missing disabled Fail over action.');
+    fireEvent.mouseEnter(failover.getElement());
+    await waitFor(() => {
+      expect(menu.findDisabledReason()?.getElement()).toHaveTextContent(
+        'Failover requires a reader DB instance in this cluster.',
+      );
+    });
+    fireEvent.click(failover.getElement());
+    expect(PAGE.findModal()).toBeNull();
+    expect(clusterApi.operateCluster).not.toHaveBeenCalled();
+  });
+
+  // Bound: Allow the reader dialog, the real three-second poll, and the ordered cluster and member responses.
+  it('sends the second reader as the failover target and polls until the new roles and statuses are visible', async () => {
+    answer(found({ members: ROLES }), rowsAt());
+    open(PATH);
+    await loaded();
+    const submit = await selectReader('app-aur-3');
+    answer(found({ status: 'failing-over', members: ROLES }), rowsAt());
+    fireEvent.click(submit);
+    await waitFor(() => expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']));
+    expect(clusterApi.operateCluster).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'failover', target: 'app-aur-3' },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe('failing-over'));
+
+    const next = holdRound();
+    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+    const promoted = ROLES.map(({ id }) => ({ id, writer: id === 'app-aur-3' }));
+    await act(async () => next.cluster.resolve(found({ members: promoted })));
+    await act(async () => next.members.resolve(rowsAt()));
+    await waitFor(() => {
+      expect(pairsOf('DB cluster details')['Status']).toBe('available');
+      expect(memberRows().map((row) => row.slice(0, 3))).toEqual([
+        ['app-aur-1', 'Reader', 'available'],
+        ['app-aur-2', 'Reader', 'available'],
+        ['app-aur-3', 'Writer', 'available'],
+      ]);
+    });
+    expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']);
+  }, 8_000);
+
+  it('shows a refused Fail over on the page and prefills the reader when reopened', async () => {
+    answer(found({ members: ROLES }), rowsAt());
+    rejectOperation('FailoverDBCluster', 'The selected DB instance is no longer in this cluster.');
+    open(PATH);
+    await loaded();
+    fireEvent.click(await selectReader('app-aur-3'));
+    await expectRefusal('The selected DB instance is no longer in this cluster.');
+
+    const { picker, submit } = await editFailover();
+    expect(picker.findTrigger().getElement()).toHaveTextContent('app-aur-3');
+    picker.openDropdown();
+    picker.selectOptionByValue('app-aur-2');
+    fireEvent.click(submit);
+    await waitFor(() => expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']));
+    expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      { kind: 'failover', target: 'app-aur-2' },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('keeps the Multi-AZ detail and Delete without exposing Aurora operations', async () => {
+    answer(found({ engine: 'postgres', engineVersion: '16.4' }));
+    open(PATH);
+    await loaded();
+    expect(pairsOf('DB cluster details')['Engine']).toBe('postgres 16.4');
+    expect(control('Delete')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+  });
+
+  it.each([
+    ['stop', 'available', 'StopDBCluster'],
+    ['start', 'stopped', 'StartDBCluster'],
+    ['modify', 'available', 'ModifyDBCluster'],
+    ['failover', 'available', 'FailoverDBCluster'],
+  ] as const)('keeps %s visible and disabled after a 501 response', async (action, status, operation) => {
+    answer(found({ status, members: ROLES }), rowsAt());
+    vi.mocked(clusterApi.operateCluster).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation }),
+    );
+    open(PATH);
+    await loaded();
+    if (action === 'modify') {
+      const dialog = await editCluster();
+      fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+      fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    } else if (action === 'failover') {
+      fireEvent.click(await selectReader('app-aur-3'));
+    } else {
+      chooseAction(action);
+    }
+
+    await waitFor(() => {
+      expect(flashes('info')[0]).toContain('Not implemented by the emulator');
+      expect(flashes('info')[0]).toContain(operation);
+      expect(PAGE.findModal()).toBeNull();
+    });
+    expect(openActions().findItemById(action, { disabled: true })).not.toBeNull();
+    expect(clusterApi.operateCluster).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('taking a DB cluster snapshot', () => {
+  beforeEach(() => {
+    vi.mocked(snapshots.createClusterSnapshot).mockReset().mockResolvedValue('app-snap');
+    vi.mocked(snapshots.listClusterSnapshots).mockReset().mockResolvedValue({ items: [] });
+  });
+
+  async function openSnapshotDialog() {
+    fireEvent.click(control('Take snapshot'));
+    return waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null) throw new Error('Missing Take snapshot dialog.');
+      expect(modal.findHeader().getElement()).toHaveTextContent('Take DB cluster snapshot');
+      return within(modal.getElement());
+    });
+  }
+
+  async function takeSnapshot(id: string) {
+    await loaded();
+    const dialog = await openSnapshotDialog();
+    fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' }), {
+      target: { value: id },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+  }
+
+  // Bound: Allow the real three-second snapshot poll after navigation and the first list response.
+  it('creates the named snapshot and keeps its result while the destination page polls', async () => {
+    const item = { id: 'app-snap', sourceId: 'app-aur', engine: 'aurora-postgresql', status: 'creating' };
+    vi.mocked(snapshots.listClusterSnapshots)
+      .mockResolvedValueOnce({ items: [item] })
+      .mockResolvedValue({ items: [{ ...item, status: 'available' }] });
+    answer(found());
+    const router = open(PATH);
+    await takeSnapshot('App-Snap');
+
+    expect(snapshots.createClusterSnapshot).toHaveBeenCalledWith(
+      ENGINE,
+      'app-aur',
+      'App-Snap',
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => {
+      expect(flashes('success')[0]).toContain('Creating DB cluster snapshot app-snap');
+    });
+    expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
+    await waitFor(() => {
+      const table = tableOf('DB cluster snapshots');
+      expect(table.findBodyCell(1, 2)?.getElement()).toHaveTextContent('app-snap');
+      expect(table.findBodyCell(1, 5)?.getElement()).toHaveTextContent('creating');
+    });
+    await waitFor(
+      () => {
+        const table = tableOf('DB cluster snapshots');
+        expect(table.findBodyCell(1, 2)?.getElement()).toHaveTextContent('app-snap');
+        expect(table.findBodyCell(1, 5)?.getElement()).toHaveTextContent('available');
+      },
+      { timeout: 6_000 },
+    );
+    expect(
+      vi
+        .mocked(snapshots.listClusterSnapshots)
+        .mock.calls.slice(0, 2)
+        .map((call) => call[1]),
+    ).toEqual([undefined, undefined]);
+    expect(flashes('success')[0]).toContain('Creating DB cluster snapshot app-snap');
+  }, 10_000);
+
+  it('shows the duplicate snapshot refusal and reopens the draft for correction', async () => {
+    vi.mocked(snapshots.createClusterSnapshot).mockRejectedValueOnce(
+      new RequestError({
+        kind: 'other',
+        operation: 'CreateDBClusterSnapshot',
+        code: 'DBClusterSnapshotAlreadyExistsFault',
+        message: 'This snapshot already exists.',
+      }),
+    );
+    answer(found());
+    const router = open(PATH);
+    await takeSnapshot('existing-snap');
+
+    await waitFor(() => {
+      expect(flashes('error')[0]).toContain('Create DB cluster snapshot existing-snap failed');
+      expect(flashes('error')[0]).toContain('This snapshot already exists.');
+    });
+    expect(router.state.location.pathname).toBe(PATH);
+    expect(flashes('success')).toEqual([]);
+
+    vi.mocked(snapshots.createClusterSnapshot).mockResolvedValueOnce('corrected-snap');
+    const dialog = await openSnapshotDialog();
+    const input = dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' });
+    expect(input).toHaveValue('existing-snap');
+    fireEvent.change(input, { target: { value: 'corrected-snap' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+    await waitFor(() => {
+      expect(flashes('success')[0]).toContain('Creating DB cluster snapshot corrected-snap');
+    });
+    expect(snapshots.createClusterSnapshot).toHaveBeenLastCalledWith(
+      ENGINE,
+      'app-aur',
+      'corrected-snap',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('disables Take snapshot after CreateDBClusterSnapshot returns 501', async () => {
+    vi.mocked(snapshots.createClusterSnapshot).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'CreateDBClusterSnapshot' }),
+    );
+    answer(found());
+    open(PATH);
+    await takeSnapshot('app-snap');
+
+    await waitFor(() => {
+      expect(flashes('info')[0]).toContain('Not implemented by the emulator');
+      expect(flashes('info')[0]).toContain('501 Not Implemented for CreateDBClusterSnapshot');
+    });
+    expect(control('Take snapshot')).toBeDisabled();
   });
 });

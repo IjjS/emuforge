@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as clusterApi from '../cluster-api';
+import * as snapshots from '../cluster-snapshot-api';
 
 // S4 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -25,6 +26,11 @@ vi.mock('../cluster-api', async (importOriginal) => {
     deleteCluster: vi.fn(),
     addInstance: vi.fn(),
   };
+});
+
+vi.mock('../cluster-snapshot-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../cluster-snapshot-api')>();
+  return { ...real, listClusterSnapshots: vi.fn() };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -491,4 +497,19 @@ describe('the DB clusters list', () => {
     expect(rows()).toHaveLength(1);
     expect(flashes('success')).toEqual(['Deleting DB cluster app-aur']);
   });
+});
+
+it('links to manual DB cluster snapshots even when there are no clusters', async () => {
+  vi.mocked(clusterApi.listClusters).mockResolvedValue({ clusters: [] });
+  vi.mocked(snapshots.listClusterSnapshots).mockResolvedValue({ items: [] });
+  const router = open('/aws/rds/clusters');
+  await waitFor(() => {
+    expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No DB clusters');
+  });
+  fireEvent.click(screen.getByRole('link', { name: 'DB cluster snapshots' }));
+  await waitFor(() => {
+    const heading = table().findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent('DB cluster snapshots');
+  });
+  expect(router.state.location.pathname).toBe('/aws/rds/cluster-snapshots');
 });

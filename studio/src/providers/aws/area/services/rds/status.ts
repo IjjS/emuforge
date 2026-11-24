@@ -5,8 +5,16 @@
 /** The kind of status a status is shown with; `undefined` for any other status. */
 export type StatusKind = 'success' | 'stopped' | 'in-progress';
 
-/** The six statuses that move by themselves. */
-export const IN_PROGRESS_STATUSES = ['creating', 'starting', 'stopping', 'rebooting', 'modifying', 'deleting'] as const;
+/** The statuses that move by themselves. */
+export const IN_PROGRESS_STATUSES = [
+  'creating',
+  'starting',
+  'stopping',
+  'rebooting',
+  'modifying',
+  'deleting',
+  'failing-over',
+] as const;
 
 /** The kind of `status`; none claimed for a status not named here. */
 export function statusKind(status: string): StatusKind | undefined {
@@ -22,7 +30,7 @@ export function statusKind(status: string): StatusKind | undefined {
 /** How long until a page that shows a status in progress reads again. */
 export const READ_AGAIN_MS = 3_000;
 
-/** Whether `status` is one of the six that move by themselves, so the page that shows it reads again. */
+/** Whether `status` is one of the statuses that move by themselves, so the page that shows it reads again. */
 export function isInProgress(status: string): boolean {
   return statusKind(status) === 'in-progress';
 }

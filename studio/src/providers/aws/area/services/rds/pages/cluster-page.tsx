@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
@@ -30,18 +30,22 @@ import type { ScreenPageProps } from '../../../screens';
 import type { DbInstance } from '../api';
 import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
+import { CLUSTER_ACTIONS, clusterActionResult, type ClusterAction, type ClusterOperation } from '../cluster-operations';
 import { useClusterDelete, useClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
+import { ClusterOperationControls } from '../components/cluster-operations';
+import { TakeSnapshotAction } from '../components/cluster-snapshot-dialogs';
 import { ComposeHostEndpoint } from '../components/compose-host-endpoint';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
+import { isAurora } from '../status';
 import { addInstanceHref, CLUSTERS_PATH, CLUSTERS_WORD, engineText, instanceHref, NONE } from '../format';
 
 // A DB cluster's page, S6 (issue 573, design task 4): read by `DBClusterIdentifier`, so an identifier the emulator
 // does not hold is "DB cluster not found", with its DB instances read by the filter `db-cluster-id` in the same round.
 // "Connection" comes first: what a client is given. A failed read of the members fails their section alone. The
-// header holds "Delete"; this page holds its request and shows its answer, on S4.
+// page holds the action requests and their results.
 
 const CONNECTION_DESCRIPTION =
   'The endpoint and the sign-in values as the emulator reports them. The API does not return the master password.';
@@ -52,6 +56,18 @@ const NAME_MIN_WIDTH = '28ch';
 const STATUS_MIN_WIDTH = '18ch';
 /** A class as the API names it, up to "db.r6g.16xlarge", on one line. */
 const CLASS_MIN_WIDTH = '17ch';
+
+const NARROW_VIEWPORT = '(width < 688px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia(NARROW_VIEWPORT);
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia(NARROW_VIEWPORT).matches;
+}
 
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
@@ -139,6 +155,14 @@ function Details({ cluster }: { cluster: DbCluster }) {
               label: 'Deletion protection',
               value: <ProtectionValue on={cluster.deletionProtection} operation="ModifyDBCluster" />,
             },
+            ...(isAurora(cluster.engine)
+              ? [
+                  {
+                    label: 'Backup retention period (days)',
+                    value: <Fixed value={cluster.backupRetentionPeriod?.toString()} />,
+                  },
+                ]
+              : []),
           ]}
         />
         {/* The ARN and the resource ID in a column of their own, as wide as the section, so each is whole. */}
@@ -192,6 +216,7 @@ interface MembersProps {
 function Members({ cluster, members, fetching, connection, onRetry }: MembersProps) {
   const handleFollow = useFollow();
   const addHref = addInstanceHref(cluster.id);
+  const showStatusWithIdentifier = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const columns: TableProps.ColumnDefinition<DbInstance>[] = [
     {
       id: 'id',
@@ -199,9 +224,16 @@ function Members({ cluster, members, fetching, connection, onRetry }: MembersPro
       isRowHeader: true,
       minWidth: NAME_MIN_WIDTH,
       cell: (row) => (
-        <Link href={instanceHref(row.id)} onFollow={handleFollow}>
-          <ValueText kind="name" value={row.id} />
-        </Link>
+        <SpaceBetween size="xxxs">
+          <Link href={instanceHref(row.id)} onFollow={handleFollow}>
+            <ValueText kind="name" value={row.id} />
+          </Link>
+          {showStatusWithIdentifier && (
+            <div aria-hidden="true">
+              <StatusValue status={row.status} />
+            </div>
+          )}
+        </SpaceBetween>
       ),
     },
     { id: 'role', header: 'Role', cell: (row) => <ValueText kind="fixed" value={roleOf(cluster, row.id)} /> },
@@ -298,8 +330,10 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
   const remove = useClusterDelete(connection.engineOrigin);
   const [announcement, announce] = useAnnouncer();
   const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
+  const [unavailable, setUnavailable] = useState<ReadonlySet<ClusterAction>>(() => new Set());
   const reading = useClusterRound(connection.engineOrigin, id);
-  const { value: round, failure, refresh, fetching, retryMembers } = reading;
+  const { value: round, failure, refresh, fetching, retryMembers, operate } = reading;
   const cluster = round?.cluster.found === true ? round.cluster.cluster : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB cluster');
 
@@ -329,19 +363,22 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
 
   // The request and what follows its answer are this page's, which stays mounted whatever its read shows.
   const handleDelete = (target: string) => {
-    if (pending) {
+    if (inFlight.current) {
       return;
     }
     const signal = pageSignal();
+    inFlight.current = true;
     setPending(true);
     remove(target, signal).then(
       () => {
         if (signal.aborted) return;
+        inFlight.current = false;
         setPending(false);
         flash.handOver(CLUSTERS_PATH, [{ type: 'success', content: `Deleting DB cluster ${target}` }]);
       },
       (error: unknown) => {
         if (signal.aborted) return;
+        inFlight.current = false;
         setPending(false);
         flash.show([
           actionFailureItem(
@@ -352,6 +389,50 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
         ]);
       },
     );
+  };
+
+  const handleOperation = async (
+    target: string,
+    action: ClusterOperation,
+  ): Promise<'retain-draft' | 'discard-draft'> => {
+    if (inFlight.current) return 'discard-draft';
+    const signal = pageSignal();
+    inFlight.current = true;
+    setPending(true);
+    try {
+      await operate(target, action, signal);
+      if (!signal.aborted) {
+        flash.show([{ type: 'success', content: clusterActionResult(action.kind, target) }]);
+      }
+    } catch (error) {
+      if (signal.aborted) return 'discard-draft';
+      const { label, operation } = CLUSTER_ACTIONS[action.kind];
+      const failure = failureOf(error, operation);
+      const subject = `${label} DB cluster ${target}`;
+      const item = actionFailureItem(failure, subject, connection.engineOrigin);
+      if (failure.kind === 'not-implemented') {
+        setUnavailable((current) => new Set([...current, action.kind]));
+      }
+      flash.show([
+        failure.kind === 'other' || failure.kind === 'not-implemented'
+          ? item
+          : {
+              ...item,
+              content: (
+                <>
+                  {subject}. {item.content}
+                </>
+              ),
+            },
+      ]);
+      return failure.kind === 'not-implemented' ? 'discard-draft' : 'retain-draft';
+    } finally {
+      if (!signal.aborted) {
+        inFlight.current = false;
+        setPending(false);
+      }
+    }
+    return 'discard-draft';
   };
 
   let content;
@@ -397,6 +478,20 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" onClick={refresh} />
+                {cluster !== undefined && isAurora(cluster.engine) && (
+                  <ClusterOperationControls
+                    cluster={cluster}
+                    pending={pending}
+                    reading={fetching}
+                    unavailable={unavailable}
+                    onSubmit={handleOperation}
+                  />
+                )}
+                <TakeSnapshotAction
+                  sourceId={cluster !== undefined && isAurora(cluster.engine) ? cluster.id : undefined}
+                  disabled={pending || fetching}
+                  endpoint={connection.engineOrigin}
+                />
                 {cluster !== undefined && (
                   <ClusterDeleteAction cluster={deleteTarget(cluster)} pending={pending} onDelete={handleDelete} />
                 )}
