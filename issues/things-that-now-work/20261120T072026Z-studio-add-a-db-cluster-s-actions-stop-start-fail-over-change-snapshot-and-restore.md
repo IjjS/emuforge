@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|rds.cluster-actions|not-built
-Issue-Check-Ids:
+Issue-Check-Ids: studio.rds-stop-and-start-a-cluster studio.rds-modify-a-cluster studio.rds-fail-over-to-a-selected-reader studio.rds-take-a-cluster-snapshot studio.rds-restore-an-orphaned-cluster-snapshot studio.rds-delete-a-cluster-snapshot studio.rds-cluster-snapshots-follow-an-emulator-restart
 Issue-Commit: 4fe827cf353b884942e2cae067a6fb063e5d2f0f
 
 # Add a DB cluster's actions: stop, start, fail over, change, snapshot and restore

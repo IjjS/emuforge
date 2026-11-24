@@ -25,8 +25,19 @@ import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
 import { useClusterDelete, useClusterListing } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
+import { TakeSnapshotAction } from '../components/cluster-snapshot-dialogs';
 import { StatusValue } from '../components/status';
-import { clusterHref, CLUSTERS_TITLE, CLUSTERS_WORD, CREATE_CLUSTER_PATH, engineText, NONE } from '../format';
+import {
+  clusterHref,
+  CLUSTER_SNAPSHOTS_PATH,
+  CLUSTER_SNAPSHOTS_TITLE,
+  CLUSTERS_TITLE,
+  CLUSTERS_WORD,
+  CREATE_CLUSTER_PATH,
+  engineText,
+  NONE,
+} from '../format';
+import { isAurora } from '../status';
 
 // The DB clusters, S4 (issue 573, design task 4): every DB cluster of the emulator, a page of `DescribeDBClusters` at
 // a time on the API's markers, in the API's order, of every engine. For the one selected row, "Delete"; this page
@@ -231,6 +242,14 @@ export function ClusterListPage({ connection }: { connection: AreaConnection }) 
                   pending={pending}
                   onDelete={handleDelete}
                 />
+                <TakeSnapshotAction
+                  sourceId={selected !== undefined && isAurora(selected.engine) ? selected.id : undefined}
+                  disabled={pending}
+                  endpoint={connection.engineOrigin}
+                />
+                <Link href={CLUSTER_SNAPSHOTS_PATH} onFollow={handleFollow}>
+                  {CLUSTER_SNAPSHOTS_TITLE}
+                </Link>
                 <Button variant="primary" href={CREATE_CLUSTER_PATH} onFollow={handleFollow}>
                   Create DB cluster
                 </Button>
