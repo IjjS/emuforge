@@ -97,7 +97,7 @@ function Page({ observeList, keyId, target }: { observeList: boolean; keyId: str
   );
 }
 
-function open(observeList = false, client = new QueryClient()) {
+function open(observeList = false, client = new QueryClient(), initialTarget: AreaConnection = connection) {
   const page = (keyId: string, target: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -105,7 +105,7 @@ function open(observeList = false, client = new QueryClient()) {
       </MemoryRouter>
     </QueryClientProvider>
   );
-  const view = render(page(KEY_ID, connection));
+  const view = render(page(KEY_ID, initialTarget));
   return (keyId: string, target: AreaConnection = connection) => view.rerender(page(keyId, target));
 }
 
@@ -205,6 +205,56 @@ describe('Key detail panel lifetime', () => {
   }
 
   const rotateButton = () => panelButton('Rotate now');
+
+  it('announces the initial metadata failure once before and after the frame detects it, then recovers on Retry', async () => {
+    const firstRead = deferred<unknown>();
+    let reads = 0;
+    emulate(key('Enabled'), (command) =>
+      command instanceof DescribeKeyCommand && ++reads === 1 ? firstRead.promise : undefined,
+    );
+    const showTarget = open(false, new QueryClient(), { ...connection, result: undefined });
+    await waitFor(() => expect(sent(DescribeKeyCommand)).toHaveLength(1));
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    refresh.focus();
+
+    await act(async () => firstRead.reject(new TypeError('Failed to fetch')));
+    const text = 'Key metadata could not be loaded. Choose Retry to try again.';
+    const announcement = await screen.findByText(text);
+    expect(announcement).toHaveAttribute('role', 'status');
+    expect(announcement).toHaveAttribute('aria-atomic', 'true');
+    expect(refresh).toHaveFocus();
+    const recovery = PAGE.findContentLayout()?.findContent().findContainer()?.findContent().getElement();
+    if (!recovery) throw new Error('Missing metadata recovery');
+    expect(recovery).toHaveTextContent(`The EmuForge engine at ${endpoint} is not answering`);
+    expect(within(recovery).getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+
+    const observed = vi.fn();
+    const observer = new MutationObserver(observed);
+    observer.observe(announcement, { childList: true, characterData: true, subtree: true });
+    try {
+      await act(async () => {
+        showTarget(KEY_ID, {
+          ...connection,
+          result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: connection.result.emulator.port },
+        });
+      });
+      expect(screen.getAllByText(text)).toEqual([announcement]);
+      expect(observer.takeRecords()).toHaveLength(0);
+      expect(observed).not.toHaveBeenCalled();
+      expect(refresh).toHaveFocus();
+    } finally {
+      observer.disconnect();
+    }
+
+    const retry = within(recovery).getByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    await expectStatus('Enabled');
+    await waitFor(() => expect(retry).not.toBeInTheDocument());
+    expect(announcement).toBeEmptyDOMElement();
+    expect(refresh).toHaveFocus();
+    expect(sent(DescribeKeyCommand)).toHaveLength(2);
+  });
 
   it('blocks new panel writes before initial metadata succeeds and unlocks them after Retry', async () => {
     const metadata = deferred<unknown>();
