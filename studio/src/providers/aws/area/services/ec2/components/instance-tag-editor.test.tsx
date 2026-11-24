@@ -57,7 +57,7 @@ function showTags() {
 
 function action(name: string) {
   if (name === 'Add tag') return screen.getByRole('button', { name });
-  return within(screen.getByRole('row', { name: /^Name / })).getByRole('button', { name });
+  return screen.getByRole('button', { name: `${name} ${TAG.key}` });
 }
 
 async function open(name: string) {
@@ -65,7 +65,7 @@ async function open(name: string) {
   return screen.findByRole('dialog', { name });
 }
 
-function enter(dialog: HTMLElement, label: string, value: string) {
+function field(dialog: HTMLElement, label: string) {
   const input = createWrapper(dialog)
     .findAllFormFields()
     .find((field) => field.findLabel()?.getElement().textContent === label)
@@ -74,7 +74,15 @@ function enter(dialog: HTMLElement, label: string, value: string) {
     ?.findNativeInput()
     .getElement();
   if (input === undefined || input === null) throw new Error(`Missing input ${label}`);
-  fireEvent.change(input, { target: { value } });
+  return input;
+}
+
+function enter(dialog: HTMLElement, label: string, value: string) {
+  fireEvent.change(field(dialog, label), { target: { value } });
+}
+
+function save(dialog: HTMLElement) {
+  return within(dialog).getByRole('button', { name: 'Save changes' });
 }
 
 function submit(dialog: HTMLElement, name: string) {
@@ -83,7 +91,6 @@ function submit(dialog: HTMLElement, name: string) {
     if (!input) throw new Error('Missing delete confirmation');
     fireEvent.change(input, { target: { value: 'delete' } });
   }
-  if (name === 'Add tag') enter(dialog, 'Key', TAG.key);
   fireEvent.click(within(dialog).getByRole('button', { name: name === 'Delete tag' ? name : 'Save changes' }));
 }
 
@@ -99,7 +106,13 @@ it('saves the empty value for just the existing key', async () => {
   const show = showTags();
   const dialog = await open('Edit tag');
   expect(within(dialog).getByText(TAG.key)).toBeVisible();
+  expect(save(dialog)).toBeDisabled();
+  enter(dialog, 'Value', 'changed');
+  expect(save(dialog)).toBeEnabled();
+  enter(dialog, 'Value', TAG.value);
+  expect(save(dialog)).toBeDisabled();
   enter(dialog, 'Value', '');
+  expect(save(dialog)).toBeEnabled();
   submit(dialog, 'Edit tag');
   await waitFor(() => expect(show).toHaveBeenCalledWith([{ type: 'success', content: 'Tag updated.' }]));
   expect(changeInstanceContent).toHaveBeenCalledExactlyOnceWith(
@@ -116,7 +129,7 @@ it('cancels a deletion and leaves the key and value in the table', async () => {
   expect(within(dialog).getByText(TAG.key)).toBeVisible();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(screen.getByRole('row', { name: /^Name dev / })).toBeVisible();
+  expect(screen.getByRole('row', { name: /^Name .* dev$/ })).toBeVisible();
   expect(changeInstanceContent).not.toHaveBeenCalled();
 });
 
@@ -126,10 +139,18 @@ it.each([
 ])('shows the original refusal for %s', async (name, operation, code, message, status) => {
   const show = showTags();
   deny(operation, code, message, status);
-  submit(await open(name), name);
-  expect(await screen.findByText(new RegExp(`${code}: ${message}`))).toBeVisible();
+  const dialog = await open(name);
+  if (name === 'Edit tag') enter(dialog, 'Value', 'updated draft');
+  submit(dialog, name);
+  const alert = await within(dialog).findByRole('alert');
+  expect(alert).toHaveTextContent(`${code}: ${message}`);
+  if (name === 'Edit tag') expect(field(dialog, 'Value')).toHaveValue('updated draft');
+  else expect(createWrapper(dialog).findInput()?.findNativeInput().getElement()).toHaveValue('delete');
   expect(show).toHaveBeenCalledTimes(1);
-  expect(show).toHaveBeenCalledWith([expect.objectContaining({ type: 'error' })]);
+  expect(show).toHaveBeenCalledWith([
+    expect.objectContaining({ type: 'error', content: expect.stringContaining(`${code}: ${message}`) }),
+  ]);
+  expect(screen.queryByText(/Tag (updated|deleted)\./)).toBeNull();
 });
 
 it.each([
@@ -139,13 +160,48 @@ it.each([
 ])('keeps %s unavailable after a 501 from %s', async (name, operation) => {
   const show = showTags();
   deny(operation, 'NotImplemented', 'Tag operation unavailable.', 501);
-  submit(await open(name), name);
+  const dialog = await open(name);
+  if (name === 'Add tag') enter(dialog, 'Key', 'new-key');
+  if (name === 'Edit tag') enter(dialog, 'Value', 'updated draft');
+  submit(dialog, name);
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
   expect(
     screen.getByText(`${name}. The emulator answered 501 Not Implemented for ${operation}. Tag operation unavailable.`),
   ).toBeVisible();
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(action(name)).toBeVisible();
   expect(action(name)).toHaveAttribute('aria-disabled', 'true');
   expect(show).toHaveBeenCalledTimes(1);
   expect(show).toHaveBeenCalledWith([expect.objectContaining({ type: 'info' })]);
+});
+
+it('keeps an existing key out of Add and preserves the draft while the key is corrected', async () => {
+  const show = showTags();
+  const dialog = await open('Add tag');
+  enter(dialog, 'Key', TAG.key);
+  expect(
+    within(dialog).getByText('This key already exists. Use Edit tag in its row to change the value.'),
+  ).toBeVisible();
+  expect(save(dialog)).toBeDisabled();
+  fireEvent.click(save(dialog));
+  expect(changeInstanceContent).not.toHaveBeenCalled();
+
+  deny(CREATE_TAGS, 'InvalidParameterValue', 'This tag key is reserved.', 400);
+  enter(dialog, 'Key', 'aws:probe');
+  enter(dialog, 'Value', 'draft');
+  fireEvent.click(save(dialog));
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+    'InvalidParameterValue: This tag key is reserved.',
+  );
+  expect(field(dialog, 'Key')).toHaveValue('aws:probe');
+  expect(field(dialog, 'Value')).toHaveValue('draft');
+  enter(dialog, 'Key', 'purpose');
+  fireEvent.click(save(dialog));
+  await waitFor(() => expect(show).toHaveBeenLastCalledWith([{ type: 'success', content: 'Tag added.' }]));
+  expect(changeInstanceContent).toHaveBeenLastCalledWith(
+    ENGINE,
+    ID,
+    { kind: 'put-tag', tag: { key: 'purpose', value: 'draft' } },
+    expect.any(AbortSignal),
+  );
 });

@@ -84,7 +84,7 @@ function save(dialog: HTMLElement) {
   return within(dialog).getByRole('button', { name: 'Save changes' });
 }
 
-it('allows Retry after a failed read and enables saving only once the actual value arrives', async () => {
+it('allows Retry after a failed read and enables saving a change once the actual value arrives', async () => {
   showEditor();
   vi.mocked(getInstanceUserData).mockRejectedValueOnce(
     refusal(READ, 'InternalError', 'The current value could not be read.', 500),
@@ -95,7 +95,10 @@ it('allows Retry after a failed read and enables saving only once the actual val
   expect(field(dialog)).toBeUndefined();
   expect(save(dialog)).toBeDisabled();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
-  expect(await loadedField(dialog)).toHaveValue('first\nsecond\n');
+  const textarea = await loadedField(dialog);
+  expect(textarea).toHaveValue('first\nsecond\n');
+  expect(save(dialog)).toBeDisabled();
+  fireEvent.change(textarea, { target: { value: 'after retry' } });
   expect(save(dialog)).toBeEnabled();
   expect(changeInstanceContent).not.toHaveBeenCalled();
 });
@@ -124,16 +127,32 @@ it('cancels edits to multiline text and reads the original content on reopening'
   expect(changeInstanceContent).not.toHaveBeenCalled();
 });
 
-it('shows the refusal if the instance was started externally before saving', async () => {
+it('keeps the original refusal and multiline draft when the instance was started externally', async () => {
   showEditor();
   vi.mocked(changeInstanceContent).mockRejectedValueOnce(
     refusal(WRITE, 'IncorrectInstanceState', 'The instance is running.', 400),
   );
   const dialog = await open();
-  fireEvent.change(await loadedField(dialog), { target: { value: 'replacement' } });
+  const draft = 'replacement\nsecond line\n';
+  const textarea = await loadedField(dialog);
+  fireEvent.change(textarea, { target: { value: draft } });
   fireEvent.click(save(dialog));
-  expect(await screen.findByText('IncorrectInstanceState: The instance is running.')).toBeVisible();
+  const message = 'IncorrectInstanceState: The instance is running.';
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent(message);
+  expect(createWrapper(document.body).findFlashbar()?.getElement()).toHaveTextContent(message);
+  expect(textarea).toHaveValue(draft);
   expect(screen.queryByText('User data updated.')).toBeNull();
+
+  fireEvent.change(textarea, { target: { value: draft + 'corrected' } });
+  fireEvent.click(save(dialog));
+  expect(await screen.findByText('User data updated.')).toBeVisible();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(changeInstanceContent).toHaveBeenLastCalledWith(
+    ENDPOINT,
+    INSTANCE.id,
+    { kind: 'user-data', text: draft + 'corrected' },
+    expect.any(AbortSignal),
+  );
 });
 
 it.each([READ, WRITE])('keeps the edit action visible and unavailable after a 501 from %s', async (operation) => {
@@ -143,7 +162,7 @@ it.each([READ, WRITE])('keeps the edit action visible and unavailable after a 50
   else vi.mocked(changeInstanceContent).mockRejectedValueOnce(denied);
   const dialog = await open();
   if (operation === WRITE) {
-    await loadedField(dialog);
+    fireEvent.change(await loadedField(dialog), { target: { value: 'new content' } });
     fireEvent.click(save(dialog));
   }
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
@@ -152,6 +171,7 @@ it.each([READ, WRITE])('keeps the edit action visible and unavailable after a 50
   const edit = screen.getByRole('button', { name: LABEL });
   expect(edit).toBeVisible();
   expect(edit).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
 
 it.each(['x\r\ny\rz\n', '\uFEFF한글\n'])('opens %j as reversible JSON and rejects invalid input', async (text) => {
@@ -174,8 +194,10 @@ it('can enter exact line endings in JSON mode and clear the data with an empty f
   let dialog = await open();
   let textarea = await loadedField(dialog);
   expect(textarea).toHaveValue('');
+  expect(save(dialog)).toBeDisabled();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Edit as JSON string' }));
   expect(textarea).toHaveValue('""');
+  expect(save(dialog)).toBeDisabled();
   fireEvent.change(textarea, { target: { value: '"A\\r\\nB\\rC 😃"' } });
   fireEvent.click(save(dialog));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -190,6 +212,9 @@ it('can enter exact line endings in JSON mode and clear the data with an empty f
   dialog = await open();
   textarea = await loadedField(dialog);
   expect(textarea).toHaveValue('"A\\r\\nB\\rC 😃"');
+  expect(save(dialog)).toBeDisabled();
+  fireEvent.change(textarea, { target: { value: ' "A\\r\\nB\\rC 😃" ' } });
+  expect(save(dialog)).toBeDisabled();
   fireEvent.change(textarea, { target: { value: '' } });
   fireEvent.click(save(dialog));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

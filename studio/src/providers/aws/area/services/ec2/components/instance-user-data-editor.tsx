@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
@@ -50,7 +51,7 @@ function UserDataDialog({
 }) {
   const endpoint = connection.engineOrigin;
   const { value, failure, refresh } = useInstanceUserData(endpoint, instance.id);
-  const { pending, save, canDismiss } = useInstanceContentChange(endpoint, instance.id);
+  const { pending, refusal, save, canDismiss } = useInstanceContentChange(endpoint, instance.id);
   useEffect(() => {
     if (failure?.kind === 'not-implemented') onUnsupported(failure);
   }, [failure, onUnsupported]);
@@ -74,7 +75,7 @@ function UserDataDialog({
         : validUnicode(decoded)
           ? undefined
           : 'Enter valid Unicode text.';
-    text = error === undefined ? decoded : undefined;
+    text = error === undefined && decoded !== value.text ? decoded : undefined;
     field = (
       <SpaceBetween size="s">
         <FormField
@@ -137,8 +138,8 @@ function UserDataDialog({
                   {
                     label: LABEL,
                     result: 'User data updated.',
-                    onSettled: (refusal) => {
-                      if (refusal?.kind === 'not-implemented') onUnsupported(refusal);
+                    onSettled: (failure) => {
+                      if (failure?.kind === 'not-implemented') onUnsupported(failure);
                       else onClose();
                     },
                   },
@@ -151,7 +152,16 @@ function UserDataDialog({
         </Box>
       }
     >
-      {field}
+      <SpaceBetween size="m">
+        {refusal !== undefined && (
+          <div role="alert">
+            <Alert type="error" header={refusal.header} statusIconAriaLabel="Error">
+              {refusal.content}
+            </Alert>
+          </div>
+        )}
+        {field}
+      </SpaceBetween>
     </AreaModal>
   );
 }

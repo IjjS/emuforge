@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
@@ -9,6 +10,7 @@ import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { ConfirmDialog } from '../../../components/confirm-dialog';
+import type { FlashItem } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
 import type { Tag } from '../../../lib/ec2-client';
 import { NONE } from '../format';
@@ -22,17 +24,23 @@ const RESULTS = { add: 'Tag added.', edit: 'Tag updated.', delete: 'Tag deleted.
 
 function TagFields({
   tag,
+  tags,
+  refusal,
   pending,
   onCancel,
   onSave,
 }: {
   tag: Tag | undefined;
+  tags: readonly Tag[];
+  refusal: FlashItem | undefined;
   pending: boolean;
   onCancel: () => void;
   onSave: (tag: Tag) => void;
 }) {
   const [key, setKey] = useState(tag?.key ?? '');
   const [value, setValue] = useState(tag?.value ?? '');
+  const duplicate = tag === undefined && tags.some((existing) => existing.key === key);
+  const canSave = key !== '' && !duplicate && (tag === undefined || value !== tag.value);
   return (
     <AreaModal
       visible
@@ -45,7 +53,7 @@ function TagFields({
             <Button variant="link" disabled={pending} onClick={onCancel}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={key === ''} loading={pending} onClick={() => onSave({ key, value })}>
+            <Button variant="primary" disabled={!canSave} loading={pending} onClick={() => onSave({ key, value })}>
               Save changes
             </Button>
           </SpaceBetween>
@@ -53,7 +61,17 @@ function TagFields({
       }
     >
       <SpaceBetween size="m">
-        <FormField label="Key">
+        {refusal !== undefined && (
+          <div role="alert">
+            <Alert type="error" header={refusal.header} statusIconAriaLabel="Error">
+              {refusal.content}
+            </Alert>
+          </div>
+        )}
+        <FormField
+          label="Key"
+          errorText={duplicate ? 'This key already exists. Use Edit tag in its row to change the value.' : undefined}
+        >
           {tag === undefined ? (
             <Input value={key} disabled={pending} onChange={({ detail }) => setKey(detail.value)} />
           ) : (
@@ -71,14 +89,17 @@ function TagFields({
 export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Tag[]; endpoint: string | undefined }) {
   const [action, setAction] = useState<TagAction>();
   const [unsupported, setUnsupported] = useState<string[]>([]);
-  const { pending, save, canDismiss } = useInstanceContentChange(endpoint, id);
+  const { pending, refusal, save, canDismiss, clearRefusal } = useInstanceContentChange(endpoint, id);
 
   const reason = (operation: string) =>
     unsupported.includes(operation) ? `Not implemented by the emulator (${operation}).` : undefined;
   const createReason = reason(CREATE_TAGS);
   const deleteReason = reason(DELETE_TAGS);
   const handleCancel = () => {
-    if (canDismiss()) setAction(undefined);
+    if (canDismiss()) {
+      clearRefusal();
+      setAction(undefined);
+    }
   };
   const handleSave = (change: InstanceContentChange) => {
     if (action === undefined) return;
@@ -100,33 +121,33 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
       header: 'Key',
       isRowHeader: true,
       minWidth: 210,
-      cell: (tag) => <ValueText kind="name" value={tag.key} />,
-    },
-    { id: 'value', header: 'Value', cell: (tag) => <ValueText kind="text" value={tag.value} none={NONE} /> },
-    {
-      id: 'actions',
-      header: 'Actions',
       cell: (tag) => (
-        <SpaceBetween size="xs" direction="horizontal">
-          <Button
-            variant="inline-link"
-            disabled={endpoint === undefined || createReason !== undefined}
-            disabledReason={createReason}
-            onClick={() => setAction({ kind: 'edit', tag })}
-          >
-            {LABELS.edit}
-          </Button>
-          <Button
-            variant="inline-link"
-            disabled={endpoint === undefined || deleteReason !== undefined}
-            disabledReason={deleteReason}
-            onClick={() => setAction({ kind: 'delete', tag })}
-          >
-            {LABELS.delete}
-          </Button>
+        <SpaceBetween size="xxs">
+          <ValueText kind="name" value={tag.key} />
+          <SpaceBetween size="xs" direction="horizontal">
+            <Button
+              variant="inline-link"
+              ariaLabel={`${LABELS.edit} ${tag.key}`}
+              disabled={endpoint === undefined || createReason !== undefined}
+              disabledReason={createReason}
+              onClick={() => setAction({ kind: 'edit', tag })}
+            >
+              {LABELS.edit}
+            </Button>
+            <Button
+              variant="inline-link"
+              ariaLabel={`${LABELS.delete} ${tag.key}`}
+              disabled={endpoint === undefined || deleteReason !== undefined}
+              disabledReason={deleteReason}
+              onClick={() => setAction({ kind: 'delete', tag })}
+            >
+              {LABELS.delete}
+            </Button>
+          </SpaceBetween>
         </SpaceBetween>
       ),
     },
+    { id: 'value', header: 'Value', cell: (tag) => <ValueText kind="text" value={tag.value} none={NONE} /> },
   ];
 
   return (
@@ -166,6 +187,17 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
           body={
             <>
               Delete the tag <ValueText kind="name" value={action.tag.key} /> from this instance?
+              {refusal !== undefined && (
+                <Box
+                  tagOverride="span"
+                  display="block"
+                  margin={{ top: 's' }}
+                  color="text-status-error"
+                  nativeAttributes={{ role: 'alert' }}
+                >
+                  <strong>{refusal.header}</strong> {refusal.content}
+                </Box>
+              )}
             </>
           }
           word="delete"
@@ -178,6 +210,8 @@ export function InstanceTagEditor({ id, tags, endpoint }: { id: string; tags: Ta
       {action !== undefined && action.kind !== 'delete' && (
         <TagFields
           tag={action.kind === 'edit' ? action.tag : undefined}
+          tags={tags}
+          refusal={refusal}
           pending={pending}
           onCancel={handleCancel}
           onSave={(tag) => handleSave({ kind: 'put-tag', tag })}

@@ -425,8 +425,8 @@ describe("an instance's page", () => {
       ['/dev/xvdb', 'vol-2', 'No'],
     ]);
     expect(tableOf('Tags').rows).toEqual([
-      ['Name', 'web-1', 'Edit tagDelete tag'],
-      ['env', 'dev', 'Edit tagDelete tag'],
+      ['NameEdit tagDelete tag', 'web-1'],
+      ['envEdit tagDelete tag', 'dev'],
     ]);
     expect(screen.getByRole('link', { name: 'dev-key' })).toHaveAttribute('href', '/aws/ec2/key-pairs');
     const link = within(groups.element).getByRole('link', { name: 'web-group' });
@@ -687,7 +687,7 @@ describe("an instance's page", () => {
     holding(full({ tags: [{ key: 'note', value: '<b>bold</b><img src=x onerror=alert(1)>' }] }));
     open(pathOf('i-0full'));
     await loaded();
-    expect(tableOf('Tags').rows).toEqual([['note', '<b>bold</b><img src=x onerror=alert(1)>', 'Edit tagDelete tag']]);
+    expect(tableOf('Tags').rows).toEqual([['noteEdit tagDelete tag', '<b>bold</b><img src=x onerror=alert(1)>']]);
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
 
@@ -852,7 +852,7 @@ describe('instance setting actions', () => {
 
 async function editName(value: string) {
   const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
-  fireEvent.click(within(row).getByRole('button', { name: 'Edit tag' }));
+  fireEvent.click(within(row).getByRole('button', { name: 'Edit tag Name' }));
   const dialog = await screen.findByRole('dialog', { name: 'Edit tag' });
   const field = createWrapper(dialog).findInput()?.findNativeInput().getElement();
   if (!field) throw new Error('Missing tag value input');
@@ -871,8 +871,8 @@ describe('instance tags and user data', () => {
     expect(screen.getByText('Stop the instance to edit user data.')).toBeVisible();
     expect(isDisabled(screen.getByRole('button', { name: 'Add tag' }))).toBe(false);
     const row = within(tableOf('Tags').element).getByRole('row', { name: /^Name / });
-    expect(isDisabled(within(row).getByRole('button', { name: 'Edit tag' }))).toBe(false);
-    expect(isDisabled(within(row).getByRole('button', { name: 'Delete tag' }))).toBe(false);
+    expect(isDisabled(within(row).getByRole('button', { name: 'Edit tag Name' }))).toBe(false);
+    expect(isDisabled(within(row).getByRole('button', { name: 'Delete tag Name' }))).toBe(false);
   });
 
   it.each(['detail', 'list'] as const)(
@@ -926,7 +926,7 @@ describe('instance tags and user data', () => {
       }
       await waitFor(() => expect(list).toHaveTextContent('new-name'));
       expect(await screen.findByRole('heading', { level: 1, name: 'new-name' })).toBeVisible();
-      expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'new-name']);
+      expect(tableOf('Tags').rows[0]).toEqual(['NameEdit tagDelete tag', 'new-name']);
       expect(screen.getByText('Tag updated.')).toBeVisible();
 
       vi.mocked(api.listInstances).mockResolvedValue({ instances: [updated] });
@@ -962,20 +962,24 @@ describe('instance tags and user data', () => {
     await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
     await editName('denied');
     const message = 'AccessDeniedException: Editing the Name tag was refused by the service.';
-    expect(await screen.findByText(message, { exact: false })).toBeVisible();
+    const flash = () => PAGE.findFlashbar()?.getElement();
+    await waitFor(() => expect(flash()).toHaveTextContent(message));
+    const dialog = screen.getByRole('dialog', { name: 'Edit tag' });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
     await act(async () => {
       finish(found ? { found: true, instance: full({ privateIp: '10.0.0.2' }) } : { found: false });
       await reread;
     });
     if (found) {
       await waitFor(() => expect(pairs()['Private IPv4']).toBe('10.0.0.2'));
-      expect(tableOf('Tags').rows[0]?.slice(0, 2)).toEqual(['Name', 'web-1']);
+      expect(tableOf('Tags').rows[0]).toEqual(['NameEdit tagDelete tag', 'web-1']);
+      expect(createWrapper(dialog).findInput()?.findNativeInput().getElement()).toHaveValue('denied');
     } else {
       expect(await screen.findByText('Instance not found')).toBeVisible();
       expect(screen.queryByRole('button', { name: 'Add tag' })).toBeNull();
       expect(screen.queryByRole('dialog')).toBeNull();
     }
-    expect(screen.getByText(message, { exact: false })).toBeVisible();
+    expect(flash()).toHaveTextContent(message);
     expect(screen.queryByText('Tag updated.')).toBeNull();
   });
 
