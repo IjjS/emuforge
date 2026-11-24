@@ -42,12 +42,14 @@ function TestPage() {
     <div ref={root}>
       <AreaRootContext value={root}>
         <PageFlashContext value={{ show, handOver: () => undefined }}>
-          {flash?.map((item, index) => (
-            <div role="status" key={index}>
-              {item.header}
-              {item.content}
-            </div>
-          ))}
+          <section aria-label="Page results">
+            {flash?.map((item, index) => (
+              <div role="status" key={index}>
+                {item.header}
+                {item.content}
+              </div>
+            ))}
+          </section>
           <TopicPage params={{ arn: ARN }} connection={{ engineOrigin: ENGINE, result: undefined }} />
         </PageFlashContext>
       </AreaRootContext>
@@ -106,6 +108,8 @@ async function openRemove() {
 }
 
 const colorRow = () => screen.findByRole('row', { name: /color/ });
+const settingsPanel = () => within(screen.getByRole('tabpanel', { name: 'Settings' }));
+const pageResults = () => within(screen.getByRole('region', { name: 'Page results' }));
 
 beforeEach(() => {
   vi.mocked(api.getTopic).mockReset().mockResolvedValue(topic());
@@ -126,8 +130,9 @@ describe('topic attribute editors', () => {
     setField(field, 'Discarded');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('textbox', { name: label })).not.toBeInTheDocument();
-    const settings = within(screen.getByRole('tabpanel', { name: 'Settings' }));
+    const settings = settingsPanel();
     expect(settings.getByText(value, { normalizer: (text) => text })).toBeVisible();
+    expect(settings.getByRole('button', { name: `Edit ${label.toLowerCase()}` })).toHaveFocus();
     expect(api.setTopicSetting).not.toHaveBeenCalled();
   });
 
@@ -142,10 +147,13 @@ describe('topic attribute editors', () => {
     );
     open();
     const field = await editAttribute('Access policy');
+    expect(field).toHaveAccessibleDescription('Enter the access policy as a JSON document.');
     setField(field, 'invalid');
     save();
-    expect(await screen.findByText('InvalidParameter')).toBeVisible();
-    expect(screen.getByText(/Invalid parameter: Policy Error: null/)).toBeVisible();
+    expect(await pageResults().findByText('Save access policy failed')).toBeVisible();
+    expect(pageResults().getByText(/Invalid parameter: Policy Error: null/)).toBeVisible();
+    expect(settingsPanel().getByText('InvalidParameter')).toBeVisible();
+    expect(settingsPanel().getByText(/Invalid parameter: Policy Error: null/)).toBeVisible();
     expect(field).toHaveValue('invalid');
     expect(screen.queryByText('Access policy saved.')).not.toBeInTheDocument();
     const corrected = '{\n    "Statement": []\n}';
@@ -154,6 +162,7 @@ describe('topic attribute editors', () => {
     save();
     expect(await screen.findByText('Access policy saved.')).toBeVisible();
     expect(await screen.findByText(corrected, { normalizer: (text) => text })).toBeVisible();
+    expect(settingsPanel().getByRole('button', { name: 'Edit access policy' })).toHaveFocus();
     expect(api.setTopicSetting).toHaveBeenLastCalledWith(
       ENGINE,
       ARN,
@@ -196,8 +205,8 @@ describe('topic attribute editors', () => {
     const field = await editAttribute('Access policy');
     setField(field, 'unsupported');
     save();
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for SetTopicAttributes/)).toBeVisible();
+    expect(await pageResults().findByText('Not implemented by the emulator')).toBeVisible();
+    expect(settingsPanel().getByText(/501 Not Implemented for SetTopicAttributes/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit display name' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Edit access policy' })).toBeDisabled();
   });
@@ -297,7 +306,19 @@ describe('writing topic tags', () => {
     expect(screen.getByRole('textbox', { name: 'Key' })).toHaveAttribute('readonly');
     setField(field, 'blue');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(within(await colorRow()).getByText('red')).toBeVisible();
+    const row = within(await colorRow());
+    expect(row.getByText('red')).toBeVisible();
+    expect(row.getByRole('button', { name: 'Edit tag color' })).toHaveFocus();
+    expect(api.tagTopic).not.toHaveBeenCalled();
+  });
+
+  it('explains existing keys beside Key before submitting an added tag', async () => {
+    open();
+    await colorRow();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    const key = screen.getByRole('textbox', { name: 'Key' });
+    setField(key, 'color');
+    expect(key).toHaveAccessibleDescription(/Saving an existing key replaces its value.*Use Edit in the existing row/);
     expect(api.tagTopic).not.toHaveBeenCalled();
   });
 
@@ -340,7 +361,9 @@ describe('writing topic tags', () => {
     const field = await editTag();
     setField(field, 'blue');
     save();
-    expect(await screen.findByText(/Tag value rejected/)).toBeVisible();
+    expect(await pageResults().findByText(/Tag value rejected/)).toBeVisible();
+    expect(settingsPanel().getByText(/Tag value rejected/)).toBeVisible();
+    expect(field).toHaveValue('blue');
     expect(within(await colorRow()).getByText('red')).toBeVisible();
     expect(screen.queryByText('Tag saved.')).not.toBeInTheDocument();
   });
@@ -372,6 +395,9 @@ describe('writing topic tags', () => {
     }
     const success = adding ? 'Tag saved.' : 'Tag removed.';
     expect(await screen.findByText(success)).toBeVisible();
+    if (adding) {
+      expect(screen.getByRole('button', { name: 'Add tag' })).toHaveFocus();
+    }
     const finishDetail = async () => {
       await act(async () => {
         detail.resolve(topic('Fresh details'));
@@ -412,8 +438,8 @@ describe('writing topic tags', () => {
     const field = await editTag();
     setField(field, 'blue');
     save();
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for TagResource/)).toBeVisible();
+    expect(await pageResults().findByText('Not implemented by the emulator')).toBeVisible();
+    expect(settingsPanel().getByText(/501 Not Implemented for TagResource/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Add tag' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Edit tag color' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Remove tag color' })).toBeEnabled();
@@ -425,8 +451,8 @@ describe('writing topic tags', () => {
     const dialog = await openRemove();
     setField(dialog.getByRole('textbox'), 'remove');
     fireEvent.click(dialog.getByRole('button', { name: 'Remove' }));
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for UntagResource/)).toBeVisible();
+    expect(await pageResults().findByText('Not implemented by the emulator')).toBeVisible();
+    expect(settingsPanel().getByText(/501 Not Implemented for UntagResource/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Remove tag color' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Edit tag color' })).toBeEnabled();
   });

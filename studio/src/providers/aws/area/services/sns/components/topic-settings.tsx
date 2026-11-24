@@ -1,6 +1,7 @@
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
+import ColumnLayout from '@cloudscape-design/components/column-layout';
 import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
@@ -9,7 +10,7 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import Textarea from '@cloudscape-design/components/textarea';
-import { useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -115,6 +116,19 @@ function AttributeSetting({
   const [draft, setDraft] = useState<string>();
   const [error, setError] = useState<FlashItem>();
   const editing = draft !== undefined && !unavailable;
+  const editButton = useRef<ButtonProps.Ref>(null);
+  const returnFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!editing && !pending && returnFocus.current) {
+      returnFocus.current = false;
+      editButton.current?.focus();
+    }
+  }, [editing, pending]);
+
+  const closeEditor = () => {
+    returnFocus.current = true;
+    setDraft(undefined);
+  };
   const handleSave = async () => {
     if (draft === undefined) {
       return;
@@ -122,13 +136,14 @@ function AttributeSetting({
     setError(undefined);
     const result = await onSave({ name, value: draft });
     if (result.saved) {
-      setDraft(undefined);
+      closeEditor();
     } else {
       setError(result.error);
     }
   };
   const edit = (
     <Button
+      ref={editButton}
       ariaLabel={`Edit ${label.toLowerCase()}`}
       disabled={unavailable || pending}
       onClick={() => {
@@ -156,11 +171,12 @@ function AttributeSetting({
             onSave={() => {
               void handleSave();
             }}
-            onCancel={() => {
-              setDraft(undefined);
-            }}
+            onCancel={closeEditor}
           >
-            <FormField label={label}>
+            <FormField
+              label={label}
+              constraintText={name === 'Policy' ? 'Enter the access policy as a JSON document.' : undefined}
+            >
               {name === 'Policy' ? (
                 <Textarea
                   value={draft}
@@ -220,7 +236,29 @@ function TopicTags({
   const editable = tags.value !== undefined && !readUnavailable;
   const canSave = editable && !saveUnavailable && !saving;
   const canRemove = editable && !removeUnavailable && !removing;
+  const tagHeading = useRef<HTMLSpanElement>(null);
+  const addTagButton = useRef<ButtonProps.Ref>(null);
+  const editTagButtons = useRef(new Map<string, ButtonProps.Ref>());
+  const returnFocus = useRef<{ key: string | undefined } | undefined>(undefined);
 
+  useLayoutEffect(() => {
+    if (draft !== undefined || saving || returnFocus.current === undefined) {
+      return;
+    }
+    const { key } = returnFocus.current;
+    returnFocus.current = undefined;
+    if (canSave) {
+      const rowEdit = key === undefined ? undefined : editTagButtons.current.get(key);
+      (rowEdit ?? addTagButton.current)?.focus();
+    } else {
+      tagHeading.current?.focus();
+    }
+  }, [canSave, draft, saving]);
+
+  const closeEditor = () => {
+    returnFocus.current = { key: editingKey ? undefined : draft?.key };
+    setDraft(undefined);
+  };
   const handleEdit = (tag?: TopicTag) => {
     setEditingKey(tag === undefined);
     setSaveError(undefined);
@@ -233,7 +271,7 @@ function TopicTags({
     setSaveError(undefined);
     const result = await onSaveTag(draft);
     if (result.saved) {
-      setDraft(undefined);
+      closeEditor();
     } else {
       setSaveError(result.error);
     }
@@ -259,11 +297,16 @@ function TopicTags({
         onSave={() => {
           void handleSave();
         }}
-        onCancel={() => {
-          setDraft(undefined);
-        }}
+        onCancel={closeEditor}
       >
-        <FormField label="Key">
+        <FormField
+          label="Key"
+          constraintText={
+            editingKey
+              ? 'Saving an existing key replaces its value. Use Edit in the existing row to update it directly.'
+              : undefined
+          }
+        >
           <Input
             value={draft.key}
             autoFocus={editingKey}
@@ -295,6 +338,7 @@ function TopicTags({
             variant="h2"
             actions={
               <Button
+                ref={addTagButton}
                 disabled={!canSave || (draft !== undefined && !saveUnavailable)}
                 onClick={() => {
                   handleEdit();
@@ -304,7 +348,9 @@ function TopicTags({
               </Button>
             }
           >
-            Tags
+            <span ref={tagHeading} tabIndex={-1}>
+              Tags
+            </span>
           </Header>
         }
         trackBy="key"
@@ -324,40 +370,50 @@ function TopicTags({
             <Box textAlign="center">No tags</Box>
           ) : undefined
         }
+        wrapLines
         columnDefinitions={[
           {
-            id: 'key',
-            header: 'Key',
-            minWidth: 220,
-            isRowHeader: true,
-            cell: (tag) => <ValueText kind="name" value={tag.key} />,
-          },
-          { id: 'value', header: 'Value', cell: (tag) => <ValueText kind="text" value={tag.value} none={NONE} /> },
-          {
-            id: 'actions',
-            header: 'Actions',
+            id: 'tag',
+            header: 'Tag details',
             cell: (tag) => (
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  ariaLabel={`Edit tag ${tag.key}`}
-                  disabled={!canSave || draft !== undefined}
-                  onClick={() => {
-                    handleEdit(tag);
-                  }}
-                >
-                  Edit
-                </Button>
-                <Button
-                  ariaLabel={`Remove tag ${tag.key}`}
-                  disabled={!canRemove}
-                  onClick={() => {
-                    setRemoveError(undefined);
-                    setRemoveKey(tag.key);
-                  }}
-                >
-                  Remove
-                </Button>
-              </SpaceBetween>
+              <ColumnLayout columns={3} minColumnWidth={220} variant="text-grid">
+                <div>
+                  <Box variant="awsui-key-label">Key</Box>
+                  <ValueText kind="name" value={tag.key} />
+                </div>
+                <div>
+                  <Box variant="awsui-key-label">Value</Box>
+                  <ValueText kind="text" value={tag.value} none={NONE} />
+                </div>
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Button
+                    ref={(button) => {
+                      if (button === null) {
+                        editTagButtons.current.delete(tag.key);
+                      } else {
+                        editTagButtons.current.set(tag.key, button);
+                      }
+                    }}
+                    ariaLabel={`Edit tag ${tag.key}`}
+                    disabled={!canSave || draft !== undefined}
+                    onClick={() => {
+                      handleEdit(tag);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    ariaLabel={`Remove tag ${tag.key}`}
+                    disabled={!canRemove}
+                    onClick={() => {
+                      setRemoveError(undefined);
+                      setRemoveKey(tag.key);
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </SpaceBetween>
+              </ColumnLayout>
             ),
           },
         ]}
