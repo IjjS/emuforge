@@ -1,6 +1,6 @@
 import { AWS_PATH } from '../../../identity';
 
-// Every address of RDS's seven screens, their titles and notice words (issue 573, design "Code layout and the cut"):
+// Every address of RDS's screens, their titles and notice words (issue 573, design "Code layout and the cut"):
 // a unit links to another unit's screen by this file alone. A DB instance and a DB cluster are addressed by their
 // identifier, percent-encoded once as one segment.
 
@@ -31,6 +31,9 @@ export const CLUSTER_PATTERN = `${CLUSTERS_PATH}/cluster/{id}`;
 /** S7's pattern, "Add DB instance" of a DB cluster. */
 export const ADD_INSTANCE_PATTERN = `${CLUSTER_PATTERN}/add-instance`;
 
+/** The manual DB cluster snapshot list. */
+export const CLUSTER_SNAPSHOTS_PATH = `${RDS_PATH}/cluster-snapshots`;
+
 /** S3 of the DB instance `id`. */
 export function instanceHref(id: string): string {
   return `${INSTANCES_PATH}/instance/${encodeURIComponent(id)}`;
@@ -52,6 +55,7 @@ export const CREATE_INSTANCE_TITLE = 'Create DB instance';
 export const CLUSTERS_TITLE = 'DB clusters';
 export const CREATE_CLUSTER_TITLE = 'Create DB cluster';
 export const ADD_INSTANCE_TITLE = 'Add DB instance';
+export const CLUSTER_SNAPSHOTS_TITLE = 'DB cluster snapshots';
 
 /** The notice's plural word, per section: S1 to S3, S4 to S7. */
 export const INSTANCES_WORD = 'DB instances';

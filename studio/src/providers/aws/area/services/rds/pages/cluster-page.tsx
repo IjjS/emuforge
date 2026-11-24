@@ -34,6 +34,7 @@ import { CLUSTER_ACTIONS, clusterActionResult, type ClusterAction, type ClusterO
 import { useClusterDelete, useClusterOperation, useClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
 import { ClusterOperationControls } from '../components/cluster-operations';
+import { TakeSnapshotAction } from '../components/cluster-snapshot-dialogs';
 import { ComposeHostEndpoint } from '../components/compose-host-endpoint';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
@@ -464,6 +465,11 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
                     }}
                   />
                 )}
+                <TakeSnapshotAction
+                  sourceId={cluster !== undefined && isAurora(cluster.engine) ? cluster.id : undefined}
+                  disabled={pending || fetching}
+                  endpoint={connection.engineOrigin}
+                />
                 {cluster !== undefined && (
                   <ClusterDeleteAction cluster={deleteTarget(cluster)} pending={pending} onDelete={handleDelete} />
                 )}
