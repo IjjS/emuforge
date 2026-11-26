@@ -17,6 +17,7 @@ function useV2StageChange<T>(
   apiId: string | undefined,
   operation: string,
   change: (endpoint: string, apiId: string, input: T, signal: AbortSignal) => Promise<void>,
+  onSuccess: (input: T) => void,
 ) {
   const client = useQueryClient();
   const pageSignal = usePageSignal();
@@ -26,8 +27,10 @@ function useV2StageChange<T>(
       if (apiId === undefined) throw new Error('The API ID is not known yet.');
       return change(endpoint, apiId, input, signal);
     },
-    onSuccess: (_, { signal }) => {
-      if (apiId !== undefined && !signal.aborted) void refreshV2Stages(client, apiId);
+    onSuccess: (_, { input, signal }) => {
+      if (apiId === undefined || signal.aborted) return;
+      onSuccess(input);
+      void refreshV2Stages(client, apiId);
     },
   });
   const failure = isError ? failureOf(error, operation) : undefined;
@@ -37,15 +40,12 @@ function useV2StageChange<T>(
     isPending,
     failure,
     available,
-    submit: (input: T, onSuccess: () => void, onError?: (failure: RequestFailure) => void) => {
+    submit: (input: T, onError?: (failure: RequestFailure) => void) => {
       if (!available || isPending) return;
       const signal = pageSignal();
       mutate(
         { input, signal },
         {
-          onSuccess: () => {
-            if (!signal.aborted) onSuccess();
-          },
           onError: (error) => {
             if (!signal.aborted) onError?.(failureOf(error, operation));
           },
@@ -55,14 +55,18 @@ function useV2StageChange<T>(
   };
 }
 
-export function useCreateV2Stage(apiId: string, endpoint: string | undefined) {
-  return useV2StageChange(endpoint, apiId, CREATE_STAGE, createV2Stage);
+export function useCreateV2Stage(apiId: string, endpoint: string | undefined, onCreated: (stageName: string) => void) {
+  return useV2StageChange(endpoint, apiId, CREATE_STAGE, createV2Stage, ({ stageName }) => onCreated(stageName));
 }
 
-export function useDeployV2Stage(apiId: string | undefined, endpoint: string | undefined) {
-  return useV2StageChange(endpoint, apiId, CREATE_DEPLOYMENT, deployV2Stage);
+export function useDeployV2Stage(
+  apiId: string | undefined,
+  endpoint: string | undefined,
+  onDeployed: (stageName: string) => void,
+) {
+  return useV2StageChange(endpoint, apiId, CREATE_DEPLOYMENT, deployV2Stage, onDeployed);
 }
 
-export function useDeleteV2Stage(apiId: string, endpoint: string | undefined) {
-  return useV2StageChange(endpoint, apiId, DELETE_STAGE, deleteV2Stage);
+export function useDeleteV2Stage(apiId: string, endpoint: string | undefined, onDeleted: (stageName: string) => void) {
+  return useV2StageChange(endpoint, apiId, DELETE_STAGE, deleteV2Stage, onDeleted);
 }
