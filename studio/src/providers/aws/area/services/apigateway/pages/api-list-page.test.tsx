@@ -309,7 +309,9 @@ it.each([
   expect(links).toHaveLength(recovery ? 2 : 0);
   for (const link of links) expect(link).toHaveAttribute('href', '/');
 
-  await userEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]!);
+  const [retryRest] = screen.getAllByRole('button', { name: 'Retry' });
+  if (retryRest === undefined) throw new Error('Missing REST list retry button');
+  await userEvent.click(retryRest);
   await waitFor(() => expectApiNames(container, [rest.name]));
   const remaining = wrapper.findAlert()?.getElement();
   if (remaining === undefined) throw new Error('Missing remaining list failure alert');
