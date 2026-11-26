@@ -16,15 +16,12 @@ import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { logStreamPath } from '../format';
+import { multilineStreamLabel } from '../choices';
+import { logStreamPath, streamNameForDisplay } from '../format';
 import { DESCRIBE_LOG_STREAMS, listLogStreams } from '../stream-api';
 
 function dateCell(time: number | undefined) {
   return <ValueText kind="fixed" value={creationDateText(time === undefined ? undefined : new Date(time))} />;
-}
-
-function multilineStreamLabel(name: string) {
-  return /[\r\n]/.test(name) ? `${name.replace(/\r\n?|\n/g, ' ')} (contains a line break)` : undefined;
 }
 
 interface StreamSectionProps {
@@ -124,7 +121,7 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
-                  <ValueText kind="name" value={logStreamName.replace(/\r\n?/g, '\n')} />
+                  <ValueText kind="name" value={streamNameForDisplay(logStreamName)} />
                 </Link>
               );
             },

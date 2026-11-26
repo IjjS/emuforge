@@ -27,7 +27,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { logGroupChoices, logStreamChoices, multilineStreamLabel } from '../choices';
 import { EventMessage } from '../components/event-message';
-import { logStreamPath } from '../format';
+import { logStreamPath, streamNameForDisplay } from '../format';
 import { FILTER_LOG_EVENTS, filterLogEvents } from '../search-api';
 import { searchRequest, type SearchForm, type SearchRequest, type SearchTime } from '../search-form';
 
@@ -53,7 +53,7 @@ function SubmittedFilters({ request }: { request: SearchRequest }) {
       </span>
       {stream !== undefined && (
         <span style={{ display: 'block', whiteSpace: 'pre-wrap' }}>
-          Log stream: <ValueText kind="name" value={stream} />
+          Log stream: <ValueText kind="name" value={streamNameForDisplay(stream)} />
         </span>
       )}
       {request.filterPattern !== undefined && (
@@ -150,7 +150,7 @@ function SearchResults({
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
-                  <ValueText kind="name" value={logStreamName} />
+                  <ValueText kind="name" value={streamNameForDisplay(logStreamName)} />
                 </Link>
               );
             },

@@ -19,7 +19,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { EventMessage } from '../components/event-message';
 import { PutEventsForm } from '../components/put-events-form';
-import { LOG_GROUPS_PATH, logGroupPath, nameFromSegment } from '../format';
+import { LOG_GROUPS_PATH, logGroupPath, nameFromSegment, streamNameForDisplay } from '../format';
 import { useStreamEvents } from '../use-stream-events';
 
 const STANDARD_CLASS = 'The emulator reads and searches log events only in log groups of the Standard class.';
@@ -90,6 +90,7 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
   useShowsResources('log events');
   const group = nameFromSegment(params.group ?? '');
   const stream = nameFromSegment(params.stream ?? '');
+  const displayName = streamNameForDisplay(stream);
   const streamEvents = useStreamEvents(connection.engineOrigin, group, stream);
   const { events, initialFailure, prepended, load, readFrom } = streamEvents;
   const flash = usePageFlash();
@@ -176,12 +177,12 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
           </Button>
         }
       >
-        {/[\r\n]/.test(stream) ? (
+        {displayName.includes('\n') ? (
           <span style={{ whiteSpace: 'pre-wrap' }}>
-            <ValueText kind="name" value={stream.replace(/\r\n?/g, '\n')} />
+            <ValueText kind="name" value={displayName} />
           </span>
         ) : (
-          <ValueText kind="name" value={stream} />
+          <ValueText kind="name" value={displayName} />
         )}
       </Header>
       <Container header={<Header variant="h2">Log events</Header>}>{body}</Container>
