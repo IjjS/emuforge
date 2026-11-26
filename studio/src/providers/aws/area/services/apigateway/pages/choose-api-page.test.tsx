@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -67,10 +67,22 @@ function open(suffix: string, result: AreaConnection['result'] = connection.resu
 
 async function openChoice(wrapper: ReturnType<typeof open>, user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('button', { name: 'Open' });
-  const select = wrapper.findSelect();
+  const field = wrapper.findFormField();
+  if (field === null) throw new Error('Missing API form field');
+  expect(field.findLabel()?.getElement()).toHaveTextContent('API');
+  const select = createWrapper(field.getElement()).findSelect();
   if (select === null) throw new Error('Missing API select');
   await user.click(select.findTrigger().getElement());
   return select.findDropdown();
+}
+
+async function findApiOption(dropdown: Awaited<ReturnType<typeof openChoice>>, api: ApiRow) {
+  return waitFor(() => {
+    const option = dropdown.findOptionByValue(api.id);
+    if (option === null) throw new Error(`Missing API option ${api.id}`);
+    expect(option.getElement()).toHaveTextContent(api.name);
+    return option;
+  });
 }
 
 it.each([
@@ -88,11 +100,7 @@ it.each([
   const openButton = await screen.findByRole('button', { name: 'Open' });
   expect(openButton).toBeDisabled();
   const dropdown = await openChoice(wrapper, user);
-  const option = await waitFor(() => {
-    const found = dropdown.findOptionByValue(selected.id);
-    if (found === null) throw new Error(`Missing API option ${selected.id}`);
-    return found;
-  });
+  const option = await findApiOption(dropdown, selected);
   if (model === 'rest') {
     expect(dropdown.findOptionByValue(http.id)).toBeNull();
     expect(dropdown.findOptionByValue(webSocket.id)).toBeNull();
@@ -121,10 +129,8 @@ it('loads a further page of APIs by the first page token', async () => {
   const dropdown = await openChoice(open('resources'), user);
   await user.click(await within(dropdown.getElement()).findByRole('button', { name: 'Load more' }));
 
-  await waitFor(() => {
-    expect(dropdown.findOptionByValue(further.id)).not.toBeNull();
-    expect(dropdown.findOptionByValue(rest.id)).not.toBeNull();
-  });
+  await findApiOption(dropdown, further);
+  await findApiOption(dropdown, rest);
   expect(readRestApis).toHaveBeenCalledTimes(2);
   expect(readRestApis).toHaveBeenLastCalledWith(engineOrigin, 'second-page', expect.any(AbortSignal));
 });
@@ -142,8 +148,6 @@ it.each([
 });
 
 interface FailureCase {
-  suffix: string;
-  read: typeof readRestApis | typeof readV2Apis;
   failure: RequestFailure;
   first: string;
   detail: string;
@@ -151,70 +155,71 @@ interface FailureCase {
   recovery?: true;
 }
 
-const failureCases: FailureCase[] = [
-  {
-    suffix: 'resources',
-    read: readRestApis,
-    failure: { kind: 'not-implemented', operation: 'GetRestApis' },
-    first: 'Not implemented by the emulator',
-    detail: 'The emulator answered 501 Not Implemented for GetRestApis, so Studio cannot show the REST APIs.',
-  },
-  {
-    suffix: 'routes',
-    read: readV2Apis,
-    failure: { kind: 'access-denied', operation: 'GetApis', message: 'The API list was refused.' },
-    first: 'Access denied',
-    detail: 'GetApis was refused: The API list was refused.',
-  },
-  {
-    suffix: 'integrations',
-    read: readV2Apis,
-    failure: { kind: 'other', operation: 'GetApis', code: 'InternalError', message: 'Unexpected list error.' },
-    first: 'The HTTP or WebSocket APIs could not be read',
-    detail: 'GetApis: InternalError: Unexpected list error.',
-  },
-  {
-    suffix: 'stages',
-    read: readRestApis,
-    failure: { kind: 'emulator-did-not-answer', operation: 'GetRestApis', message: 'The request timed out.' },
-    first: 'Not answering at https://127.0.0.1:9682',
-    detail: 'GetRestApis got no answer from the emulator. The request timed out.',
-    recovery: true,
-  },
-  {
-    suffix: 'resources',
-    read: readRestApis,
-    failure: { kind: 'emulator-did-not-answer', operation: 'GetRestApis', message: '' },
-    first: 'Not started on port 9682',
-    detail: 'GetRestApis got no answer from the emulator.',
-    result: { ...connection.result, kind: 'emulator-unreachable', reason: 'not_started', message: '' },
-    recovery: true,
-  },
-  {
-    suffix: 'v2-stages',
-    read: readV2Apis,
-    failure: { kind: 'engine-did-not-answer', operation: 'GetApis' },
-    first: 'The EmuForge engine at http://127.0.0.1:9681 is not answering',
-    detail: 'GetApis got no answer.',
-    recovery: true,
-  },
-];
+describe.each([
+  ['resources', readRestApis, 'GetRestApis', 'REST APIs', [rest]],
+  ['routes', readV2Apis, 'GetApis', 'HTTP or WebSocket APIs', [http, webSocket]],
+] as const)('%s list failures', (suffix, read, operation, things, apis) => {
+  const failureCases: FailureCase[] = [
+    {
+      failure: { kind: 'not-implemented', operation },
+      first: 'Not implemented by the emulator',
+      detail: `The emulator answered 501 Not Implemented for ${operation}, so Studio cannot show the ${things}.`,
+    },
+    {
+      failure: { kind: 'access-denied', operation, message: 'The API list was refused.' },
+      first: 'Access denied',
+      detail: `${operation} was refused: The API list was refused.`,
+    },
+    {
+      failure: { kind: 'other', operation, code: 'InternalError', message: 'Unexpected list error.' },
+      first: `The ${things} could not be read`,
+      detail: `${operation}: InternalError: Unexpected list error.`,
+    },
+    {
+      failure: { kind: 'emulator-did-not-answer', operation, message: 'The request timed out.' },
+      first: 'Not answering at https://127.0.0.1:9682',
+      detail: `${operation} got no answer from the emulator. The request timed out.`,
+      recovery: true,
+    },
+    {
+      failure: { kind: 'emulator-did-not-answer', operation, message: '' },
+      first: 'Not started on port 9682',
+      detail: `${operation} got no answer from the emulator.`,
+      result: { ...connection.result, kind: 'emulator-unreachable', reason: 'not_started', message: '' },
+      recovery: true,
+    },
+    {
+      failure: { kind: 'engine-did-not-answer', operation },
+      first: 'The EmuForge engine at http://127.0.0.1:9681 is not answering',
+      detail: `${operation} got no answer.`,
+      recovery: true,
+    },
+  ];
 
-it.each(failureCases)('names the $failure.kind failure of $failure.operation and retries', async (testCase) => {
-  const { suffix, read, failure, first, detail, result, recovery } = testCase;
-  vi.mocked(read).mockRejectedValueOnce(new RequestError(failure));
-  const wrapper = open(suffix, result);
+  it.each(failureCases)('restores API options after "$first"', async ({ failure, first, detail, result, recovery }) => {
+    vi.mocked(read)
+      .mockRejectedValueOnce(new RequestError(failure))
+      .mockResolvedValueOnce({ items: [...apis] });
+    const wrapper = open(suffix, result);
+    const content = wrapper.findContainer()?.findContent().getElement();
+    if (content === undefined) throw new Error('Missing API choice container');
+    const choice = within(content);
+    const retry = await choice.findByRole('button', { name: 'Retry' });
 
-  expect(await screen.findByText(detail)).toBeInTheDocument();
-  expect(wrapper.getElement()).toHaveTextContent(first);
-  const recoveryLink = screen.queryByRole('link', { name: 'Connection status' });
-  if (recovery === true) {
-    expect(recoveryLink).toHaveAttribute('href', '/');
-  } else {
-    expect(recoveryLink).not.toBeInTheDocument();
-  }
-  expect(screen.queryByText('The emulator holds none.')).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('button', { name: 'Open' })).toBeDisabled();
-  expect(read).toHaveBeenCalledTimes(2);
+    expect(createWrapper(content).findStatusIndicator()?.getElement()).toHaveTextContent(first);
+    expect(content).toHaveTextContent(detail);
+    const recoveryLink = choice.queryByRole('link', { name: 'Connection status' });
+    if (recovery === true) {
+      expect(recoveryLink).toHaveAttribute('href', '/');
+    } else {
+      expect(recoveryLink).not.toBeInTheDocument();
+    }
+    expect(content).not.toHaveTextContent('The emulator holds none.');
+
+    const user = userEvent.setup();
+    await user.click(retry);
+    const dropdown = await openChoice(wrapper, user);
+    await Promise.all(apis.map((api) => findApiOption(dropdown, api)));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
 });
