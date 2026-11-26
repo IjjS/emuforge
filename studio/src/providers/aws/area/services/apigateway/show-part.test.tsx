@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import Header from '@cloudscape-design/components/header';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
 
@@ -10,9 +12,17 @@ function Sections({ loaded }: { loaded: boolean }) {
     <>
       <h1>API</h1>
       {loaded && (
-        <h2 ref={headingRef} tabIndex={-1}>
-          Resources
-        </h2>
+        <Header variant="h2">
+          <span
+            ref={(text) => {
+              const heading = text?.closest('h2') ?? null;
+              if (heading !== null) heading.tabIndex = -1;
+              headingRef(heading);
+            }}
+          >
+            Resources
+          </span>
+        </Header>
       )}
     </>
   );
@@ -28,13 +38,14 @@ it('scrolls and focuses the requested part as soon as its heading mounts', () =>
         <Sections loaded={false} />
       </MemoryRouter>,
     );
-    expect(scroll).not.toHaveBeenCalled();
     page.rerender(
       <MemoryRouter initialEntries={['/?show=resources']}>
         <Sections loaded />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: 'Resources' })).toHaveFocus();
+    const heading = createWrapper(page.container).findHeader()?.findHeadingText().getElement().closest('h2');
+    expect(heading).toHaveTextContent('Resources');
+    expect(heading).toHaveFocus();
     expect(scroll).toHaveBeenCalledOnce();
   } finally {
     if (descriptor !== undefined) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', descriptor);
