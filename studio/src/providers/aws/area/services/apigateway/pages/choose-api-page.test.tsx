@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import type { AreaConnection } from '../../../components/emulator-line';
 import { readRestApis, readV2Apis, type ApiRow } from '../apis-api';
 import { SCREENS } from '../screens/choose-api';
 
@@ -46,7 +47,7 @@ function Destination() {
   return <output>{pathname + search}</output>;
 }
 
-function open(suffix: string) {
+function open(suffix: string, result: AreaConnection['result'] = connection.result) {
   const path = `/aws/apigateway/${suffix}`;
   const registered = SCREENS.find((entry) => entry.paths.includes(path));
   if (registered === undefined) throw new Error(`No Choose an API screen at ${path}`);
@@ -55,7 +56,7 @@ function open(suffix: string) {
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path={path} element={<Page connection={connection} params={{}} />} />
+          <Route path={path} element={<Page connection={{ ...connection, result }} params={{}} />} />
           <Route path="*" element={<Destination />} />
         </Routes>
       </MemoryRouter>
@@ -144,7 +145,9 @@ interface FailureCase {
   suffix: string;
   read: typeof readRestApis | typeof readV2Apis;
   failure: RequestFailure;
+  first: string;
   detail: string;
+  result?: AreaConnection['result'];
   recovery?: true;
 }
 
@@ -153,42 +156,57 @@ const failureCases: FailureCase[] = [
     suffix: 'resources',
     read: readRestApis,
     failure: { kind: 'not-implemented', operation: 'GetRestApis' },
+    first: 'Not implemented by the emulator',
     detail: 'The emulator answered 501 Not Implemented for GetRestApis, so Studio cannot show the REST APIs.',
   },
   {
     suffix: 'v2/routes',
     read: readV2Apis,
     failure: { kind: 'access-denied', operation: 'GetApis', message: 'The API list was refused.' },
+    first: 'Access denied',
     detail: 'GetApis was refused: The API list was refused.',
   },
   {
     suffix: 'v2/integrations',
     read: readV2Apis,
     failure: { kind: 'other', operation: 'GetApis', code: 'InternalError', message: 'Unexpected list error.' },
+    first: 'The HTTP or WebSocket APIs could not be read',
     detail: 'GetApis: InternalError: Unexpected list error.',
   },
   {
     suffix: 'stages',
     read: readRestApis,
     failure: { kind: 'emulator-did-not-answer', operation: 'GetRestApis', message: 'The request timed out.' },
+    first: 'Not answering at https://127.0.0.1:9682',
     detail: 'GetRestApis got no answer from the emulator. The request timed out.',
+    recovery: true,
+  },
+  {
+    suffix: 'resources',
+    read: readRestApis,
+    failure: { kind: 'emulator-did-not-answer', operation: 'GetRestApis', message: '' },
+    first: 'Not started on port 9682',
+    detail: 'GetRestApis got no answer from the emulator.',
+    result: { ...connection.result, kind: 'emulator-unreachable', reason: 'not_started', message: '' },
     recovery: true,
   },
   {
     suffix: 'v2/stages',
     read: readV2Apis,
     failure: { kind: 'engine-did-not-answer', operation: 'GetApis' },
+    first: 'The EmuForge engine at http://127.0.0.1:9681 is not answering',
     detail: 'GetApis got no answer.',
     recovery: true,
   },
 ];
 
 it.each(failureCases)('names the $failure.kind failure of $failure.operation and retries', async (testCase) => {
-  const { suffix, read, failure, detail, recovery } = testCase;
+  const { suffix, read, failure, first, detail, result, recovery } = testCase;
   vi.mocked(read).mockRejectedValueOnce(new RequestError(failure));
-  open(suffix);
+  const wrapper = open(suffix, result);
 
   expect(await screen.findByText(detail)).toBeInTheDocument();
+  expect(wrapper.getElement()).toHaveTextContent(first);
   const recoveryLink = screen.queryByRole('link', { name: 'Connection status' });
   if (recovery === true) {
     expect(recoveryLink).toHaveAttribute('href', '/');
