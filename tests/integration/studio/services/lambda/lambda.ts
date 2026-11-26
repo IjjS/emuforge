@@ -794,6 +794,30 @@ export async function listRolesDirect(caller: Caller, port: number, prefix?: str
   throw new Error('direct ListRoles: more than 1000 pages');
 }
 
+/** How long an emulator may take to stop listing the roles `withoutRoles` removed. */
+const EMPTIED_BOUND_MS = 20_000;
+
+/**
+ * The Given "an emulator without roles" (issue 653), for a check's own emulator and before the check makes a role:
+ * every role a direct `ListRoles` holds is removed with a direct `DeleteServiceLinkedRole` (an emulator starts with
+ * roles of that kind, which `DeleteRole` refuses), then a direct `ListRoles` is waited for until it returns none.
+ * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
+ */
+export async function withoutRoles(caller: Caller, port: number): Promise<void> {
+  for (const role of await listRolesDirect(caller, port)) {
+    given(
+      caller,
+      await iamDirect(caller, port, 'DeleteServiceLinkedRole', { RoleName: role.name }),
+      200,
+      `direct DeleteServiceLinkedRole ${role.name}`,
+    );
+  }
+  const emptied = await waitFor(EMPTIED_BOUND_MS, async () =>
+    (await listRolesDirect(caller, port)).length === 0 ? true : undefined,
+  );
+  if (!emptied) throw new EnvError('the emulator still lists a role after each was removed with DeleteServiceLinkedRole');
+}
+
 /** A direct IAM `GetRole name`; `null` when the emulator holds no such role (`NoSuchEntity`). */
 export async function getRoleDirect(caller: Caller, port: number, name: string): Promise<DirectRole | null> {
   const answer = await iamDirect(caller, port, 'GetRole', { RoleName: name });

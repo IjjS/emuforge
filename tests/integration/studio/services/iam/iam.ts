@@ -37,6 +37,7 @@ import path from 'node:path';
 
 import { EnvError, expect, type Ctx } from '../../support/check';
 import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
+import { waitFor } from '../../support/wait';
 
 const REGION = 'us-east-1';
 
@@ -498,6 +499,26 @@ export async function listRolesDirect(caller: Caller, port: number, pathPrefix?:
 /** The names of a direct `ListRoles`, in its order. */
 export async function roleNamesDirect(caller: Caller, port: number): Promise<string[]> {
   return (await listRolesDirect(caller, port)).map((r) => r.name);
+}
+
+/** How long an emulator may take to stop listing the roles `withoutRoles` removed. */
+const EMPTIED_BOUND_MS = 20_000;
+
+/**
+ * The Given "an emulator that holds no role" (issue 653), for a check's own emulator and before the check makes a
+ * role: every role a direct `ListRoles` holds is removed with a direct `DeleteServiceLinkedRole` (an emulator starts
+ * with roles of that kind, which `DeleteRole` refuses), then a direct `ListRoles` is waited for until it returns none.
+ * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
+ */
+export async function withoutRoles(caller: Caller, port: number): Promise<void> {
+  for (const name of await roleNamesDirect(caller, port)) {
+    const read = await iamAnswer(caller, port, 'DeleteServiceLinkedRole', { RoleName: name }, name);
+    if (!read.ok) throw new EnvError(`direct DeleteServiceLinkedRole ${name}: ${shownRead(read)}`);
+  }
+  const emptied = await waitFor(EMPTIED_BOUND_MS, async () =>
+    (await roleNamesDirect(caller, port)).length === 0 ? true : undefined,
+  );
+  if (!emptied) throw new EnvError('the emulator still lists a role after each was removed with DeleteServiceLinkedRole');
 }
 
 /** The names of `names` that contain `text`, upper and lower case alike, in their order. */
