@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -103,16 +103,42 @@ function open(currentConnection = connection) {
     if (!tile) throw new Error(`Missing integration option ${value}`);
     await user.click(tile.getElement());
   };
-  const shown = () => screen.findByRole('heading', { name: 'Route settings' });
-  const submit = () => user.click(screen.getByRole('button', { name: 'Create route' }));
-  const cancel = () => user.click(screen.getByRole('button', { name: 'Cancel' }));
+  const shown = () =>
+    waitFor(() => {
+      const heading = wrapper.findContainer()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+      expect(heading).toHaveTextContent('Route settings');
+      return heading;
+    });
+  const formAction = (index: number, label: string) => {
+    const button = wrapper.findForm()?.findActions()?.findAllButtons()[index]?.getElement();
+    if (!button) throw new Error(`Missing route form action ${label}`);
+    expect(button).toHaveTextContent(label);
+    return button;
+  };
+  const submitButton = () => formAction(1, 'Create route');
+  const submit = () => user.click(submitButton());
+  const cancel = () => user.click(formAction(0, 'Cancel'));
   const findAlert = () =>
     waitFor(() => {
       const alert = wrapper.findAlert()?.getElement();
       if (!alert) throw new Error('Missing form alert');
       return alert;
     });
-  return { handOver, user, wrapper, field, input, openSelect, choose, chooseKind, shown, submit, cancel, findAlert };
+  return {
+    handOver,
+    user,
+    wrapper,
+    field,
+    input,
+    openSelect,
+    choose,
+    chooseKind,
+    shown,
+    submitButton,
+    submit,
+    cancel,
+    findAlert,
+  };
 }
 
 const methods = {
@@ -132,10 +158,8 @@ it('shows the API name directly below the Create route heading', async () => {
   const form = open();
   await form.shown();
 
-  const heading = screen.getByRole('heading', { level: 1, name: 'Create route' });
-  const header = createWrapper()
-    .findAllHeaders()
-    .find((entry) => entry.getElement().contains(heading));
+  const header = form.wrapper.findHeader();
+  expect(header?.findHeadingText().getElement()).toHaveTextContent('Create route');
   const description = header?.findDescription()?.getElement();
   expect(description).toBeVisible();
   expect(description).toHaveTextContent(`API: ${apiName}`);
@@ -186,7 +210,9 @@ it('shows the Lambda controls and payload options and sends the independent HTTP
   await form.shown();
   await form.choose('HTTP method', 'PATCH');
   await form.user.type(form.input('Path'), '/orders');
-  expect(screen.getByText('PATCH /orders')).toBeVisible();
+  const preview = form.wrapper.findContainer()?.findContent().findBox(':has(> .aws-area-value)')?.getElement();
+  expect(preview).toBeVisible();
+  expect(preview).toHaveTextContent('Route key PATCH /orders');
   await form.choose('Integration', 'new');
   expect(form.field('Integration kind').getElement()).toHaveTextContent(
     'A Lambda function the emulator holds is invoked.',
@@ -261,12 +287,13 @@ it.each([removalFailure, cleanupUnavailable])(
     const form = open();
     await form.shown();
     await form.choose('Existing integration', 'int-existing');
+    expect(integrations).toHaveBeenCalledOnce();
     await fillNewHttp(form);
     await form.submit();
     const error = await form.findAlert();
     expect(error).toHaveTextContent('CreateRoute: ConflictException: Route already exists.');
     expect(error).toHaveTextContent('Integration int-new was created without a route and could not be removed:');
-    const submit = screen.getByRole('button', { name: 'Create route' });
+    const submit = form.submitButton();
     if (cleanup.kind === 'not-implemented') {
       expect(error).toHaveTextContent('Not implemented by the emulator');
       expect(error).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteIntegration.');
@@ -286,11 +313,9 @@ it.each([removalFailure, cleanupUnavailable])(
       ],
     });
     await form.choose('Integration', 'existing');
-    expect(error).toBeVisible();
-    expect(submit).toBeEnabled();
-    expect(integrations).toHaveBeenCalledTimes(1);
     await form.choose('Existing integration', 'int-new');
     expect(error).toBeVisible();
+    expect(submit).toBeEnabled();
     expect(integrations).toHaveBeenCalledTimes(2);
     await form.submit();
     await waitFor(() =>
@@ -324,7 +349,7 @@ it('shows that neither integration mode can create a route when route creation a
   expect(error).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteIntegration.');
   expect(error).toHaveTextContent('Route creation is unavailable for both new and existing integrations.');
   expect(error).not.toHaveTextContent('Switch to “Use an existing integration”');
-  const submit = screen.getByRole('button', { name: 'Create route' });
+  const submit = form.submitButton();
   expect(submit).toBeDisabled();
 
   await form.choose('Integration', 'existing');
@@ -408,9 +433,12 @@ it.each<ReadCase>([
   api.mockRejectedValueOnce(new RequestError(failure));
   const form = open(health);
   await waitFor(() => expect(form.wrapper.findStatusIndicator()?.getElement()).toHaveTextContent(status));
-  expect(screen.getByText(detail)).toBeVisible();
-  if (recovery) expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
-  await form.user.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(form.wrapper.findBox('p')?.getElement()).toHaveTextContent(detail);
+  if (recovery) expect(form.wrapper.findLink('[href="/"]')?.getElement()).toHaveTextContent('Connection status');
+  const retry = form.wrapper.findButton()?.getElement();
+  if (!retry) throw new Error('Missing GetApi Retry button');
+  expect(retry).toHaveTextContent('Retry');
+  await form.user.click(retry);
   expect(await form.shown()).toBeVisible();
   expect(form.field('Route').getElement()).toBeVisible();
   expect(create).not.toHaveBeenCalled();
@@ -429,23 +457,19 @@ it.each([
   const form = open(health);
   await form.shown();
   const choice = await form.openSelect('Existing integration');
-  const field = form.field('Existing integration').getElement();
+  const field = createWrapper(form.field('Existing integration').getElement());
   await waitFor(() => expect(choice.findStatusIndicator()?.getElement()).toHaveTextContent(dropdownStatus));
   const retry = choice.findErrorRecoveryButton()?.getElement();
   expect(retry).toHaveTextContent('Retry');
   const dropdown = choice.findDropdown().getElement();
-  const readStatus = createWrapper(field)
-    .findAllStatusIndicators()
-    .find((indicator) => !dropdown.contains(indicator.getElement()));
+  const readStatus = field.findAllStatusIndicators().find((indicator) => !dropdown.contains(indicator.getElement()));
   expect(readStatus?.getElement()).toHaveTextContent(status);
-  expect(within(field).getByText(detail)).toBeVisible();
-  const connectionStatus = within(field).queryByRole('link', { name: 'Connection status' });
-  if (recovery) expect(connectionStatus).toBeVisible();
-  else expect(connectionStatus).not.toBeInTheDocument();
-  const fieldRetry = createWrapper(field)
-    .findAllButtons()
-    .find((button) => button.getElement().textContent === 'Retry');
-  expect(fieldRetry?.getElement()).toBeVisible();
+  expect(field.findBox('p')?.getElement()).toHaveTextContent(detail);
+  const connectionStatus = field.findLink('[href="/"]')?.getElement();
+  if (recovery) expect(connectionStatus).toHaveTextContent('Connection status');
+  else expect(connectionStatus).toBeUndefined();
+  const fieldRetry = field.findAllButtons().find((button) => !dropdown.contains(button.getElement()));
+  expect(fieldRetry?.getElement()).toHaveTextContent('Retry');
   if (!retry) throw new Error('Missing Retry in existing integration choice');
   await form.user.click(retry);
   await waitFor(() =>
@@ -456,18 +480,22 @@ it.each([
 
 it('links a WebSocket address to the API and offers no create form', async () => {
   api.mockResolvedValueOnce({ found: true, api: { ProtocolType: 'WEBSOCKET' } });
-  open();
-  expect(await screen.findByRole('heading', { name: 'Routes are created here for HTTP APIs only' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'View API' })).toHaveAttribute('href', v2ApiPath(apiId));
-  expect(screen.getByText(/is a WebSocket API/).parentElement).toHaveTextContent(`${apiId} is a WebSocket API.`);
-  expect(screen.queryByRole('button', { name: 'Create route' })).not.toBeInTheDocument();
+  const { wrapper } = open();
+  await waitFor(() =>
+    expect(wrapper.findHeader()?.findHeadingText().getElement()).toHaveTextContent(
+      'Routes are created here for HTTP APIs only',
+    ),
+  );
+  expect(wrapper.findLink(`[href="${v2ApiPath(apiId)}"]`)?.getElement()).toHaveTextContent('View API');
+  expect(wrapper.findBox()?.getElement()).toHaveTextContent(new RegExp(`${apiId}.*is a WebSocket API\\.`));
+  expect(wrapper.findForm()).toBeNull();
 });
 
 it('shows API not found for a missing API', async () => {
   api.mockResolvedValueOnce({ found: false });
-  open();
-  expect(await screen.findByRole('heading', { name: 'API not found' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'View APIs' })).toHaveAttribute('href', '/aws/apigateway/apis');
+  const { wrapper } = open();
+  await waitFor(() => expect(wrapper.findHeader()?.findHeadingText().getElement()).toHaveTextContent('API not found'));
+  expect(wrapper.findLink('[href="/aws/apigateway/apis"]')?.getElement()).toHaveTextContent('View APIs');
 });
 
 it.each([false, true])(
@@ -521,7 +549,7 @@ for (const operation of ['CreateIntegration', 'CreateRoute']) {
     expect(alert).toHaveTextContent(operation);
     expect(form.input('HTTP address')).toHaveValue(`${endpoint}/orders`);
     expect(form.handOver).not.toHaveBeenCalled();
-    const submit = screen.getByRole('button', { name: 'Create route' });
+    const submit = form.submitButton();
     if (failure.kind === 'not-implemented') {
       expect(submit).toBeDisabled();
       expect(alert).toHaveTextContent('Not implemented by the emulator');
@@ -541,21 +569,20 @@ it('asks before discarding and keeps the values if the developer stays', async (
   await form.shown();
   await form.user.type(form.input('Path'), '/orders');
   await form.cancel();
-  const answerDiscardDialog = async (name: string) => {
+  const answerDiscardDialog = async (index: number, label: string) => {
     const modal = form.wrapper.findModal();
     expect(modal?.getElement()).toBeVisible();
     const footer = modal?.findFooter()?.getElement();
     if (!footer) throw new Error('Missing discard dialog footer');
-    const button = createWrapper(footer)
-      .findAllButtons()
-      .find((entry) => entry.getElement().textContent === name);
-    if (!button) throw new Error(`Missing discard dialog action ${name}`);
-    await form.user.click(button.getElement());
+    const button = createWrapper(footer).findAllButtons()[index]?.getElement();
+    if (!button) throw new Error(`Missing discard dialog action ${index}`);
+    expect(button).toHaveTextContent(label);
+    await form.user.click(button);
   };
-  await answerDiscardDialog('Keep editing');
+  await answerDiscardDialog(0, 'Keep editing');
   expect(form.input('Path')).toHaveValue('/orders');
   await form.cancel();
-  await answerDiscardDialog('Discard');
+  await answerDiscardDialog(1, 'Discard');
   expect(await screen.findByText(`Destination ${v2ApiPath(apiId)}`)).toBeVisible();
 });
 
