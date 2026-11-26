@@ -812,8 +812,15 @@ export async function withoutRoles(caller: Caller, port: number): Promise<void> 
       const params: Record<string, string> = { MaxItems: '100' };
       if (marker !== null) params.Marker = marker;
       const body = given(caller, await iamDirect(caller, port, 'ListRoles', params), 200, 'direct ListRoles');
-      names.push(...rolesOf(body).map((role) => role.name));
-      if (element(body, 'IsTruncated') !== 'true') return names;
+      // Only a `ListRolesResult` that holds `Roles` and says whether it is truncated tells what the emulator lists.
+      const truncated = element(body, 'IsTruncated');
+      if (!/<ListRolesResult[\s>]/.test(body) || !/<Roles[\s/>]/.test(body) || (truncated !== 'true' && truncated !== 'false')) {
+        throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
+      }
+      const page = rolesOf(body).map((role) => role.name);
+      if (page.some((name) => name === '')) throw new EnvError('direct ListRoles: a role without a RoleName');
+      names.push(...page);
+      if (truncated !== 'true') return names;
       marker = element(body, 'Marker');
       if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
     }

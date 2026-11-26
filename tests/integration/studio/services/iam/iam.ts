@@ -521,9 +521,15 @@ export async function withoutRoles(caller: Caller, port: number): Promise<void> 
       const read = await iamAnswer(caller, port, 'ListRoles', params, 'before the check makes a role');
       if (!read.ok) throw new EnvError(`direct ListRoles: ${shownRead(read)}`);
       const result = at(read.xml, 'ListRolesResponse', 'ListRolesResult');
-      if (result === null) throw new EnvError('direct ListRoles: no ListRolesResult');
-      names.push(...members(result, 'Roles').map((m) => textAt(m, 'RoleName') ?? ''));
-      if (textAt(result, 'IsTruncated') !== 'true') return names;
+      // Only a `ListRolesResult` that holds `Roles` and says whether it is truncated tells what the emulator lists.
+      const truncated = textAt(result, 'IsTruncated');
+      if (result === null || at(result, 'Roles') === null || (truncated !== 'true' && truncated !== 'false')) {
+        throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
+      }
+      const page = members(result, 'Roles').map((m) => textAt(m, 'RoleName') ?? '');
+      if (page.some((name) => name === '')) throw new EnvError('direct ListRoles: a role without a RoleName');
+      names.push(...page);
+      if (truncated !== 'true') return names;
       marker = textAt(result, 'Marker');
       if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
     }
