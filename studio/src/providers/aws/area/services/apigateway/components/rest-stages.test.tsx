@@ -48,7 +48,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
 
-function StagesWithFlash() {
+function StagesWithFlash({ connection }: { connection: AreaConnection }) {
   const { shown, pageFlash, dismiss, announce } = useAreaFlash('/aws/apigateway/apis/rest/api-1', 0, true);
   return (
     <PageFlashContext.Provider value={pageFlash}>
@@ -58,7 +58,7 @@ function StagesWithFlash() {
   );
 }
 
-function open() {
+function open(activeConnection = connection) {
   const user = userEvent.setup();
   const root = { current: null as HTMLDivElement | null };
   render(
@@ -70,7 +70,7 @@ function open() {
               root.current = element;
             }}
           >
-            <StagesWithFlash />
+            <StagesWithFlash connection={activeConnection} />
           </div>
         </AreaRootContext.Provider>
       </MemoryRouter>
@@ -79,110 +79,155 @@ function open() {
   return user;
 }
 
-function row(name: string) {
-  const element = screen.getByRole('rowheader', { name }).closest('tr');
-  assert(element);
-  return within(element);
-}
+const root = () => createWrapper(document.body);
+const table = () => root().findTable();
+const cell = (row: number, column: number) => table()?.findBodyCell(row, column)?.getElement();
+const names = () =>
+  table()
+    ?.findRows()
+    .map((_, index) => cell(index + 1, 2)?.textContent);
+const addressCell = (row: number) => cell(row, 5);
+const success = () => root().findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
 
 it('shows stages, deployment IDs, last change and copyable invoke URLs as plain text', async () => {
   const user = open();
-  await screen.findByRole('rowheader', { name: 'dev' });
-  expect(
-    screen.getByText(
-      'A stage serves the API as it was when last deployed. Deploy again after you change resources or methods.',
-    ),
-  ).toBeInTheDocument();
-  expect(row('dev').getByText('deploy-dev')).toBeInTheDocument();
-  expect(row('dev').getByRole('cell', { name: /November/ })).toHaveTextContent(creationDateText(changed));
-  await user.click(row('dev').getByRole('button', { name: 'Copy Deployment ID' }));
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  expect(table()?.findHeaderSlot()?.getElement()).toHaveTextContent(
+    'A stage serves the API as it was when last deployed. Deploy again after you change resources or methods.',
+  );
+  expect(cell(1, 3)).toHaveTextContent('deploy-dev');
+  expect(cell(1, 4)).toHaveTextContent(creationDateText(changed));
+  const deployment = cell(1, 3);
+  assert(deployment);
+  await user.click(within(deployment).getByRole('button', { name: 'Copy Deployment ID' }));
   expect(await navigator.clipboard.readText()).toBe('deploy-dev');
 
-  const copyAddress = await row('dev').findByRole('button', { name: 'Copy Invoke URL' });
-  expect(row('dev').getByRole('cell', { name: new RegExp('execute-api') })).toHaveTextContent(invokeUrl('dev'));
-  expect(row('dev').queryByRole('link')).not.toBeInTheDocument();
-  await user.click(copyAddress);
+  await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
+  const address = addressCell(1);
+  assert(address);
+  expect(within(address).queryByRole('link')).not.toBeInTheDocument();
+  await user.click(within(address).getByRole('button', { name: 'Copy Invoke URL' }));
   expect(await navigator.clipboard.readText()).toBe(invokeUrl('dev'));
 });
 
 it('shows why a stage is needed when none exist', async () => {
   readStages.mockResolvedValue([]);
   open();
-  expect(await screen.findByText('No stages')).toBeVisible();
-  expect(screen.getByText('Deploy the API to a stage to get an invoke URL.')).toBeVisible();
+  await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent('No stages'));
+  expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent('Deploy the API to a stage to get an invoke URL.');
   expect(readAddress).not.toHaveBeenCalled();
 });
 
-it.each<[RequestFailure, string]>([
-  [{ kind: 'not-implemented', operation: 'GetExport' }, 'Not implemented by the emulator'],
-  [{ kind: 'access-denied', operation: 'GetExport', message: 'Export is refused.' }, 'Access denied'],
-  [
-    { kind: 'other', operation: 'GetExport', code: 'BadRequestException', message: 'Invalid export.' },
-    'The invoke URL could not be read',
-  ],
-  [{ kind: 'emulator-did-not-answer', operation: 'GetExport', message: 'Timeout' }, `Not answering at ${endpoint}`],
-  [
-    { kind: 'engine-did-not-answer', operation: 'GetExport' },
-    `The EmuForge engine at ${engineOrigin} is not answering`,
-  ],
-])('keeps healthy addresses and refreshes every stage address after %j', async (failure, first) => {
-  let failDev = true;
-  readAddress.mockImplementation(async (_, __, name) => {
-    if (name === 'dev' && failDev) throw new RequestError(failure);
-    return invokeUrl(name);
-  });
-  const user = open();
-  await screen.findByRole('rowheader', { name: 'dev' });
-  await row('dev').findByText('GetExport');
-  expect(row('dev').getByRole('cell', { name: /GetExport/ })).toHaveTextContent(first);
-  expect(row('dev').queryByRole('button', { name: 'Copy Invoke URL' })).not.toBeInTheDocument();
-  expect(await row('prod').findByRole('button', { name: 'Copy Invoke URL' })).toBeEnabled();
-  expect(row('prod').getByRole('cell', { name: /execute-api/ })).toHaveTextContent(invokeUrl('prod'));
-  failDev = false;
-  await user.click(screen.getByRole('button', { name: 'Refresh' }));
-  expect(await row('dev').findByRole('button', { name: 'Copy Invoke URL' })).toBeEnabled();
-  expect(row('dev').getByRole('cell', { name: /execute-api/ })).toHaveTextContent(invokeUrl('dev'));
-  expect(readStages).toHaveBeenCalledTimes(2);
-  for (const stage of ['dev', 'prod']) {
-    expect(readAddress.mock.calls.filter(([, , name]) => name === stage)).toHaveLength(2);
-  }
-});
+function readFailures(operation: 'GetExport' | 'GetStages', thing: string) {
+  const stopped: AreaConnection = {
+    engineOrigin,
+    result: {
+      kind: 'emulator-unreachable',
+      checkedAt: 1,
+      reason: 'not_started',
+      message: 'The emulator is stopped.',
+      emulator: { port: 9682, endpoint },
+    },
+  };
+  return [
+    {
+      failure: { kind: 'not-implemented', operation },
+      first: 'Not implemented by the emulator',
+      detail: `501 Not Implemented for ${operation}`,
+      connection,
+      recovery: false,
+    },
+    {
+      failure: { kind: 'access-denied', operation, message: 'Request refused.' },
+      first: 'Access denied',
+      detail: `${operation} was refused: Request refused.`,
+      connection,
+      recovery: false,
+    },
+    {
+      failure: { kind: 'emulator-did-not-answer', operation, message: 'Connection refused.' },
+      first: 'Not started on port 9682',
+      detail: `${operation} got no answer from the emulator. Connection refused.`,
+      connection: stopped,
+      recovery: true,
+    },
+    {
+      failure: { kind: 'emulator-did-not-answer', operation, message: 'Timeout.' },
+      first: `Not answering at ${endpoint}`,
+      detail: `${operation} got no answer from the emulator. Timeout.`,
+      connection,
+      recovery: true,
+    },
+    {
+      failure: { kind: 'engine-did-not-answer', operation },
+      first: `The EmuForge engine at ${engineOrigin} is not answering`,
+      detail: `${operation} got no answer.`,
+      connection,
+      recovery: true,
+    },
+    {
+      failure: { kind: 'other', operation, code: 'BadRequestException', message: 'Invalid request.' },
+      first: `The ${thing} could not be read`,
+      detail: `${operation}: BadRequestException: Invalid request.`,
+      connection,
+      recovery: false,
+    },
+  ] satisfies {
+    failure: RequestFailure;
+    first: string;
+    detail: string;
+    connection: AreaConnection;
+    recovery: boolean;
+  }[];
+}
 
-it.each<[RequestFailure, string, string]>([
-  [
-    { kind: 'not-implemented', operation: 'GetStages' },
-    'Not implemented by the emulator',
-    '501 Not Implemented for GetStages',
-  ],
-  [
-    { kind: 'access-denied', operation: 'GetStages', message: 'Stages refused.' },
-    'Access denied',
-    'GetStages was refused: Stages refused.',
-  ],
-  [
-    { kind: 'other', operation: 'GetStages', code: 'BadRequestException', message: 'Invalid API' },
-    'The stages could not be read',
-    'GetStages: BadRequestException: Invalid API',
-  ],
-  [
-    { kind: 'emulator-did-not-answer', operation: 'GetStages', message: 'Timeout.' },
-    `Not answering at ${endpoint}`,
-    'GetStages got no answer from the emulator. Timeout.',
-  ],
-  [
-    { kind: 'engine-did-not-answer', operation: 'GetStages' },
-    `The EmuForge engine at ${engineOrigin} is not answering`,
-    'GetStages got no answer.',
-  ],
-])('shows the failed GetStages state and retries it (%j)', async (failure, first, detail) => {
-  readStages.mockRejectedValueOnce(new RequestError(failure));
-  const user = open();
-  const table = within(screen.getByRole('table', { name: 'Stages' }));
-  await table.findByText(detail, { exact: false });
-  expect(table.getByRole('row', { name: /GetStages/ })).toHaveTextContent(first);
-  await user.click(table.getByRole('button', { name: 'Retry' }));
-  expect(await table.findByRole('rowheader', { name: 'dev' })).toBeVisible();
-});
+it.each(readFailures('GetExport', 'invoke URL'))(
+  'keeps healthy addresses and can recover GetExport after $first',
+  async ({ failure, first, detail, connection, recovery }) => {
+    let failDev = true;
+    readAddress.mockImplementation(async (_, __, name) => {
+      if (name === 'dev' && failDev) throw new RequestError(failure);
+      return invokeUrl(name);
+    });
+    const user = open(connection);
+    await waitFor(() => expect(addressCell(1)).toHaveTextContent(detail));
+    const failedCell = addressCell(1);
+    assert(failedCell);
+    expect(failedCell).toHaveTextContent(first);
+    expect(failedCell).not.toHaveTextContent(invokeUrl('dev'));
+    expect(Boolean(within(failedCell).queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
+    await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+
+    failDev = false;
+    await user.click(within(failedCell).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
+    readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() =>
+      expect([addressCell(1)?.textContent, addressCell(2)?.textContent]).toEqual([
+        invokeUrl('dev') + '?deployment=latest',
+        invokeUrl('prod') + '?deployment=latest',
+      ]),
+    );
+    expect(readStages).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each(readFailures('GetStages', 'stages'))(
+  'shows and retries the failed GetStages state after $first',
+  async ({ failure, first, detail, connection, recovery }) => {
+    readStages.mockRejectedValueOnce(new RequestError(failure));
+    const user = open(connection);
+    await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent(detail));
+    const empty = table()?.findEmptySlot()?.getElement();
+    assert(empty);
+    expect(empty).toHaveTextContent(first);
+    expect(Boolean(within(empty).queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
+    await user.click(within(empty).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  },
+);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -194,11 +239,17 @@ function deferred<T>() {
 
 type User = ReturnType<typeof userEvent.setup>;
 
+async function openModal(user: User, button: string) {
+  await user.click(screen.getByRole('button', { name: button }));
+  return waitFor(() => {
+    const modal = root().findModal();
+    assert(modal && modal.isVisible());
+    return modal;
+  });
+}
+
 async function deployToNewStage(user: User) {
-  await user.click(screen.getByRole('button', { name: 'Deploy API' }));
-  const dialog = within(await screen.findByRole('dialog', { name: 'Deploy API' }));
-  const modal = createWrapper(document.body).findModal();
-  assert(modal);
+  const modal = await openModal(user, 'Deploy API');
   const content = modal.findContent();
   const target = content.findRadioGroup()?.findInputByValue('new');
   assert(target);
@@ -206,112 +257,132 @@ async function deployToNewStage(user: User) {
   const input = content.findInput()?.findNativeInput();
   assert(input);
   await user.type(input.getElement(), 'sandbox');
-  await user.click(dialog.getByRole('button', { name: 'Deploy' }));
+  await user.click(within(modal.getElement()).getByRole('button', { name: 'Deploy' }));
 }
 
 async function deleteDev(user: User) {
-  const radio = createWrapper(document.body).findTable()?.findRowSelectionArea(1)?.find('input');
+  const radio = table()?.findRowSelectionArea(1)?.find('input');
   assert(radio);
   await user.click(radio.getElement());
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
-  const dialog = within(await screen.findByRole('dialog', { name: 'Delete stage dev?' }));
-  const input = createWrapper(document.body).findModal()?.findContent().findInput()?.findNativeInput();
+  const modal = await openModal(user, 'Delete');
+  const input = modal.findContent().findInput()?.findNativeInput();
   assert(input);
   await user.type(input.getElement(), 'dev');
-  await user.click(dialog.getByRole('button', { name: 'Delete' }));
+  await user.click(within(modal.getElement()).getByRole('button', { name: 'Delete' }));
 }
 
-const deployedStages = [...stages, { stageName: 'sandbox', deploymentId: 'deploy-sandbox' }];
+const changes = [
+  {
+    action: 'deploy',
+    mutate: deploy,
+    submit: deployToNewStage,
+    message: 'API deployed to stage sandbox.',
+    updated: [...stages, { stageName: 'sandbox', deploymentId: 'deploy-sandbox' }],
+    expectedNames: ['dev', 'prod', 'sandbox'],
+    prodRow: 2,
+  },
+  {
+    action: 'delete',
+    mutate: remove,
+    submit: deleteDev,
+    message: 'Stage dev deleted.',
+    updated: stages.slice(1),
+    expectedNames: ['prod'],
+    prodRow: 1,
+  },
+];
 
-it('shows the deploy result and reads the stages and invoke URLs again', async () => {
-  const user = open();
-  await rowAfterRead('dev');
-  deploy.mockImplementationOnce(async () => {
-    readStages.mockResolvedValue(deployedStages);
-    readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
-  });
-  await deployToNewStage(user);
-  const notifications = await screen.findByRole('list', { name: 'Notifications' });
-  expect(notifications).toHaveTextContent('API deployed to stage sandbox.');
-  await rowAfterRead('sandbox');
-  await waitFor(() =>
-    expect(row('dev').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
-      invokeUrl('dev') + '?deployment=latest',
-    ),
-  );
-  expect(row('sandbox').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
-    invokeUrl('sandbox') + '?deployment=latest',
-  );
-});
+it.each(changes)(
+  'shows the $action result and closes the dialog before refreshing stages and exports',
+  async (change) => {
+    const user = open();
+    await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    const feedbackAtRead = () => ({
+      flash: success()?.textContent,
+      modalOpen: Boolean(root().findModal()?.isVisible()),
+    });
+    const stagesAtRefresh: ReturnType<typeof feedbackAtRead>[] = [];
+    const exportsAtRefresh: ReturnType<typeof feedbackAtRead>[] = [];
+    change.mutate.mockImplementationOnce(async () => {
+      readStages.mockImplementationOnce(async () => {
+        stagesAtRefresh.push(feedbackAtRead());
+        return change.updated;
+      });
+      readAddress.mockImplementation(async (_, __, name) => {
+        exportsAtRefresh.push(feedbackAtRead());
+        return invokeUrl(name) + '?deployment=latest';
+      });
+    });
+    await change.submit(user);
+    await waitFor(() => expect(names()).toEqual(change.expectedNames));
+    await waitFor(() =>
+      expect(change.expectedNames.map((_, index) => addressCell(index + 1)?.textContent)).toEqual(
+        change.expectedNames.map((name) => invokeUrl(name) + '?deployment=latest'),
+      ),
+    );
+    const feedback = { flash: change.message, modalOpen: false };
+    expect(stagesAtRefresh).toEqual([feedback]);
+    expect(exportsAtRefresh.length).toBeGreaterThan(0);
+    for (const state of exportsAtRefresh) expect(state).toEqual(feedback);
+    expect(success()).toHaveTextContent(change.message);
+    if (change.action === 'delete') expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  },
+);
 
-async function rowAfterRead(name: string) {
-  await screen.findByRole('rowheader', { name });
-  await row(name).findByRole('button', { name: 'Copy Invoke URL' });
-}
+const orderCases = changes.flatMap((change) => (['older', 'newer'] as const).map((first) => ({ ...change, first })));
 
-it('enables Delete for a selection and reads the stages after deletion', async () => {
-  const user = open();
-  await rowAfterRead('dev');
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-  remove.mockImplementationOnce(async () => {
-    readStages.mockResolvedValue(stages.slice(1));
-  });
-  await deleteDev(user);
-  const notifications = await screen.findByRole('list', { name: 'Notifications' });
-  expect(notifications).toHaveTextContent('Stage dev deleted.');
-  await waitFor(() => expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument());
-  expect(screen.getByRole('rowheader', { name: 'prod' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-});
-
-it.each(['deploy', 'delete'] as const)(
-  'keeps the later stages, addresses and result when older reads answer after %s',
-  async (action) => {
+it.each(orderCases)(
+  'keeps the newer stages, addresses and $action result with the $first reads answering first',
+  async (change) => {
     const staleStages = deferred<Stage[]>();
     const staleAddress = deferred<string>();
+    const freshStages = deferred<Stage[]>();
+    const freshAddress = deferred<string>();
+    const readFreshStages = vi.fn(() => freshStages.promise);
     const user = open();
-    await rowAfterRead('prod');
+    await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
     readStages.mockReturnValueOnce(staleStages.promise);
     readAddress.mockImplementation(async (_, __, name) => (name === 'prod' ? staleAddress.promise : invokeUrl(name)));
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => {
-      expect(readStages).toHaveBeenCalledTimes(2);
-      expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(2);
-    });
+    await waitFor(() => expect(readStages).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(2));
     const stageSignal = readStages.mock.calls[1]?.[2];
     const exportSignal = readAddress.mock.calls.filter(([, , name]) => name === 'prod')[1]?.[3];
-    const finishChange = async () => {
-      readStages.mockResolvedValue(action === 'deploy' ? deployedStages : stages.slice(1));
-      readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
-    };
-    if (action === 'deploy') {
-      deploy.mockImplementationOnce(finishChange);
-      await deployToNewStage(user);
-    } else {
-      remove.mockImplementationOnce(finishChange);
-      await deleteDev(user);
-    }
-    const notifications = await screen.findByRole('list', { name: 'Notifications' });
-    const message = action === 'deploy' ? 'API deployed to stage sandbox.' : 'Stage dev deleted.';
-    await waitFor(() =>
-      expect(row('prod').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
-        invokeUrl('prod') + '?deployment=latest',
-      ),
-    );
-    if (action === 'deploy') await rowAfterRead('sandbox');
-    else await waitFor(() => expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument());
+    change.mutate.mockImplementationOnce(async () => {
+      readStages.mockImplementationOnce(readFreshStages);
+      readAddress.mockImplementation(async (_, __, name) => (name === 'prod' ? freshAddress.promise : invokeUrl(name)));
+    });
+    await change.submit(user);
+    await waitFor(() => expect(success()).toHaveTextContent(change.message));
+    await waitFor(() => expect(readFreshStages).toHaveBeenCalledOnce());
+    await waitFor(() => expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(3));
     expect(stageSignal?.aborted).toBe(true);
     expect(exportSignal?.aborted).toBe(true);
-    await act(async () => {
-      staleStages.resolve([...stages, { stageName: 'stale', deploymentId: 'stale' }]);
-      staleAddress.resolve(invokeUrl('prod') + '?deployment=stale');
-    });
-    expect(screen.queryByRole('rowheader', { name: 'stale' })).not.toBeInTheDocument();
-    if (action === 'deploy') expect(screen.getByRole('rowheader', { name: 'sandbox' })).toBeVisible();
-    else expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument();
-    expect(row('prod').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
-      invokeUrl('prod') + '?deployment=latest',
-    );
-    expect(notifications).toHaveTextContent(message);
+
+    const finishOlder = () =>
+      act(async () => {
+        staleStages.resolve([...stages, { stageName: 'stale', deploymentId: 'stale' }]);
+        staleAddress.resolve(invokeUrl('prod') + '?deployment=stale');
+      });
+    const finishNewer = async () => {
+      await act(async () => freshStages.resolve(change.updated));
+      await waitFor(() => expect(names()).toEqual(change.expectedNames));
+      await act(async () => freshAddress.resolve(invokeUrl('prod') + '?deployment=latest'));
+      await waitFor(() =>
+        expect(addressCell(change.prodRow)).toHaveTextContent(invokeUrl('prod') + '?deployment=latest'),
+      );
+    };
+    if (change.first === 'older') {
+      await finishOlder();
+      await finishNewer();
+    } else {
+      await finishNewer();
+      await finishOlder();
+    }
+
+    expect(names()).toEqual(change.expectedNames);
+    expect(addressCell(change.prodRow)).toHaveTextContent(invokeUrl('prod') + '?deployment=latest');
+    expect(success()).toHaveTextContent(change.message);
   },
 );

@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { assert, beforeEach, expect, it, vi } from 'vitest';
@@ -8,7 +8,6 @@ import { assert, beforeEach, expect, it, vi } from 'vitest';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { PageFlashContext } from '../../../components/page-flash';
 import { STAGE_NAME_RULE } from '../deploy-form';
 import { readRestStages } from '../rest-api';
 import { deployRestApi } from '../rest-stage-api';
@@ -47,7 +46,7 @@ beforeEach(() => {
 });
 
 async function open(hasStages: boolean, connection = connected) {
-  const show = vi.fn();
+  const onSuccess = vi.fn();
   const close = vi.fn();
   const user = userEvent.setup();
   const root = { current: null as HTMLDivElement | null };
@@ -60,23 +59,29 @@ async function open(hasStages: boolean, connection = connected) {
       >
         <MemoryRouter>
           <QueryClientProvider client={new QueryClient()}>
-            <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
-              <DeployDialog apiId={id} connection={connection} hasStages={hasStages} onClose={close} />
-            </PageFlashContext.Provider>
+            <DeployDialog
+              apiId={id}
+              connection={connection}
+              hasStages={hasStages}
+              onClose={close}
+              onSuccess={onSuccess}
+            />
           </QueryClientProvider>
         </MemoryRouter>
       </div>
     </AreaRootContext.Provider>,
   );
-  const dialog = within(await screen.findByRole('dialog', { name: 'Deploy API' }));
-  const modal = createWrapper(document.body).findModal();
-  assert(modal);
+  const modal = await waitFor(() => {
+    const found = createWrapper(document.body).findModal();
+    assert(found && found.isVisible());
+    return found;
+  });
+  const dialog = within(modal.getElement());
   const content = modal.findContent();
   return {
     user,
-    show,
+    onSuccess,
     close,
-    dialog,
     content,
     deployButton: dialog.getByRole('button', { name: 'Deploy' }),
     radio: (value: string) => {
@@ -103,17 +108,21 @@ async function open(hasStages: boolean, connection = connected) {
 }
 
 it('describes both targets and starts with a new-stage name when there are no stages', async () => {
-  const { dialog, radio } = await open(false);
-  expect(dialog.getByText('Moves a stage this API has to the new deployment.')).toBeVisible();
-  expect(dialog.getByText('Creates a stage with this deployment.')).toBeVisible();
+  const { content, radio } = await open(false);
+  expect(content.findRadioGroup()?.findButtons()[0]?.getElement()).toHaveTextContent(
+    'Moves a stage this API has to the new deployment.',
+  );
+  expect(content.findRadioGroup()?.findButtons()[1]?.getElement()).toHaveTextContent(
+    'Creates a stage with this deployment.',
+  );
   expect(radio('new')).toBeChecked();
   expect(radio('existing')).not.toBeChecked();
-  expect(dialog.getByText(STAGE_NAME_RULE)).toBeVisible();
+  expect(content.findAllFormFields()[1]?.findConstraint()?.getElement()).toHaveTextContent(STAGE_NAME_RULE);
   expect(read).not.toHaveBeenCalled();
 });
 
 it('reads stages when the dialog opens and deploys with the chosen option and description', async () => {
-  const { user, radio, descriptionInput, select, deployButton, close } = await open(true);
+  const { user, radio, descriptionInput, select, deployButton, close, onSuccess } = await open(true);
   expect(radio('existing')).toBeChecked();
   await waitFor(() => expect(read).toHaveBeenCalledWith(engineOrigin, id, expect.any(AbortSignal)));
   const field = select();
@@ -128,7 +137,8 @@ it('reads stages when the dialog opens and deploys with the chosen option and de
   await user.click(option.getElement());
   await user.type(descriptionInput(), 'Send to production');
   await user.click(deployButton);
-  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith('prod'));
+  expect(close).not.toHaveBeenCalled();
   expect(read).toHaveBeenCalledOnce();
   expect(deploy).toHaveBeenCalledWith(
     engineOrigin,
@@ -169,26 +179,41 @@ it.each<[RequestFailure, AreaConnection, string, string, boolean]>([
   ],
 ])('shows and retries the stages choice failure %j', async (failure, connection, first, detail, recovery) => {
   read.mockRejectedValueOnce(new RequestError(failure));
-  const { user, dialog, content, select } = await open(true, connection);
-  expect(await dialog.findByText(detail, { exact: false })).toBeVisible();
-  expect(content.findStatusIndicator()?.getElement()).toHaveTextContent(first);
-  expect(Boolean(dialog.queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
+  const { user, content, select } = await open(true, connection);
   const field = select();
   await user.click(field.findTrigger().getElement());
   const dropdown = field.findDropdown();
-  const retry = await within(dropdown.getElement()).findByRole('button', { name: 'Retry' });
+  const retry = await waitFor(() => {
+    const button = field.findErrorRecoveryButton();
+    assert(button);
+    return button;
+  });
+  const stageField = content.findAllFormFields()[1];
+  assert(stageField);
+  expect(stageField.getElement()).toHaveTextContent(first);
+  expect(stageField.getElement()).toHaveTextContent(detail);
+  expect(Boolean(within(stageField.getElement()).queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
   expect(dropdown.getElement()).toHaveTextContent('The stages could not be loaded');
-  expect(dialog.getAllByRole('button', { name: 'Retry' })).toHaveLength(2);
-  await user.click(retry);
-  await waitFor(() => expect(dropdown.findOptionByValue('dev')?.getElement()).toBeVisible());
-  expect(dialog.queryByText(detail, { exact: false })).not.toBeInTheDocument();
+  expect(within(stageField.getElement()).getAllByRole('button', { name: 'Retry' })).toHaveLength(2);
+  await user.click(retry.getElement());
+  await waitFor(() =>
+    expect(['dev', 'prod'].map((value) => dropdown.findOptionByValue(value)?.getElement().textContent)).toEqual([
+      'devDeployment dep-dev',
+      'prodDeployment dep-prod',
+    ]),
+  );
+  expect(stageField.getElement()).not.toHaveTextContent(detail);
 });
 
 it('deploys to a new name after the existing-stage choice fails', async () => {
   read.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'GetStages' }));
-  const { user, dialog, radio, nameInput, deployButton } = await open(true);
-  await dialog.findByText('Not implemented by the emulator');
-  expect(dialog.getByText('Creates a stage with this deployment.')).toBeVisible();
+  const { user, content, radio, nameInput, deployButton } = await open(true);
+  await waitFor(() =>
+    expect(content.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+  );
+  expect(content.findRadioGroup()?.findButtons()[1]?.getElement()).toHaveTextContent(
+    'Creates a stage with this deployment.',
+  );
   await user.click(radio('new'));
   await user.type(nameInput(), 'sandbox_2');
   await user.click(deployButton);
@@ -216,16 +241,16 @@ it.each<[RequestFailure, string, boolean]>([
   ],
 ])('keeps the deployment form and its draft when the change fails (%j)', async (failure, text, unavailable) => {
   deploy.mockRejectedValueOnce(new RequestError(failure));
-  const { user, dialog, nameInput, descriptionInput, deployButton, close, show } = await open(false);
+  const { user, content, nameInput, descriptionInput, deployButton, close, onSuccess } = await open(false);
   await user.type(nameInput(), 'dev');
   await user.type(descriptionInput(), 'Draft');
   await user.click(deployButton);
-  expect(await dialog.findByText(text, { exact: false })).toBeVisible();
-  expect(dialog.getByText(/CreateDeployment/)).toBeVisible();
+  await waitFor(() => expect(content.findAlert()?.getElement()).toHaveTextContent(text));
+  expect(content.findAlert()?.getElement()).toHaveTextContent('CreateDeployment');
   expect(nameInput()).toHaveValue('dev');
   expect(descriptionInput()).toHaveValue('Draft');
   if (unavailable) expect(deployButton).toBeDisabled();
   else expect(deployButton).toBeEnabled();
   expect(close).not.toHaveBeenCalled();
-  expect(show).not.toHaveBeenCalled();
+  expect(onSuccess).not.toHaveBeenCalled();
 });
