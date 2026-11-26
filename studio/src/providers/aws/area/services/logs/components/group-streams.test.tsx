@@ -167,7 +167,7 @@ it.each([
 ] as const)('keeps a successful %s independent of listing results when %s', async (action, order) => {
   const before = deferred<TokenPage<LogStream>>();
   const after = deferred<TokenPage<LogStream>>();
-  const written = deferred<void>();
+  const written = deferred<undefined>();
   const isCreate = action === 'create';
   const name = isCreate ? 'created stream' : 'deleted stream';
   const original = isCreate ? page('kept') : page('kept', name);
