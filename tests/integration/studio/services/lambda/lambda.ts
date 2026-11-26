@@ -794,6 +794,47 @@ export async function listRolesDirect(caller: Caller, port: number, prefix?: str
   throw new Error('direct ListRoles: more than 1000 pages');
 }
 
+/** An element of an XML answer read as a tree: its name without a prefix, its children, its text when it has none. */
+interface Xml {
+  name: string;
+  children: Xml[];
+  text: string;
+}
+
+/**
+ * `xml` read as a tree under a root without a name; `null` unless every element opened is closed, by its own name and
+ * in its order. Attributes and a namespace prefix are read past.
+ */
+function wellFormed(xml: string): Xml | null {
+  const root: Xml = { name: '', children: [], text: '' };
+  const stack: Xml[] = [root];
+  const tag = /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[^>]*?)?)(\/?)>|<\?[\s\S]*?\?>|<!--[\s\S]*?-->/g;
+  let last = 0;
+  for (let m = tag.exec(xml); m !== null; m = tag.exec(xml)) {
+    const between = xml.slice(last, m.index);
+    last = tag.lastIndex;
+    if (m[2] === undefined) continue;
+    const top = stack[stack.length - 1];
+    if (top.children.length === 0) top.text += between;
+    const name = m[2].includes(':') ? m[2].slice(m[2].indexOf(':') + 1) : m[2];
+    if (m[1] === '/') {
+      if (stack.length < 2 || top.name !== name) return null;
+      top.text = top.children.length === 0 ? xmlText(top.text) : '';
+      stack.pop();
+    } else {
+      const node: Xml = { name, children: [], text: '' };
+      top.children.push(node);
+      if (m[4] !== '/') stack.push(node);
+    }
+  }
+  return stack.length === 1 && xml.slice(last).trim() === '' ? root : null;
+}
+
+/** The first child of `node` named `name`; `null` when there is none, or no node. */
+function childOf(node: Xml | null, name: string): Xml | null {
+  return node?.children.find((each) => each.name === name) ?? null;
+}
+
 /** How long an emulator may take to stop listing the roles `withoutRoles` removed. */
 const EMPTIED_BOUND_MS = 20_000;
 
@@ -804,7 +845,7 @@ const EMPTIED_BOUND_MS = 20_000;
  * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
  */
 export async function withoutRoles(caller: Caller, port: number): Promise<void> {
-  /** The names of every role the emulator lists; an `EnvError` when a `ListRoles` is not answered 200. */
+  /** The names of every role the emulator lists; an `EnvError` when a `ListRoles` answer cannot be read whole. */
   const held = async (): Promise<string[]> => {
     const names: string[] = [];
     let marker: string | null = null;
@@ -812,17 +853,22 @@ export async function withoutRoles(caller: Caller, port: number): Promise<void> 
       const params: Record<string, string> = { MaxItems: '100' };
       if (marker !== null) params.Marker = marker;
       const body = given(caller, await iamDirect(caller, port, 'ListRoles', params), 200, 'direct ListRoles');
-      // Only a `ListRolesResult` that holds `Roles` and says whether it is truncated tells what the emulator lists.
-      const truncated = element(body, 'IsTruncated');
-      if (!/<ListRolesResult[\s>]/.test(body) || !/<Roles[\s/>]/.test(body) || (truncated !== 'true' && truncated !== 'false')) {
+      // Emptiness is taken only from a well-formed answer, read as a tree: `ListRolesResponse/ListRolesResult` with
+      // `Roles`, every child of which is a `member` with a `RoleName`, and `IsTruncated` saying `true` or `false`.
+      const result = childOf(childOf(wellFormed(body), 'ListRolesResponse'), 'ListRolesResult');
+      const roles = childOf(result, 'Roles');
+      const truncated = childOf(result, 'IsTruncated')?.text ?? null;
+      if (result === null || roles === null || (truncated !== 'true' && truncated !== 'false')) {
         throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
       }
-      const page = rolesOf(body).map((role) => role.name);
-      if (page.some((name) => name === '')) throw new EnvError('direct ListRoles: a role without a RoleName');
-      names.push(...page);
-      if (truncated !== 'true') return names;
-      marker = element(body, 'Marker');
-      if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
+      for (const member of roles.children) {
+        const name = member.name === 'member' ? (childOf(member, 'RoleName')?.text ?? '') : '';
+        if (name === '') throw new EnvError('direct ListRoles: an entry of Roles that is not a member with a RoleName');
+        names.push(name);
+      }
+      if (truncated === 'false') return names;
+      marker = childOf(result, 'Marker')?.text ?? null;
+      if (marker === null || marker === '') throw new EnvError('direct ListRoles: truncated without a Marker');
     }
     throw new EnvError('direct ListRoles: more than 1000 pages');
   };
