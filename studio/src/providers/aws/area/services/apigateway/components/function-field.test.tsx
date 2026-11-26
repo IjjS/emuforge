@@ -77,6 +77,10 @@ it.each<{ failure: RequestFailure; text: string; recovery?: boolean }>([
   read.mockRejectedValueOnce(new RequestError(failure));
   const { select } = renderField();
   await userEvent.click(select.findTrigger().getElement());
-  expect(await screen.findByText(text, { exact: !recovery })).toBeVisible();
+  const dropdown = select.findDropdown().getElement();
+  const heading = await screen.findByText(
+    (content, element) => !dropdown.contains(element) && (recovery ? content.includes(text) : content === text),
+  );
+  expect(heading).toBeVisible();
   if (recovery) expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
 });
