@@ -109,6 +109,17 @@ function open() {
   );
 }
 
+it('keeps room for ten-character IDs and their cell padding inside the API table', async () => {
+  const { container } = open();
+  const restRow = await screen.findByRole('row', { name: /Payroll/ });
+  expect(within(restRow).getByRole('cell', { name: rest.id })).toBeInTheDocument();
+  const idHeader = createWrapper(container)
+    .findTable()
+    ?.findColumnHeaders()
+    .find((header) => header.getElement().textContent === 'ID');
+  expect(idHeader?.getElement().style.minWidth).toBe('calc(15ch + 24px)');
+});
+
 it('shows one sorted table with the model-specific links and metadata', async () => {
   vi.mocked(readV2Apis).mockResolvedValue({ items: [webSocket, http] });
   open();
