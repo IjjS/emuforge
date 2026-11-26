@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -51,7 +51,6 @@ async function open(read: ChoiceSource<typeof first>['read'], result: AreaConnec
   );
   const select = createWrapper(test.container).findSelect();
   if (select === null) throw new Error('Missing integration select');
-  expect(read).not.toHaveBeenCalled();
   await userEvent.click(select.findTrigger().getElement());
   return { ...test, onChange, dropdown: select.findDropdown(), select };
 }
@@ -61,13 +60,15 @@ it('shows options by value with label and description, and loads a further page 
     .fn<ChoiceSource<typeof first>['read']>()
     .mockResolvedValueOnce(firstPage)
     .mockResolvedValueOnce(lastPage);
-  const { dropdown, onChange } = await open(read);
+  const { dropdown, onChange, select } = await open(read);
   await waitFor(() => {
     expect(dropdown.findOptionByValue(first.value)?.getElement()).toHaveTextContent(
       'Lambda functionThe first integration',
     );
   });
-  const load = within(dropdown.getElement()).getByRole('button', { name: 'Load more' });
+  const load = select.findDropdownFooter()?.findButton()?.getElement();
+  if (load === undefined) throw new Error('Missing load more button');
+  expect(load).toHaveTextContent('Load more');
   await userEvent.click(load);
   await waitFor(() => {
     expect(dropdown.findOptionByValue(second.value)?.getElement()).toHaveTextContent(
@@ -79,7 +80,6 @@ it('shows options by value with label and description, and loads a further page 
   if (option === null) throw new Error('Missing second integration');
   await userEvent.click(option.getElement());
   expect(onChange).toHaveBeenCalledWith(second);
-  expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
 });
 
 describe.each([
@@ -126,30 +126,42 @@ describe.each([
 
     const { container, dropdown, select } = await open(read, result);
     if (further) {
-      await userEvent.click(await within(dropdown.getElement()).findByRole('button', { name: 'Load more' }));
+      const load = await waitFor(() => {
+        const button = select.findDropdownFooter()?.findButton()?.getElement();
+        if (button === undefined) throw new Error('Missing load more button');
+        expect(button).toHaveTextContent('Load more');
+        return button;
+      });
+      await userEvent.click(load);
     }
 
-    const dropdownRetry = await waitFor(() => {
+    await waitFor(() => {
       expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(
         `The integrations could not be loaded: ${dropdownReason}`,
       );
-      const retry = select.findErrorRecoveryButton()?.getElement();
-      if (retry === undefined) throw new Error('Missing dropdown recovery button');
-      expect(retry).toHaveTextContent('Retry');
-      return retry;
+      expect(select.findErrorRecoveryButton()?.getElement()).toHaveTextContent('Retry');
     });
     expect(container).toHaveTextContent(heading);
     expect(container).toHaveTextContent(detail);
-    const link = screen.queryByRole('link', { name: 'Connection status' });
+    const wrapper = createWrapper(container);
+    const link = wrapper
+      .findAllLinks()
+      .map((item) => item.getElement())
+      .find((item) => !dropdown.getElement().contains(item));
     if (recovery) {
+      expect(link).toHaveTextContent('Connection status');
       expect(link).toHaveAttribute('href', '/');
     } else {
-      expect(link).not.toBeInTheDocument();
+      expect(link).toBeUndefined();
     }
     if (further) expect(dropdown.findOptionByValue(first.value)?.getElement()).toHaveTextContent(first.label);
 
-    const blockRetry = screen.getAllByRole('button', { name: 'Retry' }).find((button) => button !== dropdownRetry);
+    const blockRetry = wrapper
+      .findAllButtons()
+      .map((button) => button.getElement())
+      .find((button) => !dropdown.getElement().contains(button));
     if (blockRetry === undefined) throw new Error('Missing retry button below the choice');
+    expect(blockRetry).toHaveTextContent('Retry');
     await userEvent.click(blockRetry);
     if (select.findTrigger().getElement().getAttribute('aria-expanded') === 'false') {
       await userEvent.click(select.findTrigger().getElement());

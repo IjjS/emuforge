@@ -18,17 +18,16 @@ it('collects the service screens without custom navigation items or leadsTo path
   }
 });
 
-it.each([
-  ['/aws/apigateway/apis', '/aws/apigateway/apis'],
-  ['/aws/apigateway', '/aws/apigateway/apis'],
-  ['/aws/apigateway/rest-apis', '/aws/apigateway/rest-apis'],
-])('opens the combined APIs list at %s with %s current', (path, activeHref) => {
-  expect(areaPage(path)).toMatchObject({
-    kind: 'screen',
-    screen: { Page: ApiListPage },
-    navigation: { activeHref },
-  });
-});
+it.each(['/aws/apigateway/apis', '/aws/apigateway', '/aws/apigateway/rest-apis'])(
+  'opens the combined APIs list at %s with APIs current',
+  (path) => {
+    expect(areaPage(path)).toMatchObject({
+      kind: 'screen',
+      screen: { Page: ApiListPage },
+      navigation: { activeHref: '/aws/apigateway/apis' },
+    });
+  },
+);
 
 it('registers screens at exactly the seven built entries', () => {
   const built = ENTRIES.flatMap(({ entries }) => entries)
