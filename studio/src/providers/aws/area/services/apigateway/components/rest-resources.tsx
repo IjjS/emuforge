@@ -18,10 +18,12 @@ import { createMethodPath } from '../format';
 import type { AppendedPages } from '../queries';
 import { orderedResources, restIntegration } from '../rest-format';
 import { useShowPart } from '../show-part';
+import { testUnavailableReason } from '../test-availability';
 import { CreateResourceDialog } from './create-resource-dialog';
 import { DeleteMethodDialog } from './delete-method-dialog';
 import { DeleteResourceDialog } from './delete-resource-dialog';
 import { RequestReadFailure } from './request-read-failure';
+import { TestMethodPanel } from './test-method-panel';
 
 function Responses({ method }: { method: Method }) {
   const methodResponses = Object.entries(method.methodResponses ?? {}).sort(([a], [b]) => a.localeCompare(b));
@@ -78,14 +80,35 @@ function Responses({ method }: { method: Method }) {
   );
 }
 
-function ResourceMethod({ method, verb, onDelete }: { method: Method; verb: string; onDelete?: () => void }) {
+function ResourceMethod({
+  method,
+  verb,
+  testing,
+  onTest,
+  onDelete,
+}: {
+  method: Method;
+  verb: string;
+  testing: boolean;
+  onTest?: () => void;
+  onDelete?: () => void;
+}) {
   const integration = restIntegration(method.methodIntegration);
+  const reason = testUnavailableReason(method.methodIntegration);
   return (
     <SpaceBetween size="xs">
       <SpaceBetween direction="horizontal" size="xs">
         <Box variant="h4">
           <ValueText kind="fixed" value={verb} />
         </Box>
+        <Button
+          ariaExpanded={testing}
+          disabled={reason !== undefined || onTest === undefined}
+          disabledReason={reason}
+          {...(onTest && { onClick: onTest })}
+        >
+          Test
+        </Button>
         {onDelete && <Button onClick={onDelete}>Delete</Button>}
       </SpaceBetween>
       <KeyValuePairs
@@ -117,16 +140,21 @@ interface ResourceTarget {
 }
 
 type DeleteTarget = ResourceTarget & ({ kind: 'resource' } | { kind: 'method'; method: string });
+type TestTarget = { resourceId: string; method: string };
 
 function ResourcePart({
   resource,
   depth,
   apiId,
+  testing,
+  onTest,
   onDelete,
 }: {
   resource: Resource;
   depth: number;
   apiId: string;
+  testing: TestTarget | undefined;
+  onTest: (target: TestTarget) => void;
   onDelete: (target: DeleteTarget) => void;
 }) {
   const follow = useFollow();
@@ -182,6 +210,8 @@ function ResourcePart({
                   key={verb}
                   method={method}
                   verb={name}
+                  testing={testing?.resourceId === resource.id && testing?.method === verb}
+                  {...(target && { onTest: () => onTest({ resourceId: target.resourceId, method: verb }) })}
                   {...(target && { onDelete: () => onDelete({ ...target, kind: 'method', method: name }) })}
                 />
               );
@@ -206,7 +236,16 @@ export function RestResources({
   const flash = usePageFlash();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<DeleteTarget>();
+  const [testing, setTesting] = useState<TestTarget>();
   const rootId = list.items?.find(({ path }) => path === '/')?.id;
+  const testResource = testing && list.items?.find(({ id }) => id === testing.resourceId);
+  const testMethod = testing && testResource?.resourceMethods?.[testing.method];
+
+  function handleTest(target: TestTarget) {
+    setTesting((current) =>
+      current?.resourceId === target.resourceId && current.method === target.method ? undefined : target,
+    );
+  }
 
   function handleCreated(path: string) {
     flash.show([
@@ -279,6 +318,8 @@ export function RestResources({
             resource={resource}
             depth={depth}
             apiId={apiId}
+            testing={testing}
+            onTest={handleTest}
             onDelete={setDeleting}
           />
         ))}
@@ -286,6 +327,16 @@ export function RestResources({
           <Button loading={list.loading} onClick={list.loadMore}>
             Load more resources
           </Button>
+        )}
+        {testing && testResource?.path && testMethod && !testUnavailableReason(testMethod.methodIntegration) && (
+          <TestMethodPanel
+            key={JSON.stringify([apiId, testing.resourceId, testing.method])}
+            endpoint={connection.engineOrigin}
+            apiId={apiId}
+            resourceId={testing.resourceId}
+            method={testing.method}
+            path={testResource.path}
+          />
         )}
       </SpaceBetween>
       {creating && (

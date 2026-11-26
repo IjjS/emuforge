@@ -16,10 +16,12 @@ import { RequestError, type RequestFailure } from '../../../../../../lib/aws/req
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readRestResources } from '../rest-api';
 import { useRestResources } from '../rest-queries';
+import { testInvokeMethod } from '../test-api';
 import { RestResources } from './rest-resources';
 
 vi.mock('../rest-api', { spy: true });
 vi.mock('../rest-change-api', { spy: true });
+vi.mock('../test-api', { spy: true });
 
 const apiId = 'api-1';
 const engineOrigin = 'http://127.0.0.1:9681';
@@ -221,6 +223,30 @@ it.each<[RequestFailure, string, string]>([
 });
 
 const newResource = { id: 'new', path: '/new' };
+
+it('opens Test for an eligible method and explains why a VPC link method cannot be tested', async () => {
+  reader.mockResolvedValueOnce({
+    items: [
+      { ...root, resourceMethods: { ANY: {} } },
+      { ...orders, resourceMethods: { POST: { methodIntegration: { type: 'MOCK', connectionType: 'VPC_LINK' } } } },
+    ],
+  });
+  const { user } = open();
+  const [eligible, unavailable] = await screen.findAllByRole('button', { name: 'Test' });
+  if (!eligible || !unavailable) throw new Error('Expected both Test controls');
+  expect(unavailable).toHaveAttribute('aria-disabled', 'true');
+  expect(unavailable).toHaveAccessibleDescription(
+    'Test is not offered for an integration through a VPC link: where the emulator sends it has not been verified.',
+  );
+  await user.click(unavailable);
+  expect(screen.queryByRole('region', { name: 'Test method' })).not.toBeInTheDocument();
+  expect(testInvokeMethod).not.toHaveBeenCalled();
+
+  await user.click(eligible);
+  const panel = within(screen.getByRole('region', { name: 'Test method' }));
+  expect(panel.getByText('ANY')).toBeVisible();
+  expect(panel.getByRole('textbox', { name: 'Path with query' })).toHaveValue('/');
+});
 
 async function openChange(kind: 'create' | 'resource' | 'method', user = open().user) {
   await screen.findByRole('heading', { name: '/orders' });
