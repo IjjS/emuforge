@@ -4,19 +4,15 @@ import Container from '@cloudscape-design/components/container';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useQuery } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
-import { failureOf, noEndpoint } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
 import { apiChoices } from '../api-choices';
 import type { ApiRow } from '../apis-api';
 import { PagedChoice } from '../components/paged-choice';
-import { RequestReadFailure } from '../components/request-read-failure';
 import { createApiPath, restApiPath, v2ApiPath } from '../format';
 
 export type ApiChoiceDestination =
@@ -29,24 +25,29 @@ interface ChooseApiPageProps extends ScreenPageProps {
 
 export function ChooseApiPage({ connection, name, destination: { model, part } }: ChooseApiPageProps) {
   useShowsResources('APIs');
-  const visit = useId();
   const navigate = useNavigate();
   const handleFollow = useFollow();
   const [selected, setSelected] = useState<ApiRow>();
+  const [empty, setEmpty] = useState(false);
+  const [opening, setOpening] = useState(0);
+  const choice = useRef<HTMLDivElement>(null);
   const things = model === 'rest' ? 'REST APIs' : 'HTTP or WebSocket APIs';
-  const endpoint = connection.engineOrigin;
-  const source = apiChoices(endpoint, model);
-  const first = useQuery({
-    queryKey: [...source.key, 'first-page', endpoint, visit],
-    enabled: endpoint !== undefined,
-    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : source.read(endpoint, '', undefined, signal)),
-    gcTime: 0,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
-  const firstPage = first.data;
-  const failure = first.isError && !first.isFetching ? failureOf(first.error, source.operation) : undefined;
+  const source = apiChoices(connection.engineOrigin, model);
+
+  useEffect(() => {
+    const trigger = choice.current?.querySelector('button[aria-haspopup="dialog"]');
+    if (trigger === undefined || trigger === null) return;
+
+    // Select requests its first page once. Its trigger exposes subsequent openings even when focus stays inside.
+    let opened = false;
+    const observer = new MutationObserver(() => {
+      if (trigger.getAttribute('aria-expanded') !== 'true') return;
+      if (opened) setOpening((previous) => previous + 1);
+      opened = true;
+    });
+    observer.observe(trigger, { attributes: true, attributeFilter: ['aria-expanded'] });
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <SpaceBetween size="l">
@@ -54,36 +55,21 @@ export function ChooseApiPage({ connection, name, destination: { model, part } }
         {name}
       </Header>
       <Container>
-        {firstPage === undefined ? (
-          failure === undefined ? (
-            <StatusIndicator type="loading">Loading {things}</StatusIndicator>
-          ) : (
-            <RequestReadFailure
-              failure={failure}
-              connection={connection}
-              thing={things}
-              onRetry={() => void first.refetch()}
-            />
-          )
-        ) : firstPage.items.length === 0 && firstPage.next === undefined ? (
-          <Box textAlign="center">
-            <SpaceBetween size="xs">
-              <Box variant="strong">No {things}</Box>
-              <Box variant="p">The emulator holds none.</Box>
-              <Button href={createApiPath} onFollow={handleFollow}>
-                Create API
-              </Button>
-            </SpaceBetween>
-          </Box>
-        ) : (
-          <SpaceBetween size="m">
-            <FormField label="API">
+        <SpaceBetween size="m">
+          <FormField label="API">
+            <div ref={choice}>
               <PagedChoice
                 source={{
                   ...source,
-                  // The screen already read the first page to determine its empty state.
-                  read: (at, text, token, signal) =>
-                    token === undefined ? Promise.resolve(firstPage) : source.read(at, text, token, signal),
+                  key: [...source.key, opening],
+                  read: async (endpoint, text, token, signal) => {
+                    if (token === undefined) setEmpty(false);
+                    const page = await source.read(endpoint, text, token, signal);
+                    if (token === undefined && !signal.aborted) {
+                      setEmpty(page.items.length === 0 && page.next === undefined);
+                    }
+                    return page;
+                  },
                 }}
                 connection={connection}
                 things={things}
@@ -91,7 +77,19 @@ export function ChooseApiPage({ connection, name, destination: { model, part } }
                 value={selected}
                 onChange={setSelected}
               />
-            </FormField>
+            </div>
+          </FormField>
+          {empty ? (
+            <Box textAlign="center">
+              <SpaceBetween size="xs">
+                <Box variant="strong">No {things}</Box>
+                <Box variant="p">The emulator holds none.</Box>
+                <Button href={createApiPath} onFollow={handleFollow}>
+                  Create API
+                </Button>
+              </SpaceBetween>
+            </Box>
+          ) : (
             <Button
               variant="primary"
               disabled={selected === undefined}
@@ -103,8 +101,8 @@ export function ChooseApiPage({ connection, name, destination: { model, part } }
             >
               Open
             </Button>
-          </SpaceBetween>
-        )}
+          )}
+        </SpaceBetween>
       </Container>
     </SpaceBetween>
   );
