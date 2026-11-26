@@ -238,23 +238,42 @@ export class LogsSeeded {
     }
   }
 
-  /** Deletes every log group of the emulator under the check's prefix. */
+  /**
+   * Deletes every log group of the emulator under the check's prefix, then reads the prefix again. A group that could
+   * not be unprotected or deleted does not stop the rest; the groups still there at the end are an error that names
+   * them, with what the emulator answered for each.
+   */
   async dispose(): Promise<void> {
-    let groups: DirectGroup[] = [];
-    try {
-      groups = await groupsDirect(this.ctx, this.port, this.prefix);
-    } catch (e) {
-      this.ctx.log(`cleanup: the log groups under ${this.prefix} could not be listed: ${(e as Error).message}`);
-      return;
-    }
-    for (const group of groups) {
-      if (group.deletionProtectionEnabled === true) {
-        await logs(this.ctx, this.port, 'PutLogGroupDeletionProtection', {
-          logGroupIdentifier: group.logGroupName,
-          deletionProtectionEnabled: false,
-        }).catch(() => undefined);
+    const refused = new Map<string, string>();
+    /** Sends one cleanup call for `name` and notes an answer other than 200, or a call that did not get through. */
+    const send = async (name: string, operation: string, input: object): Promise<boolean> => {
+      try {
+        const answer = await logs(this.ctx, this.port, operation, input);
+        if (answer.status === 200) return true;
+        refused.set(name, `${operation} answered ${String(answer.status)} ${JSON.stringify(answer.json)}`);
+      } catch (e) {
+        refused.set(name, `${operation}: ${(e as Error).message}`);
       }
-      await logs(this.ctx, this.port, 'DeleteLogGroup', { logGroupName: group.logGroupName }).catch(() => undefined);
+      return false;
+    };
+    for (const group of await groupsDirect(this.ctx, this.port, this.prefix)) {
+      const name = group.logGroupName;
+      if (group.deletionProtectionEnabled === true) {
+        const off = await send(name, 'PutLogGroupDeletionProtection', {
+          logGroupIdentifier: name,
+          deletionProtectionEnabled: false,
+        });
+        if (!off) continue;
+      }
+      await send(name, 'DeleteLogGroup', { logGroupName: name });
+    }
+    const left = (await groupsDirect(this.ctx, this.port, this.prefix)).map((group) => group.logGroupName);
+    if (left.length > 0) {
+      throw new Error(
+        `the log groups under ${this.prefix} that could not be removed: ${left
+          .map((name) => `${name} (${refused.get(name) ?? 'deleted with 200 and still reported'})`)
+          .join('; ')}`,
+      );
     }
   }
 }
@@ -416,7 +435,13 @@ function inside(selector: { toSelector(): string }): string {
 }
 
 export const TABLE = rel(wrapper.findTable());
+/** The data rows of a table, below its root: a loading or an empty table has none. */
+const TABLE_ROWS = inside(wrapper.findTable().findRows());
+/** The column headings of a table, below its root, the selection column's (without a text) included. */
+const TABLE_HEADERS = inside(wrapper.findTable().findColumnHeaders());
 const TABLE_EMPTY = inside(wrapper.findTable().findEmptySlot());
+const MODAL = wrapper.findModal().toSelector();
+const HEADING_TEXT = rel(wrapper.findHeader().findHeadingText());
 const TEXT_FILTER = rel(wrapper.findTextFilter().findInput().findNativeInput());
 const NEXT_PAGE = rel(wrapper.findPagination().findNextPageButton());
 const PREVIOUS_PAGE = rel(wrapper.findPagination().findPreviousPageButton());
@@ -458,30 +483,35 @@ export async function open(page: Page, path: string, h1: string): Promise<void> 
   await expect(heading(page, h1), `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
 }
 
+/** The data rows of the table `table`, found with Cloudscape's selector: what a row holds is looked for inside them. */
+export function rowsIn(table: Locator): Locator {
+  return table.locator(TABLE_ROWS);
+}
+
 /**
  * The data rows of the table `table` as shown, each a record of its column headings' texts to its cells' texts (the
- * selection column has no heading and is left out). A row whose only cell spans the table (loading, empty, a failure)
- * is not a data row.
+ * selection column has no heading and is left out). The headings and the rows are found with Cloudscape's selectors;
+ * a row's cells are its own children, one under each heading. A table that is loading, empty or failed has no data
+ * row.
  */
 export async function rowsOf(table: Locator): Promise<Record<string, string>[]> {
-  return table.evaluate((root) => {
-    const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
-    const element = [...root.querySelectorAll('table')].find((each) => each.tBodies.length > 0);
-    if (element === undefined) return [];
-    const headers = [...element.querySelectorAll('thead tr:first-child > th')].map((th) => norm(th.textContent));
-    const rows: Record<string, string>[] = [];
-    for (const tr of element.querySelectorAll('tbody > tr')) {
-      const cells = [...tr.querySelectorAll(':scope > td, :scope > th')];
-      if (cells.length !== headers.length) continue;
-      const row: Record<string, string> = {};
-      cells.forEach((cell, i) => {
-        const header = headers[i] ?? '';
-        if (header !== '') row[header] = norm(cell.textContent);
-      });
-      rows.push(row);
-    }
-    return rows;
-  });
+  const norm = (texts: (string | null)[]) => texts.map((text) => (text ?? '').replace(/\s+/g, ' ').trim());
+  const headers = norm(await table.locator(TABLE_HEADERS).allTextContents());
+  const cells = await rowsIn(table).evaluateAll((rows) =>
+    rows.map((row) => [...row.children].map((cell) => cell.textContent)),
+  );
+  const rows: Record<string, string>[] = [];
+  for (const each of cells) {
+    const texts = norm(each);
+    if (texts.length !== headers.length) continue;
+    const row: Record<string, string> = {};
+    texts.forEach((text, i) => {
+      const header = headers[i] ?? '';
+      if (header !== '') row[header] = text;
+    });
+    rows.push(row);
+  }
+  return rows;
 }
 
 /** Waits until the rows of `table`, mapped by `pick`, equal `want`. */
@@ -506,13 +536,15 @@ export function flashItems(page: Page, type: 'success' | 'error' | 'info' | 'war
   return page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector());
 }
 
-/** Waits for one flash item of `type` holding every text of `texts`. */
+/** Waits until one flash item of `type`, and no more, holds every text of `texts`: the items' own texts are read. */
 export async function expectFlash(page: Page, type: 'success' | 'error', ...texts: string[]): Promise<void> {
-  let item = flashItems(page, type);
-  for (const text of texts) item = item.filter({ hasText: text });
-  await expect(item, `a ${type} flash holding ${texts.map((t) => `"${t}"`).join(', ')}`).toHaveCount(1, {
-    timeout: 15_000,
-  });
+  const items = flashItems(page, type);
+  await expect
+    .poll(async () => (await items.allInnerTexts()).filter((shown) => texts.every((text) => shown.includes(text))).length, {
+      message: `one ${type} flash holding ${texts.map((t) => `"${t}"`).join(', ')}`,
+      timeout: 15_000,
+    })
+    .toBe(1);
 }
 
 /** Whether a request the page sent to the engine is the CloudWatch Logs operation `operation`. */
@@ -575,9 +607,9 @@ export function alerts(scope: Locator): Locator {
   return scope.locator(ALERT);
 }
 
-/** The open dialog. */
+/** The open dialog: Cloudscape's modal that is shown (one that is closed stays in the page, hidden). */
 export function dialogOf(page: Page): Locator {
-  return page.getByRole('dialog');
+  return page.locator(MODAL).filter({ visible: true });
 }
 
 /** In the open dialog: types `name` into its one text field and chooses `action`. */
@@ -593,9 +625,15 @@ export function stateText(page: Page, text: string): Locator {
   return page.getByRole('main').locator(CONTAINER).getByText(text, { exact: true });
 }
 
-/** The containers of the page's content, for what a state in the place of the data says. */
-export function containers(page: Page): Locator {
-  return page.getByRole('main').locator(CONTAINER);
+/**
+ * The place of the events on a log stream's page: the container of the page's content whose heading reads
+ * "Log events". A state in the place of the events (a refusal, "not found") is looked for inside it.
+ */
+export function eventArea(page: Page): Locator {
+  return page
+    .getByRole('main')
+    .locator(CONTAINER)
+    .filter({ has: page.locator(HEADING_TEXT).filter({ hasText: new RegExp(`^${escaped(LOG_EVENTS)}$`) }) });
 }
 
 // --- S1, Log groups ---------------------------------------------------------------------------------------------
@@ -608,8 +646,8 @@ export function groupList(page: Page) {
     main,
     table,
     filter: table.locator(TEXT_FILTER),
-    radio: (name: string) => main.getByRole('radio', { name, exact: true }),
-    link: (name: string) => table.getByRole('link', { name, exact: true }),
+    radio: (name: string) => rowsIn(table).getByRole('radio', { name, exact: true }),
+    link: (name: string) => rowsIn(table).getByRole('link', { name, exact: true }),
     del: main.getByRole('button', { name: DELETE, exact: true }),
     next: main.locator(NEXT_PAGE),
     previous: main.locator(PREVIOUS_PAGE),
@@ -655,15 +693,16 @@ export function createScreen(page: Page) {
 export function groupScreen(page: Page) {
   const main = page.getByRole('main');
   const streams = page.getByRole('region', { name: LOG_STREAMS, exact: true });
+  const streamTable = streams.locator(TABLE);
   return {
     main,
     button: (name: string) => main.getByRole('button', { name, exact: true }),
     searchEvents: main.getByRole('link', { name: SEARCH_LOG_EVENTS, exact: true }),
-    tags: main.locator(TABLE).filter({ has: page.getByRole('heading', { name: 'Tags', exact: true }) }),
+    tags: main.locator(TABLE).filter({ has: page.locator(HEADING_TEXT).filter({ hasText: /^Tags$/ }) }),
     streams,
-    streamTable: streams.locator(TABLE),
-    streamLink: (name: string) => streams.getByRole('link', { name, exact: true }),
-    streamRadio: (name: string) => streams.getByRole('radio', { name, exact: true }),
+    streamTable,
+    streamLink: (name: string) => rowsIn(streamTable).getByRole('link', { name, exact: true }),
+    streamRadio: (name: string) => rowsIn(streamTable).getByRole('radio', { name, exact: true }),
   };
 }
 
@@ -726,7 +765,7 @@ export function streamScreen(page: Page) {
 
 /** The messages of the events the stream's page shows, in order, each as written (line breaks kept). */
 export async function shownMessages(page: Page): Promise<string[]> {
-  return page.getByRole('main').getByRole('log', { name: LOG_EVENTS, exact: true }).locator('pre').allTextContents();
+  return eventArea(page).getByRole('log', { name: LOG_EVENTS, exact: true }).locator('pre').allTextContents();
 }
 
 /** Waits until the messages the stream's page shows are `want`, in that order. */
@@ -753,7 +792,7 @@ export function searchScreen(page: Page) {
     results,
     empty: results.locator(TABLE_EMPTY),
     next: main.locator(NEXT_PAGE),
-    streamLink: (name: string) => results.getByRole('link', { name, exact: true }),
+    streamLink: (name: string) => rowsIn(results).getByRole('link', { name, exact: true }),
   };
 }
 

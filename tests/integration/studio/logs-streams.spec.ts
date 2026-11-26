@@ -24,6 +24,7 @@ import {
   DELETE,
   DELETE_LOG_STREAM,
   dialogOf,
+  eventArea,
   eventually,
   expectEmpty,
   expectFlash,
@@ -53,6 +54,7 @@ import {
   rowsOf,
   searchDirect,
   shownMessages,
+  rowsIn,
   stateText,
   STREAM_NOT_FOUND,
   streamCreated,
@@ -129,16 +131,18 @@ test('studio.logs-read-a-stream-older-and-newer', async ({ ctx, page }) => {
   await lines.line(
     'An event `m-151` is put outside; "Load newer events" → it is the last event shown, `m-150` not repeated; the same control again → "No newer events."',
     async () => {
+      // The page of the line before stays open, with the older events loaded: the read of newer events goes on from
+      // where the first read ended, whatever was read backwards since.
       const s = streamScreen(page);
-      await open(page, streamPath(group, 'live'), 'live');
-      await expectMessages(page, range('m', 51, 150), 'the newest hundred events before the put');
+      await expect(page, "the stream's page, still open").toHaveURL(addressOf(streamPath(group, 'live')));
+      await expectMessages(page, range('m', 1, 150), 'every event once and in order before the put');
       await seeded.events(group, 'live', [{ timestamp: Math.max(Date.now(), now + 1), message: numbered('m', 151) }]);
       await answered(page, 'GetLogEvents', () => s.newer.click(ACTION));
-      await expectMessages(page, range('m', 51, 151), '`m-151` last, `m-150` once');
+      await expectMessages(page, range('m', 1, 151), '`m-001` to `m-151`, each once and in order: `m-151` last, `m-150` once');
       await expect(s.newerStatus, 'nothing said yet beside "Load newer events"').toHaveCount(0);
       await answered(page, 'GetLogEvents', () => s.newer.click(ACTION));
       await expect(s.newerStatus, 'what the control says after a read that returned nothing').toHaveText(NO_NEWER);
-      expect(await shownMessages(page), 'the events after the second read').toEqual(range('m', 51, 151));
+      expect(await shownMessages(page), 'the events after the second read').toEqual(range('m', 1, 151));
     },
   );
 
@@ -213,11 +217,17 @@ test('studio.logs-missing-group-and-stream-are-not-found', async ({ ctx, page })
     'Open the address of the stream `none` of `<p>/here` → "Log stream not found"; of the stream `none` of `<p>/nowhere` → "Log group not found"',
     async () => {
       await page.goto(streamPath(here, 'none'));
-      await expect(stateText(page, STREAM_NOT_FOUND), `"${STREAM_NOT_FOUND}" in the place of the events`).toBeVisible({
+      await expect(
+        eventArea(page).getByText(STREAM_NOT_FOUND, { exact: true }),
+        `"${STREAM_NOT_FOUND}" in the place of the events`,
+      ).toBeVisible({
         timeout: 15_000,
       });
       await page.goto(streamPath(nowhere, 'none'));
-      await expect(stateText(page, GROUP_NOT_FOUND), `"${GROUP_NOT_FOUND}" in the place of the events`).toBeVisible({
+      await expect(
+        eventArea(page).getByText(GROUP_NOT_FOUND, { exact: true }),
+        `"${GROUP_NOT_FOUND}" in the place of the events`,
+      ).toBeVisible({
         timeout: 15_000,
       });
     },
@@ -259,7 +269,7 @@ test('studio.logs-streams-entry-lists-a-chosen-group', async ({ ctx, page }) => 
       await expect(page.getByRole('button', { name: CREATE_LOG_STREAM, exact: true }), '"Create log stream"').toHaveCount(0);
       await expect(page.getByRole('button', { name: DELETE_LOG_STREAM, exact: true }), '"Delete log stream"').toHaveCount(0);
 
-      await table.getByRole('link', { name: 'a-late', exact: true }).click(ACTION);
+      await rowsIn(table).getByRole('link', { name: 'a-late', exact: true }).click(ACTION);
       await expect(page, "the stream's page").toHaveURL(addressOf(streamPath(group, 'a-late')));
       await expect(heading(page, 'a-late'), 'the h1 "a-late"').toBeVisible();
     },
@@ -351,7 +361,8 @@ test('studio.logs-create-and-delete-stream', async ({ ctx, page }) => {
       await answered(page, 'DeleteLogStream', () => confirmWith(page, 'kept', DELETE));
       await expectFlash(page, 'success', streamDeleted('kept'));
       await expect(dialog, 'the dialog after the delete').toHaveCount(0);
-      await expect.poll(namesShown, { message: 'the streams listed after the delete', timeout: 15_000 }).not.toContain('kept');
+      // The list settled after the delete: `made here`, of the first line, is its only row.
+      await expectStreams(s.streamTable, ['made here']);
       expect(
         await eventually(5_000, namesDirect, (names) => !names.includes('kept')),
         'the streams, directly',

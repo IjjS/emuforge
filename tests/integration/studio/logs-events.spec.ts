@@ -15,7 +15,7 @@ import { checkPrefix } from './support/service-screens';
 import {
   answered,
   chooseOption,
-  containers,
+  eventArea,
   eventsPut,
   eventually,
   expectFlash,
@@ -39,7 +39,6 @@ import {
   selectOf,
   shownMessages,
   STANDARD_ONLY,
-  stateText,
   streamDirect,
   streamPath,
   streamScreen,
@@ -200,9 +199,15 @@ test('studio.logs-other-class-refuses-reading-and-takes-puts', async ({ ctx, pag
     async () => {
       const reason = await refusalDirect(ctx, port, 'GetLogEvents', { logGroupName: group, logStreamName: 's' });
       await open(page, streamPath(group, 's'), 's');
-      await expect(stateText(page, STANDARD_ONLY), 'what the screen says of the class').toBeVisible({ timeout: 15_000 });
-      await expect(containers(page), "the emulator's reason").toContainText(reason);
-      await expect(stateText(page, NO_EVENTS), `"${NO_EVENTS}"`).toHaveCount(0);
+      const area = eventArea(page);
+      await expect(area, 'the place of the events').toHaveCount(1);
+      await expect(
+        area.getByText(STANDARD_ONLY, { exact: true }),
+        'what the place of the events says of the class',
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(area, "the emulator's reason, in the place of the events").toContainText(reason);
+      await expect(area.getByRole('log'), 'a list of events beside the refusal').toHaveCount(0);
+      await expect(area.getByText(NO_EVENTS, { exact: true }), `"${NO_EVENTS}"`).toHaveCount(0);
     },
   );
 
@@ -213,7 +218,10 @@ test('studio.logs-other-class-refuses-reading-and-takes-puts', async ({ ctx, pag
       const before = (await streamDirect(ctx, port, group, 's')).lastIngestionTime;
       expect(typeof before, 'the last ingestion time before, directly').toBe('number');
       await open(page, streamPath(group, 's'), 's');
-      await expect(stateText(page, STANDARD_ONLY), 'what the screen says of the class').toBeVisible({ timeout: 15_000 });
+      await expect(
+        eventArea(page).getByText(STANDARD_ONLY, { exact: true }),
+        'what the place of the events says of the class',
+      ).toBeVisible({ timeout: 15_000 });
       await s.put.click(ACTION);
       await expect(s.dialog, 'the dialog').toBeVisible();
       await s.message(1).fill('one more', ACTION);

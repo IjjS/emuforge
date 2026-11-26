@@ -11,15 +11,20 @@ import { expect, startStack, test } from './support';
 import { expectOneCurrent, navigationLink, navigationTree } from './support/aws-entries';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
+import { nothingChanged } from './support/no-screen-part';
 import { checkPrefix } from './support/service-screens';
 import {
+  CHOOSE_A_GROUP,
   ENTRIES,
+  expectGroups,
+  filterGroups,
   groupPath,
   groupScreen,
   LOG_EVENTS,
   LOG_EVENTS_PATH,
   LOG_GROUPS,
   LOG_GROUPS_PATH,
+  LOG_STREAMS_PATH,
   LogsSeeded,
   NAVIGATION_HEADER,
   open,
@@ -62,6 +67,18 @@ test('studio.logs-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx, page
       await expect(page, `the address of "${entry.label}"`).toHaveURL(addressOf(entry.path));
       await expect(heading(page, entry.label), `the screen titled "${entry.label}"`).toBeVisible();
       await expectOneCurrent(page, entry.label);
+      // The screen itself, not the area's page for an entry without one.
+      await expect(nothingChanged(page), `the sentence of a page without a screen at ${entry.path}`).toHaveCount(0);
+      if (entry.path === LOG_STREAMS_PATH) {
+        await expect(
+          page.getByRole('main').getByText(CHOOSE_A_GROUP, { exact: true }),
+          `Log streams before a group is chosen: "${CHOOSE_A_GROUP}"`,
+        ).toBeVisible();
+      } else {
+        expect(entry.path, 'the other entry with a screen').toBe(LOG_GROUPS_PATH);
+        await filterGroups(page, p);
+        await expectGroups(page, [group]);
+      }
     }
   });
 
@@ -73,6 +90,10 @@ test('studio.logs-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx, page
         await navigationLink(page, entry.path).click(ACTION);
         await expect(page, `the address of "${entry.label}"`).toHaveURL(addressOf(entry.path));
         await expect(heading(page, entry.label), `the page titled "${entry.label}"`).toBeVisible();
+        await expect(
+          nothingChanged(page),
+          `the sentence of the area's page for an entry without a screen at ${entry.path}`,
+        ).toBeVisible();
         await expectOneCurrent(page, entry.label);
         await expectNavigation(`the service's navigation on the page of "${entry.label}"`);
         await expect(heading(page, 'Page not found'), `"Page not found" at ${entry.path}`).toHaveCount(0);
