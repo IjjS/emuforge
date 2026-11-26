@@ -11,11 +11,14 @@ import { useState } from 'react';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
+import type { DeleteApiTarget } from '../api-delete-api';
 import type { ApiRow } from '../apis-api';
+import { DeleteApiDialog } from '../components/delete-api-dialog';
 import { RequestReadFailure, requestReadFailureState } from '../components/request-read-failure';
 import { createApiPath, endpointTypeText, restApiPath, v2ApiPath } from '../format';
 import { useApiLists, type AppendedPages } from '../queries';
@@ -67,6 +70,8 @@ export function ApiListPage({ connection }: ScreenPageProps) {
   useShowsResources(title);
   const { rest, v2 } = useApiLists(connection.engineOrigin);
   const handleFollow = useFollow();
+  const flash = usePageFlash();
+  const [deleteTarget, setDeleteTarget] = useState<DeleteApiTarget>();
   const [selectedKey, setSelectedKey] = useState<string>();
   const [copyStatus, setCopyStatus] = useState<'success' | 'error'>();
   const [announcement, announce] = useAnnouncer();
@@ -85,6 +90,22 @@ export function ApiListPage({ connection }: ScreenPageProps) {
     setCopyStatus(undefined);
     void rest.refresh();
     void v2.refresh();
+  }
+
+  function handleDeleted(api: DeleteApiTarget) {
+    flash.show([
+      {
+        type: 'success',
+        content: (
+          <>
+            API <ValueText kind="name" value={api.name} /> deleted.
+          </>
+        ),
+      },
+    ]);
+    setDeleteTarget(undefined);
+    setSelectedKey(undefined);
+    setCopyStatus(undefined);
   }
 
   async function handleCopyId() {
@@ -143,6 +164,14 @@ export function ApiListPage({ connection }: ScreenPageProps) {
   return (
     <SpaceBetween size="s">
       {announcement}
+      {deleteTarget !== undefined && (
+        <DeleteApiDialog
+          api={deleteTarget}
+          endpoint={connection.engineOrigin}
+          onDeleted={handleDeleted}
+          onDismiss={() => setDeleteTarget(undefined)}
+        />
+      )}
       <Header
         variant="h1"
         actions={
@@ -152,6 +181,9 @@ export function ApiListPage({ connection }: ScreenPageProps) {
             </Button>
             <Button iconName="copy" disabled={selected === undefined} onClick={() => void handleCopyId()}>
               Copy ID
+            </Button>
+            <Button disabled={selected === undefined} onClick={() => setDeleteTarget(selected)}>
+              Delete
             </Button>
             {createApi(true)}
           </SpaceBetween>

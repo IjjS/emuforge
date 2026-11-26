@@ -1,16 +1,32 @@
 import { apisPath, servicePath } from './format';
 
+export type ApiChoiceDestination =
+  { model: 'rest'; part: 'resources' | 'stages' } | { model: 'v2'; part: 'routes' | 'integrations' | 'stages' };
+
 export interface ApiGatewayEntry {
   group: 'core' | 'REST APIs' | 'HTTP and WebSocket APIs';
   name: string;
   path: string;
   built: boolean;
+  chooseApi?: ApiChoiceDestination;
 }
 
 export const ENTRIES: readonly ApiGatewayEntry[] = [
   { group: 'core', name: 'APIs', path: apisPath, built: true },
-  { group: 'REST APIs', name: 'Resources', path: `${servicePath}/resources`, built: false },
-  { group: 'REST APIs', name: 'Stages', path: `${servicePath}/stages`, built: false },
+  {
+    group: 'REST APIs',
+    name: 'Resources',
+    path: `${servicePath}/resources`,
+    built: true,
+    chooseApi: { model: 'rest', part: 'resources' },
+  },
+  {
+    group: 'REST APIs',
+    name: 'Stages',
+    path: `${servicePath}/stages`,
+    built: true,
+    chooseApi: { model: 'rest', part: 'stages' },
+  },
   { group: 'REST APIs', name: 'Deployments', path: `${servicePath}/deployments`, built: false },
   { group: 'REST APIs', name: 'Authorizers', path: `${servicePath}/authorizers`, built: false },
   { group: 'REST APIs', name: 'Models', path: `${servicePath}/models`, built: false },
@@ -32,9 +48,27 @@ export const ENTRIES: readonly ApiGatewayEntry[] = [
   { group: 'REST APIs', name: 'VPC links', path: `${servicePath}/vpc-links`, built: false },
   { group: 'REST APIs', name: 'Client certificates', path: `${servicePath}/client-certificates`, built: false },
   { group: 'REST APIs', name: 'Account settings', path: `${servicePath}/account`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Routes', path: `${servicePath}/v2/routes`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Integrations', path: `${servicePath}/v2/integrations`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Stages', path: `${servicePath}/v2/stages`, built: false },
+  {
+    group: 'HTTP and WebSocket APIs',
+    name: 'Routes',
+    path: `${servicePath}/v2/routes`,
+    built: true,
+    chooseApi: { model: 'v2', part: 'routes' },
+  },
+  {
+    group: 'HTTP and WebSocket APIs',
+    name: 'Integrations',
+    path: `${servicePath}/v2/integrations`,
+    built: true,
+    chooseApi: { model: 'v2', part: 'integrations' },
+  },
+  {
+    group: 'HTTP and WebSocket APIs',
+    name: 'Stages',
+    path: `${servicePath}/v2/stages`,
+    built: true,
+    chooseApi: { model: 'v2', part: 'stages' },
+  },
   { group: 'HTTP and WebSocket APIs', name: 'Deployments', path: `${servicePath}/v2/deployments`, built: false },
   {
     group: 'HTTP and WebSocket APIs',
