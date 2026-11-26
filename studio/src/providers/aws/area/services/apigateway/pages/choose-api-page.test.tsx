@@ -65,13 +65,16 @@ function open(suffix: string, result: AreaConnection['result'] = connection.resu
   return createWrapper(view.container);
 }
 
-async function openChoice(wrapper: ReturnType<typeof open>, user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByRole('button', { name: 'Open' });
+function apiSelect(wrapper: ReturnType<typeof open>) {
   const field = wrapper.findFormField();
   if (field === null) throw new Error('Missing API form field');
   expect(field.findLabel()?.getElement()).toHaveTextContent('API');
   const select = createWrapper(field.getElement()).findSelect();
   if (select === null) throw new Error('Missing API select');
+  return select;
+}
+
+async function openChoice(select: ReturnType<typeof apiSelect>, user: ReturnType<typeof userEvent.setup>) {
   await user.click(select.findTrigger().getElement());
   return select.findDropdown();
 }
@@ -94,12 +97,15 @@ it.each([
 ] as const)('offers the APIs for %s and opens its selected part', async (suffix, name, model, part, selected) => {
   const wrapper = open(suffix);
   const user = userEvent.setup();
-  expect(screen.getByRole('heading', { level: 1, name })).toBeInTheDocument();
-  expect(screen.getByText(`${name} belong to an API. Choose the API to open them.`)).toBeInTheDocument();
+  const header = wrapper.findHeader();
+  expect(header?.findHeadingText().getElement()).toHaveTextContent(name);
+  expect(header?.findDescription()?.getElement()).toHaveTextContent(
+    `${name} belong to an API. Choose the API to open them.`,
+  );
 
-  const openButton = await screen.findByRole('button', { name: 'Open' });
+  const openButton = screen.getByRole('button', { name: 'Open' });
   expect(openButton).toBeDisabled();
-  const dropdown = await openChoice(wrapper, user);
+  const dropdown = await openChoice(apiSelect(wrapper), user);
   const option = await findApiOption(dropdown, selected);
   if (model === 'rest') {
     expect(dropdown.findOptionByValue(http.id)).toBeNull();
@@ -120,13 +126,36 @@ it.each([
   expect(screen.getByRole('status')).toHaveTextContent(`/aws/apigateway/apis/${model}/${selected.id}?show=${part}`);
 });
 
+it.each([
+  ['resources', readRestApis, rest],
+  ['routes', readV2Apis, http],
+] as const)('reads current API options when the %s choice reopens', async (suffix, read, original) => {
+  const replacement = { ...original, id: `${original.id}-new`, name: 'New API' };
+  const user = userEvent.setup();
+  const select = apiSelect(open(suffix));
+  const trigger = select.findTrigger().getElement();
+  expect(read).not.toHaveBeenCalled();
+  const dropdown = await openChoice(select, user);
+  await findApiOption(dropdown, original);
+  await user.keyboard('{Escape}');
+
+  vi.mocked(read).mockResolvedValue({ items: [replacement] });
+  await user.click(trigger);
+  const reopened = select.findDropdown();
+  await findApiOption(reopened, replacement);
+
+  expect(reopened.findOptionByValue(original.id)).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenLastCalledWith(engineOrigin, undefined, expect.any(AbortSignal));
+});
+
 it('loads a further page of APIs by the first page token', async () => {
   const further = { ...rest, id: 'rest-2', name: 'Shipping' };
   vi.mocked(readRestApis)
     .mockResolvedValueOnce({ items: [rest], next: 'second-page' })
     .mockResolvedValueOnce({ items: [further] });
   const user = userEvent.setup();
-  const dropdown = await openChoice(open('resources'), user);
+  const dropdown = await openChoice(apiSelect(open('resources')), user);
   await user.click(await within(dropdown.getElement()).findByRole('button', { name: 'Load more' }));
 
   await findApiOption(dropdown, further);
@@ -140,10 +169,11 @@ it.each([
   ['routes', readV2Apis, 'No HTTP or WebSocket APIs'],
 ] as const)('offers Create API when %s has no API of its model', async (suffix, read, empty) => {
   vi.mocked(read).mockResolvedValue({ items: [] });
-  open(suffix);
+  const user = userEvent.setup();
+  await openChoice(apiSelect(open(suffix)), user);
 
-  expect(await screen.findByText(empty)).toBeInTheDocument();
-  expect(screen.getByText('The emulator holds none.')).toBeInTheDocument();
+  expect(await screen.findByText('The emulator holds none.')).toBeInTheDocument();
+  expect(screen.getByText(empty, { ignore: '[role="dialog"] *' })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'Create API' })).toHaveAttribute('href', '/aws/apigateway/apis/create');
 });
 
@@ -201,12 +231,26 @@ describe.each([
       .mockRejectedValueOnce(new RequestError(failure))
       .mockResolvedValueOnce({ items: [...apis] });
     const wrapper = open(suffix, result);
+    const user = userEvent.setup();
+    const select = apiSelect(wrapper);
+    const dropdown = await openChoice(select, user);
+    const dropdownRetry = await waitFor(() => {
+      expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(`The ${things} could not be loaded:`);
+      const button = select.findErrorRecoveryButton()?.getElement();
+      if (button === undefined) throw new Error('Missing dropdown Retry');
+      expect(button).toHaveTextContent('Retry');
+      return button;
+    });
     const content = wrapper.findContainer()?.findContent().getElement();
     if (content === undefined) throw new Error('Missing API choice container');
     const choice = within(content);
-    const retry = await choice.findByRole('button', { name: 'Retry' });
+    const retry = choice.getAllByRole('button', { name: 'Retry' }).find((button) => button !== dropdownRetry);
 
-    expect(createWrapper(content).findStatusIndicator()?.getElement()).toHaveTextContent(first);
+    expect(retry).toBeInTheDocument();
+    const status = createWrapper(content)
+      .findAllStatusIndicators()
+      .find((indicator) => !dropdown.getElement().contains(indicator.getElement()));
+    expect(status?.getElement()).toHaveTextContent(first);
     expect(content).toHaveTextContent(detail);
     const recoveryLink = choice.queryByRole('link', { name: 'Connection status' });
     if (recovery === true) {
@@ -216,10 +260,10 @@ describe.each([
     }
     expect(content).not.toHaveTextContent('The emulator holds none.');
 
-    const user = userEvent.setup();
-    await user.click(retry);
-    const dropdown = await openChoice(wrapper, user);
+    await user.click(dropdownRetry);
     await Promise.all(apis.map((api) => findApiOption(dropdown, api)));
     expect(read).toHaveBeenCalledTimes(2);
+    expect(select.findErrorRecoveryButton()).toBeNull();
+    expect(content).not.toHaveTextContent(detail);
   });
 });
