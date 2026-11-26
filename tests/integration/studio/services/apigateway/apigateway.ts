@@ -416,7 +416,8 @@ export async function selectRow(tableRoot: Locator, name: string): Promise<void>
   await tableRoot.locator(below(table, table.findRowSelectionArea(index))).click();
 }
 
-function escapeText(text: string): string {
+/** `text` as a pattern that matches it literally. */
+export function escapeText(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -425,17 +426,25 @@ function escapeText(text: string): string {
 const pairs = ui.findKeyValuePairs().findItems();
 const firstPair = pairs.get(1);
 
-/** The labels of the key and value pairs below `scope`, in order. */
+/** The labels of the key and value pairs drawn below `scope`, in order; a collapsed section's are left out. */
 export const pairLabels = (scope: Locator) =>
-  scope.locator(sel(pairs)).locator(below(firstPair, firstPair.findLabel()));
-/** The values of the key and value pairs below `scope`, in order. */
+  scope.locator(sel(pairs)).locator(below(firstPair, firstPair.findLabel())).filter({ visible: true });
+/** The values of the key and value pairs drawn below `scope`, in order. */
 export const pairValues = (scope: Locator) =>
-  scope.locator(sel(pairs)).locator(below(firstPair, firstPair.findValue()));
+  scope.locator(sel(pairs)).locator(below(firstPair, firstPair.findValue())).filter({ visible: true });
 
-/** The pairs below `scope` are exactly `expected`, label by label in order. */
+/** The pairs drawn below `scope` are exactly `expected`, label by label in order. */
 export async function expectPairs(scope: Locator, expected: [string, string | RegExp][]): Promise<void> {
   await expect(pairLabels(scope)).toHaveText(expected.map(([label]) => label));
   await expect(pairValues(scope)).toHaveText(expected.map(([, value]) => value));
+}
+
+/** The value drawn beside the first label `label` below `scope`, read now; `null` when no such pair is drawn. */
+export async function pairValue(scope: Locator, label: string): Promise<string | null> {
+  const labels = (await pairLabels(scope).allTextContents()).map((text) => text.trim());
+  const values = (await pairValues(scope).allTextContents()).map((text) => text.trim());
+  const index = labels.indexOf(label);
+  return index < 0 ? null : (values[index] ?? null);
 }
 
 // -- containers and dialogs ------------------------------------------------------------------------------------------
@@ -600,4 +609,55 @@ export function entryOf(label: string): Entry {
   const found = ENTRIES.find((candidate) => candidate.label === label);
   if (found === undefined) throw new Error(`the service has no entry "${label}"`);
   return found;
+}
+
+// -- a REST API's screen -----------------------------------------------------------------------------------------------
+
+/** The "Resources" part of a REST API's screen. */
+export const resourcesPart = (page: Page) => page.getByRole('region', { name: 'Resources', exact: true });
+
+/** The resource at `resourcePath`: its container in the "Resources" part. */
+export const resourceOf = (page: Page, resourcePath: string) => containerOf(resourcesPart(page), resourcePath);
+
+/** The method `verb` of a resource: the part of the resource's container that holds its heading and its values. */
+export function methodOf(resource: Locator, verb: string): Locator {
+  const page = resource.page();
+  return resource
+    .locator('div')
+    .filter({ has: page.getByRole('heading', { level: 4, name: verb, exact: true }) })
+    .filter({ has: page.locator(sel(ui.findKeyValuePairs())) })
+    .last();
+}
+
+/** The expand control of the one Cloudscape expandable section below `scope`. */
+export const expandControl = (scope: Locator) => scope.locator(sel(ui.findExpandableSection().findExpandButton()));
+
+/** The open "Test method" panel. */
+export const testPanel = (page: Page) => page.getByRole('region', { name: 'Test method', exact: true });
+
+/** A Cloudscape alert below `scope`. */
+export const alertIn = (scope: Page | Locator) => scope.locator(sel(ui.findAlert()));
+
+/** A control shown as unavailable says why: it is disabled for assistive technology and described by `reason`. */
+export async function expectUnavailable(control: Locator, reason: string): Promise<void> {
+  await expect(control).toHaveAttribute('aria-disabled', 'true');
+  await expect(control).toHaveAccessibleDescription(reason);
+}
+
+/** Types `word` into the open confirmation and confirms with "Delete". */
+export async function confirmDelete(page: Page, header: string, word: string): Promise<void> {
+  await expect(dialogHeader(page)).toHaveText(header);
+  await dialogContent(page).getByRole('textbox').fill(word);
+  await button(dialogFooter(page), 'Delete').click();
+}
+
+/** The invoke address the emulator's export of a REST stage gives: its server's URL with the base path's default. */
+export async function exportedAddress(rest: APIGateway, apiId: string, stageName: string): Promise<string> {
+  const answer = await rest.getExport({ restApiId: apiId, stageName, exportType: 'oas30' });
+  const document = JSON.parse(Buffer.from(answer.body ?? new Uint8Array()).toString('utf8')) as {
+    servers?: { url?: string; variables?: Record<string, { default?: string }> }[];
+  };
+  const server = document.servers?.[0];
+  if (!server?.url) throw new Error(`the export of stage ${stageName} names no server`);
+  return server.url.replace(/\{(\w+)\}/g, (_, name: string) => server.variables?.[name]?.default ?? '');
 }
