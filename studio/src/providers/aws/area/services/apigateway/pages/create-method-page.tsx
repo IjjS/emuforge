@@ -260,6 +260,7 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
               </Button>
               <Button
                 variant="primary"
+                nativeButtonAttributes={{ id: submitId }}
                 loading={mutation.isPending}
                 loadingText="Creating method"
                 disabled={unavailable}
