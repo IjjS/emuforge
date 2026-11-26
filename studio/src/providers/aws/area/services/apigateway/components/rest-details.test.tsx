@@ -132,6 +132,7 @@ async function openEdit() {
 function expectSaveResult() {
   expect(page.findModal()).toBeNull();
   const flash = page.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+  expect(flash).toBeVisible();
   expect(flash).toHaveTextContent(`API ${saved.name} updated.`);
 }
 
@@ -143,10 +144,17 @@ function expectSaved() {
 
 it('closes the edit and shows the flash and new fields from the refreshed API', async () => {
   const { save } = await openEdit();
-  reader.mockResolvedValueOnce(saved);
+  const feedbackAtRead = vi.fn();
+  reader.mockImplementationOnce(async () => {
+    const flash = page.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+    const flashVisible = flash?.isConnected === true && getComputedStyle(flash).visibility === 'visible';
+    feedbackAtRead(flash?.textContent, flashVisible, Boolean(page.findModal()?.isVisible()));
+    return saved;
+  });
   await save();
   await waitFor(expectSaved);
   expect(reader).toHaveBeenCalledTimes(2);
+  expect(feedbackAtRead).toHaveBeenCalledExactlyOnceWith(`API ${saved.name} updated.`, true, false);
 });
 
 function deferred() {
@@ -168,15 +176,11 @@ it.each(['earlier read first', 'save read first'])('keeps the new fields and fla
   await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
 
   await save();
-  await waitFor(() => {
-    expectSaveResult();
-    expect(reader).toHaveBeenCalledTimes(3);
-  });
+  await waitFor(() => expect(reader).toHaveBeenCalledTimes(3));
   expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
 
   if (order === 'earlier read first') {
     await act(async () => earlier.answer(beforeEdit));
-    expectSaveResult();
     await act(async () => afterSave.answer(saved));
     await waitFor(expectSaved);
   } else {
