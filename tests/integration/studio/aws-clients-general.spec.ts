@@ -9,6 +9,7 @@ import { createHash, createHmac } from 'node:crypto';
 import type { BrowserContext, Page } from '@playwright/test';
 
 import { expect, NO_SCREEN_SERVICE, startStack, test, waitFor, type Ctx } from './support';
+import { connectedAt, expectLine } from './support/aws-area';
 import { awsRequests, describe, EngineRequests, type EngineRequest, type Outcome } from './support/aws-clients';
 import {
   createdTopicArn,
@@ -320,16 +321,45 @@ function validStudioSignature(post: CapturedPost, headers: Record<string, string
   return createHmac('sha256', key).update(toSign).digest('hex') === signature;
 }
 
-/** Include preflights and join the headers Chromium observed on the wire to their POST. */
+/** The schemes of a URL that names no host: the browser serves a `data:` or a `blob:` URL itself (issue 649). */
+const HOSTLESS_SCHEMES = ['data:', 'blob:'];
+
+/** How much of a host-less URL the observer keeps: enough to tell this check's own reads, never a whole font. */
+const HOSTLESS_URL_KEPT = 256;
+
+/**
+ * Waits within `STATE_BOUND_MS` until the page has settled: the emulator line shows its connected state and the
+ * fonts the page uses are read, so what is left of the page's loading is not observed as requests of the call.
+ */
+async function settled(page: Page, emulatorPort: number): Promise<void> {
+  await expectLine(page, connectedAt(emulatorPort), STATE_BOUND_MS);
+  await expect
+    .poll(() => page.evaluate(() => document.fonts.status), {
+      timeout: STATE_BOUND_MS,
+      message: 'the fonts the settled page uses are read',
+    })
+    .toBe('loaded');
+}
+
+/**
+ * Include preflights and join the headers Chromium observed on the wire to their POST. A request whose URL names no
+ * host (`HOSTLESS_SCHEMES`) has no destination: it is kept apart, by its URL, and is not among the origins.
+ */
 async function observeQueueCall(context: BrowserContext, page: Page) {
   const session = await context.newCDPSession(page);
   const origins = new Set<string>();
+  const hostless: string[] = [];
   const posts = new Map<string, CapturedPost>();
   const wireHeaders = new Map<string, Record<string, string>>();
   const lower = (headers: Record<string, string>) =>
     Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
   session.on('Network.requestWillBeSent', ({ requestId, request }) => {
-    origins.add(new URL(request.url).origin);
+    const url = new URL(request.url);
+    if (HOSTLESS_SCHEMES.includes(url.protocol)) {
+      hostless.push(request.url.slice(0, HOSTLESS_URL_KEPT));
+      return;
+    }
+    origins.add(url.origin);
     if (request.method === 'POST') posts.set(requestId, { ...request, headers: lower(request.headers) });
   });
   session.on('Network.requestWillBeSentExtraInfo', ({ requestId, headers }) => {
@@ -338,6 +368,13 @@ async function observeQueueCall(context: BrowserContext, page: Page) {
   await session.send('Network.enable');
   return {
     origins,
+    /** Whether the observer has received a request of exactly each of `urls`, waited for within `STATE_BOUND_MS`. */
+    async received(urls: string[]): Promise<boolean> {
+      const all = await waitFor(STATE_BOUND_MS, () => (urls.every((u) => hostless.includes(u)) ? true : undefined));
+      return all === true;
+    },
+    /** The schemes of the host-less requests observed, each once. */
+    hostlessSchemes: () => [...new Set(hostless.map((u) => new URL(u).protocol))],
     async signedPostAt(engineOrigin: string) {
       return await waitFor(STATE_BOUND_MS, () => {
         for (const [id, post] of posts) {
@@ -408,6 +445,9 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
     stack.engine.port,
   );
 
+  // The page has settled before anything of the call is observed.
+  await settled(page, stack.emulatorPort);
+
   // The SQS client asks for the queue's attributes by that URL.
   const hostsFrom = hosts.mark();
   const requestsFrom = (await requests.all()).length;
@@ -419,6 +459,26 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
       matches: (r) => r.method === 'POST' && r.target === 'AmazonSQS.GetQueueAttributes',
     },
   ]);
+
+  // Inside the same observation, once the call has answered: the page reads a `data:` and a `blob:` URL of this
+  // check's own. The observer receives both, and neither is a destination.
+  const text = `${prefix}-649`;
+  const reads = await page.evaluate(async (body) => {
+    const dataUrl = `data:text/plain,${body}`;
+    const blobUrl = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
+    const data = await (await fetch(dataUrl)).text();
+    const blob = await (await fetch(blobUrl)).text();
+    URL.revokeObjectURL(blobUrl);
+    return { dataUrl, blobUrl, data, blob };
+  }, text);
+  expect([reads.data, reads.blob], 'the page read its data: and its blob: URL').toEqual([text, text]);
+  expect([new URL(reads.dataUrl).protocol, new URL(reads.blobUrl).protocol], 'the schemes of the two reads').toEqual(
+    HOSTLESS_SCHEMES,
+  );
+  const receivedBoth = await observed.received([reads.dataUrl, reads.blobUrl]);
+  ctx.log(`host-less requests observed: ${observed.hostlessSchemes().join(', ') || 'none'}`);
+  expect(receivedBoth, 'the observer received the data: read and the blob: read').toBe(true);
+
   const post = await observed.signedPostAt(stack.engine.url);
   expect(post?.queueUrl, 'GetQueueAttributes POST: QueueUrl from direct CreateQueue').toBe(queueUrl);
   expect(post?.validSignature, 'GetQueueAttributes POST: valid Studio signature').toBe(true);
