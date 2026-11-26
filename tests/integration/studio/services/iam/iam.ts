@@ -37,6 +37,7 @@ import path from 'node:path';
 
 import { EnvError, expect, type Ctx } from '../../support/check';
 import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
+import { waitFor } from '../../support/wait';
 
 const REGION = 'us-east-1';
 
@@ -498,6 +499,62 @@ export async function listRolesDirect(caller: Caller, port: number, pathPrefix?:
 /** The names of a direct `ListRoles`, in its order. */
 export async function roleNamesDirect(caller: Caller, port: number): Promise<string[]> {
   return (await listRolesDirect(caller, port)).map((r) => r.name);
+}
+
+/** How long an emulator may take to stop listing the roles `withoutRoles` removed. */
+const EMPTIED_BOUND_MS = 20_000;
+
+/**
+ * The Given "an emulator that holds no role" (issue 653), for a check's own emulator and before the check makes a
+ * role: every role a direct `ListRoles` holds is removed with a direct `DeleteServiceLinkedRole` (an emulator starts
+ * with roles of that kind, which `DeleteRole` refuses), then a direct `ListRoles` is waited for until it returns none.
+ * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
+ */
+export async function withoutRoles(caller: Caller, port: number): Promise<void> {
+  /** The names of every role the emulator lists; an `EnvError` when a `ListRoles` is not answered 200. */
+  const held = async (): Promise<string[]> => {
+    const names: string[] = [];
+    let marker: string | null = null;
+    for (let page = 0; page < 100; page++) {
+      const params: Record<string, string> = { MaxItems: DIRECT_PAGE };
+      if (marker !== null) params.Marker = marker;
+      const answer = await directIam(caller, port, 'ListRoles', params);
+      const read = readAnswer(answer);
+      caller.log(`direct ListRoles before the check makes a role: ${shownRead(read)}`);
+      if (!read.ok) throw new EnvError(`direct ListRoles: ${shownRead(read)}`);
+      // A `<` or `>` left once every whole tag is taken out is a tag cut short: the answer is not read as a list.
+      if ('error' in answer || /[<>]/.test(answer.body.replace(/<[^<>]*>/g, ''))) {
+        throw new EnvError('direct ListRoles: answered 200 with a body that is not well-formed');
+      }
+      const result = at(read.xml, 'ListRolesResponse', 'ListRolesResult');
+      // Only a `ListRolesResult` that holds `Roles` and says whether it is truncated tells what the emulator lists.
+      const truncated = textAt(result, 'IsTruncated');
+      if (result === null || at(result, 'Roles') === null || (truncated !== 'true' && truncated !== 'false')) {
+        throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
+      }
+      // `Roles` is read whole: text in it (an entry cut short, as `<member` without its end) or a child that is
+      // not a `member` with a `RoleName` is content that cannot be read, never an empty list.
+      const roles = at(result, 'Roles');
+      if (roles === null || (roles.children.length === 0 && roles.text.trim() !== '')) {
+        throw new EnvError('direct ListRoles: Roles holds text that is no member');
+      }
+      for (const member of roles.children) {
+        const name = member.name === 'member' ? (textAt(member, 'RoleName') ?? '') : '';
+        if (name === '') throw new EnvError('direct ListRoles: an entry of Roles that is not a member with a RoleName');
+        names.push(name);
+      }
+      if (truncated !== 'true') return names;
+      marker = textAt(result, 'Marker');
+      if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
+    }
+    throw new EnvError('direct ListRoles: more than 100 pages');
+  };
+  for (const name of await held()) {
+    const read = await iamAnswer(caller, port, 'DeleteServiceLinkedRole', { RoleName: name }, name);
+    if (!read.ok) throw new EnvError(`direct DeleteServiceLinkedRole ${name}: ${shownRead(read)}`);
+  }
+  const emptied = await waitFor(EMPTIED_BOUND_MS, async () => ((await held()).length === 0 ? true : undefined));
+  if (!emptied) throw new EnvError('the emulator still lists a role after each was removed with DeleteServiceLinkedRole');
 }
 
 /** The names of `names` that contain `text`, upper and lower case alike, in their order. */
