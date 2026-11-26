@@ -174,16 +174,19 @@ it('focuses and reveals the results on each submission, then announces the outco
     expect(reveal).toHaveBeenLastCalledWith({ block: 'start' });
     expect(reveal.mock.contexts.at(-1)).toBe(results());
     await waitFor(() => expect(announcement()).toHaveTextContent('Search complete. 1 log event on this page.'));
+    expect(reveal.mock.contexts.filter((target) => target === results())).toHaveLength(2);
 
     field('Filter pattern').focus();
     enter('Filter pattern', 'no match');
     expect(field('Filter pattern')).toHaveFocus();
     submit();
     expect(results()).toHaveFocus();
-    expect(reveal.mock.contexts.filter((target) => target === results())).toHaveLength(1);
+    const secondResults = results();
+    expect(reveal.mock.contexts.filter((target) => target === secondResults)).toHaveLength(1);
     field('Filter pattern').focus();
     await waitFor(() => expect(announcement()).toHaveTextContent('Search complete. No log events match.'));
     expect(field('Filter pattern')).toHaveFocus();
+    expect(reveal.mock.contexts.filter((target) => target === secondResults)).toHaveLength(1);
   } finally {
     if (descriptor === undefined) Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
     else Object.defineProperty(Element.prototype, 'scrollIntoView', descriptor);
@@ -220,7 +223,7 @@ it('bounds long messages while preserving their text, whitespace, timestamp and 
   const pre = row?.querySelector('pre');
   expect(pre?.textContent).toBe(message);
   expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  expect(pre?.parentElement?.style.maxInlineSize).toBe('min(35vw, 72ch)');
+  expect(pre?.parentElement?.style.maxInlineSize).toBe('clamp(5ch, calc(100vw - 17.5rem), 72ch)');
   expect(pre?.firstElementChild).toHaveClass('aws-area-value-text');
 });
 

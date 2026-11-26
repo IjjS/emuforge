@@ -99,6 +99,11 @@ function SearchResults({
     results?.scrollIntoView?.({ block: 'start' });
   }, []);
   useEffect(() => {
+    // Once the rows arrive, the page may have more room to scroll than during loading.
+    const results = resultsRef.current;
+    if ((count !== undefined || failureText !== undefined) && document.activeElement === results) {
+      results?.scrollIntoView?.({ block: 'start' });
+    }
     if (failureText !== undefined) announce(failureText);
     else if (count === undefined) announce('');
     else if (count === 0) announce('Search complete. No log events match.');
@@ -114,6 +119,7 @@ function SearchResults({
           </Header>
         }
         items={listing.items ?? []}
+        ariaLabels={{ tableLabel: 'Matching log events' }}
         wrapLines
         cellVerticalAlign="top"
         loading={listing.loading}
@@ -145,7 +151,8 @@ function SearchResults({
             id: 'message',
             header: 'Message',
             cell: ({ message }) => (
-              <div style={{ maxInlineSize: 'min(35vw, 72ch)' }}>
+              // Leave room for the time and stream columns and the table gutters on narrow screens.
+              <div style={{ maxInlineSize: 'clamp(5ch, calc(100vw - 17.5rem), 72ch)' }}>
                 <EventMessage message={message} />
               </div>
             ),
