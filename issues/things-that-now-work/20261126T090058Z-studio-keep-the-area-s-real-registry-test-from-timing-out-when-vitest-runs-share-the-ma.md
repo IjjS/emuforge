@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|aws-area.area-layout-test|registry-import-deadline
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/test/area-preload.test.ts studio-unit:src/providers/aws/area/area-layout.test.tsx
 Issue-Commit: ed8f53eabec6c564c992b80b44b52b48defa6db7
 
 # Keep the area's real-registry test from timing out when Vitest runs share the machine
