@@ -121,10 +121,10 @@ it('clears the stream when the group is changed and opens only the new group’s
 });
 
 function enterRange() {
-  enter('Start date', '2026-11-26');
-  enter('Start time', '12:34:56');
-  enter('End date', '2026-11-26');
-  enter('End time', '12:35:57');
+  enter('Time range Start date', '2026-11-26');
+  enter('Time range Start time', '12:34:56');
+  enter('Time range End date', '2026-11-26');
+  enter('Time range End time', '12:35:57');
 }
 
 it('pages with the submitted pattern, times and stream even while the form holds edits', async () => {
@@ -136,7 +136,7 @@ it('pages with the submitted pattern, times and stream even while the form holds
   expect(await screen.findByText('first page')).toBeVisible();
 
   enter('Filter pattern', 'edited');
-  enter('End time', '12:36:00');
+  enter('Time range End time', '12:36:00');
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   expect(await screen.findByText('second page')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
@@ -176,9 +176,9 @@ it('submits the unchanged form from page 2 as a new first-page request', async (
 it('shows the end field error without searching a reversed range', () => {
   open();
   enterRange();
-  enter('End time', '12:00:00');
+  enter('Time range End time', '12:00:00');
   submit();
-  expect(field('End time')).toHaveAccessibleDescription(/End time must be at or after start time/);
+  expect(field('Time range End time')).toHaveAccessibleDescription(/End time must be at or after start time/);
   expect(search).not.toHaveBeenCalled();
 });
 

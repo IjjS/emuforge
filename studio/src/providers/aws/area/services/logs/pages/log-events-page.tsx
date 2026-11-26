@@ -145,7 +145,11 @@ function TimeFields({
   return (
     <ColumnLayout columns={2}>
       <FormField label={`${edge} date`} constraintText="YYYY-MM-DD">
-        <DateInput value={value.date} onChange={({ detail }) => onChange({ ...value, date: detail.value })} />
+        <DateInput
+          format="iso"
+          value={value.date}
+          onChange={({ detail }) => onChange({ ...value, date: detail.value })}
+        />
       </FormField>
       <FormField label={`${edge} time`} constraintText="HH:MM:SS" errorText={error}>
         <TimeInput
