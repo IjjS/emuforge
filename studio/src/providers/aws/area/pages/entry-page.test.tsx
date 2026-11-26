@@ -61,7 +61,7 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
     expect(screen.getByText('Part of')).toBeInTheDocument();
     expect(screen.getByText(service.label)).toBeInTheDocument();
     expect(screen.getByText('Listed by')).toBeInTheDocument();
-    expect(screen.getByText(rules.listedBy).tagName).toBe('CODE');
+    expect(screen.getByText(rules.listedBy).closest('code')).toHaveTextContent(rules.listedBy);
     expect(screen.getByText('Opening this page changed nothing in your local emulator.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Go to Accounts' })).toHaveAttribute('href', route);
     expect(screen.getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
@@ -115,8 +115,11 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
     const unbuilt = screen.getByRole('link', { name: rules.label });
     expect(built).toHaveAttribute('href', accounts.path);
     expect(built.closest('li')).not.toHaveTextContent('No screen yet');
+    expect(built).not.toHaveAccessibleDescription();
     expect(unbuilt).toHaveAttribute('href', rules.path);
+    expect(unbuilt.textContent).toBe(rules.label);
     expect(unbuilt.closest('li')).toHaveTextContent('No screen yet');
+    expect(unbuilt).toHaveAccessibleDescription('No screen yet');
   });
 
   it('offers Home alone when the service has no first screen at a literal path', () => {

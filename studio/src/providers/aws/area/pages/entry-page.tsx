@@ -6,14 +6,17 @@ import Header from '@cloudscape-design/components/header';
 import KeyValuePairs, { type KeyValuePairsProps } from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import { useId } from 'react';
 
 import type { EntryAreaPage } from '../area-page';
 import { useFollow } from '../components/use-follow';
+import { ValueText } from '../components/value-text';
 import { findResourceEntry } from '../entries';
 
 /** The AWS area's page for a resource kind or sub-service whose path has no screen (issue 650, R5). */
 export function EntryPage({ page }: { page: EntryAreaPage }) {
   const follow = useFollow();
+  const statusIdPrefix = useId();
   const { first, groups, label, match, service } = page;
   const values: KeyValuePairsProps.Pair[] = [];
   let primary: { title: string; href: string } | undefined =
@@ -29,7 +32,14 @@ export function EntryPage({ page }: { page: EntryAreaPage }) {
     const parent = listedInside === undefined ? undefined : findResourceEntry(groups, listedInside);
     values.push({ label: 'Resource kind', value: label });
     if (groups.length > 1) values.push({ label: 'Part of', value: group.name });
-    values.push({ label: 'Listed by', value: <Box variant="code">{listedBy}</Box> });
+    values.push({
+      label: 'Listed by',
+      value: (
+        <Box variant="code">
+          <ValueText kind="name" value={listedBy} />
+        </Box>
+      ),
+    });
     if (parent !== undefined) values.push({ label: 'Listed inside', value: parent.label });
 
     if (shownIn !== undefined) {
@@ -49,7 +59,7 @@ export function EntryPage({ page }: { page: EntryAreaPage }) {
               <Box variant="strong">{statement}</Box>
               {shownPlace !== undefined && <Box variant="p">{`It shows them in ${shownPlace}.`}</Box>}
             </SpaceBetween>
-            <KeyValuePairs columns={2} items={values} />
+            <KeyValuePairs columns={2} minColumnWidth={200} items={values} />
             <Box variant="p">Opening this page changed nothing in your local emulator.</Box>
             <SpaceBetween direction="horizontal" size="xs">
               {primary !== undefined && (
@@ -66,14 +76,22 @@ export function EntryPage({ page }: { page: EntryAreaPage }) {
         {'subService' in match && (
           <Container header={<Header variant="h2">Resource kinds</Header>}>
             <Box tagOverride="ul">
-              {match.links.map(({ href, text, info }) => (
-                <Box tagOverride="li" key={href}>
-                  <Link href={href} onFollow={follow}>
-                    {text}
-                  </Link>
-                  {info !== undefined && <Box variant="small">{` — ${info}`}</Box>}
-                </Box>
-              ))}
+              {match.links.map(({ href, text, info }) => {
+                const statusId = info === undefined ? undefined : `${statusIdPrefix}-${href}`;
+                return (
+                  <Box tagOverride="li" key={href}>
+                    <Link href={href} onFollow={follow} nativeAttributes={{ 'aria-describedby': statusId }}>
+                      {text}
+                    </Link>
+                    {statusId !== undefined && (
+                      <Box variant="small">
+                        <span aria-hidden="true"> — </span>
+                        <span id={statusId}>{info}</span>
+                      </Box>
+                    )}
+                  </Box>
+                );
+              })}
             </Box>
           </Container>
         )}
