@@ -57,7 +57,6 @@ export function FunctionField({
         }
       >
         <PagedChoice
-          ariaLabel="Lambda function"
           source={source}
           connection={connection}
           things="Lambda functions"

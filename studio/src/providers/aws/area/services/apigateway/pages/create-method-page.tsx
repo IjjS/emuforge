@@ -60,7 +60,7 @@ const keys = [
 ];
 const integrations = [
   { value: 'lambda', label: 'Lambda function', description: 'A Lambda function the emulator holds is invoked.' },
-  { value: 'http', label: 'HTTP endpoint', description: 'The request is passed to an HTTP address.' },
+  { value: 'http', label: 'HTTP endpoint', description: 'Use an invoke URL served by this emulator.' },
   { value: 'mock', label: 'Mock', description: 'A fixed answer, without a backend.' },
 ];
 
@@ -296,7 +296,6 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
                 )}
                 <FormField label="Resource" errorText={errors.resource}>
                   <PagedChoice
-                    ariaLabel="Resource"
                     source={source}
                     connection={connection}
                     things="resources"
@@ -312,7 +311,6 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
                 {resource && <CopyValue label="resource ID" value={resource.id} kind="fixed" />}
                 <FormField label="HTTP method">
                   <Select
-                    ariaLabel="HTTP method"
                     options={HTTP_METHODS}
                     selectedOption={HTTP_METHODS.find(({ value }) => value === form.method) ?? null}
                     onChange={({ detail }) => set({ method: detail.selectedOption.value as MethodForm['method'] })}
@@ -320,7 +318,6 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
                 </FormField>
                 <FormField label="Authorization">
                   <Select
-                    ariaLabel="Authorization"
                     options={authorizations}
                     selectedOption={authorizations.find(({ value }) => value === form.authorization) ?? null}
                     onChange={({ detail }) =>
@@ -330,7 +327,6 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
                 </FormField>
                 <FormField label="API key required">
                   <Select
-                    ariaLabel="API key required"
                     options={keys}
                     selectedOption={keys[form.apiKeyRequired ? 1 : 0] ?? null}
                     onChange={({ detail }) => set({ apiKeyRequired: detail.selectedOption.value === 'yes' })}
@@ -374,7 +370,6 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
                     </FormField>
                     <FormField label="Integration HTTP method">
                       <Select
-                        ariaLabel="Integration HTTP method"
                         options={HTTP_METHODS}
                         selectedOption={HTTP_METHODS.find(({ value }) => value === form.integrationMethod) ?? null}
                         onChange={({ detail }) =>
@@ -446,7 +441,7 @@ export function CreateMethodPage({ connection, params }: ScreenPageProps) {
             The emulator holds no REST API with the ID <CopyValue label="API ID" kind="fixed" value={apiId} />.
           </Box>
           <Link href={apisPath} onFollow={follow}>
-            APIs
+            View APIs
           </Link>
         </SpaceBetween>
       )}
