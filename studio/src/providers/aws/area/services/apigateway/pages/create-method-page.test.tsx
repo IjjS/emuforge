@@ -233,12 +233,32 @@ it('reads resources when opened and describes the resource and each known form o
   }
   const integration = form.field('Integration kind').getElement();
   expect(integration).toHaveTextContent('A Lambda function the emulator holds is invoked.');
-  expect(integration).toHaveTextContent('The request is passed to an HTTP address.');
+  expect(integration).toHaveTextContent('Use an invoke URL served by this emulator.');
   expect(integration).toHaveTextContent('A fixed answer, without a backend.');
   await form.chooseKind('http');
   expect(form.field('HTTP address').findDescription()?.getElement()).toHaveTextContent(
     "The emulator sends no request to this address. It answers only for an address it serves itself, such as another API's invoke URL.",
   );
+});
+
+it('announces each select field label once with its current choice', async () => {
+  const form = open();
+  await form.shown();
+  const trigger = (label: string) => form.select(label).findTrigger().getElement();
+
+  expect(trigger('Resource')).toHaveAccessibleName('Resource Choose a resource');
+  expect(trigger('HTTP method')).toHaveAccessibleName('HTTP method GET');
+  expect(trigger('Authorization')).toHaveAccessibleName('Authorization NONE');
+  expect(trigger('API key required')).toHaveAccessibleName('API key required No');
+  expect(trigger('Lambda function')).toHaveAccessibleName('Lambda function Choose a Lambda function');
+
+  await form.choose('Resource', 'root');
+  expect(trigger('Resource')).toHaveAccessibleName('Resource /');
+  await form.choose('Lambda function', fn.arn);
+  expect(trigger('Lambda function')).toHaveAccessibleName(`Lambda function ${fn.name}`);
+
+  await form.chooseKind('http');
+  expect(trigger('Integration HTTP method')).toHaveAccessibleName('Integration HTTP method GET');
 });
 
 it('uses the independent HTTP integration method and offers all eight described values', async () => {
@@ -651,7 +671,7 @@ it('shows API not found with a link to APIs when the API does not exist', async 
     expect(heading).toBeVisible();
   });
   const link = form.wrapper.findLink()?.getElement();
-  expect(link).toHaveTextContent('APIs');
+  expect(link).toHaveAccessibleName('View APIs');
   expect(link).toHaveAttribute('href', '/aws/apigateway/apis');
 });
 
