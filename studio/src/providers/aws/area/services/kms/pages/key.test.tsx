@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { preloadArea } from '../../../../../../test/area-preload';
 import { FakeEngine, renderApp } from '../../../../../../test/home-test-kit';
 import { AWS_PROVIDER } from '../../../../provider';
 import type { AreaConnection } from '../../../components/emulator-line';
