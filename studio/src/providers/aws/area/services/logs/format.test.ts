@@ -1,7 +1,11 @@
+import { matchRoutes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
+import { matchesPattern, patternParams } from '../../screen-paths';
 import {
   deletionProtectionText,
+  LOG_GROUP_PATH,
+  LOG_STREAM_PATH,
   logGroupClassText,
   logGroupPath,
   logStreamPath,
@@ -27,6 +31,28 @@ describe('log names in addresses', () => {
       expect(address.pathname.split('/').length).toBe(8);
       const segment = address.pathname.split('/').at(-1) ?? '';
       expect(nameFromSegment(decodeURIComponent(segment))).toBe(stream);
+    }
+  });
+
+  it.each([
+    ['CR', '\r'],
+    ['LF', '\n'],
+    ['CRLF', '\r\n'],
+  ])('keeps %s in group and stream names through both routers', (_label, lineBreak) => {
+    const group = `/aws/lambda${lineBreak}group`;
+    const stream = `worker${lineBreak}%0D%0A/#?`;
+    const providerRoutes = [{ path: '/aws/*' }, { path: '*' }];
+
+    for (const [path, pattern] of [
+      [logGroupPath(group), LOG_GROUP_PATH],
+      [logStreamPath(group, stream), LOG_STREAM_PATH],
+    ] as const) {
+      const { pathname } = new URL(path, 'http://127.0.0.1');
+      expect(matchRoutes(providerRoutes, pathname)?.at(-1)?.route.path).toBe('/aws/*');
+      expect(matchesPattern(pattern, pathname)).toBe(true);
+      const params = patternParams(pattern, pathname);
+      expect(nameFromSegment(params?.group ?? '')).toBe(group);
+      if (pattern === LOG_STREAM_PATH) expect(nameFromSegment(params?.stream ?? '')).toBe(stream);
     }
   });
 });
