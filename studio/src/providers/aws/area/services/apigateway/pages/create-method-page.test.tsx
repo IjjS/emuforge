@@ -552,8 +552,10 @@ it.each([
   const answers = first === 'api' ? [answerApi, answerResources] : [answerResources, answerApi];
   for (const answer of answers) await act(async () => answer());
   await waitFor(() => {
-    const headings = form.wrapper.findAllHeaders().map((header) => header.findHeadingText().getElement());
-    expect(headings.find((heading) => heading.textContent === '/orders')).toBeVisible();
+    const resourcesSection = form.wrapper.find('section[aria-label="Resources"]');
+    const heading = resourcesSection?.findContainer()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent('/orders');
+    expect(heading).toBeVisible();
   });
   expectResult();
 });
