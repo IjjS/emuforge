@@ -184,12 +184,12 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
   const common = [
     ['Deployments', 'deployments'],
     ['Authorizers', 'authorizers'],
-  ];
+  ] as const;
   const webSocket = [
     ['Models', 'models'],
     ['Route responses', 'route-responses'],
     ['Integration responses', 'integration-responses'],
-  ];
+  ] as const;
   const links = ProtocolType === 'WEBSOCKET' ? [...common, ...webSocket] : common;
   const content = within(await screen.findByRole('region', { name: 'Events' }));
   for (const [name, segment] of links) {

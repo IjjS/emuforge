@@ -27,6 +27,7 @@ export function V2Stages({ api, stages, connection }: V2StagesProps) {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
+      minWidth: '24ch',
       cell: (stage) => <ValueText kind="name" value={stage.StageName} none="-" />,
     },
     {

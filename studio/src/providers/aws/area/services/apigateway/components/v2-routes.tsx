@@ -60,6 +60,7 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
           id: 'key',
           header: 'Route key',
           isRowHeader: true,
+          minWidth: '24ch',
           cell: (route) => <ValueText kind="name" value={route.RouteKey} none="-" />,
         },
         {
