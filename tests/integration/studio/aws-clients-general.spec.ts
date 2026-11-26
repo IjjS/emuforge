@@ -333,12 +333,19 @@ const HOSTLESS_URL_KEPT = 256;
  */
 async function settled(page: Page, emulatorPort: number): Promise<void> {
   await expectLine(page, connectedAt(emulatorPort), STATE_BOUND_MS);
-  await expect
-    .poll(() => page.evaluate(() => document.fonts.status), {
-      timeout: STATE_BOUND_MS,
-      message: 'the fonts the settled page uses are read',
-    })
-    .toBe('loaded');
+  // `document.fonts.ready` resolves once the fonts the laid-out page asked for are read; the layout is brought up to
+  // date first, so the line just shown has asked for its fonts. The bound ends the wait, never a time.
+  const ready = await page.evaluate(async (boundMs) => {
+    document.body.getBoundingClientRect();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), boundMs);
+    });
+    const read = await Promise.race([document.fonts.ready.then(() => true as const), bound]);
+    clearTimeout(timer);
+    return read;
+  }, STATE_BOUND_MS);
+  expect(ready, 'document.fonts.ready resolved: the fonts the settled page uses are read').toBe(true);
 }
 
 /**
