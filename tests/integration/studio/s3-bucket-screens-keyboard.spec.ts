@@ -20,6 +20,7 @@
 import type { Locator, Page, Request } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
+import { focusInNavigation, navigationStops } from './support/aws-entries';
 import { areaImages, currentCrumb, documentIcons, emulatorLine, expectLine, notStartedOn } from './support/aws-area';
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
@@ -94,6 +95,9 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
+  /** Inside the side navigation, and whether it is its header link (by Cloudscape's own selector). */
+  inNavigation: boolean;
+  navigationHeader: boolean;
   /** The section the stop is in: the level-2 heading of the nearest element around it that holds exactly one. */
   section: string | null;
   /** The focus indicator it draws; `null` when none. */
@@ -124,7 +128,13 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     }
     return { inArea, section };
   });
-  return { role: ax.role, name: ax.name, ...where, ring: await focusRing(page) };
+  return {
+    role: ax.role,
+    name: ax.name,
+    ...where,
+    ...(await focusInNavigation(page)),
+    ring: await focusRing(page),
+  };
 }
 
 const shown = (stop: Stop) => `${stop.role} "${stop.name}"${stop.section ? ` in "${stop.section}"` : ''}`;
@@ -162,13 +172,8 @@ function orderProblems(stops: Stop[], expected: Expected[]): string[] {
 function frameStops(crumbs: string[]): Expected[] {
   return [
     { what: '"Close navigation" (Cloudscape\'s layout)', match: named('Close navigation', 'button'), optional: true },
-    { what: `the side navigation's header "${NAV_HEADER}"`, match: named(NAV_HEADER, 'link') },
-    {
-      what: "the toggle of the navigation's section (Cloudscape's)",
-      match: named('Buckets', 'button'),
-      optional: true,
-    },
-    { what: `"${NAV_GENERAL}"`, match: named(NAV_GENERAL, 'link') },
+    // Issue 650 (design.md, D6 C): the navigation holds every entry of the service, each a stop.
+    ...navigationStops<Stop>(NAV_HEADER, [NAV_GENERAL]),
     ...crumbs.map((c, i) => ({
       what: i === crumbs.length - 1 ? `the current crumb "${c}"` : `the crumb "${c}"`,
       match: i === crumbs.length - 1 ? named(c) : named(c, 'link'),

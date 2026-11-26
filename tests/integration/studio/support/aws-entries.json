@@ -1,0 +1,2284 @@
+{
+ "s3": [
+  {
+   "model": "s3",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "General purpose buckets",
+     "path": "/aws/s3/buckets",
+     "listedBy": "ListBuckets",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Bucket analytics configurations",
+     "path": "/aws/s3/bucket-analytics-configurations",
+     "listedBy": "ListBucketAnalyticsConfigurations",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": null
+    },
+    {
+     "label": "Bucket intelligent tiering configurations",
+     "path": "/aws/s3/bucket-intelligent-tiering-configurations",
+     "listedBy": "ListBucketIntelligentTieringConfigurations",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": null
+    },
+    {
+     "label": "Bucket inventory configurations",
+     "path": "/aws/s3/bucket-inventory-configurations",
+     "listedBy": "ListBucketInventoryConfigurations",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": null
+    },
+    {
+     "label": "Bucket metrics configurations",
+     "path": "/aws/s3/bucket-metrics-configurations",
+     "listedBy": "ListBucketMetricsConfigurations",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": null
+    },
+    {
+     "label": "Directory buckets",
+     "path": "/aws/s3/directory-buckets",
+     "listedBy": "ListDirectoryBuckets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Multipart uploads",
+     "path": "/aws/s3/multipart-uploads",
+     "listedBy": "ListMultipartUploads",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": null
+    },
+    {
+     "label": "Object versions",
+     "path": "/aws/s3/object-versions",
+     "listedBy": "ListObjectVersions",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": {
+      "entry": "/aws/s3/buckets",
+      "place": "\"Show versions\" in the \"Objects\" tab of a bucket"
+     }
+    },
+    {
+     "label": "Objects",
+     "path": "/aws/s3/objects",
+     "listedBy": "ListObjects",
+     "screenToday": false,
+     "listedInside": "/aws/s3/buckets",
+     "shownIn": {
+      "entry": "/aws/s3/buckets",
+      "place": "the \"Objects\" tab of a bucket"
+     }
+    }
+   ]
+  }
+ ],
+ "lambda": [
+  {
+   "model": "lambda",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Event Functions",
+     "path": "/aws/lambda/functions",
+     "listedBy": "ListFunctions",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Layers",
+     "path": "/aws/lambda/layers",
+     "listedBy": "ListLayers",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Aliases",
+     "path": "/aws/lambda/aliases",
+     "listedBy": "ListAliases",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": {
+      "entry": "/aws/lambda/functions",
+      "place": "the \"Versions and aliases\" tab of a function"
+     }
+    },
+    {
+     "label": "Capacity providers",
+     "path": "/aws/lambda/capacity-providers",
+     "listedBy": "ListCapacityProviders",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Code signing configs",
+     "path": "/aws/lambda/code-signing-configs",
+     "listedBy": "ListCodeSigningConfigs",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Durable executions",
+     "path": "/aws/lambda/durable-executions",
+     "listedBy": "ListDurableExecutionsByFunction",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": null
+    },
+    {
+     "label": "Event source mappings",
+     "path": "/aws/lambda/event-source-mappings",
+     "listedBy": "ListEventSourceMappings",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": {
+      "entry": "/aws/lambda/functions",
+      "place": "the \"Event sources\" tab of a function"
+     }
+    },
+    {
+     "label": "Function event invoke configs",
+     "path": "/aws/lambda/function-event-invoke-configs",
+     "listedBy": "ListFunctionEventInvokeConfigs",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": null
+    },
+    {
+     "label": "Function url configs",
+     "path": "/aws/lambda/function-url-configs",
+     "listedBy": "ListFunctionUrlConfigs",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": null
+    },
+    {
+     "label": "Layer versions",
+     "path": "/aws/lambda/layer-versions",
+     "listedBy": "ListLayerVersions",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/layers",
+     "shownIn": {
+      "entry": "/aws/lambda/layers",
+      "place": "the \"Versions\" table of a layer selected on the Layers screen"
+     }
+    },
+    {
+     "label": "Provisioned concurrency configs",
+     "path": "/aws/lambda/provisioned-concurrency-configs",
+     "listedBy": "ListProvisionedConcurrencyConfigs",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": null
+    },
+    {
+     "label": "Versions",
+     "path": "/aws/lambda/versions",
+     "listedBy": "ListVersionsByFunction",
+     "screenToday": false,
+     "listedInside": "/aws/lambda/functions",
+     "shownIn": {
+      "entry": "/aws/lambda/functions",
+      "place": "the \"Versions and aliases\" tab of a function"
+     }
+    }
+   ]
+  }
+ ],
+ "iam": [
+  {
+   "model": "iam",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Roles",
+     "path": "/aws/iam/roles",
+     "listedBy": "ListRoles",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Policies",
+     "path": "/aws/iam/policies",
+     "listedBy": "ListPolicies",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Access keys",
+     "path": "/aws/iam/access-keys",
+     "listedBy": "ListAccessKeys",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Account aliases",
+     "path": "/aws/iam/account-aliases",
+     "listedBy": "ListAccountAliases",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Attached group policies",
+     "path": "/aws/iam/attached-group-policies",
+     "listedBy": "ListAttachedGroupPolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/groups",
+     "shownIn": null
+    },
+    {
+     "label": "Attached role policies",
+     "path": "/aws/iam/attached-role-policies",
+     "listedBy": "ListAttachedRolePolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/roles",
+     "shownIn": {
+      "entry": "/aws/iam/roles",
+      "place": "\"Permissions policies\" in the \"Permissions\" tab of a role"
+     }
+    },
+    {
+     "label": "Attached user policies",
+     "path": "/aws/iam/attached-user-policies",
+     "listedBy": "ListAttachedUserPolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/users",
+     "shownIn": null
+    },
+    {
+     "label": "Delegation requests",
+     "path": "/aws/iam/delegation-requests",
+     "listedBy": "ListDelegationRequests",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Group policies",
+     "path": "/aws/iam/group-policies",
+     "listedBy": "ListGroupPolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/groups",
+     "shownIn": null
+    },
+    {
+     "label": "Groups",
+     "path": "/aws/iam/groups",
+     "listedBy": "ListGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Instance profiles",
+     "path": "/aws/iam/instance-profiles",
+     "listedBy": "ListInstanceProfiles",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "MFA devices",
+     "path": "/aws/iam/mfa-devices",
+     "listedBy": "ListMFADevices",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "OpenID Connect providers",
+     "path": "/aws/iam/open-id-connect-providers",
+     "listedBy": "ListOpenIDConnectProviders",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Policy versions",
+     "path": "/aws/iam/policy-versions",
+     "listedBy": "ListPolicyVersions",
+     "screenToday": false,
+     "listedInside": "/aws/iam/policies",
+     "shownIn": {
+      "entry": "/aws/iam/policies",
+      "place": "the \"Versions\" section of a policy"
+     }
+    },
+    {
+     "label": "Role policies",
+     "path": "/aws/iam/role-policies",
+     "listedBy": "ListRolePolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/roles",
+     "shownIn": {
+      "entry": "/aws/iam/roles",
+      "place": "\"Permissions policies\" in the \"Permissions\" tab of a role"
+     }
+    },
+    {
+     "label": "SAML providers",
+     "path": "/aws/iam/saml-providers",
+     "listedBy": "ListSAMLProviders",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Server certificates",
+     "path": "/aws/iam/server-certificates",
+     "listedBy": "ListServerCertificates",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Service specific credentials",
+     "path": "/aws/iam/service-specific-credentials",
+     "listedBy": "ListServiceSpecificCredentials",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Signing certificates",
+     "path": "/aws/iam/signing-certificates",
+     "listedBy": "ListSigningCertificates",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "SSH public keys",
+     "path": "/aws/iam/ssh-public-keys",
+     "listedBy": "ListSSHPublicKeys",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "User policies",
+     "path": "/aws/iam/user-policies",
+     "listedBy": "ListUserPolicies",
+     "screenToday": false,
+     "listedInside": "/aws/iam/users",
+     "shownIn": null
+    },
+    {
+     "label": "Users",
+     "path": "/aws/iam/users",
+     "listedBy": "ListUsers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Virtual MFA devices",
+     "path": "/aws/iam/virtual-mfa-devices",
+     "listedBy": "ListVirtualMFADevices",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "dynamodb": [
+  {
+   "model": "dynamodb",
+   "name": "DynamoDB",
+   "subService": null,
+   "entries": [
+    {
+     "label": "Tables",
+     "path": "/aws/dynamodb/tables",
+     "listedBy": "ListTables",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Backups",
+     "path": "/aws/dynamodb/backups",
+     "listedBy": "ListBackups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Contributor insights",
+     "path": "/aws/dynamodb/contributor-insights",
+     "listedBy": "ListContributorInsights",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Exports",
+     "path": "/aws/dynamodb/exports",
+     "listedBy": "ListExports",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Global tables",
+     "path": "/aws/dynamodb/global-tables",
+     "listedBy": "ListGlobalTables",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Imports",
+     "path": "/aws/dynamodb/imports",
+     "listedBy": "ListImports",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  },
+  {
+   "model": "dax",
+   "name": "DynamoDB Accelerator (DAX)",
+   "subService": {
+    "name": "DynamoDB Accelerator (DAX)",
+    "path": "/aws/dynamodb/dax"
+   },
+   "entries": [
+    {
+     "label": "Clusters",
+     "path": "/aws/dynamodb/clusters",
+     "listedBy": "DescribeClusters",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Parameter groups",
+     "path": "/aws/dynamodb/parameter-groups",
+     "listedBy": "DescribeParameterGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Subnet groups",
+     "path": "/aws/dynamodb/subnet-groups",
+     "listedBy": "DescribeSubnetGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "sqs": [
+  {
+   "model": "sqs",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Queues",
+     "path": "/aws/sqs/queues",
+     "listedBy": "ListQueues",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Message move tasks",
+     "path": "/aws/sqs/message-move-tasks",
+     "listedBy": "ListMessageMoveTasks",
+     "screenToday": false,
+     "listedInside": "/aws/sqs/queues",
+     "shownIn": {
+      "entry": "/aws/sqs/queues",
+      "place": "\"Move tasks\" in the \"Redrive\" tab of a dead-letter queue"
+     }
+    }
+   ]
+  }
+ ],
+ "sns": [
+  {
+   "model": "sns",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Topics",
+     "path": "/aws/sns/topics",
+     "listedBy": "ListTopics",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Platform applications",
+     "path": "/aws/sns/platform-applications",
+     "listedBy": "ListPlatformApplications",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Platform endpoints",
+     "path": "/aws/sns/platform-endpoints",
+     "listedBy": "ListEndpointsByPlatformApplication",
+     "screenToday": false,
+     "listedInside": "/aws/sns/platform-applications",
+     "shownIn": null
+    },
+    {
+     "label": "SMS sandbox phone numbers",
+     "path": "/aws/sns/sms-sandbox-phone-numbers",
+     "listedBy": "ListSMSSandboxPhoneNumbers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Subscriptions",
+     "path": "/aws/sns/subscriptions",
+     "listedBy": "ListSubscriptions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": {
+      "entry": "/aws/sns/topics",
+      "place": "the \"Subscriptions\" tab of a topic"
+     }
+    }
+   ]
+  }
+ ],
+ "ec2": [
+  {
+   "model": "ec2",
+   "name": "Amazon EC2",
+   "subService": null,
+   "entries": [
+    {
+     "label": "Instances",
+     "path": "/aws/ec2/instances",
+     "listedBy": "DescribeInstances",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Volumes",
+     "path": "/aws/ec2/volumes",
+     "listedBy": "DescribeVolumes",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Security groups",
+     "path": "/aws/ec2/security-groups",
+     "listedBy": "DescribeSecurityGroups",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Key pairs",
+     "path": "/aws/ec2/key-pairs",
+     "listedBy": "DescribeKeyPairs",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Bundle tasks",
+     "path": "/aws/ec2/bundle-tasks",
+     "listedBy": "DescribeBundleTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Capacity blocks",
+     "path": "/aws/ec2/capacity-blocks",
+     "listedBy": "DescribeCapacityBlocks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Capacity manager data exports",
+     "path": "/aws/ec2/capacity-manager-data-exports",
+     "listedBy": "DescribeCapacityManagerDataExports",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Capacity reservation billing requests",
+     "path": "/aws/ec2/capacity-reservation-billing-requests",
+     "listedBy": "DescribeCapacityReservationBillingRequests",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Capacity reservation fleets",
+     "path": "/aws/ec2/capacity-reservation-fleets",
+     "listedBy": "DescribeCapacityReservationFleets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Capacity reservations",
+     "path": "/aws/ec2/capacity-reservations",
+     "listedBy": "DescribeCapacityReservations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Conversion tasks",
+     "path": "/aws/ec2/conversion-tasks",
+     "listedBy": "DescribeConversionTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Declarative policies reports",
+     "path": "/aws/ec2/declarative-policies-reports",
+     "listedBy": "DescribeDeclarativePoliciesReports",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Elastic IP address transfers",
+     "path": "/aws/ec2/address-transfers",
+     "listedBy": "DescribeAddressTransfers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Elastic IP addresses",
+     "path": "/aws/ec2/addresses",
+     "listedBy": "DescribeAddresses",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Export image tasks",
+     "path": "/aws/ec2/export-image-tasks",
+     "listedBy": "DescribeExportImageTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Export tasks",
+     "path": "/aws/ec2/export-tasks",
+     "listedBy": "DescribeExportTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Fleets",
+     "path": "/aws/ec2/fleets",
+     "listedBy": "DescribeFleets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "FPGA images",
+     "path": "/aws/ec2/fpga-images",
+     "listedBy": "DescribeFpgaImages",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Host reservations",
+     "path": "/aws/ec2/host-reservations",
+     "listedBy": "DescribeHostReservations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Hosts",
+     "path": "/aws/ec2/hosts",
+     "listedBy": "DescribeHosts",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IAM instance profile associations",
+     "path": "/aws/ec2/iam-instance-profile-associations",
+     "listedBy": "DescribeIamInstanceProfileAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Image usage reports",
+     "path": "/aws/ec2/image-usage-reports",
+     "listedBy": "DescribeImageUsageReports",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Images (AMIs)",
+     "path": "/aws/ec2/images",
+     "listedBy": "DescribeImages",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Import image tasks",
+     "path": "/aws/ec2/import-image-tasks",
+     "listedBy": "DescribeImportImageTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Import snapshot tasks",
+     "path": "/aws/ec2/import-snapshot-tasks",
+     "listedBy": "DescribeImportSnapshotTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Instance connect endpoints",
+     "path": "/aws/ec2/instance-connect-endpoints",
+     "listedBy": "DescribeInstanceConnectEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Instance event windows",
+     "path": "/aws/ec2/instance-event-windows",
+     "listedBy": "DescribeInstanceEventWindows",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Launch template versions",
+     "path": "/aws/ec2/launch-template-versions",
+     "listedBy": "DescribeLaunchTemplateVersions",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/launch-templates",
+     "shownIn": null
+    },
+    {
+     "label": "Launch templates",
+     "path": "/aws/ec2/launch-templates",
+     "listedBy": "DescribeLaunchTemplates",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Mac modification tasks",
+     "path": "/aws/ec2/mac-modification-tasks",
+     "listedBy": "DescribeMacModificationTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network interface permissions",
+     "path": "/aws/ec2/network-interface-permissions",
+     "listedBy": "DescribeNetworkInterfacePermissions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network interfaces",
+     "path": "/aws/ec2/network-interfaces",
+     "listedBy": "DescribeNetworkInterfaces",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Placement groups",
+     "path": "/aws/ec2/placement-groups",
+     "listedBy": "DescribePlacementGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Replace root volume tasks",
+     "path": "/aws/ec2/replace-root-volume-tasks",
+     "listedBy": "DescribeReplaceRootVolumeTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Reserved instances",
+     "path": "/aws/ec2/reserved-instances",
+     "listedBy": "DescribeReservedInstances",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Reserved instances listings",
+     "path": "/aws/ec2/reserved-instances-listings",
+     "listedBy": "DescribeReservedInstancesListings",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Scheduled instances",
+     "path": "/aws/ec2/scheduled-instances",
+     "listedBy": "DescribeScheduledInstances",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Security group rules",
+     "path": "/aws/ec2/security-group-rules",
+     "listedBy": "DescribeSecurityGroupRules",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": {
+      "entry": "/aws/ec2/security-groups",
+      "place": "the \"Rules\" section of a security group"
+     }
+    },
+    {
+     "label": "Snapshots",
+     "path": "/aws/ec2/snapshots",
+     "listedBy": "DescribeSnapshots",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Spot fleet requests",
+     "path": "/aws/ec2/spot-fleet-requests",
+     "listedBy": "DescribeSpotFleetRequests",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Spot instance requests",
+     "path": "/aws/ec2/spot-instance-requests",
+     "listedBy": "DescribeSpotInstanceRequests",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Store image tasks",
+     "path": "/aws/ec2/store-image-tasks",
+     "listedBy": "DescribeStoreImageTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Tags",
+     "path": "/aws/ec2/tags",
+     "listedBy": "DescribeTags",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": {
+      "entry": "/aws/ec2/instances",
+      "place": "the \"Tags\" section of an instance"
+     }
+    }
+   ]
+  },
+  {
+   "model": "elbv2",
+   "name": "Elastic Load Balancing",
+   "subService": {
+    "name": "Elastic Load Balancing",
+    "path": "/aws/ec2/elastic-load-balancing"
+   },
+   "entries": [
+    {
+     "label": "Listener certificates",
+     "path": "/aws/ec2/listener-certificates",
+     "listedBy": "DescribeListenerCertificates",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/listeners",
+     "shownIn": null
+    },
+    {
+     "label": "Listeners",
+     "path": "/aws/ec2/listeners",
+     "listedBy": "DescribeListeners",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Load balancers",
+     "path": "/aws/ec2/load-balancers",
+     "listedBy": "DescribeLoadBalancers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Rules",
+     "path": "/aws/ec2/rules",
+     "listedBy": "DescribeRules",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/listeners",
+     "shownIn": null
+    },
+    {
+     "label": "Target groups",
+     "path": "/aws/ec2/target-groups",
+     "listedBy": "DescribeTargetGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Trust store revocations",
+     "path": "/aws/ec2/trust-store-revocations",
+     "listedBy": "DescribeTrustStoreRevocations",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/trust-stores",
+     "shownIn": null
+    },
+    {
+     "label": "Trust stores",
+     "path": "/aws/ec2/trust-stores",
+     "listedBy": "DescribeTrustStores",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  },
+  {
+   "model": "elb",
+   "name": "Classic Load Balancing",
+   "subService": {
+    "name": "Classic Load Balancing",
+    "path": "/aws/ec2/classic-load-balancing"
+   },
+   "entries": [
+    {
+     "label": "Classic load balancer policies",
+     "path": "/aws/ec2/load-balancer-policies",
+     "listedBy": "DescribeLoadBalancerPolicies",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Classic load balancers",
+     "path": "/aws/ec2/classic-load-balancers",
+     "listedBy": "DescribeLoadBalancers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  },
+  {
+   "model": "autoscaling",
+   "name": "EC2 Auto Scaling",
+   "subService": {
+    "name": "EC2 Auto Scaling",
+    "path": "/aws/ec2/ec2-auto-scaling"
+   },
+   "entries": [
+    {
+     "label": "Auto Scaling groups",
+     "path": "/aws/ec2/auto-scaling-groups",
+     "listedBy": "DescribeAutoScalingGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Auto Scaling tags",
+     "path": "/aws/ec2/auto-scaling-tags",
+     "listedBy": "DescribeTags",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Instance refreshes",
+     "path": "/aws/ec2/instance-refreshes",
+     "listedBy": "DescribeInstanceRefreshes",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/auto-scaling-groups",
+     "shownIn": null
+    },
+    {
+     "label": "Launch configurations",
+     "path": "/aws/ec2/launch-configurations",
+     "listedBy": "DescribeLaunchConfigurations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Lifecycle hooks",
+     "path": "/aws/ec2/lifecycle-hooks",
+     "listedBy": "DescribeLifecycleHooks",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/auto-scaling-groups",
+     "shownIn": null
+    },
+    {
+     "label": "Notification configurations",
+     "path": "/aws/ec2/notification-configurations",
+     "listedBy": "DescribeNotificationConfigurations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Scaling policies",
+     "path": "/aws/ec2/policies",
+     "listedBy": "DescribePolicies",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Scheduled actions",
+     "path": "/aws/ec2/scheduled-actions",
+     "listedBy": "DescribeScheduledActions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Traffic sources",
+     "path": "/aws/ec2/traffic-sources",
+     "listedBy": "DescribeTrafficSources",
+     "screenToday": false,
+     "listedInside": "/aws/ec2/auto-scaling-groups",
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "rds": [
+  {
+   "model": "rds",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "DB instances",
+     "path": "/aws/rds/instances",
+     "listedBy": "DescribeDBInstances",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB clusters",
+     "path": "/aws/rds/clusters",
+     "listedBy": "DescribeDBClusters",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB cluster snapshots",
+     "path": "/aws/rds/cluster-snapshots",
+     "listedBy": "DescribeDBClusterSnapshots",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Blue green deployments",
+     "path": "/aws/rds/blue-green-deployments",
+     "listedBy": "DescribeBlueGreenDeployments",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB cluster backtracks",
+     "path": "/aws/rds/db-cluster-backtracks",
+     "listedBy": "DescribeDBClusterBacktracks",
+     "screenToday": false,
+     "listedInside": "/aws/rds/clusters",
+     "shownIn": null
+    },
+    {
+     "label": "DB cluster endpoints",
+     "path": "/aws/rds/db-cluster-endpoints",
+     "listedBy": "DescribeDBClusterEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB cluster parameter groups",
+     "path": "/aws/rds/db-cluster-parameter-groups",
+     "listedBy": "DescribeDBClusterParameterGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB engine versions",
+     "path": "/aws/rds/db-engine-versions",
+     "listedBy": "DescribeDBEngineVersions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB instance automated backups",
+     "path": "/aws/rds/db-instance-automated-backups",
+     "listedBy": "DescribeDBInstanceAutomatedBackups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB parameter groups",
+     "path": "/aws/rds/db-parameter-groups",
+     "listedBy": "DescribeDBParameterGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB proxies",
+     "path": "/aws/rds/db-proxies",
+     "listedBy": "DescribeDBProxies",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB proxy endpoints",
+     "path": "/aws/rds/db-proxy-endpoints",
+     "listedBy": "DescribeDBProxyEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB proxy targets",
+     "path": "/aws/rds/db-proxy-targets",
+     "listedBy": "DescribeDBProxyTargets",
+     "screenToday": false,
+     "listedInside": "/aws/rds/db-proxies",
+     "shownIn": null
+    },
+    {
+     "label": "DB security groups",
+     "path": "/aws/rds/db-security-groups",
+     "listedBy": "DescribeDBSecurityGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB shard groups",
+     "path": "/aws/rds/db-shard-groups",
+     "listedBy": "DescribeDBShardGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB snapshots",
+     "path": "/aws/rds/db-snapshots",
+     "listedBy": "DescribeDBSnapshots",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DB subnet groups",
+     "path": "/aws/rds/db-subnet-groups",
+     "listedBy": "DescribeDBSubnetGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Event subscriptions",
+     "path": "/aws/rds/event-subscriptions",
+     "listedBy": "DescribeEventSubscriptions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Export tasks",
+     "path": "/aws/rds/export-tasks",
+     "listedBy": "DescribeExportTasks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Global clusters",
+     "path": "/aws/rds/global-clusters",
+     "listedBy": "DescribeGlobalClusters",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Integrations",
+     "path": "/aws/rds/integrations",
+     "listedBy": "DescribeIntegrations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Option groups",
+     "path": "/aws/rds/option-groups",
+     "listedBy": "DescribeOptionGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Reserved DB instances",
+     "path": "/aws/rds/reserved-db-instances",
+     "listedBy": "DescribeReservedDBInstances",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Tenant databases",
+     "path": "/aws/rds/tenant-databases",
+     "listedBy": "DescribeTenantDatabases",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "vpc": [
+  {
+   "model": "ec2",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "VPCs",
+     "path": "/aws/vpc/vpcs",
+     "listedBy": "DescribeVpcs",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Subnets",
+     "path": "/aws/vpc/subnets",
+     "listedBy": "DescribeSubnets",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Route tables",
+     "path": "/aws/vpc/route-tables",
+     "listedBy": "DescribeRouteTables",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Internet gateways",
+     "path": "/aws/vpc/internet-gateways",
+     "listedBy": "DescribeInternetGateways",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "AWS network performance metric subscriptions",
+     "path": "/aws/vpc/aws-network-performance-metric-subscriptions",
+     "listedBy": "DescribeAwsNetworkPerformanceMetricSubscriptions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "BYOIP CIDRs",
+     "path": "/aws/vpc/byoip-cidrs",
+     "listedBy": "DescribeByoipCidrs",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Carrier gateways",
+     "path": "/aws/vpc/carrier-gateways",
+     "listedBy": "DescribeCarrierGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Client VPN authorization rules",
+     "path": "/aws/vpc/client-vpn-authorization-rules",
+     "listedBy": "DescribeClientVpnAuthorizationRules",
+     "screenToday": false,
+     "listedInside": "/aws/vpc/client-vpn-endpoints",
+     "shownIn": null
+    },
+    {
+     "label": "Client VPN endpoints",
+     "path": "/aws/vpc/client-vpn-endpoints",
+     "listedBy": "DescribeClientVpnEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Client VPN routes",
+     "path": "/aws/vpc/client-vpn-routes",
+     "listedBy": "DescribeClientVpnRoutes",
+     "screenToday": false,
+     "listedInside": "/aws/vpc/client-vpn-endpoints",
+     "shownIn": null
+    },
+    {
+     "label": "Client VPN target networks",
+     "path": "/aws/vpc/client-vpn-target-networks",
+     "listedBy": "DescribeClientVpnTargetNetworks",
+     "screenToday": false,
+     "listedInside": "/aws/vpc/client-vpn-endpoints",
+     "shownIn": null
+    },
+    {
+     "label": "CoIP pools",
+     "path": "/aws/vpc/coip-pools",
+     "listedBy": "DescribeCoipPools",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Customer gateways",
+     "path": "/aws/vpc/customer-gateways",
+     "listedBy": "DescribeCustomerGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "DHCP options",
+     "path": "/aws/vpc/dhcp-options",
+     "listedBy": "DescribeDhcpOptions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Egress only internet gateways",
+     "path": "/aws/vpc/egress-only-internet-gateways",
+     "listedBy": "DescribeEgressOnlyInternetGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Flow logs",
+     "path": "/aws/vpc/flow-logs",
+     "listedBy": "DescribeFlowLogs",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM BYOASN",
+     "path": "/aws/vpc/ipam-byoasn",
+     "listedBy": "DescribeIpamByoasn",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM pools",
+     "path": "/aws/vpc/ipam-pools",
+     "listedBy": "DescribeIpamPools",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM prefix list resolver targets",
+     "path": "/aws/vpc/ipam-prefix-list-resolver-targets",
+     "listedBy": "DescribeIpamPrefixListResolverTargets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM prefix list resolvers",
+     "path": "/aws/vpc/ipam-prefix-list-resolvers",
+     "listedBy": "DescribeIpamPrefixListResolvers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM resource discoveries",
+     "path": "/aws/vpc/ipam-resource-discoveries",
+     "listedBy": "DescribeIpamResourceDiscoveries",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM resource discovery associations",
+     "path": "/aws/vpc/ipam-resource-discovery-associations",
+     "listedBy": "DescribeIpamResourceDiscoveryAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAM scopes",
+     "path": "/aws/vpc/ipam-scopes",
+     "listedBy": "DescribeIpamScopes",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPAMs",
+     "path": "/aws/vpc/ipams",
+     "listedBy": "DescribeIpams",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "IPv6 pools",
+     "path": "/aws/vpc/ipv6-pools",
+     "listedBy": "DescribeIpv6Pools",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Local gateway route table virtual interface group associations",
+     "path": "/aws/vpc/local-gateway-route-table-virtual-interface-group-associations",
+     "listedBy": "DescribeLocalGatewayRouteTableVirtualInterfaceGroupAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Local gateway route table VPC associations",
+     "path": "/aws/vpc/local-gateway-route-table-vpc-associations",
+     "listedBy": "DescribeLocalGatewayRouteTableVpcAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Local gateway route tables",
+     "path": "/aws/vpc/local-gateway-route-tables",
+     "listedBy": "DescribeLocalGatewayRouteTables",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Local gateway virtual interface groups",
+     "path": "/aws/vpc/local-gateway-virtual-interface-groups",
+     "listedBy": "DescribeLocalGatewayVirtualInterfaceGroups",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Local gateway virtual interfaces",
+     "path": "/aws/vpc/local-gateway-virtual-interfaces",
+     "listedBy": "DescribeLocalGatewayVirtualInterfaces",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Managed prefix lists",
+     "path": "/aws/vpc/managed-prefix-lists",
+     "listedBy": "DescribeManagedPrefixLists",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "NAT gateways",
+     "path": "/aws/vpc/nat-gateways",
+     "listedBy": "DescribeNatGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network ACLs",
+     "path": "/aws/vpc/network-acls",
+     "listedBy": "DescribeNetworkAcls",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network insights access scope analyses",
+     "path": "/aws/vpc/network-insights-access-scope-analyses",
+     "listedBy": "DescribeNetworkInsightsAccessScopeAnalyses",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network insights access scopes",
+     "path": "/aws/vpc/network-insights-access-scopes",
+     "listedBy": "DescribeNetworkInsightsAccessScopes",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network insights analyses",
+     "path": "/aws/vpc/network-insights-analyses",
+     "listedBy": "DescribeNetworkInsightsAnalyses",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Network insights paths",
+     "path": "/aws/vpc/network-insights-paths",
+     "listedBy": "DescribeNetworkInsightsPaths",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Public IPv4 pools",
+     "path": "/aws/vpc/public-ipv4-pools",
+     "listedBy": "DescribePublicIpv4Pools",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Route server endpoints",
+     "path": "/aws/vpc/route-server-endpoints",
+     "listedBy": "DescribeRouteServerEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Route server peers",
+     "path": "/aws/vpc/route-server-peers",
+     "listedBy": "DescribeRouteServerPeers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Route servers",
+     "path": "/aws/vpc/route-servers",
+     "listedBy": "DescribeRouteServers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Secondary networks",
+     "path": "/aws/vpc/secondary-networks",
+     "listedBy": "DescribeSecondaryNetworks",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Secondary subnets",
+     "path": "/aws/vpc/secondary-subnets",
+     "listedBy": "DescribeSecondarySubnets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Security group VPC associations",
+     "path": "/aws/vpc/security-group-vpc-associations",
+     "listedBy": "DescribeSecurityGroupVpcAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Traffic mirror filters",
+     "path": "/aws/vpc/traffic-mirror-filters",
+     "listedBy": "DescribeTrafficMirrorFilters",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Traffic mirror sessions",
+     "path": "/aws/vpc/traffic-mirror-sessions",
+     "listedBy": "DescribeTrafficMirrorSessions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Traffic mirror targets",
+     "path": "/aws/vpc/traffic-mirror-targets",
+     "listedBy": "DescribeTrafficMirrorTargets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway connect peers",
+     "path": "/aws/vpc/transit-gateway-connect-peers",
+     "listedBy": "DescribeTransitGatewayConnectPeers",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway connects",
+     "path": "/aws/vpc/transit-gateway-connects",
+     "listedBy": "DescribeTransitGatewayConnects",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway metering policies",
+     "path": "/aws/vpc/transit-gateway-metering-policies",
+     "listedBy": "DescribeTransitGatewayMeteringPolicies",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway multicast domains",
+     "path": "/aws/vpc/transit-gateway-multicast-domains",
+     "listedBy": "DescribeTransitGatewayMulticastDomains",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway peering attachments",
+     "path": "/aws/vpc/transit-gateway-peering-attachments",
+     "listedBy": "DescribeTransitGatewayPeeringAttachments",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway policy tables",
+     "path": "/aws/vpc/transit-gateway-policy-tables",
+     "listedBy": "DescribeTransitGatewayPolicyTables",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway route table announcements",
+     "path": "/aws/vpc/transit-gateway-route-table-announcements",
+     "listedBy": "DescribeTransitGatewayRouteTableAnnouncements",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway route tables",
+     "path": "/aws/vpc/transit-gateway-route-tables",
+     "listedBy": "DescribeTransitGatewayRouteTables",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateway VPC attachments",
+     "path": "/aws/vpc/transit-gateway-vpc-attachments",
+     "listedBy": "DescribeTransitGatewayVpcAttachments",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Transit gateways",
+     "path": "/aws/vpc/transit-gateways",
+     "listedBy": "DescribeTransitGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Verified access endpoints",
+     "path": "/aws/vpc/verified-access-endpoints",
+     "listedBy": "DescribeVerifiedAccessEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Verified access instances",
+     "path": "/aws/vpc/verified-access-instances",
+     "listedBy": "DescribeVerifiedAccessInstances",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Verified access trust providers",
+     "path": "/aws/vpc/verified-access-trust-providers",
+     "listedBy": "DescribeVerifiedAccessTrustProviders",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC block public access exclusions",
+     "path": "/aws/vpc/vpc-block-public-access-exclusions",
+     "listedBy": "DescribeVpcBlockPublicAccessExclusions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC encryption controls",
+     "path": "/aws/vpc/vpc-encryption-controls",
+     "listedBy": "DescribeVpcEncryptionControls",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC endpoint connection notifications",
+     "path": "/aws/vpc/vpc-endpoint-connection-notifications",
+     "listedBy": "DescribeVpcEndpointConnectionNotifications",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC endpoint service configurations",
+     "path": "/aws/vpc/vpc-endpoint-service-configurations",
+     "listedBy": "DescribeVpcEndpointServiceConfigurations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC endpoints",
+     "path": "/aws/vpc/vpc-endpoints",
+     "listedBy": "DescribeVpcEndpoints",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPC peering connections",
+     "path": "/aws/vpc/vpc-peering-connections",
+     "listedBy": "DescribeVpcPeeringConnections",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPN connections",
+     "path": "/aws/vpc/vpn-connections",
+     "listedBy": "DescribeVpnConnections",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "VPN gateways",
+     "path": "/aws/vpc/vpn-gateways",
+     "listedBy": "DescribeVpnGateways",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "ecs": [
+  {
+   "model": "ecs",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Clusters",
+     "path": "/aws/ecs/clusters",
+     "listedBy": "ListClusters",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Task definitions",
+     "path": "/aws/ecs/task-definitions",
+     "listedBy": "ListTaskDefinitions",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Account settings",
+     "path": "/aws/ecs/account-settings",
+     "listedBy": "ListAccountSettings",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Attributes",
+     "path": "/aws/ecs/attributes",
+     "listedBy": "ListAttributes",
+     "screenToday": false,
+     "listedInside": "/aws/ecs/clusters",
+     "shownIn": null
+    },
+    {
+     "label": "Capacity providers",
+     "path": "/aws/ecs/capacity-providers",
+     "listedBy": "DescribeCapacityProviders",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Container instances",
+     "path": "/aws/ecs/container-instances",
+     "listedBy": "ListContainerInstances",
+     "screenToday": false,
+     "listedInside": "/aws/ecs/clusters",
+     "shownIn": null
+    },
+    {
+     "label": "Daemon task definitions",
+     "path": "/aws/ecs/daemon-task-definitions",
+     "listedBy": "ListDaemonTaskDefinitions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Daemons",
+     "path": "/aws/ecs/daemons",
+     "listedBy": "ListDaemons",
+     "screenToday": false,
+     "listedInside": "/aws/ecs/clusters",
+     "shownIn": null
+    },
+    {
+     "label": "Services",
+     "path": "/aws/ecs/services",
+     "listedBy": "ListServices",
+     "screenToday": false,
+     "listedInside": "/aws/ecs/clusters",
+     "shownIn": {
+      "entry": "/aws/ecs/clusters",
+      "place": "the \"Services\" section of a cluster"
+     }
+    },
+    {
+     "label": "Tasks",
+     "path": "/aws/ecs/tasks",
+     "listedBy": "ListTasks",
+     "screenToday": false,
+     "listedInside": "/aws/ecs/clusters",
+     "shownIn": {
+      "entry": "/aws/ecs/clusters",
+      "place": "the \"Tasks\" section of a cluster"
+     }
+    }
+   ]
+  }
+ ],
+ "secretsmanager": [
+  {
+   "model": "secretsmanager",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Secrets",
+     "path": "/aws/secretsmanager/secrets",
+     "listedBy": "ListSecrets",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Secret versions",
+     "path": "/aws/secretsmanager/secret-versions",
+     "listedBy": "ListSecretVersionIds",
+     "screenToday": false,
+     "listedInside": "/aws/secretsmanager/secrets",
+     "shownIn": {
+      "entry": "/aws/secretsmanager/secrets",
+      "place": "the \"Version history\" section of a secret"
+     }
+    }
+   ]
+  }
+ ],
+ "kms": [
+  {
+   "model": "kms",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Customer managed keys",
+     "path": "/aws/kms/keys",
+     "listedBy": "ListKeys",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Aliases",
+     "path": "/aws/kms/aliases",
+     "listedBy": "ListAliases",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": {
+      "entry": "/aws/kms/keys",
+      "place": "\"Aliases\" in the \"Labels\" tab of a key"
+     }
+    },
+    {
+     "label": "Custom key stores",
+     "path": "/aws/kms/custom-key-stores",
+     "listedBy": "DescribeCustomKeyStores",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Grants",
+     "path": "/aws/kms/grants",
+     "listedBy": "ListGrants",
+     "screenToday": false,
+     "listedInside": "/aws/kms/keys",
+     "shownIn": {
+      "entry": "/aws/kms/keys",
+      "place": "\"Grants\" in the \"Access\" tab of a key"
+     }
+    },
+    {
+     "label": "Key policies",
+     "path": "/aws/kms/key-policies",
+     "listedBy": "ListKeyPolicies",
+     "screenToday": false,
+     "listedInside": "/aws/kms/keys",
+     "shownIn": {
+      "entry": "/aws/kms/keys",
+      "place": "\"Key policy\" in the \"Access\" tab of a key"
+     }
+    },
+    {
+     "label": "Key rotations",
+     "path": "/aws/kms/key-rotations",
+     "listedBy": "ListKeyRotations",
+     "screenToday": false,
+     "listedInside": "/aws/kms/keys",
+     "shownIn": {
+      "entry": "/aws/kms/keys",
+      "place": "\"Rotation history\" in the \"Rotation\" tab of a key"
+     }
+    }
+   ]
+  }
+ ],
+ "ssm": [
+  {
+   "model": "ssm",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Parameter Store",
+     "path": "/aws/ssm/parameters",
+     "listedBy": "DescribeParameters",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Activations",
+     "path": "/aws/ssm/activations",
+     "listedBy": "DescribeActivations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Association versions",
+     "path": "/aws/ssm/association-versions",
+     "listedBy": "ListAssociationVersions",
+     "screenToday": false,
+     "listedInside": "/aws/ssm/associations",
+     "shownIn": null
+    },
+    {
+     "label": "Associations",
+     "path": "/aws/ssm/associations",
+     "listedBy": "ListAssociations",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Automation executions",
+     "path": "/aws/ssm/automation-executions",
+     "listedBy": "DescribeAutomationExecutions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Commands",
+     "path": "/aws/ssm/commands",
+     "listedBy": "ListCommands",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Compliance items",
+     "path": "/aws/ssm/compliance-items",
+     "listedBy": "ListComplianceItems",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Document versions",
+     "path": "/aws/ssm/document-versions",
+     "listedBy": "ListDocumentVersions",
+     "screenToday": false,
+     "listedInside": "/aws/ssm/documents",
+     "shownIn": null
+    },
+    {
+     "label": "Documents",
+     "path": "/aws/ssm/documents",
+     "listedBy": "ListDocuments",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Maintenance window targets",
+     "path": "/aws/ssm/maintenance-window-targets",
+     "listedBy": "DescribeMaintenanceWindowTargets",
+     "screenToday": false,
+     "listedInside": "/aws/ssm/maintenance-windows",
+     "shownIn": null
+    },
+    {
+     "label": "Maintenance window tasks",
+     "path": "/aws/ssm/maintenance-window-tasks",
+     "listedBy": "DescribeMaintenanceWindowTasks",
+     "screenToday": false,
+     "listedInside": "/aws/ssm/maintenance-windows",
+     "shownIn": null
+    },
+    {
+     "label": "Maintenance windows",
+     "path": "/aws/ssm/maintenance-windows",
+     "listedBy": "DescribeMaintenanceWindows",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Ops item related items",
+     "path": "/aws/ssm/ops-item-related-items",
+     "listedBy": "ListOpsItemRelatedItems",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Ops items",
+     "path": "/aws/ssm/ops-items",
+     "listedBy": "DescribeOpsItems",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Ops metadata",
+     "path": "/aws/ssm/ops-metadata",
+     "listedBy": "ListOpsMetadata",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Patch baselines",
+     "path": "/aws/ssm/patch-baselines",
+     "listedBy": "DescribePatchBaselines",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Resource data sync",
+     "path": "/aws/ssm/resource-data-sync",
+     "listedBy": "ListResourceDataSync",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Sessions",
+     "path": "/aws/ssm/sessions",
+     "listedBy": "DescribeSessions",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ],
+ "cloudformation": [
+  {
+   "model": "cloudformation",
+   "name": null,
+   "subService": null,
+   "entries": [
+    {
+     "label": "Stacks",
+     "path": "/aws/cloudformation/stacks",
+     "listedBy": "ListStacks",
+     "screenToday": true,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Change sets",
+     "path": "/aws/cloudformation/change-sets",
+     "listedBy": "ListChangeSets",
+     "screenToday": false,
+     "listedInside": "/aws/cloudformation/stacks",
+     "shownIn": null
+    },
+    {
+     "label": "Generated templates",
+     "path": "/aws/cloudformation/generated-templates",
+     "listedBy": "ListGeneratedTemplates",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Resource scans",
+     "path": "/aws/cloudformation/resource-scans",
+     "listedBy": "ListResourceScans",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Stack instances",
+     "path": "/aws/cloudformation/stack-instances",
+     "listedBy": "ListStackInstances",
+     "screenToday": false,
+     "listedInside": "/aws/cloudformation/stack-sets",
+     "shownIn": null
+    },
+    {
+     "label": "Stack sets",
+     "path": "/aws/cloudformation/stack-sets",
+     "listedBy": "ListStackSets",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    },
+    {
+     "label": "Type versions",
+     "path": "/aws/cloudformation/type-versions",
+     "listedBy": "ListTypeVersions",
+     "screenToday": false,
+     "listedInside": "/aws/cloudformation/types",
+     "shownIn": null
+    },
+    {
+     "label": "Types",
+     "path": "/aws/cloudformation/types",
+     "listedBy": "ListTypes",
+     "screenToday": false,
+     "listedInside": null,
+     "shownIn": null
+    }
+   ]
+  }
+ ]
+}

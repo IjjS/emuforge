@@ -6,7 +6,7 @@ import type { RegisterTaskDefinitionCommandInput, TaskDefinition } from '@aws-sd
 // emulator's, shown as its refusal.
 
 /**
- * Studio's starter, R4's document as written there, indented by two spaces. It is text a developer edits; nothing else
+ * Studio's starter, issue 657's R3 document, indented by two spaces. It is text a developer edits; nothing else
  * of the area reads the account or the Region from it.
  */
 export const STARTER = `{
@@ -21,7 +21,7 @@ export const STARTER = `{
       "name": "app",
       "image": "busybox",
       "essential": true,
-      "command": ["sh", "-c", "echo hello from EmuForge Studio; sleep 3600"],
+      "command": ["sh", "-c", "echo hello from EmuForge Studio; sleep infinity"],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {

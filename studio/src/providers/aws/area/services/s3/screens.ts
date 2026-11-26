@@ -24,13 +24,6 @@ import { withAbandonedUploads } from './components/upload-abandoned-flash';
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
   header: { text: 'Amazon S3', href: S3_PATH },
-  items: [
-    {
-      type: 'section',
-      text: 'Buckets',
-      items: [{ type: 'link', text: 'General purpose buckets', href: BUCKETS_PATH }],
-    },
-  ],
   activeHref: BUCKETS_PATH,
 };
 

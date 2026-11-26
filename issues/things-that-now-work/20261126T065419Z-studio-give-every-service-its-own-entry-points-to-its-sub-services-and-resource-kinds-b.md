@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|aws-area|service-sub-entry-points
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-entries-navigation-holds-every-entry-of-the-inventory studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-screen studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen studio.aws-entries-kind-without-a-screen-opens-its-page studio.aws-entries-kind-shown-inside-another-says-where studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent studio.aws-entries-sub-service-page-links-its-kinds studio.aws-entries-path-below-an-entry-shows-the-generic-page
 Issue-Commit: e46981cdff212c94d40ef0b9b5e631c0dc9cd5b5
 
 # Give every service its own entry points to its sub-services and resource kinds, built or not

@@ -7,7 +7,6 @@ import { TablePage } from './pages/table-page';
 /** DynamoDB's side navigation on its screens (issue 496, requirement "Screens, routes, layer"): "DynamoDB" and "Tables". */
 const NAVIGATION: ScreenNavigation = {
   header: { text: 'DynamoDB', href: DYNAMODB_PATH },
-  items: [{ type: 'link', text: TABLES_TITLE, href: TABLES_PATH }],
   activeHref: TABLES_PATH,
 };
 

@@ -10,10 +10,6 @@ const LAYERS_PATH = `${LAMBDA_PATH}/layers`;
 /** Lambda's side navigation on its screens. */
 const NAVIGATION: ServiceScreen['navigation'] = {
   header: { text: 'Lambda', href: LAMBDA_PATH },
-  items: [
-    { type: 'link', text: 'Event Functions', href: FUNCTIONS_PATH },
-    { type: 'link', text: LAYERS_TITLE, href: LAYERS_PATH },
-  ],
   activeHref: FUNCTIONS_PATH,
 };
 

@@ -17,6 +17,7 @@ import { AreaModal } from './components/area-modal';
 import { usePageFlash, type FlashResult } from './components/page-flash';
 import { usePageHelp } from './components/page-help';
 import { useShowsResources } from './components/page-resources';
+import type { ServiceEntries } from './entries';
 import AwsArea from './index';
 import type { AreaScreen, ScreenPageProps } from './screens';
 import { AREA_ROOT_CLASS } from './styles/root-class';
@@ -43,9 +44,13 @@ vi.mock('./pages/no-screen-page', async (importOriginal) => {
 });
 
 /** The area's screens as a case registers them; empty, as on `main`, unless a case adds one. */
-const registry = vi.hoisted(() => ({ screens: [] as unknown[] }));
+const registry = vi.hoisted(() => ({ screens: [] as unknown[], entries: [] as ServiceEntries[] }));
 
 vi.mock('./screens', () => ({ SCREENS: registry.screens }));
+vi.mock('./entries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./entries')>()),
+  ENTRIES: registry.entries,
+}));
 
 const { SCREENS: realScreens } = await preloadArea(() => vi.importActual<typeof import('./screens')>('./screens'));
 
@@ -2763,5 +2768,141 @@ describe('a dialog of the area, told to Studio (issue 531)', () => {
 
     await act(() => router.navigate('/'));
     expect(modals).toEqual([true, false, true, false]);
+  });
+});
+
+describe('a service that gives entries (issue 650, R4–R5)', () => {
+  const service = '/dynamodb';
+  const route = '/aws/dynamodb';
+  const widgets = { label: 'Widgets', path: `${route}/widgets`, listedBy: 'ListWidgets' };
+  const things = { label: 'Things', path: `${route}/things`, listedBy: 'ListThings' };
+  const header = { text: 'Amazon DynamoDB', href: route };
+  const widgetScreen: AreaScreen = {
+    service,
+    paths: [route, widgets.path],
+    title: widgets.label,
+    crumbs: [{ text: widgets.label }],
+    navigation: { header, activeHref: widgets.path },
+    help: () => <HelpPanel header={<h2>Widgets help</h2>} />,
+    Page: () => <Header variant="h1">{widgets.label}</Header>,
+  };
+
+  beforeEach(() => {
+    registry.screens.push(widgetScreen);
+    registry.entries.push({ service, groups: [{ entries: [widgets, things] }] });
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+    registry.entries.length = 0;
+  });
+
+  it('shows the service header and the entries, with exactly one current link on the built screen', () => {
+    const { wrapper } = open(widgets.path);
+    const nav = wrapper.findSideNavigation();
+    expect(nav?.findHeaderLink()?.getElement()).toHaveAttribute('href', route);
+    const unbuilt = nav?.findLinkByHref(things.path)?.getElement();
+    const built = nav?.findLinkByHref(widgets.path)?.getElement();
+    expect(unbuilt?.textContent).toBe(things.label);
+    expect(unbuilt).toHaveAccessibleName(things.label);
+    expect(unbuilt).toHaveAccessibleDescription('No screen yet');
+    expect(unbuilt?.closest('li')).toHaveTextContent('No screen yet');
+    expect(built).not.toHaveAccessibleDescription();
+    expect(built).toHaveAttribute('aria-current', 'page');
+    expect(nav?.getElement().querySelectorAll('a[aria-current="page"]')).toHaveLength(1);
+  });
+
+  it.each([false, true])('opens the current range in a long navigation (named groups: %s)', async (grouped) => {
+    const kinds = ['Adapters', 'Bridges', 'Cables'].flatMap((label) =>
+      Array.from({ length: 10 }, (_, index) => ({
+        label: `${label} ${index}`,
+        path: `${route}/${label.toLowerCase()}-${index}`,
+        listedBy: `List${label}`,
+      })),
+    );
+    const core = { entries: [widgets, ...kinds] };
+    const groups = grouped
+      ? [
+          { ...core, name: 'Core' },
+          { name: 'Secondary', entries: [things] },
+        ]
+      : [core];
+    registry.entries.splice(0, 1, { service, groups });
+
+    const { router, wrapper } = open(widgets.path);
+    const navigation = () => wrapper.findSideNavigation();
+    const rangeSection = (index: number) => {
+      const nav = navigation();
+      if (!grouped) return nav?.findItemByIndex(index)?.findSection();
+      const core = nav?.findItemByIndex(1);
+      const children = core
+        ?.findItems()
+        .filter((item) => item.getElement().parentElement?.closest('li') === core.getElement());
+      return children?.[index - 1]?.findSection();
+    };
+    if (grouped) {
+      expect(navigation()?.findItemByIndex(1)?.findSectionTitle()?.getElement()).toHaveTextContent('Core');
+      expect(navigation()?.findItemByIndex(2)?.findSectionTitle()?.getElement()).toHaveTextContent('Secondary');
+    }
+    const ranges = [2, 3, 4].map((index) => rangeSection(index)?.findExpandButton().getElement());
+    expect(ranges.map((button) => button?.textContent?.trim())).toEqual(['A', 'B', 'C']);
+    for (const button of ranges) expect(button).toHaveAttribute('aria-expanded', 'false');
+    const built = navigation()?.findLinkByHref(widgets.path)?.getElement();
+    expect(built).toHaveAccessibleName(widgets.label);
+    expect(built).toHaveAttribute('aria-current', 'page');
+
+    const [adapters] = ranges;
+    fireEvent.click(adapters as HTMLElement);
+    expect(adapters).toHaveAttribute('aria-expanded', 'true');
+    const adapter = navigation()?.findLinkByHref(`${route}/adapters-0`)?.getElement();
+    expect(adapter).toHaveAccessibleName('Adapters 0');
+    expect(adapter).toHaveAccessibleDescription('No screen yet');
+
+    await act(() => router.navigate(`${route}/cables-9`));
+    if (grouped) {
+      const core = navigation()?.findItemByIndex(1)?.findSection()?.findExpandButton().getElement();
+      expect(core).toHaveAttribute('aria-expanded', 'true');
+    }
+    expect(rangeSection(4)?.findExpandButton().getElement()).toHaveAttribute('aria-expanded', 'true');
+    const cable = navigation()?.findLinkByHref(`${route}/cables-9`)?.getElement();
+    expect(cable).toHaveAccessibleName('Cables 9');
+    expect(cable).toHaveAttribute('aria-current', 'page');
+    expect(navigation()?.findActiveLink()?.getElement()).toBe(cable);
+  });
+
+  it('uses the entry’s title and crumbs, with the emulator line and without the notice or help controls', () => {
+    const { wrapper } = open(things.path);
+    expect(breadcrumbs(wrapper)).toEqual([
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['DynamoDB', route],
+      [things.label, null],
+    ]);
+    const target = screen.getByRole('region', { name: things.label });
+    expect(within(target).getByRole('heading', { name: things.label, level: 1 })).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
+    expect(within(target).queryByText(/are in your local emulator/)).not.toBeInTheDocument();
+    expect(within(target).queryByRole('button', { name: 'About the local emulator' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open help panel' })).not.toBeInTheDocument();
+    expect(titles.at(-1)).toBe(things.label);
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', things.path);
+  });
+
+  it('focuses the entry’s content target after following the navigation from a built screen', async () => {
+    const { wrapper, router } = open(widgets.path);
+    const link = wrapper.findSideNavigation()?.findLinkByHref(things.path)?.getElement();
+    expect(link).toBeDefined();
+    fireEvent.click(link as HTMLElement);
+
+    expect(router.state.location.pathname).toBe(things.path);
+    await expectFocusOnTarget(things.label, 'Go to Widgets');
+  });
+
+  it('shows the generated navigation with the screen above current on a generic part page', () => {
+    const { wrapper } = open(`${widgets.path}/extra`);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_PART })).toBeInTheDocument();
+    const nav = wrapper.findSideNavigation();
+    expect(nav?.findLinkByHref(things.path)?.getElement()).toBeInTheDocument();
+    expect(nav?.findActiveLink()?.getElement()).toHaveAttribute('href', widgets.path);
   });
 });

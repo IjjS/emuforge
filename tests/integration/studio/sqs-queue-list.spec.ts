@@ -82,7 +82,7 @@ test('studio.sqs-routes-lead-to-the-queue-screens', async ({ ctx, page }) => {
   const table = page.locator(TABLE).first();
 
   await lines.line(
-    'Open `/aws/sqs/queues` directly → the same list as at `/aws/sqs`, the address unchanged; the crumbs `EmuForge > AWS > SQS > Queues`; the side navigation "SQS" with its one entry "Queues", current',
+    'Open `/aws/sqs/queues` directly → the same list as at `/aws/sqs`, the address unchanged; the crumbs `EmuForge > AWS > SQS > Queues`; the side navigation "SQS" with the entry "Queues", current',
     async () => {
       await open(page, SQS_PATH, LIST_H1);
       await search(page, p);
@@ -96,7 +96,8 @@ test('studio.sqs-routes-lead-to-the-queue-screens', async ({ ctx, page }) => {
       const navigation = page.locator(SIDE_NAVIGATION);
       await expect(navigation.getByRole('link', { name: NAVIGATION_HEADER, exact: true })).toBeVisible();
       const links = (await navigation.getByRole('link').allInnerTexts()).map((t) => t.trim());
-      expect(links, 'the side navigation: its header and one entry').toEqual([NAVIGATION_HEADER, 'Queues']);
+      // Issue 650 (design.md, D6 A): "Queues" is among the navigation's entries, no longer the only one.
+      expect(links, 'the side navigation: the entry "Queues"').toContain('Queues');
       await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'the current entry').toHaveText('Queues');
     },
   );

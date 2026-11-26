@@ -506,7 +506,7 @@ it('links to manual DB cluster snapshots even when there are no clusters', async
   await waitFor(() => {
     expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No DB clusters');
   });
-  fireEvent.click(screen.getByRole('link', { name: 'DB cluster snapshots' }));
+  fireEvent.click(within(table().getElement()).getByRole('link', { name: 'DB cluster snapshots' }));
   await waitFor(() => {
     const heading = table().findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
     expect(heading).toHaveTextContent('DB cluster snapshots');
