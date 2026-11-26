@@ -1,7 +1,7 @@
 import type { Stage } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { assert, beforeEach, expect, it, vi } from 'vitest';
@@ -89,6 +89,29 @@ const names = () =>
 const addressCell = (row: number) => cell(row, 5);
 const success = () => root().findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
 
+function stageAction(label: 'Refresh' | 'Delete' | 'Deploy API') {
+  const index = ['Refresh', 'Delete', 'Deploy API'].indexOf(label);
+  const action = table()?.findHeaderSlot()?.findHeader()?.findActions()?.findAllButtons()[index]?.getElement();
+  assert(action);
+  expect(action).toHaveTextContent(label);
+  return action;
+}
+
+async function retryFailure(user: User, failure: HTMLElement, recovery: boolean) {
+  const wrapper = createWrapper(failure);
+  const link = wrapper.findLink()?.getElement();
+  if (recovery) {
+    expect(link).toHaveTextContent('Connection status');
+    expect(link).toHaveAttribute('href', '/');
+  } else {
+    expect(wrapper.findLink()).toBeNull();
+  }
+  const retry = wrapper.findButton()?.getElement();
+  assert(retry);
+  expect(retry).toHaveTextContent('Retry');
+  await user.click(retry);
+}
+
 it('shows stages, deployment IDs, last change and copyable invoke URLs as plain text', async () => {
   const user = open();
   await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
@@ -97,17 +120,22 @@ it('shows stages, deployment IDs, last change and copyable invoke URLs as plain 
   );
   expect(cell(1, 3)).toHaveTextContent('deploy-dev');
   expect(cell(1, 4)).toHaveTextContent(creationDateText(changed));
-  const deployment = cell(1, 3);
-  assert(deployment);
-  await user.click(within(deployment).getByRole('button', { name: 'Copy Deployment ID' }));
+  const copyDeployment = table()?.findBodyCell(1, 3)?.findCopyToClipboard()?.findCopyButton().getElement();
+  assert(copyDeployment);
+  expect(copyDeployment).toHaveAccessibleName('Copy Deployment ID');
+  await user.click(copyDeployment);
   expect(await navigator.clipboard.readText()).toBe('deploy-dev');
 
   await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
   const address = addressCell(1);
   assert(address);
   expect(address.style.minWidth).toBe('28ch');
-  expect(within(address).queryByRole('link')).not.toBeInTheDocument();
-  await user.click(within(address).getByRole('button', { name: 'Copy Invoke URL' }));
+  const addressWrapper = createWrapper(address);
+  expect(addressWrapper.find('a')).toBeNull();
+  const copyAddress = addressWrapper.findCopyToClipboard()?.findCopyButton().getElement();
+  assert(copyAddress);
+  expect(copyAddress).toHaveAccessibleName('Copy Invoke URL');
+  await user.click(copyAddress);
   expect(await navigator.clipboard.readText()).toBe(invokeUrl('dev'));
 });
 
@@ -196,15 +224,14 @@ it.each(readFailures('GetExport', 'invoke URL'))(
     assert(failedCell);
     expect(failedCell).toHaveTextContent(first);
     expect(failedCell).not.toHaveTextContent(invokeUrl('dev'));
-    expect(Boolean(within(failedCell).queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
     await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(stageAction('Refresh')).toBeEnabled();
 
     failDev = false;
-    await user.click(within(failedCell).getByRole('button', { name: 'Retry' }));
+    await retryFailure(user, failedCell, recovery);
     await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
     readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await user.click(stageAction('Refresh'));
     await waitFor(() =>
       expect([addressCell(1)?.textContent, addressCell(2)?.textContent]).toEqual([
         invokeUrl('dev') + '?deployment=latest',
@@ -224,8 +251,7 @@ it.each(readFailures('GetStages', 'stages'))(
     const empty = table()?.findEmptySlot()?.getElement();
     assert(empty);
     expect(empty).toHaveTextContent(first);
-    expect(Boolean(within(empty).queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
-    await user.click(within(empty).getByRole('button', { name: 'Retry' }));
+    await retryFailure(user, empty, recovery);
     await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
   },
 );
@@ -240,8 +266,8 @@ function deferred<T>() {
 
 type User = ReturnType<typeof userEvent.setup>;
 
-async function openModal(user: User, button: string) {
-  await user.click(screen.getByRole('button', { name: button }));
+async function openModal(user: User, button: 'Delete' | 'Deploy API') {
+  await user.click(stageAction(button));
   return waitFor(() => {
     const modal = root().findModal();
     assert(modal && modal.isVisible());
@@ -258,7 +284,10 @@ async function deployToNewStage(user: User) {
   const input = content.findInput()?.findNativeInput();
   assert(input);
   await user.type(input.getElement(), 'sandbox');
-  await user.click(within(modal.getElement()).getByRole('button', { name: 'Deploy' }));
+  const submit = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
+  assert(submit);
+  expect(submit).toHaveTextContent('Deploy');
+  await user.click(submit);
 }
 
 async function deleteDev(user: User) {
@@ -269,7 +298,10 @@ async function deleteDev(user: User) {
   const input = modal.findContent().findInput()?.findNativeInput();
   assert(input);
   await user.type(input.getElement(), 'dev');
-  await user.click(within(modal.getElement()).getByRole('button', { name: 'Delete' }));
+  const submit = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
+  assert(submit);
+  expect(submit).toHaveTextContent('Delete');
+  await user.click(submit);
 }
 
 const changes = [
@@ -298,7 +330,7 @@ it.each(changes)(
   async (change) => {
     const user = open();
     await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(stageAction('Delete')).toBeDisabled();
     const feedbackAtRead = () => ({
       flash: success()?.textContent,
       modalOpen: Boolean(root().findModal()?.isVisible()),
@@ -327,7 +359,7 @@ it.each(changes)(
     expect(exportsAtRefresh.length).toBeGreaterThan(0);
     for (const state of exportsAtRefresh) expect(state).toEqual(feedback);
     expect(success()).toHaveTextContent(change.message);
-    if (change.action === 'delete') expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    if (change.action === 'delete') expect(stageAction('Delete')).toBeDisabled();
   },
 );
 
@@ -345,7 +377,7 @@ it.each(orderCases)(
     await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
     readStages.mockReturnValueOnce(staleStages.promise);
     readAddress.mockImplementation(async (_, __, name) => (name === 'prod' ? staleAddress.promise : invokeUrl(name)));
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await user.click(stageAction('Refresh'));
     await waitFor(() => expect(readStages).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(2));
     const stageSignal = readStages.mock.calls[1]?.[2];
