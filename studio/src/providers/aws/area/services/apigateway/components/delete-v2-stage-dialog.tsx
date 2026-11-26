@@ -6,7 +6,6 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
-import { usePageFlash } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
 import { useDeleteV2Stage } from '../v2-stage-queries';
 import { RestChangeFailure } from './delete-resource-dialog';
@@ -21,12 +20,11 @@ export function DeleteV2StageDialog({
   apiId: string;
   stageName: string;
   endpoint: string | undefined;
-  onDeleted: () => void;
+  onDeleted: (stageName: string) => void;
   onClose: () => void;
 }) {
   const [typed, setTyped] = useState('');
-  const flash = usePageFlash();
-  const remove = useDeleteV2Stage(apiId, endpoint);
+  const remove = useDeleteV2Stage(apiId, endpoint, onDeleted);
   const canDelete = typed === stageName && remove.available;
 
   function handleClose() {
@@ -35,20 +33,7 @@ export function DeleteV2StageDialog({
 
   function handleDelete() {
     if (!canDelete || remove.isPending) return;
-    remove.submit(stageName, () => {
-      flash.show([
-        {
-          type: 'success',
-          content: (
-            <>
-              Stage <ValueText kind="name" value={stageName} /> deleted.
-            </>
-          ),
-        },
-      ]);
-      onDeleted();
-      onClose();
-    });
+    remove.submit(stageName);
   }
 
   return (

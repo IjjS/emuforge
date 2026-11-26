@@ -39,11 +39,8 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
   const stages = useV2Stages(endpoint, id);
   const handleFollow = useFollow();
   const api = reading.value?.found === true ? reading.value.api : undefined;
-
-  let heading: ReactNode = <ValueText kind="name" value={api?.Name ?? id} />;
-  let content;
-  if (reading.failure !== undefined) {
-    content = (
+  const failure =
+    reading.failure === undefined ? null : (
       <Container>
         <RequestReadFailure
           failure={reading.failure}
@@ -53,6 +50,11 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
         />
       </Container>
     );
+
+  let heading: ReactNode = <ValueText kind="name" value={api?.Name ?? id} />;
+  let content;
+  if (api === undefined && failure !== null) {
+    content = failure;
   } else if (reading.value === undefined) {
     content = (
       <Container>
@@ -80,6 +82,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
     content = (
       <>
         <V2Details api={api} id={id} endpoint={endpoint} onRefresh={() => void reading.refresh()} />
+        {failure}
         <V2Routes
           id={id}
           isHttp={api.ProtocolType === 'HTTP'}

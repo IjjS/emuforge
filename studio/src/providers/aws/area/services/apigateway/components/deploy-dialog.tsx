@@ -13,9 +13,7 @@ import { useId, useRef, useState } from 'react';
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
 import { failureOf, noEndpoint } from '../../../components/use-token-listing';
-import { ValueText } from '../../../components/value-text';
 import { checkDeployStage, STAGE_NAME_RULE } from '../deploy-form';
 import { apiQueryKey } from '../queries';
 import { GET_REST_STAGES, readRestStages } from '../rest-api';
@@ -111,11 +109,13 @@ export function DeployDialog({
   connection,
   hasStages,
   onClose,
+  onSuccess,
 }: {
   apiId: string;
   connection: AreaConnection;
   hasStages: boolean;
   onClose: () => void;
+  onSuccess: (stageName: string) => void;
 }) {
   const [target, setTarget] = useState<'existing' | 'new'>(hasStages ? 'existing' : 'new');
   const [name, setName] = useState('');
@@ -124,8 +124,7 @@ export function DeployDialog({
   const [error, setError] = useState<string>();
   const nameRef = useRef<InputProps.Ref>(null);
   const selectRef = useRef<SelectProps.Ref>(null);
-  const flash = usePageFlash();
-  const deploy = useDeployRestApi(apiId, connection.engineOrigin);
+  const deploy = useDeployRestApi(apiId, connection.engineOrigin, onSuccess);
   const failure = deploy.isError ? failureOf(deploy.error, CREATE_DEPLOYMENT) : undefined;
   const alert = failure && actionFailureItem(failure, failure.operation, connection.engineOrigin);
   const unavailable = connection.engineOrigin === undefined || failure?.kind === 'not-implemented';
@@ -143,24 +142,7 @@ export function DeployDialog({
       return;
     }
     const { stageName } = checked;
-    deploy.mutate(
-      { stageName, description },
-      {
-        onSuccess: () => {
-          flash.show([
-            {
-              type: 'success',
-              content: (
-                <>
-                  API deployed to stage <ValueText kind="name" value={stageName} />.
-                </>
-              ),
-            },
-          ]);
-          onClose();
-        },
-      },
-    );
+    deploy.mutate({ stageName, description });
   };
 
   return (
