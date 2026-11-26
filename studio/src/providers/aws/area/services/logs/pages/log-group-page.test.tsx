@@ -100,6 +100,15 @@ const tags = vi.mocked(listLogGroupTags);
 const streams = vi.mocked(listLogStreams);
 const found = { kind: 'found', group: { logGroupName: group, logGroupClass: 'STANDARD' } } as const;
 
+function firstTagValue() {
+  const table = createWrapper(document.body)
+    .findAllTables()
+    .find(
+      (candidate) => candidate.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags',
+    );
+  return table?.findBodyCell(1, 2)?.getElement();
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -161,7 +170,7 @@ it('opens the address by group name, uses it for the title and crumb, and shows 
   expect(screen.getByRole('heading', { level: 1, name: group })).toBeVisible();
   expect(resources).toHaveBeenCalledWith({ word: 'log streams' });
   expect(await screen.findByText('Standard')).toBeVisible();
-  expect(await screen.findByText('web')).toBeVisible();
+  await waitFor(() => expect(firstTagValue()).toHaveTextContent('web'));
   expect(await screen.findByRole('link', { name: 'some-stream' })).toBeVisible();
   expect(read).toHaveBeenCalledWith(engineOrigin, group, expect.any(AbortSignal));
 });
@@ -350,7 +359,7 @@ it.each(
         await write.promise;
       });
     const client = openLayout();
-    await screen.findByText('old-team');
+    await waitFor(() => expect(firstTagValue()).toHaveTextContent('old-team'));
 
     void client.refetchQueries({ queryKey: LOGS_KEYS.group(group) });
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
@@ -379,7 +388,7 @@ it.each(
 
     await act(async () => oldRead.resolve(original));
     await act(async () => newTags.resolve({ team: 'new-team' }));
-    expect(await screen.findByText('new-team')).toBeVisible();
+    await waitFor(() => expect(firstTagValue()).toHaveTextContent('new-team'));
     expect(flash).toHaveTextContent(result);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
@@ -478,7 +487,7 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
         expect(screen.getByText('Loading tags')).toBeVisible();
         expect(flash).toHaveTextContent(result);
         await act(async () => tagsRead.resolve({ team: 'last-tag' }));
-        expect(await screen.findByText('last-tag')).toBeVisible();
+        await waitFor(() => expect(firstTagValue()).toHaveTextContent('last-tag'));
       } else {
         if (order === 'tags fail') {
           await act(async () =>
@@ -494,7 +503,7 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
           expect(await screen.findByText('TagsReadFailure')).toBeVisible();
         } else {
           await act(async () => tagsRead.resolve({ team: 'first-tag' }));
-          expect(await screen.findByText('first-tag')).toBeVisible();
+          await waitFor(() => expect(firstTagValue()).toHaveTextContent('first-tag'));
         }
         expect(flash).toHaveTextContent(result);
         await act(async () => streamsRead.resolve({ items: [{ logStreamName: 'last-stream' }] }));
