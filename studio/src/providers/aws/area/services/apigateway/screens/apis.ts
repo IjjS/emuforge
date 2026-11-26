@@ -6,7 +6,7 @@ const apiList = {
   title: 'APIs',
   crumbs: [{ text: 'APIs' }],
   Page: ApiListPage,
-};
+} satisfies Pick<ServiceScreen, 'title' | 'crumbs' | 'Page'>;
 const header = { text: 'API Gateway', href: servicePath };
 
 export const SCREENS: readonly ServiceScreen[] = [
