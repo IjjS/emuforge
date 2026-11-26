@@ -33,6 +33,7 @@ import {
   serviceTrust,
   SERVICE_ROLE_PATH,
   shownRead,
+  withoutRoles,
 } from './services/iam/iam';
 import { Lines } from './support/lines';
 
@@ -453,6 +454,7 @@ test('studio.iam-role-list-empty-emulator-says-no-roles', async ({ ctx, page }) 
   const lines = new Lines(ctx);
   const p = rolePrefix(ctx, 'rlempty');
   const seeded = new IamSeeded(ctx, port);
+  await withoutRoles(ctx, port);
   const s = screen(page);
 
   await lines.line(
@@ -549,6 +551,7 @@ test('studio.iam-role-list-pages-follow-the-emulator', async ({ ctx, page }) => 
   const lines = new Lines(ctx);
   const p = rolePrefix(ctx, 'rlpages');
   const seeded = new IamSeeded(ctx, port);
+  await withoutRoles(ctx, port);
   const made = Array.from({ length: 12 }, (_, i) => `${p}-${String(i + 1).padStart(2, '0')}`);
   for (const name of made) await seeded.role(name);
   const direct = await roleNamesDirect(ctx, port);
