@@ -117,6 +117,17 @@ test('studio.logs-search-events-by-pattern-stream-and-time', async ({ ctx, page 
     'Clear the pattern and the stream, set the start to the time of `error one` and the end to the time of `ok two`, search → `error one`, `ok two` and `error job`, and not `error three`',
     async () => {
       const s = searchScreen(page);
+      // An event one second before `error one`, put outside: the start is a bound only when this one is left out,
+      // and it includes its own time only when `error one` is shown.
+      await seeded.events(group, 'web', [{ timestamp: t - 1_000, message: 'before the start' }]);
+      expect(
+        await eventually(
+          5_000,
+          () => messagesDirect(ctx, port, group, 'web'),
+          (messages) => messages.includes('before the start'),
+        ),
+        'the events of `web`, directly, with the one before the start',
+      ).toEqual(['before the start', 'error one', 'ok two', 'error three']);
       await open(page, searchAddress, LOG_EVENTS);
       await s.pattern.fill('error', ACTION);
       await chooseOption(s.stream, 'web');
