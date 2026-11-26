@@ -220,7 +220,7 @@ it('bounds long messages while preserving their text, whitespace, timestamp and 
   const pre = row?.querySelector('pre');
   expect(pre?.textContent).toBe(message);
   expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  expect(pre?.parentElement).toHaveStyle({ maxInlineSize: 'min(35vw, 72ch)' });
+  expect(pre?.parentElement?.style.maxInlineSize).toBe('min(35vw, 72ch)');
   expect(pre?.firstElementChild).toHaveClass('aws-area-value-text');
 });
 
