@@ -552,9 +552,18 @@ it('distinguishes line breaks and literal escapes in stream choices and submits 
   for (const [index, { stored, label, display }] of names.entries()) {
     streamChoice.openDropdown();
     const dropdown = streamChoice.findDropdown();
-    const optionLabels = () => dropdown.findOptions().map((option) => option.findLabel().getElement().textContent);
-    await waitFor(() => expect(optionLabels()).toEqual(['All log streams', ...names.map((name) => name.label)]));
-    streamChoice.selectOption(index + 2);
+    const streamOption = await waitFor(() => {
+      // Cloudscape's attribute selector cannot reliably represent raw line terminators.
+      const match = /[\r\n\u2028\u2029]/.test(stored)
+        ? dropdown.findOptions().find((option) => option.getElement().getAttribute('data-value') === stored)
+        : dropdown.findOptionByValue(stored);
+      const wrapper = requiredElement(match);
+      expect(wrapper.getElement()).toBeVisible();
+      expect(wrapper.getElement()).toHaveAttribute('data-value', stored);
+      expect(wrapper.findLabel().getElement().textContent).toBe(label);
+      return wrapper;
+    });
+    fireEvent.mouseUp(streamOption.getElement());
     expect(streamChoice.findTrigger().getElement()).toHaveTextContent(label);
     submit();
     await waitFor(() => expectResult(label));
