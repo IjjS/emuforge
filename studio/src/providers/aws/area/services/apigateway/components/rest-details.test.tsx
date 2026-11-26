@@ -50,9 +50,9 @@ it('shows the name, copyable ID, description, endpoint types and creation time',
   );
   expect(detail('Name')).toHaveTextContent(api.name);
   expect(detail('ID')).toHaveTextContent(api.id);
-  const copy = createWrapper(detail('ID')).findCopyToClipboard()?.findCopyButton().getElement();
-  expect(copy).toBeEnabled();
-  expect(copy).toHaveAccessibleName('Copy ID');
+  const copyId = createWrapper(detail('ID')).findCopyToClipboard()?.findCopyButton().getElement();
+  expect(copyId).toBeEnabled();
+  expect(copyId).toHaveAccessibleName('Copy ID');
   expect(detail('Description')).toHaveTextContent(api.description);
   expect(detail('Endpoint type')).toHaveTextContent('Regional, Private');
   expect(detail('Creation time')).toHaveTextContent(creationDateText(api.createdDate));
@@ -101,10 +101,10 @@ async function openEdit() {
     </QueryClientProvider>,
   );
   const edit = await waitFor(() => {
-    const button = page.findHeader()?.findActions()?.findAllButtons()[1]?.getElement();
-    assert(button);
-    expect(button).toHaveTextContent('Edit');
-    return button;
+    const edit = page.findHeader()?.findActions()?.findAllButtons().at(-1)?.getElement();
+    assert(edit);
+    expect(edit).toHaveTextContent('Edit');
+    return edit;
   });
   await user.click(edit);
   const modal = await waitFor(() => {
@@ -116,8 +116,7 @@ async function openEdit() {
   const [nameField, descriptionField] = modal.findContent().findAllFormFields();
   const name = nameField?.findControl()?.findInput()?.findNativeInput();
   const description = descriptionField?.findControl()?.findTextarea()?.findNativeTextarea();
-  const footer = modal.findFooter();
-  const save = footer?.findAllButtons().at(-1)?.getElement();
+  const save = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
   assert(name && description && save);
   expect(save).toHaveTextContent('Save');
   for (const [input, text] of [

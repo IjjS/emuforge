@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { infiniteQueryOptions, useInfiniteQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
@@ -32,9 +32,8 @@ export interface AppendedPages<T> {
   refresh: () => Promise<void>;
 }
 
-export function useAppendedPages<T>({ key, endpoint, operation, read }: AppendedPagesOptions<T>): AppendedPages<T> {
-  const client = useQueryClient();
-  const query = useInfiniteQuery({
+function appendedPageOptions<T>({ key, endpoint, read }: Omit<AppendedPagesOptions<T>, 'operation'>) {
+  return infiniteQueryOptions({
     queryKey: key,
     enabled: endpoint !== undefined,
     queryFn: ({ signal, pageParam }) => (endpoint === undefined ? noEndpoint() : read(endpoint, pageParam, signal)),
@@ -45,6 +44,11 @@ export function useAppendedPages<T>({ key, endpoint, operation, read }: Appended
     refetchOnReconnect: false,
     gcTime: 0,
   });
+}
+
+export function useAppendedPages<T>({ key, endpoint, operation, read }: AppendedPagesOptions<T>): AppendedPages<T> {
+  const client = useQueryClient();
+  const query = useInfiniteQuery(appendedPageOptions({ key, endpoint, read }));
   const refresh = () => client.resetQueries({ queryKey: key, exact: true });
 
   return {
@@ -83,9 +87,25 @@ export function useApiLists(endpoint: string | undefined) {
   return { rest, v2 };
 }
 
-/** Resets both lists in place when a change is made from the APIs screen. */
-export function refreshApiLists(client: QueryClient): Promise<void> {
-  return client.resetQueries({ queryKey: listsKey });
+/** Replaces both lists with their first pages while keeping the current rows visible. */
+export async function refreshApiLists(client: QueryClient): Promise<void> {
+  const filters = { queryKey: listsKey, type: 'active' } as const;
+  // Cancel even a first read with no data, so it cannot replace the post-change result.
+  void client.cancelQueries(filters);
+  await Promise.all(
+    client
+      .getQueryCache()
+      .findAll(filters)
+      .map(({ queryKey: key }) => {
+        const [, , endpoint, model] = key;
+        if (typeof endpoint !== 'string' || (model !== 'rest' && model !== 'v2')) return;
+
+        const read = model === 'rest' ? readRestApis : readV2Apis;
+        return client
+          .infiniteQuery({ ...appendedPageOptions({ key, endpoint, read }), pages: 1, staleTime: 0 })
+          .catch(() => undefined);
+      }),
+  );
 }
 
 export function dropApiLists(client: QueryClient): void {

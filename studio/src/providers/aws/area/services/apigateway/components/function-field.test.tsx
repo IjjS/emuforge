@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -43,10 +43,11 @@ function renderField(connection = connected) {
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const field = createWrapper(container).findFormField();
+  const wrapper = createWrapper(container);
+  const field = wrapper.findFormField();
   const select = field && createWrapper(field.getElement()).findSelect();
   if (!select) throw new Error('Missing function choice');
-  return { field, select, onChange, user };
+  return { field, select, onChange, user, wrapper };
 }
 
 it('reads on opening the choice and shows the name and ARN at the option with that ARN', async () => {
@@ -65,8 +66,9 @@ it('reads on opening the choice and shows the name and ARN at the option with th
 
 it('describes the empty function choice and checks permission by default', async () => {
   read.mockResolvedValueOnce({ items: [] });
-  const { field, select, user } = renderField();
-  const checkbox = screen.getByRole('checkbox', { name: 'Allow API Gateway to invoke this function' });
+  const { field, select, user, wrapper } = renderField();
+  const checkbox = wrapper.findCheckbox()?.findNativeInput().getElement();
+  expect(checkbox).toHaveAccessibleName('Allow API Gateway to invoke this function');
   expect(checkbox).toBeChecked();
   expect(checkbox).toHaveAccessibleDescription(
     "Adds a permission to the function's resource policy for this API. Without it the emulator answers 500.",
@@ -141,9 +143,9 @@ it.each<{
   const status = fieldWrapper.findAllStatusIndicators().find((entry) => !dropdown.contains(entry.getElement()));
   expect(status?.getElement()).toHaveTextContent(scenario.heading);
   expect(fieldElement).toHaveTextContent(scenario.reason);
-  const below = within(fieldElement);
-  if (scenario.recovery) expect(below.getByRole('link', { name: 'Connection status' })).toBeVisible();
-  else expect(below.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+  const connectionLink = fieldWrapper.findLink('[href="/"]')?.getElement();
+  if (scenario.recovery) expect(connectionLink).toHaveTextContent('Connection status');
+  else expect(connectionLink).toBeUndefined();
   expect(select.findDropdown().findOptionByValue(item.arn)).toBeNull();
   const retryBelow = fieldWrapper.findButton()?.getElement();
   if (!retryBelow) throw new Error('Missing Retry below the choice');

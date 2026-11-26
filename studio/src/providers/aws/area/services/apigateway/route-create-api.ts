@@ -14,7 +14,7 @@ export const CREATE_INTEGRATION = 'CreateIntegration';
 export const CREATE_ROUTE = 'CreateRoute';
 
 export type RouteOutcome =
-  | { kind: 'created'; permissionWarning?: { functionName: string; reason: string } }
+  | { kind: 'created'; permissionWarning?: { functionName: string; reason: string; failure?: RequestFailure } }
   | { kind: 'unchanged' | 'removed'; failure: RequestFailure }
   | { kind: 'left'; failure: RequestFailure; integrationId: string; removalFailure: RequestFailure };
 
@@ -112,7 +112,11 @@ export async function createRoute(
     if (permission.kind === 'not-given') {
       return {
         kind: 'created',
-        permissionWarning: { functionName: integration.function.name, reason: permission.reason },
+        permissionWarning: {
+          functionName: integration.function.name,
+          reason: permission.reason,
+          ...(permission.failure && { failure: permission.failure }),
+        },
       };
     }
   }

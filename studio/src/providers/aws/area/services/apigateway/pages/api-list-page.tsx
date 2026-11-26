@@ -7,6 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useAnnouncer } from '../../../components/failure-states';
@@ -93,19 +94,22 @@ export function ApiListPage({ connection }: ScreenPageProps) {
   }
 
   function handleDeleted(api: DeleteApiTarget) {
-    flash.show([
-      {
-        type: 'success',
-        content: (
-          <>
-            API <ValueText kind="name" value={api.name} /> deleted.
-          </>
-        ),
-      },
-    ]);
-    setDeleteTarget(undefined);
-    setSelectedKey(undefined);
-    setCopyStatus(undefined);
+    // Commit the feedback and close before the mutation starts refreshing the lists.
+    flushSync(() => {
+      flash.show([
+        {
+          type: 'success',
+          content: (
+            <>
+              API <ValueText kind="name" value={api.name} /> deleted.
+            </>
+          ),
+        },
+      ]);
+      setDeleteTarget(undefined);
+      setSelectedKey(undefined);
+      setCopyStatus(undefined);
+    });
   }
 
   async function handleCopyId() {

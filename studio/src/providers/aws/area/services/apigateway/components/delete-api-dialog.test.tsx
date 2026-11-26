@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { assert, beforeEach, expect, it, vi } from 'vitest';
 
@@ -49,12 +49,16 @@ async function open(api: DeleteApiTarget) {
   assert(input);
   const footer = modal.findFooter();
   assert(footer);
-  const buttons = within(footer.getElement());
+  const [cancel, confirm] = footer.findAllButtons().map((button) => button.getElement());
+  assert(cancel);
+  assert(confirm);
+  expect(cancel).toHaveTextContent('Cancel');
+  expect(confirm).toHaveTextContent('Delete');
   return {
     modal,
     input: input.getElement(),
-    confirm: buttons.getByRole('button', { name: 'Delete' }),
-    cancel: buttons.getByRole('button', { name: 'Cancel' }),
+    confirm,
+    cancel,
     findAlert: () =>
       waitFor(() => {
         const alert = modal.findContent().findAlert();
