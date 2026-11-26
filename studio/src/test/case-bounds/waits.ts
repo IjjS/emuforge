@@ -18,6 +18,17 @@ it('opens the area', async () => {
 });
 `;
 
+export const SHADOWED_TIMEOUT = `
+const TIMEOUT = 10_000;
+it('uses the file timeout', async () => {
+  await vi.waitFor(ready, TIMEOUT);
+});
+it('uses a local timeout', async () => {
+  const TIMEOUT = 4000;
+  await vi.waitFor(ready, TIMEOUT);
+});
+`;
+
 export const HELPER = `
 async function heading(name) {
   return screen.findByRole('heading', { name }, { timeout: 10_000 });
@@ -34,8 +45,26 @@ export const WAIT_FOR = `
 await waitFor(() => { expect(ready).toBe(true); }, { timeout: 10_000 });
 `;
 
+export const QUOTED_TIMEOUT = `
+await waitFor(ready, { 'timeout': 10_000 });
+`;
+
 export const FIND_ALL_BY = `
 await screen.findAllByRole('link', { name }, { timeout: 10_000 });
+`;
+
+export const QUERY_OPTIONS = `
+import { findByRole, findAllByRole, screen } from '@testing-library/react';
+const query = { name: 'Orders', timeout: 10_000 };
+await screen.findByRole('heading', query);
+await screen.findAllByRole('heading', query);
+await findByRole(container, 'heading', query);
+await findAllByRole(container, 'heading', query);
+`;
+
+export const UNBOUND_QUERY = `
+import { findByRole } from '@testing-library/react';
+await findByRole(container, 'heading', {}, { timeout: 10_000 });
 `;
 
 export const WAIT_FOR_REMOVAL = `
