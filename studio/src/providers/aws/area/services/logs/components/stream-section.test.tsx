@@ -101,20 +101,17 @@ it('lists the stream name as a single-segment link, then the last event, first e
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/a%2Fb%23c%3Fd%25e',
   );
-  const rows = createWrapper(container).findTable()?.findRows();
-  expect(rows).toHaveLength(2);
-  expect(rows?.[0]?.findCells().map((cell) => cell.getElement().textContent)).toEqual([
+  const table = createWrapper(container).findTable();
+  expect(table?.findRows()).toHaveLength(2);
+  const rowValues = (row: number) =>
+    [1, 2, 3, 4].map((column) => table?.findBodyCell(row, column)?.getElement().textContent);
+  expect(rowValues(1)).toEqual([
     'a/b#c?d%e',
     creationDateText(new Date(time + 2000)),
     creationDateText(new Date(time + 1000)),
     creationDateText(new Date(time)),
   ]);
-  expect(rows?.[1]?.findCells().map((cell) => cell.getElement().textContent)).toEqual([
-    'empty',
-    '-',
-    '-',
-    creationDateText(new Date(time)),
-  ]);
+  expect(rowValues(2)).toEqual(['empty', '-', '-', creationDateText(new Date(time))]);
 });
 
 it('shows loading and distinguishes an empty list from an empty prefix result', async () => {

@@ -35,7 +35,7 @@ export function GroupDetails({ connection, group, tags }: GroupDetailsProps) {
       <Container header={<Header variant="h2">Details</Header>}>
         <SpaceBetween size="m">
           <KeyValuePairs
-            items={[{ label: 'ARN', value: <CopyValue label="ARN" value={group.logGroupArn ?? group.arn} /> }]}
+            items={[{ label: 'ARN', value: <CopyValue label="ARN" value={group.logGroupArn ?? group.arn} none="-" /> }]}
           />
           <KeyValuePairs
             columns={4}
