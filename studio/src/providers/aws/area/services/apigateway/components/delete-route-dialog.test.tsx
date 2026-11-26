@@ -8,14 +8,19 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
+import type { AreaConnection } from '../../../components/emulator-line';
 import { useV2Routes } from '../v2-queries';
-import { deleteV2Route } from '../v2-route-change-api';
+import { deleteV2Route, isIntegrationShared } from '../v2-route-change-api';
 import { DeleteRouteDialog } from './delete-route-dialog';
 import { V2Routes } from './v2-routes';
 
 vi.mock('../v2-route-change-api', { spy: true });
 
 const connection = { engineOrigin: 'http://127.0.0.1:9681', result: undefined };
+const emulator = { port: 9682, endpoint: 'https://127.0.0.1:9682' };
+const connected = { kind: 'connected', checkedAt: 1, emulator } as const;
+const stopped = { kind: 'emulator-unreachable', checkedAt: 1, emulator, reason: 'not_started', message: '' } as const;
+const ui = createWrapper(document.body);
 const route = { RouteId: 'r-1', RouteKey: 'GET /events', Target: 'integrations/i-1' };
 const request = vi.fn<(request: Request) => Response | Promise<Response>>();
 const operation = 'DeleteRoute';
@@ -46,21 +51,33 @@ function renderInArea(children: ReactNode) {
 }
 
 async function confirmWord(user: ReturnType<typeof userEvent.setup>) {
-  const dialog = within(await screen.findByRole('dialog', { name: 'Delete route GET /events?' }));
-  const remove = dialog.getByRole('button', { name: 'Delete' });
-  const confirmation = dialog.getByRole('textbox', { name: 'To confirm, type “delete” in the field.' });
+  const modal = await waitFor(() => {
+    const dialog = ui.findModal();
+    if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
+    return dialog;
+  });
+  const footer = modal.findFooter()?.getElement();
+  if (!footer) throw new Error('Missing dialog footer');
+  expect(modal.findHeader().getElement()).toHaveTextContent('Delete route GET /events?');
+  const content = modal.findContent().getElement();
+  const remove = within(footer).getByRole('button', { name: 'Delete' });
+  const field = createWrapper(modal.findContent().getElement()).findFormField();
+  expect(field?.findLabel()?.getElement()).toHaveTextContent('To confirm, type “delete” in the field.');
+  const input = field && createWrapper(field.getElement()).findInput();
+  if (!input) throw new Error('Missing confirmation input');
+  const confirmation = input.findNativeInput().getElement();
   await user.type(confirmation, 'delete');
-  return { dialog, remove, confirmation };
+  return { modal, content, remove, confirmation };
 }
 
-async function open(target = route) {
+async function open(target = route, result: AreaConnection['result'] = undefined) {
   const user = userEvent.setup();
   const onDeleted = vi.fn();
   renderInArea(
     <DeleteRouteDialog
       apiId="api-1"
       route={target}
-      connection={connection}
+      connection={{ ...connection, result }}
       onDeleted={onDeleted}
       onDismiss={vi.fn()}
     />,
@@ -80,8 +97,8 @@ it('keeps Delete unavailable after typing the word while the integration check i
       answer = resolve;
     }),
   );
-  const { dialog, remove, user } = await open();
-  expect(dialog.getByText(/Checking whether another route uses integration/).parentElement).toHaveTextContent(
+  const { modal, remove, user } = await open();
+  expect(createWrapper(modal.findContent().getElement()).findStatusIndicator()?.getElement()).toHaveTextContent(
     'Checking whether another route uses integration i-1…',
   );
   expect(remove).toBeDisabled();
@@ -113,23 +130,22 @@ it.each([false, true])('checks the second page before deleting (shared: %s)', as
   renderInArea(<RoutesWithFirstPage />);
   expect(await screen.findByRole('button', { name: 'Load more routes' })).toBeVisible();
   expect(request).toHaveBeenCalledOnce();
-  const selection = createWrapper(document.body).findTable()?.findRowSelectionArea(1)?.find('input');
+  const selection = ui.findTable()?.findRowSelectionArea(1)?.find('input');
   if (!selection) throw new Error('Missing route selector');
   await user.click(selection.getElement());
   await user.click(screen.getByRole('button', { name: 'Delete' }));
-  const { dialog, remove } = await confirmWord(user);
+  const { content, remove } = await confirmWord(user);
   await waitFor(() => expect(remove).toBeEnabled());
 
-  const message = dialog.queryByText(/Its integration/);
-  if (shared) {
-    expect(message).not.toBeInTheDocument();
-  } else {
-    expect(message).toHaveTextContent('Its integration i-1 is used by no other route and is deleted with it.');
-  }
+  const message = 'Its integration i-1 is used by no other route and is deleted with it.';
+  if (shared) expect(content).not.toHaveTextContent(message);
+  else expect(content).toHaveTextContent(message);
   await user.click(remove);
-  if (shared) await screen.findByRole('rowheader', { name: 'GET /elsewhere' });
-  else await screen.findByText('No routes');
-  expect(screen.queryByRole('rowheader', { name: route.RouteKey })).not.toBeInTheDocument();
+  await waitFor(() => {
+    if (shared) expect(ui.findTable()?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('GET /elsewhere');
+    else expect(ui.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
+  });
+  expect(ui.findTable()?.getElement()).not.toHaveTextContent(route.RouteKey);
   expect(
     request.mock.calls.map(([sent]) => [
       sent.method,
@@ -146,15 +162,62 @@ it.each([false, true])('checks the second page before deleting (shared: %s)', as
   ]);
 });
 
-it('shows the GetRoutes failure, then enables confirmation after a successful retry', async () => {
-  request
-    .mockReturnValueOnce(Response.json({ message: 'Routes temporarily unavailable.' }, { status: 400 }))
-    .mockReturnValueOnce(Response.json({ items: [] }));
-  const { dialog, remove, user, onDeleted } = await open();
-  expect(await dialog.findByText(/GetRoutes.*Routes temporarily unavailable\./)).toBeVisible();
+const read = 'GetRoutes';
+const emulatorFailure = { operation: read, kind: 'emulator-did-not-answer', message: 'Timed out.' } as const;
+it.each<[RequestFailure, AreaConnection['result'], string, string, boolean]>([
+  [
+    { operation: read, kind: 'not-implemented' },
+    connected,
+    'Not implemented by the emulator',
+    '501 Not Implemented for GetRoutes',
+    false,
+  ],
+  [
+    { operation: read, kind: 'access-denied', message: 'Policy denies routes.' },
+    connected,
+    'Access denied',
+    'GetRoutes was refused: Policy denies routes.',
+    false,
+  ],
+  [emulatorFailure, stopped, 'Not started on port 9682', 'GetRoutes got no answer from the emulator. Timed out.', true],
+  [
+    emulatorFailure,
+    connected,
+    'Not answering at https://127.0.0.1:9682',
+    'GetRoutes got no answer from the emulator. Timed out.',
+    true,
+  ],
+  [
+    { operation: read, kind: 'engine-did-not-answer' },
+    connected,
+    'The EmuForge engine at http://127.0.0.1:9681 is not answering',
+    'GetRoutes got no answer.',
+    true,
+  ],
+  [
+    { operation: read, kind: 'other', code: 'InvalidId', message: 'Route check refused.' },
+    stopped,
+    'The routes could not be read',
+    'GetRoutes: InvalidId: Route check refused.',
+    false,
+  ],
+])('recovers the integration check after Retry from %j (%j)', async (failure, result, heading, reason, recovery) => {
+  vi.mocked(isIntegrationShared).mockRejectedValueOnce(new RequestError(failure));
+  request.mockReturnValueOnce(Response.json({ items: [] }));
+  const { content, remove, user, onDeleted } = await open(route, result);
+  await waitFor(() => expect(content).toHaveTextContent(heading));
+  expect(content).toHaveTextContent(reason);
+  const dialog = within(content);
+  const status = dialog.queryByRole('link', { name: 'Connection status' });
+  if (recovery) expect(status).toHaveAttribute('href', '/');
+  else expect(status).not.toBeInTheDocument();
   expect(remove).toBeDisabled();
   await user.click(dialog.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(remove).toBeEnabled());
+  await waitFor(() => {
+    expect(remove).toBeEnabled();
+    expect(content).toHaveTextContent('Its integration i-1 is used by no other route and is deleted with it.');
+    expect(content).not.toHaveTextContent(reason);
+  });
   await user.click(remove);
   await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce());
 });
@@ -167,11 +230,13 @@ it.each<[RequestFailure, string]>([
   [{ operation, kind: 'engine-did-not-answer' }, 'did not answer'],
 ])('keeps the confirmation and shows the DeleteRoute failure (%j)', async (failure, message) => {
   vi.mocked(deleteV2Route).mockRejectedValueOnce(new RequestError(failure));
-  const { dialog, remove, user, onDeleted, confirmation } = await open({ ...route, Target: '' });
+  const { modal, remove, user, onDeleted, confirmation } = await open({ ...route, Target: '' });
   await user.click(remove);
-  const alert = await dialog.findByRole('alert');
-  expect(alert).toHaveTextContent(operation);
-  expect(alert).toHaveTextContent(message);
+  await waitFor(() => {
+    const alert = createWrapper(modal.findContent().getElement()).findAlert()?.getElement();
+    expect(alert).toHaveTextContent(operation);
+    expect(alert).toHaveTextContent(message);
+  });
   expect(confirmation).toHaveValue('delete');
   expect(onDeleted).not.toHaveBeenCalled();
   if (failure.kind === 'not-implemented') expect(remove).toBeDisabled();

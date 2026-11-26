@@ -1,4 +1,5 @@
 import type { ProtocolType } from '@aws-sdk/client-apigatewayv2';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -15,6 +16,8 @@ import { useV2Api } from '../v2-queries';
 import { updateV2Api } from '../v2-route-change-api';
 import { V2Details } from './v2-details';
 
+const ui = createWrapper(document.body);
+
 it.each([
   ['HTTP', 'HTTP'],
   ['WEBSOCKET', 'WebSocket'],
@@ -25,7 +28,7 @@ it.each([
     const CreatedDate = new Date('2026-11-26T12:00:00Z');
     const ApiEndpoint = 'https://127.0.0.1:9323/_aws/execute-api/api-1';
     const onRefresh = vi.fn();
-    const { container } = render(
+    render(
       <V2Details
         id="api-1"
         endpoint={undefined}
@@ -35,8 +38,19 @@ it.each([
     );
 
     expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
-    for (const text of ['Events', 'api-1', protocol, 'Collects events', ApiEndpoint, creationDateText(CreatedDate)]) {
-      expect(container).toHaveTextContent(text);
+    const values = ui
+      .findKeyValuePairs()
+      ?.findItems()
+      .map((item) => item.findValue()?.getElement());
+    for (const [index, text] of [
+      'Events',
+      'api-1',
+      protocol,
+      'Collects events',
+      ApiEndpoint,
+      creationDateText(CreatedDate),
+    ].entries()) {
+      expect(values?.[index]).toHaveTextContent(text);
     }
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Copy API ID' }));
@@ -92,25 +106,43 @@ async function openEdit(ProtocolType: ProtocolType, beforeOpen?: () => Promise<v
   const edit = await screen.findByRole('button', { name: 'Edit' });
   await beforeOpen?.();
   await user.click(edit);
-  const dialog = within(await screen.findByRole('dialog', { name: 'Edit API' }));
-  for (const [field, value] of [
-    ['Name', savedFields.Name],
-    ['Description', savedFields.Description],
+  const modal = await waitFor(() => {
+    const dialog = ui.findModal();
+    if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
+    return dialog;
+  });
+  const footer = modal.findFooter()?.getElement();
+  if (!footer) throw new Error('Missing dialog footer');
+  expect(modal.findHeader().getElement()).toHaveTextContent('Edit API');
+  const [name, description] = createWrapper(modal.findContent().getElement()).findAllFormFields();
+  for (const [input, value] of [
+    [name && createWrapper(name.getElement()).findInput()?.findNativeInput().getElement(), savedFields.Name],
+    [
+      description && createWrapper(description.getElement()).findTextarea()?.findNativeTextarea().getElement(),
+      savedFields.Description,
+    ],
   ] as const) {
-    const input = dialog.getByRole('textbox', { name: field });
+    if (!input) throw new Error('Missing API edit field');
     await user.clear(input);
     await user.type(input, value);
   }
-  return { earlier, saved, save: () => user.click(dialog.getByRole('button', { name: 'Save' })) };
+  return {
+    earlier,
+    saved,
+    save: () => user.click(within(footer).getByRole('button', { name: 'Save' })),
+  };
+}
+
+function expectUpdateFlash() {
+  expect(ui.findFlashbar()?.findItemsByType('success')[0]?.getElement()).toHaveTextContent('API New events updated.');
 }
 
 function expectSaved() {
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText(savedFields.Description)).toBeVisible();
-  expect(screen.getAllByText(savedFields.Name)).toHaveLength(2);
-  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent('API New events updated.');
-  expect(screen.queryByText(earlierFields.Name)).not.toBeInTheDocument();
-  expect(screen.queryByText(earlierFields.Description)).not.toBeInTheDocument();
+  expect(ui.findModal()).toBeNull();
+  const items = ui.findKeyValuePairs()?.findItems();
+  expect(items?.[0]?.findValue()?.getElement()).toHaveTextContent(savedFields.Name);
+  expect(items?.[3]?.findValue()?.getElement()).toHaveTextContent(savedFields.Description);
+  expectUpdateFlash();
 }
 
 it.each(['HTTP', 'WEBSOCKET'] as const)(
@@ -124,22 +156,37 @@ it.each(['HTTP', 'WEBSOCKET'] as const)(
   },
 );
 
-it('keeps the new details and flash when a read started before saving answers last', async () => {
-  let answerEarlier!: (value: V2ApiRead) => void;
-  const { save, earlier } = await openEdit('HTTP', async () => {
-    reader
-      .mockReturnValueOnce(
-        new Promise<V2ApiRead>((resolve) => {
-          answerEarlier = resolve;
-        }),
-      )
-      .mockResolvedValueOnce({ found: true, api: savedFields });
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+function deferredRead() {
+  let resolve!: (value: V2ApiRead) => void;
+  const promise = new Promise<V2ApiRead>((done) => {
+    resolve = done;
   });
-  await save();
-  await waitFor(expectSaved);
-  expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
-  await act(async () => answerEarlier(earlier));
-  expectSaved();
-});
+  return { promise, resolve };
+}
+
+it.each(['earlier', 'saved'] as const)(
+  'keeps the new details and flash when the %s read answers first',
+  async (first) => {
+    const earlierRead = deferredRead();
+    const savedRead = deferredRead();
+    const { save, earlier, saved } = await openEdit('HTTP', async () => {
+      reader.mockReturnValueOnce(earlierRead.promise).mockReturnValueOnce(savedRead.promise);
+      await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+    });
+    await save();
+    await waitFor(() => {
+      expectUpdateFlash();
+      expect(reader).toHaveBeenCalledTimes(3);
+    });
+    expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
+    const replies = {
+      earlier: () => earlierRead.resolve(earlier),
+      saved: () => savedRead.resolve(saved),
+    };
+    await act(async () => replies[first]());
+    expectUpdateFlash();
+    await act(async () => replies[first === 'earlier' ? 'saved' : 'earlier']());
+    await waitFor(expectSaved);
+  },
+);

@@ -4,7 +4,8 @@ import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -35,45 +36,65 @@ export function V2Stages({ api, stages, connection }: V2StagesProps) {
   const [deleting, setDeleting] = useState<string>();
   const deployReasonId = useId();
   const flash = usePageFlash();
-  const deploy = useDeployV2Stage(apiId, endpoint);
+  const deploy = useDeployV2Stage(apiId, endpoint, (stageName) => {
+    completeChange(
+      <>
+        API deployed to stage <ValueText kind="name" value={stageName} />.
+      </>,
+    );
+  });
   const selected = stages.items?.find((stage) => stage.StageName && stage.StageName === selectedName);
   const canChange = apiId !== undefined && endpoint !== undefined && !deploy.isPending;
   const deployReason = selected?.AutoDeploy ? 'This stage deploys automatically.' : undefined;
   const canDeploy = canChange && selected?.StageName !== undefined && !deployReason && deploy.available;
 
+  function completeChange(content: ReactNode, close?: () => void) {
+    // Commit the result and close before the mutation hook starts GetStages.
+    flushSync(() => {
+      flash.show([{ type: 'success', content }]);
+      close?.();
+    });
+  }
+
+  function handleCreated(stageName: string) {
+    completeChange(
+      <>
+        Stage <ValueText kind="name" value={stageName} /> created.
+      </>,
+      () => setCreateOpen(false),
+    );
+  }
+
+  function handleDeleted(stageName: string) {
+    completeChange(
+      <>
+        Stage <ValueText kind="name" value={stageName} /> deleted.
+      </>,
+      () => {
+        setSelectedName(undefined);
+        setDeleting(undefined);
+      },
+    );
+  }
+
   function handleDeploy() {
     const stageName = selected?.StageName;
     if (!canDeploy || stageName === undefined) return;
-    deploy.submit(
-      stageName,
-      () => {
-        flash.show([
-          {
-            type: 'success',
-            content: (
-              <>
-                API deployed to stage <ValueText kind="name" value={stageName} />.
-              </>
-            ),
-          },
-        ]);
-      },
-      (failure) => {
-        const item = actionFailureItem(failure, failure.operation, endpoint);
-        flash.show([
-          failure.kind === 'emulator-did-not-answer' || failure.kind === 'engine-did-not-answer'
-            ? {
-                ...item,
-                content: (
-                  <>
-                    {failure.operation} got no answer. {item.content}
-                  </>
-                ),
-              }
-            : item,
-        ]);
-      },
-    );
+    deploy.submit(stageName, (failure) => {
+      const item = actionFailureItem(failure, failure.operation, endpoint);
+      flash.show([
+        failure.kind === 'emulator-did-not-answer' || failure.kind === 'engine-did-not-answer'
+          ? {
+              ...item,
+              content: (
+                <>
+                  {failure.operation} got no answer. {item.content}
+                </>
+              ),
+            }
+          : item,
+      ]);
+    });
   }
 
   const columns: TableProps.ColumnDefinition<Stage>[] = [
@@ -187,14 +208,19 @@ export function V2Stages({ api, stages, connection }: V2StagesProps) {
         }
       />
       {isHttp && createOpen && apiId !== undefined && (
-        <CreateV2StageDialog apiId={apiId} endpoint={endpoint} onClose={() => setCreateOpen(false)} />
+        <CreateV2StageDialog
+          apiId={apiId}
+          endpoint={endpoint}
+          onCreated={handleCreated}
+          onClose={() => setCreateOpen(false)}
+        />
       )}
       {deleting !== undefined && apiId !== undefined && (
         <DeleteV2StageDialog
           apiId={apiId}
           stageName={deleting}
           endpoint={endpoint}
-          onDeleted={() => setSelectedName(undefined)}
+          onDeleted={handleDeleted}
           onClose={() => setDeleting(undefined)}
         />
       )}
