@@ -27,6 +27,7 @@ that order. Its screens serve those tasks and need not match the AWS console (`a
 
 - What the emulator supports of the service today, found by calling it (start one on a free port, stop it after),
   never from memory or a model: each operation the tasks need, and whether it works or answers 501.
+- The AWS service's list of entries, by the rule in `aws-area.md`, "A service's entries".
 - The service's tasks, each with the operations it calls, in order of importance, the core ones marked; and which of
   them this issue builds.
 - The routes and the layer of each screen: Studio's own, or a provider area (`/aws/...`).
