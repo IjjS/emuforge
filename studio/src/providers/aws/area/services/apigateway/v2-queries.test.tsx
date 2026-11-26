@@ -181,7 +181,7 @@ function pagesAfterDelete<T>(
 it.each([true, false])(
   'recovers v2 lists from a failed post-delete read (integration deleted: %s)',
   async (integrationDeleted) => {
-    const routes = pagesAfterDelete(getRoutes, GET_ROUTES, (id) => ({ RouteId: id }));
+    const routes = pagesAfterDelete(getRoutes, GET_ROUTES, (id) => ({ RouteId: id, RouteKey: `GET /${id}` }));
     const integrations = pagesAfterDelete(getIntegrations, GET_INTEGRATIONS, (id) => ({ IntegrationId: id }));
     const stages = pagesAfterDelete(getStages, GET_STAGES, (id) => ({ StageName: id }));
 
