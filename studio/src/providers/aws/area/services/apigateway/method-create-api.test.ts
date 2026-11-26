@@ -66,8 +66,8 @@ it.each([true, false])('creates the Lambda proxy before making the optional perm
     ['PUT', base],
     ['PUT', `${base}/integration`],
   ]);
-  expect(await sent.mock.calls[0]![0].json()).toEqual({ authorizationType: 'AWS_IAM', apiKeyRequired: true });
-  expect(await sent.mock.calls[1]![0].json()).toEqual({
+  expect(await sent.mock.calls[0]?.[0].json()).toEqual({ authorizationType: 'AWS_IAM', apiKeyRequired: true });
+  expect(await sent.mock.calls[1]?.[0].json()).toEqual({
     type: 'AWS_PROXY',
     httpMethod: 'POST',
     uri: `arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/${arn}/invocations`,
@@ -93,7 +93,7 @@ it('sends an HTTP proxy with its separate method and address', async () => {
     ['PUT', base],
     ['PUT', `${base}/integration`],
   ]);
-  expect(await sent.mock.calls[1]![0].json()).toEqual({ type: 'HTTP_PROXY', httpMethod: 'POST', uri: address });
+  expect(await sent.mock.calls[1]?.[0].json()).toEqual({ type: 'HTTP_PROXY', httpMethod: 'POST', uri: address });
 });
 
 it('creates a mock with its request and 200 response templates in order', async () => {
@@ -104,11 +104,11 @@ it('creates a mock with its request and 200 response templates in order', async 
     ['PUT', `${base}/responses/200`],
     ['PUT', `${base}/integration/responses/200`],
   ]);
-  expect(await sent.mock.calls[1]![0].json()).toEqual({
+  expect(await sent.mock.calls[1]?.[0].json()).toEqual({
     type: 'MOCK',
     requestTemplates: { 'application/json': '{"statusCode": 200}' },
   });
-  expect(await sent.mock.calls[3]![0].json()).toEqual({
+  expect(await sent.mock.calls[3]?.[0].json()).toEqual({
     responseTemplates: { 'application/json': mockInput.integration.body },
   });
   expect(permission).not.toHaveBeenCalled();

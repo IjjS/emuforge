@@ -89,7 +89,7 @@ function open(path = address, connection = connected) {
   const choose = async (label: string, value: string) => {
     const choice = await openSelect(label);
     await waitFor(() => expect(choice.findDropdown().findOptionByValue(value)).not.toBeNull());
-    await user.click(choice.findDropdown().findOptionByValue(value)!.getElement());
+    choice.selectOptionByValue(value);
   };
   const chooseKind = async (label: string) => {
     const tile = within(field('Integration kind').getElement()).getByRole('radio', { name: label });
@@ -158,7 +158,7 @@ it('uses the independent HTTP integration method and offers all eight described 
   for (const [value, description] of Object.entries(methods)) {
     expect(choice.findDropdown().findOptionByValue(value)?.getElement()).toHaveTextContent(description);
   }
-  await form.user.click(choice.findDropdown().findOptionByValue('POST')!.getElement());
+  choice.selectOptionByValue('POST');
   const url = `${endpoint}/_aws/execute-api/sibling/dev`;
   await form.user.type(screen.getByRole('textbox', { name: 'HTTP address' }), url);
   await form.submit();
@@ -301,8 +301,9 @@ it.each([false, true])('hands off the success and the optional permission warnin
   await form.choose('Lambda function', fn.arn);
   await form.submit();
   await waitFor(() => expect(form.handOver).toHaveBeenCalledOnce());
-  expect(form.handOver.mock.calls[0]![0]).toBe(restApiPath(apiId, 'resources'));
-  const result = form.handOver.mock.calls[0]![1] as { type: string; content: React.ReactNode }[];
+  const [to, items] = form.handOver.mock.calls[0] ?? [];
+  expect(to).toBe(restApiPath(apiId, 'resources'));
+  const result = items as { type: string; content: React.ReactNode }[];
   const { container } = render(
     <>
       {result.map(({ type, content }) => (

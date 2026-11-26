@@ -158,7 +158,7 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
   const [failure, setFailure] = useState<FlashItem>();
   const [unavailable, setUnavailable] = useState(false);
   const [asking, setAsking] = useState(false);
-  const [restoreCancel, setRestoreCancel] = useState(false);
+  const [kept, setKept] = useState(0);
   const busy = useRef(false);
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const resourceRef = useRef<SelectProps.Ref>(null);
@@ -169,11 +169,8 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
   const mutation = useCreateMethod(apiId, endpoint);
 
   useEffect(() => {
-    if (restoreCancel) {
-      cancelRef.current?.focus();
-      setRestoreCancel(false);
-    }
-  }, [restoreCancel]);
+    if (kept > 0) cancelRef.current?.focus();
+  }, [kept]);
 
   useEffect(() => {
     if (failure) failureRef.current?.focus();
@@ -391,7 +388,7 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
           onAnswer={(answer) => {
             setAsking(false);
             if (answer === 'discard') void navigate(restApiPath(apiId));
-            else setRestoreCancel(true);
+            else setKept((count) => count + 1);
           }}
         />
       )}

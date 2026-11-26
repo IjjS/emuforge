@@ -28,7 +28,8 @@ it('reads names and ARNs with the requested marker and a 50-function page', asyn
     items: [{ name: 'orders', arn }],
     next: 'next',
   });
-  const request = sent.mock.calls[0]![0];
+  const request = sent.mock.calls[0]?.[0];
+  if (!request) throw new Error('Missing ListFunctions request');
   const url = new URL(request.url);
   expect(url.pathname).toBe('/2015-03-31/functions');
   expect(Object.fromEntries(url.searchParams)).toEqual({ MaxItems: '50', Marker: 'previous' });
@@ -60,10 +61,15 @@ it('sends the permission inputs and reads the policy statements or the absence o
   await expect(readPolicy(endpoint, arn, signal)).resolves.toBeNull();
   const [add, read] = sent.mock.calls.map(([request]) => request);
   const path = `/2015-03-31/functions/${encodeURIComponent(arn)}/policy`;
-  expect(new URL(add!.url).pathname).toBe(path);
-  expect(add!.method).toBe('POST');
-  const { FunctionName: _functionName, ...body } = input;
-  expect(await add!.json()).toEqual(body);
-  expect(new URL(read!.url).pathname).toBe(path);
-  expect(read!.method).toBe('GET');
+  if (!add || !read) throw new Error('Missing policy requests');
+  expect(new URL(add.url).pathname).toBe(path);
+  expect(add.method).toBe('POST');
+  expect(await add.json()).toEqual({
+    Action: input.Action,
+    Principal: input.Principal,
+    SourceArn: input.SourceArn,
+    StatementId: input.StatementId,
+  });
+  expect(new URL(read.url).pathname).toBe(path);
+  expect(read.method).toBe('GET');
 });

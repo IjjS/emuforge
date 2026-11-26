@@ -30,7 +30,8 @@ function renderField() {
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const select = createWrapper(container).findSelect()!;
+  const select = createWrapper(container).findSelect();
+  if (!select) throw new Error('Missing function choice');
   return { select, onChange };
 }
 
@@ -45,7 +46,7 @@ it('reads on opening the choice and shows the name and ARN at the option with th
       `${item.name}${item.arn}`,
     ),
   );
-  await userEvent.click(select.findDropdown().findOptionByValue(item.arn)!.getElement());
+  select.selectOptionByValue(item.arn);
   expect(onChange).toHaveBeenCalledWith(item);
 });
 
