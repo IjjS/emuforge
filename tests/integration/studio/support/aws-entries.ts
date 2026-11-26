@@ -199,21 +199,24 @@ export async function openSection(page: Page, title: string): Promise<void> {
 
 /**
  * Opens every section of the navigation that is closed, the outer ones first (a closed section's own sections are
- * drawn once it is open), until none is closed. The bound is the number of sections, never a time.
+ * drawn once it is open), until none is closed. One section a turn, the first closed one that is drawn, found by its
+ * place among the sections' buttons; the bound is the number of sections, never a time.
  */
 export async function openEverySection(page: Page): Promise<void> {
-  const closed = page.locator(`${NAVIGATION_SECTION_BUTTONS}[aria-expanded="false"]`).filter({ visible: true });
-  const most = (await page.locator(NAVIGATION_SECTION_BUTTONS).count()) + 1;
-  for (let opened = 0; opened < most; opened++) {
-    if ((await closed.count()) === 0) return;
-    const first = closed.first();
-    await first.click(ACTION);
-    await expect(first, 'the section just opened is no longer among the closed ones').not.toHaveAttribute(
-      'aria-expanded',
-      'false',
+  const buttons = page.locator(NAVIGATION_SECTION_BUTTONS);
+  const firstClosed = () =>
+    buttons.evaluateAll((els) =>
+      els.findIndex((el) => el.getAttribute('aria-expanded') === 'false' && el.getClientRects().length > 0),
     );
+  const most = (await buttons.count()) + 1;
+  for (let opened = 0; opened < most; opened++) {
+    const index = await firstClosed();
+    if (index < 0) return;
+    const button = buttons.nth(index);
+    await button.click(ACTION);
+    await expect(button, 'the section just chosen is open').toHaveAttribute('aria-expanded', 'true');
   }
-  expect(await closed.count(), 'sections still closed').toBe(0);
+  expect(await firstClosed(), 'the place of a section still closed (-1: none)').toBe(-1);
 }
 
 /** The navigation's link to `href`, by Cloudscape's own selector. */
@@ -319,9 +322,9 @@ export function statement(page: Page, text: string): Locator {
   return page.getByRole('main').getByText(text, { exact: true });
 }
 
-/** The links under the page's heading "Resource kinds" (a sub-service's page), each with its description. */
-export async function resourceKindLinks(page: Page): Promise<(LinkPair & { description: string })[]> {
-  const container = page
+/** The container under the page's heading "Resource kinds" (a sub-service's page). */
+export function resourceKinds(page: Page): Locator {
+  return page
     .getByRole('main')
     .locator(
       createWrapper()
@@ -330,20 +333,26 @@ export async function resourceKindLinks(page: Page): Promise<(LinkPair & { descr
         .replace(/^body /, ''),
     )
     .filter({ has: page.getByRole('heading', { level: 2, name: 'Resource kinds', exact: true }) });
-  return container.getByRole('link').evaluateAll((els) =>
-    els.map((el) => {
-      const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
-      return {
-        text: clean(el.textContent),
-        href: el.getAttribute('href') ?? '',
-        description: (el.getAttribute('aria-describedby') ?? '')
-          .split(/\s+/)
-          .filter((id) => id !== '')
-          .map((id) => clean(document.getElementById(id)?.textContent))
-          .join(' '),
-      };
-    }),
-  );
+}
+
+/** The links under the page's heading "Resource kinds", each with its description. */
+export async function resourceKindLinks(page: Page): Promise<(LinkPair & { description: string })[]> {
+  return resourceKinds(page)
+    .getByRole('link')
+    .evaluateAll((els) =>
+      els.map((el) => {
+        const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+        return {
+          text: clean(el.textContent),
+          href: el.getAttribute('href') ?? '',
+          description: (el.getAttribute('aria-describedby') ?? '')
+            .split(/\s+/)
+            .filter((id) => id !== '')
+            .map((id) => clean(document.getElementById(id)?.textContent))
+            .join(' '),
+        };
+      }),
+    );
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -42,6 +42,7 @@ import {
   openEverySection,
   openSection,
   resourceKindLinks,
+  resourceKinds,
   routeOf,
   shownInStatement,
   statement,
@@ -509,7 +510,8 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page }
     async () => {
       await page.goto(EC2_ELB);
       await expectEntryPage(page, EC2_ELB, ELB);
-      await page.getByRole('main').getByRole('link', { name: 'Target groups', exact: true }).click(ACTION);
+      // The area's `main` holds the side navigation too, which has a link of the same name: the page's own list.
+      await resourceKinds(page).getByRole('link', { name: 'Target groups', exact: true }).click(ACTION);
       await expectEntryPage(page, '/aws/ec2/target-groups', 'Target groups');
     },
   );
