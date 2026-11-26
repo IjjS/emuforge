@@ -3,6 +3,7 @@ import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import Textarea from '@cloudscape-design/components/textarea';
 import { useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
@@ -15,6 +16,7 @@ interface ConfirmNameDialogProps {
   name: string;
   action: string;
   pending: boolean;
+  multiline?: boolean;
   unavailable?: ReactNode;
   feedback?: ReactNode;
   onConfirm: () => void;
@@ -28,6 +30,7 @@ function Dialog({
   name,
   action,
   pending,
+  multiline,
   unavailable,
   feedback,
   onConfirm,
@@ -66,16 +69,28 @@ function Dialog({
         {unavailable}
         {feedback}
         <FormField label={label}>
-          <Input
-            value={typed}
-            readOnly={pending}
-            autoComplete={false}
-            spellcheck={false}
-            onChange={({ detail }) => setTyped(detail.value)}
-            onKeyDown={({ detail }) => {
-              if (detail.key === 'Enter' && !detail.isComposing) handleConfirm();
-            }}
-          />
+          {multiline ? (
+            <Textarea
+              rows={2}
+              resize="vertical"
+              value={typed}
+              readOnly={pending}
+              autoComplete={false}
+              spellcheck={false}
+              onChange={({ detail }) => setTyped(detail.value)}
+            />
+          ) : (
+            <Input
+              value={typed}
+              readOnly={pending}
+              autoComplete={false}
+              spellcheck={false}
+              onChange={({ detail }) => setTyped(detail.value)}
+              onKeyDown={({ detail }) => {
+                if (detail.key === 'Enter' && !detail.isComposing) handleConfirm();
+              }}
+            />
+          )}
         </FormField>
       </SpaceBetween>
     </AreaModal>

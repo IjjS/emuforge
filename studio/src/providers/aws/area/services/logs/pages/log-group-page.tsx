@@ -171,24 +171,24 @@ export function LogGroupPage({ connection, params }: ScreenPageProps) {
         </Header>
       }
     >
-      {group === undefined ? (
-        <Container>
-          {failure === undefined ? (
-            <Box textAlign="center" color="inherit">
-              {read.loading ? (
-                <StatusIndicator type="loading">Loading log group</StatusIndicator>
-              ) : (
-                <Box variant="strong" color="inherit">
-                  Log group not found
-                </Box>
-              )}
-            </Box>
-          ) : (
-            <ReadFailure state={failure} onRetry={read.refresh} />
-          )}
-        </Container>
-      ) : (
-        <SpaceBetween size="l">
+      <SpaceBetween size="l">
+        {group === undefined ? (
+          <Container>
+            {failure === undefined ? (
+              <Box textAlign="center" color="inherit">
+                {read.loading ? (
+                  <StatusIndicator type="loading">Loading log group</StatusIndicator>
+                ) : (
+                  <Box variant="strong" color="inherit">
+                    Log group not found
+                  </Box>
+                )}
+              </Box>
+            ) : (
+              <ReadFailure state={failure} onRetry={read.refresh} />
+            )}
+          </Container>
+        ) : (
           <GroupDetails
             connection={connection}
             group={group}
@@ -202,11 +202,14 @@ export function LogGroupPage({ connection, params }: ScreenPageProps) {
               if (tags.value !== undefined) setDialog({ kind: 'tags', initialTags: tags.value });
             }}
           />
-          <section ref={streamsSection} id="log-streams" tabIndex={-1} aria-label="Log streams">
-            <GroupStreams connection={connection} group={name} />
-          </section>
-        </SpaceBetween>
-      )}
+        )}
+        <GroupStreams
+          connection={connection}
+          group={name}
+          showListing={group !== undefined}
+          sectionRef={streamsSection}
+        />
+      </SpaceBetween>
       {engineOrigin !== undefined && dialog?.kind === 'retention' && (
         <EditRetentionDialog
           endpoint={engineOrigin}
