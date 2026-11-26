@@ -815,13 +815,17 @@ function wellFormed(xml: string): Xml | null {
     last = tag.lastIndex;
     if (m[2] === undefined) continue;
     const top = stack[stack.length - 1];
+    // A `<` or `>` between two tags is a tag cut short, and text beside child elements is not an answer's.
+    if (between.includes('<') || between.includes('>')) return null;
     if (top.children.length === 0) top.text += between;
+    else if (between.trim() !== '') return null;
     const name = m[2].includes(':') ? m[2].slice(m[2].indexOf(':') + 1) : m[2];
     if (m[1] === '/') {
       if (stack.length < 2 || top.name !== name) return null;
       top.text = top.children.length === 0 ? xmlText(top.text) : '';
       stack.pop();
     } else {
+      if (top.text.trim() !== '') return null;
       const node: Xml = { name, children: [], text: '' };
       top.children.push(node);
       if (m[4] !== '/') stack.push(node);
@@ -860,6 +864,10 @@ export async function withoutRoles(caller: Caller, port: number): Promise<void> 
       const truncated = childOf(result, 'IsTruncated')?.text ?? null;
       if (result === null || roles === null || (truncated !== 'true' && truncated !== 'false')) {
         throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
+      }
+      // Text in `Roles` (an entry cut short, as `<member` without its end) is content that cannot be read.
+      if (roles.children.length === 0 && roles.text.trim() !== '') {
+        throw new EnvError('direct ListRoles: Roles holds text that is no member');
       }
       for (const member of roles.children) {
         const name = member.name === 'member' ? (childOf(member, 'RoleName')?.text ?? '') : '';

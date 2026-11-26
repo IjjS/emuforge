@@ -518,17 +518,31 @@ export async function withoutRoles(caller: Caller, port: number): Promise<void> 
     for (let page = 0; page < 100; page++) {
       const params: Record<string, string> = { MaxItems: DIRECT_PAGE };
       if (marker !== null) params.Marker = marker;
-      const read = await iamAnswer(caller, port, 'ListRoles', params, 'before the check makes a role');
+      const answer = await directIam(caller, port, 'ListRoles', params);
+      const read = readAnswer(answer);
+      caller.log(`direct ListRoles before the check makes a role: ${shownRead(read)}`);
       if (!read.ok) throw new EnvError(`direct ListRoles: ${shownRead(read)}`);
+      // A `<` or `>` left once every whole tag is taken out is a tag cut short: the answer is not read as a list.
+      if ('error' in answer || /[<>]/.test(answer.body.replace(/<[^<>]*>/g, ''))) {
+        throw new EnvError('direct ListRoles: answered 200 with a body that is not well-formed');
+      }
       const result = at(read.xml, 'ListRolesResponse', 'ListRolesResult');
       // Only a `ListRolesResult` that holds `Roles` and says whether it is truncated tells what the emulator lists.
       const truncated = textAt(result, 'IsTruncated');
       if (result === null || at(result, 'Roles') === null || (truncated !== 'true' && truncated !== 'false')) {
         throw new EnvError('direct ListRoles: answered 200 without a ListRolesResult that holds Roles and IsTruncated');
       }
-      const page = members(result, 'Roles').map((m) => textAt(m, 'RoleName') ?? '');
-      if (page.some((name) => name === '')) throw new EnvError('direct ListRoles: a role without a RoleName');
-      names.push(...page);
+      // `Roles` is read whole: text in it (an entry cut short, as `<member` without its end) or a child that is
+      // not a `member` with a `RoleName` is content that cannot be read, never an empty list.
+      const roles = at(result, 'Roles');
+      if (roles === null || (roles.children.length === 0 && roles.text.trim() !== '')) {
+        throw new EnvError('direct ListRoles: Roles holds text that is no member');
+      }
+      for (const member of roles.children) {
+        const name = member.name === 'member' ? (textAt(member, 'RoleName') ?? '') : '';
+        if (name === '') throw new EnvError('direct ListRoles: an entry of Roles that is not a member with a RoleName');
+        names.push(name);
+      }
       if (truncated !== 'true') return names;
       marker = textAt(result, 'Marker');
       if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
