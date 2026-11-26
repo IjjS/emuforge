@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
@@ -209,23 +209,28 @@ it('keeps a pending edit mounted and shows its result when Details refresh fails
   await screen.findByRole('heading', { name: 'Details' });
   const wrapper = createWrapper(document.body);
   const detailsHeader = wrapper.findContainer()?.findHeader()?.getElement();
+  assert.isOk(detailsHeader, 'Expected the Details header');
   expect(detailsHeader).toHaveTextContent('Details');
-  await user.click(within(detailsHeader!).getByRole('button', { name: 'Refresh' }));
+  await user.click(within(detailsHeader).getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(apiReader).toHaveBeenCalledTimes(2));
 
-  await user.click(within(detailsHeader!).getByRole('button', { name: 'Edit' }));
+  await user.click(within(detailsHeader).getByRole('button', { name: 'Edit' }));
   const modal = await waitFor(() => {
     const edit = wrapper.findModal();
-    expect(edit?.findHeader().getElement()).toHaveTextContent('Edit API');
-    return edit!;
+    assert.isOk(edit, 'Expected the Edit API dialog');
+    expect(edit.findHeader().getElement()).toHaveTextContent('Edit API');
+    return edit;
   });
   const nameField = modal.findContent().findFormField();
   expect(nameField?.findLabel()?.getElement()).toHaveTextContent('Name');
   const nameInput = nameField?.findControl()?.findInput()?.findNativeInput().getElement();
+  assert.isOk(nameInput, 'Expected the Name input');
   expect(nameInput).toHaveValue(api.name);
-  await user.clear(nameInput!);
-  await user.type(nameInput!, updated.name);
-  await user.click(within(modal.findFooter()!.getElement()).getByRole('button', { name: 'Save' }));
+  await user.clear(nameInput);
+  await user.type(nameInput, updated.name);
+  const footer = modal.findFooter()?.getElement();
+  assert.isOk(footer, 'Expected the Edit API footer');
+  await user.click(within(footer).getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(updateRestApi).toHaveBeenCalledOnce());
 
   const message = 'GetRestApi: BadRequestException: Details refresh refused.';
