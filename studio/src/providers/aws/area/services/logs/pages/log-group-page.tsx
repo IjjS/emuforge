@@ -44,6 +44,7 @@ export function LogGroupPage({ connection, params }: ScreenPageProps) {
   const protectionBusy = useRef(false);
   const [leavingAfterDelete, setLeavingAfterDelete] = useState(false);
   const [lastGroup, setLastGroup] = useState<LogGroup>();
+  const streamsSection = useRef<HTMLElement>(null);
 
   const read = useLogGroup(engineOrigin, name, !leavingAfterDelete);
   const currentGroup = read.value?.kind === 'found' ? read.value.group : undefined;
@@ -150,6 +151,18 @@ export function LogGroupPage({ connection, params }: ScreenPageProps) {
                 >
                   Search log events
                 </Button>
+                <Button
+                  href="#log-streams"
+                  onFollow={(event) => {
+                    const section = streamsSection.current;
+                    if (section === null) return;
+                    event.preventDefault();
+                    section.focus({ preventScroll: true });
+                    section.scrollIntoView({ block: 'start' });
+                  }}
+                >
+                  Jump to log streams
+                </Button>
               </SpaceBetween>
             )
           }
@@ -189,7 +202,9 @@ export function LogGroupPage({ connection, params }: ScreenPageProps) {
               if (tags.value !== undefined) setDialog({ kind: 'tags', initialTags: tags.value });
             }}
           />
-          <GroupStreams connection={connection} group={name} />
+          <section ref={streamsSection} id="log-streams" tabIndex={-1} aria-label="Log streams">
+            <GroupStreams connection={connection} group={name} />
+          </section>
         </SpaceBetween>
       )}
       {engineOrigin !== undefined && dialog?.kind === 'retention' && (
