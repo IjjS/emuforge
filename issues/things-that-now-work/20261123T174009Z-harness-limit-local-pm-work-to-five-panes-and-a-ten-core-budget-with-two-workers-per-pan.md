@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|pm-local-cpu|five-panes-two-workers
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: e373ef54b8556fff03d08d8003d188d8dbbb7782
 
 # Limit local PM work to five panes and a ten-core budget with two workers per pane
