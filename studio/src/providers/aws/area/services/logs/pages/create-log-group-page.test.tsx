@@ -65,14 +65,23 @@ function open() {
 
 const page = createWrapper(document.body);
 
+function required<T>(control: T | null | undefined, label: string): T {
+  if (control === null || control === undefined) throw new Error(`Control "${label}" was not found.`);
+  return control;
+}
+
 function field(label: string) {
   const found = page.findAllFormFields().find((item) => item.findLabel()?.getElement().textContent === label);
   if (found === undefined) throw new Error(`Field "${label}" was not found.`);
   return found;
 }
 
-const nameInput = () => field('Log group name').findInput()!.findNativeInput().getElement();
-const select = (label: string) => field(label).findSelect()!;
+function nativeInput(control: Element) {
+  return required(createWrapper(control).findInput(), 'Input').findNativeInput().getElement();
+}
+
+const nameInput = () => nativeInput(field('Log group name').getElement());
+const select = (label: string) => required(createWrapper(field(label).getElement()).findSelect(), label);
 const submitButton = () => screen.getByRole('button', { name: 'Create log group' });
 
 function nameGroup(name: string) {
@@ -86,18 +95,18 @@ function choose(label: string, value: string) {
 }
 
 function addTag(key: string, value: string) {
-  const editor = page.findAttributeEditor()!;
-  act(() => editor.findAddButton()!.click());
-  const [keyInput, valueInput] = editor.findRows().at(-1)!.findFields();
-  fireEvent.change(keyInput!.findInput()!.findNativeInput().getElement(), { target: { value: key } });
-  fireEvent.change(valueInput!.findInput()!.findNativeInput().getElement(), { target: { value } });
+  const editor = required(page.findAttributeEditor(), 'Tags');
+  act(() => required(editor.findAddButton(), 'Add tag').click());
+  const [keyInput, valueInput] = required(editor.findRows().at(-1), 'Last tag row').findFields();
+  fireEvent.change(nativeInput(required(keyInput, 'Tag key').getElement()), { target: { value: key } });
+  fireEvent.change(nativeInput(required(valueInput, 'Tag value').getElement()), { target: { value } });
 }
 
 function fill() {
   nameGroup(NAME);
   choose('Log class', 'INFREQUENT_ACCESS');
   choose('Retention', '7');
-  act(() => page.findCheckbox()!.findNativeInput().click());
+  act(() => required(page.findCheckbox(), 'Deletion protection').findNativeInput().click());
   addTag('team', 'core');
 }
 
@@ -105,10 +114,21 @@ function expectFormKept() {
   expect(nameInput()).toHaveValue(NAME);
   expect(select('Log class').findTrigger().getElement()).toHaveTextContent('Infrequent Access');
   expect(select('Retention').findTrigger().getElement()).toHaveTextContent('7 days');
-  expect(page.findCheckbox()!.findNativeInput().getElement()).toBeChecked();
-  const [key, value] = page.findAttributeEditor()!.findRows()[0]!.findFields();
-  expect(key!.findInput()!.findNativeInput().getElement()).toHaveValue('team');
-  expect(value!.findInput()!.findNativeInput().getElement()).toHaveValue('core');
+  expect(required(page.findCheckbox(), 'Deletion protection').findNativeInput().getElement()).toBeChecked();
+  const [key, value] = required(
+    required(page.findAttributeEditor(), 'Tags').findRows()[0],
+    'First tag row',
+  ).findFields();
+  expect(nativeInput(required(key, 'Tag key').getElement())).toHaveValue('team');
+  expect(nativeInput(required(value, 'Tag value').getElement())).toHaveValue('core');
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 const submit = () => fireEvent.click(submitButton());
@@ -129,7 +149,7 @@ it('opens with the name constraint, the three described classes, Never expire an
   const logClass = select('Log class');
   expect(logClass.findTrigger().getElement()).toHaveTextContent('Standard');
   expect(select('Retention').findTrigger().getElement()).toHaveTextContent('Never expire');
-  expect(page.findCheckbox()!.findNativeInput().getElement()).not.toBeChecked();
+  expect(required(page.findCheckbox(), 'Deletion protection').findNativeInput().getElement()).not.toBeChecked();
   act(() => logClass.openDropdown());
   const classes = logClass.findDropdown();
   expect(classes.findOptions()).toHaveLength(3);
@@ -175,8 +195,8 @@ it('creates with Never expire in one call and hands over the success to the new 
 });
 
 it('waits for creation, then puts seven days before handing over the result', async () => {
-  const creation = Promise.withResolvers<Awaited<ReturnType<typeof createLogGroup>>>();
-  const retention = Promise.withResolvers<Awaited<ReturnType<typeof putRetentionPolicy>>>();
+  const creation = deferred<Awaited<ReturnType<typeof createLogGroup>>>();
+  const retention = deferred<Awaited<ReturnType<typeof putRetentionPolicy>>>();
   create.mockReturnValueOnce(creation.promise);
   put.mockReturnValueOnce(retention.promise);
 
@@ -214,7 +234,7 @@ it('reports a refused create with its operation and leaves all fields as entered
   );
   const item = show.mock.lastCall?.[0][0];
   const { getByText } = render(<>{item?.content}</>);
-  expect(getByText('A group by that name already exists.')).toBeVisible();
+  expect(getByText(/A group by that name already exists\./)).toBeVisible();
   expectFormKept();
   expect(put).not.toHaveBeenCalled();
   expect(handOver).not.toHaveBeenCalled();
@@ -233,7 +253,7 @@ it('hands over the partial result and the retention refusal after creating the g
   );
   const item = handOver.mock.lastCall?.[1][1];
   const { getByText } = render(<>{item?.content}</>);
-  expect(getByText('Retention could not be stored.')).toBeVisible();
+  expect(getByText(/Retention could not be stored\./)).toBeVisible();
 });
 
 it('keeps the filled form and disables the action if CreateLogGroup answers 501', async () => {

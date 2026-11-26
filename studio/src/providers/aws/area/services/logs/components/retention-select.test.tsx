@@ -8,7 +8,8 @@ const DAYS = [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 109
 
 it('offers Never expire and each allowed value, in order and with a description', () => {
   const { container } = render(<RetentionSelect value={undefined} onChange={vi.fn()} />);
-  const select = createWrapper(container).findSelect()!;
+  const select = createWrapper(container).findSelect();
+  if (select === null) throw new Error('Retention select was not found.');
   act(() => select.openDropdown());
   const dropdown = select.findDropdown();
   const labels = ['Never expire', ...DAYS.map((days) => (days === 1 ? '1 day' : `${days.toString()} days`))];
@@ -33,7 +34,8 @@ it('offers Never expire and each allowed value, in order and with a description'
 it('reports a finite retention as days and Never expire as undefined', () => {
   const onChange = vi.fn();
   const { container, rerender } = render(<RetentionSelect value={undefined} onChange={onChange} />);
-  const select = createWrapper(container).findSelect()!;
+  const select = createWrapper(container).findSelect();
+  if (select === null) throw new Error('Retention select was not found.');
   act(() => select.openDropdown());
   act(() => select.selectOptionByValue('7'));
   expect(onChange).toHaveBeenLastCalledWith(7);
