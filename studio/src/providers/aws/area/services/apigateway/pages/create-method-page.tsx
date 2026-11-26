@@ -412,7 +412,18 @@ export function CreateMethodPage({ connection, params }: ScreenPageProps) {
   const notFound = api.data === null;
   return (
     <SpaceBetween size="l">
-      <Header variant="h1">{notFound ? 'API not found' : title}</Header>
+      <Header
+        variant="h1"
+        description={
+          api.data?.name ? (
+            <>
+              API: <ValueText kind="name" value={api.data.name} />
+            </>
+          ) : undefined
+        }
+      >
+        {notFound ? 'API not found' : title}
+      </Header>
       {api.failure && (
         <RequestReadFailure
           failure={api.failure}

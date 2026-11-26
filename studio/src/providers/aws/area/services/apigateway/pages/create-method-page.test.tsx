@@ -109,9 +109,10 @@ function open(path = address, connection = connected) {
     await user.click(tile.getElement());
   };
   const shown = () => screen.findByRole('heading', { name: 'Method settings' });
+  const headingDescription = () => wrapper.findHeader()?.findDescription()?.getElement();
   const submit = () => user.click(screen.getByRole('button', { name: 'Create method' }));
   const cancel = () => user.click(screen.getByRole('button', { name: 'Cancel' }));
-  return { handOver, user, field, select, openSelect, choose, chooseKind, shown, submit, cancel };
+  return { handOver, user, field, select, openSelect, choose, chooseKind, shown, headingDescription, submit, cancel };
 }
 
 const methods = {
@@ -128,6 +129,8 @@ const methods = {
 it('reads resources when opened and describes the resource and each known form option', async () => {
   const form = open();
   await form.shown();
+  expect(form.headingDescription()).toHaveTextContent('API: Orders');
+  expect(form.headingDescription()).toBeVisible();
   expect(resources).not.toHaveBeenCalled();
   const resource = await form.openSelect('Resource');
   await waitFor(() =>
