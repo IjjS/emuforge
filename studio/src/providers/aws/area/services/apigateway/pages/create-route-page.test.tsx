@@ -97,8 +97,7 @@ function open() {
       if (!alert) throw new Error('Missing form alert');
       return alert;
     });
-  const readStatus = () => wrapper.findStatusIndicator()?.getElement();
-  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel, findAlert, readStatus };
+  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel, findAlert };
 }
 
 const methods = {
@@ -285,9 +284,9 @@ function describeReads(operation: 'GetApi' | 'GetIntegrations', read: typeof api
       await form.shown();
       await form.openSelect('Existing integration');
     }
-    await waitFor(() =>
-      expect(form.readStatus()).toHaveTextContent(failure.kind === 'other' ? 'could not be read' : text),
-    );
+    const thing = operation === 'GetApi' ? 'API' : 'integrations';
+    const status = failure.kind === 'other' ? `The ${thing} could not be read` : text;
+    expect(await screen.findByText((content) => content.startsWith(status))).toBeVisible();
     const detail = screen.getByText(
       (content) =>
         content.startsWith(operation) ||
