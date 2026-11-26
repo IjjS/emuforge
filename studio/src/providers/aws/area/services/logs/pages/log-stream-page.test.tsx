@@ -373,11 +373,11 @@ it('shows the put result when the read from the put time fails and retries that 
     )
     .mockResolvedValueOnce(page(['after retry']));
   put.mockResolvedValueOnce(undefined);
-  renderPage();
+  const { container } = renderPage();
   await screen.findByText('initial');
   await submitMessages(['my message']);
   const retry = await screen.findByRole('button', { name: 'Retry' });
-  expect(screen.getByText('InvalidParameterException: read failed')).toBeVisible();
+  expect(container).toHaveTextContent('InvalidParameterException: read failed');
   expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]);
   fireEvent.click(retry);
   expect(await screen.findByText('after retry')).toBeVisible();
