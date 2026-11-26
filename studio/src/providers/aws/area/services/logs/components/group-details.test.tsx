@@ -190,15 +190,15 @@ it.each(failures)(
   'shows %s in Tags, keeps the details, and retries the tags read',
   async (_label, failure, result, text) => {
     read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ retried: 'tag-value' });
-    const { container } = renderDetails(result);
-    const tags = createWrapper(container).findTable()?.findEmptySlot();
-    await waitFor(() => expect(tags?.getElement()).toHaveTextContent(text));
+    renderDetails(result);
+    const empty = () => tableByHeading('Tags')?.findEmptySlot();
+    await waitFor(() => expect(empty()?.getElement()).toHaveTextContent(text));
     if (failure.kind === 'not-implemented')
-      expect(tags?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(empty()?.getElement()).toHaveTextContent('Not implemented by the emulator');
     const copy = aws().findCopyToClipboard()?.findCopyButton().getElement();
     expect(copy).toBeVisible();
     expect(copy).toHaveAccessibleName('Copy ARN');
-    fireEvent.click(requiredElement(buttonIn(tags, 'Retry')));
+    fireEvent.click(requiredElement(buttonIn(empty(), 'Retry')));
     await waitFor(() => expect(firstTagValue()).toHaveTextContent('tag-value'));
     expect(read).toHaveBeenCalledTimes(2);
     expect(read).toHaveBeenLastCalledWith(engineOrigin, group.logGroupName, expect.any(AbortSignal));
