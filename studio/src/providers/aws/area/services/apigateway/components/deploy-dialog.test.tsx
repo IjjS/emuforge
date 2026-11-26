@@ -3,9 +3,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext } from '../../../components/page-flash';
 import { STAGE_NAME_RULE } from '../deploy-form';
@@ -25,7 +26,13 @@ const connected: AreaConnection = {
 };
 const disconnected: AreaConnection = {
   engineOrigin,
-  result: { kind: 'emulator-unreachable', checkedAt: 1, reason: 'not_started', emulator: { port: 9682, endpoint } },
+  result: {
+    kind: 'emulator-unreachable',
+    checkedAt: 1,
+    reason: 'not_started',
+    message: 'The emulator is stopped.',
+    emulator: { port: 9682, endpoint },
+  },
 };
 const read = vi.mocked(readRestStages);
 const deploy = vi.mocked(deployRestApi);
@@ -39,37 +46,64 @@ beforeEach(() => {
   deploy.mockResolvedValue(undefined);
 });
 
-function open(hasStages: boolean, connection = connected) {
+async function open(hasStages: boolean, connection = connected) {
   const show = vi.fn();
   const close = vi.fn();
   const user = userEvent.setup();
+  const root = { current: null as HTMLDivElement | null };
   render(
-    <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
-        <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
-          <DeployDialog apiId={id} connection={connection} hasStages={hasStages} onClose={close} />
-        </PageFlashContext.Provider>
-      </QueryClientProvider>
-    </MemoryRouter>,
+    <AreaRootContext.Provider value={root}>
+      <div
+        ref={(element) => {
+          root.current = element;
+        }}
+      >
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient()}>
+            <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
+              <DeployDialog apiId={id} connection={connection} hasStages={hasStages} onClose={close} />
+            </PageFlashContext.Provider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      </div>
+    </AreaRootContext.Provider>,
   );
-  const dialog = within(screen.getByRole('dialog', { name: 'Deploy API' }));
-  const modal = createWrapper(document.body).findModal()!;
+  const dialog = within(await screen.findByRole('dialog', { name: 'Deploy API' }));
+  const modal = createWrapper(document.body).findModal();
+  assert(modal);
   const content = modal.findContent();
   return {
     user,
     show,
     close,
     dialog,
+    content,
     deployButton: dialog.getByRole('button', { name: 'Deploy' }),
-    radio: (value: string) => content.findRadioGroup()!.findInputByValue(value)!.getElement(),
-    nameInput: () => content.findInput()!.findNativeInput().getElement(),
-    descriptionInput: () => content.findTextarea()!.findNativeTextarea().getElement(),
-    select: () => content.findSelect()!,
+    radio: (value: string) => {
+      const input = content.findRadioGroup()?.findInputByValue(value);
+      assert(input);
+      return input.getElement();
+    },
+    nameInput: () => {
+      const input = content.findInput()?.findNativeInput();
+      assert(input);
+      return input.getElement();
+    },
+    descriptionInput: () => {
+      const input = content.findTextarea()?.findNativeTextarea();
+      assert(input);
+      return input.getElement();
+    },
+    select: () => {
+      const select = content.findSelect();
+      assert(select);
+      return select;
+    },
   };
 }
 
-it('describes both targets and starts with a new-stage name when there are no stages', () => {
-  const { dialog, radio } = open(false);
+it('describes both targets and starts with a new-stage name when there are no stages', async () => {
+  const { dialog, radio } = await open(false);
   expect(dialog.getByText('Moves a stage this API has to the new deployment.')).toBeVisible();
   expect(dialog.getByText('Creates a stage with this deployment.')).toBeVisible();
   expect(radio('new')).toBeChecked();
@@ -79,7 +113,7 @@ it('describes both targets and starts with a new-stage name when there are no st
 });
 
 it('reads stages when the dialog opens and deploys with the chosen option and description', async () => {
-  const { user, radio, descriptionInput, select, deployButton, close } = open(true);
+  const { user, radio, descriptionInput, select, deployButton, close } = await open(true);
   expect(radio('existing')).toBeChecked();
   await waitFor(() => expect(read).toHaveBeenCalledWith(engineOrigin, id, expect.any(AbortSignal)));
   const field = select();
@@ -89,7 +123,9 @@ it('reads stages when the dialog opens and deploys with the chosen option and de
     expect(dropdown.findOptionByValue('dev')?.getElement()).toHaveTextContent('devDeployment dep-dev');
     expect(dropdown.findOptionByValue('prod')?.getElement()).toHaveTextContent('prodDeployment dep-prod');
   });
-  await user.click(dropdown.findOptionByValue('prod')!.getElement());
+  const option = dropdown.findOptionByValue('prod');
+  assert(option);
+  await user.click(option.getElement());
   await user.type(descriptionInput(), 'Send to production');
   await user.click(deployButton);
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
@@ -133,9 +169,9 @@ it.each<[RequestFailure, AreaConnection, string, string, boolean]>([
   ],
 ])('shows and retries the stages choice failure %j', async (failure, connection, first, detail, recovery) => {
   read.mockRejectedValueOnce(new RequestError(failure));
-  const { user, dialog, select } = open(true, connection);
+  const { user, dialog, content, select } = await open(true, connection);
   expect(await dialog.findByText(detail, { exact: false })).toBeVisible();
-  expect(dialog.getByText(first, { exact: false })).toBeVisible();
+  expect(content.findStatusIndicator()?.getElement()).toHaveTextContent(first);
   expect(Boolean(dialog.queryByRole('link', { name: 'Connection status' }))).toBe(recovery);
   const field = select();
   await user.click(field.findTrigger().getElement());
@@ -150,7 +186,7 @@ it.each<[RequestFailure, AreaConnection, string, string, boolean]>([
 
 it('deploys to a new name after the existing-stage choice fails', async () => {
   read.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'GetStages' }));
-  const { user, dialog, radio, nameInput, deployButton } = open(true);
+  const { user, dialog, radio, nameInput, deployButton } = await open(true);
   await dialog.findByText('Not implemented by the emulator');
   expect(dialog.getByText('Creates a stage with this deployment.')).toBeVisible();
   await user.click(radio('new'));
@@ -180,7 +216,7 @@ it.each<[RequestFailure, string, boolean]>([
   ],
 ])('keeps the deployment form and its draft when the change fails (%j)', async (failure, text, unavailable) => {
   deploy.mockRejectedValueOnce(new RequestError(failure));
-  const { user, dialog, nameInput, descriptionInput, deployButton, close, show } = open(false);
+  const { user, dialog, nameInput, descriptionInput, deployButton, close, show } = await open(false);
   await user.type(nameInput(), 'dev');
   await user.type(descriptionInput(), 'Draft');
   await user.click(deployButton);

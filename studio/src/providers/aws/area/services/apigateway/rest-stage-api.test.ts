@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { deleteRestStage, deployRestApi } from './rest-stage-api';
 
@@ -24,7 +24,8 @@ it.each(['First deployment', ''])(
     sent.mockReturnValue(Response.json({ id: 'deployment-1' }));
     await deployRestApi(endpoint, 'api-1', { stageName: 'dev', description }, signal);
     expect(sent).toHaveBeenCalledOnce();
-    const request = sent.mock.calls[0]![0];
+    const request = sent.mock.calls[0]?.[0];
+    assert(request);
     expect(new URL(request.url).pathname).toBe('/restapis/api-1/deployments');
     expect(request.method).toBe('POST');
     expect(await request.json()).toEqual({ stageName: 'dev', ...(description && { description }) });
@@ -35,7 +36,8 @@ it('deletes the named stage from that API', async () => {
   sent.mockReturnValue(new Response(null, { status: 202 }));
   await deleteRestStage(endpoint, 'api-1', 'dev', signal);
   expect(sent).toHaveBeenCalledOnce();
-  const request = sent.mock.calls[0]![0];
+  const request = sent.mock.calls[0]?.[0];
+  assert(request);
   expect(new URL(request.url).pathname).toBe('/restapis/api-1/stages/dev');
   expect(request.method).toBe('DELETE');
 });

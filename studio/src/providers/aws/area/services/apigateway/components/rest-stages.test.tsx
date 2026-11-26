@@ -4,9 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
@@ -59,10 +60,19 @@ function StagesWithFlash() {
 
 function open() {
   const user = userEvent.setup();
+  const root = { current: null as HTMLDivElement | null };
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <StagesWithFlash />
+        <AreaRootContext.Provider value={root}>
+          <div
+            ref={(element) => {
+              root.current = element;
+            }}
+          >
+            <StagesWithFlash />
+          </div>
+        </AreaRootContext.Provider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -70,7 +80,9 @@ function open() {
 }
 
 function row(name: string) {
-  return within(screen.getByRole('rowheader', { name }).closest('tr')!);
+  const element = screen.getByRole('rowheader', { name }).closest('tr');
+  assert(element);
+  return within(element);
 }
 
 it('shows stages, deployment IDs, last change and copyable invoke URLs as plain text', async () => {
@@ -184,20 +196,27 @@ type User = ReturnType<typeof userEvent.setup>;
 
 async function deployToNewStage(user: User) {
   await user.click(screen.getByRole('button', { name: 'Deploy API' }));
-  const dialog = within(screen.getByRole('dialog', { name: 'Deploy API' }));
-  const content = createWrapper(dialog.getByText('Deploy to').closest('[role="dialog"]')!).findRadioGroup()!;
-  await user.click(content.findInputByValue('new')!.getElement());
-  const input = createWrapper(document.body).findModal()!.findContent().findInput()!.findNativeInput();
+  const dialog = within(await screen.findByRole('dialog', { name: 'Deploy API' }));
+  const modal = createWrapper(document.body).findModal();
+  assert(modal);
+  const content = modal.findContent();
+  const target = content.findRadioGroup()?.findInputByValue('new');
+  assert(target);
+  await user.click(target.getElement());
+  const input = content.findInput()?.findNativeInput();
+  assert(input);
   await user.type(input.getElement(), 'sandbox');
   await user.click(dialog.getByRole('button', { name: 'Deploy' }));
 }
 
 async function deleteDev(user: User) {
-  const radio = createWrapper(document.body).findTable()!.findRowSelectionArea(1)!.find('input')!;
+  const radio = createWrapper(document.body).findTable()?.findRowSelectionArea(1)?.find('input');
+  assert(radio);
   await user.click(radio.getElement());
   await user.click(screen.getByRole('button', { name: 'Delete' }));
-  const dialog = within(screen.getByRole('dialog', { name: 'Delete stage dev?' }));
-  const input = createWrapper(document.body).findModal()!.findContent().findInput()!.findNativeInput();
+  const dialog = within(await screen.findByRole('dialog', { name: 'Delete stage dev?' }));
+  const input = createWrapper(document.body).findModal()?.findContent().findInput()?.findNativeInput();
+  assert(input);
   await user.type(input.getElement(), 'dev');
   await user.click(dialog.getByRole('button', { name: 'Delete' }));
 }
@@ -212,11 +231,17 @@ it('shows the deploy result and reads the stages and invoke URLs again', async (
     readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
   });
   await deployToNewStage(user);
-  const notifications = await screen.findByRole('region', { name: 'Notifications' });
+  const notifications = await screen.findByRole('list', { name: 'Notifications' });
   expect(notifications).toHaveTextContent('API deployed to stage sandbox.');
   await rowAfterRead('sandbox');
-  await waitFor(() => expect(row('dev').getByText(invokeUrl('dev') + '?deployment=latest')).toBeVisible());
-  expect(row('sandbox').getByText(invokeUrl('sandbox') + '?deployment=latest')).toBeVisible();
+  await waitFor(() =>
+    expect(row('dev').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
+      invokeUrl('dev') + '?deployment=latest',
+    ),
+  );
+  expect(row('sandbox').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
+    invokeUrl('sandbox') + '?deployment=latest',
+  );
 });
 
 async function rowAfterRead(name: string) {
@@ -232,7 +257,7 @@ it('enables Delete for a selection and reads the stages after deletion', async (
     readStages.mockResolvedValue(stages.slice(1));
   });
   await deleteDev(user);
-  const notifications = await screen.findByRole('region', { name: 'Notifications' });
+  const notifications = await screen.findByRole('list', { name: 'Notifications' });
   expect(notifications).toHaveTextContent('Stage dev deleted.');
   await waitFor(() => expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument());
   expect(screen.getByRole('rowheader', { name: 'prod' })).toBeVisible();
@@ -253,8 +278,8 @@ it.each(['deploy', 'delete'] as const)(
       expect(readStages).toHaveBeenCalledTimes(2);
       expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(2);
     });
-    const stageSignal = readStages.mock.calls[1]![2];
-    const exportSignal = readAddress.mock.calls.filter(([, , name]) => name === 'prod')[1]![3];
+    const stageSignal = readStages.mock.calls[1]?.[2];
+    const exportSignal = readAddress.mock.calls.filter(([, , name]) => name === 'prod')[1]?.[3];
     const finishChange = async () => {
       readStages.mockResolvedValue(action === 'deploy' ? deployedStages : stages.slice(1));
       readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
@@ -266,13 +291,17 @@ it.each(['deploy', 'delete'] as const)(
       remove.mockImplementationOnce(finishChange);
       await deleteDev(user);
     }
-    const notifications = await screen.findByRole('region', { name: 'Notifications' });
+    const notifications = await screen.findByRole('list', { name: 'Notifications' });
     const message = action === 'deploy' ? 'API deployed to stage sandbox.' : 'Stage dev deleted.';
-    await waitFor(() => expect(row('prod').getByText(invokeUrl('prod') + '?deployment=latest')).toBeVisible());
+    await waitFor(() =>
+      expect(row('prod').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
+        invokeUrl('prod') + '?deployment=latest',
+      ),
+    );
     if (action === 'deploy') await rowAfterRead('sandbox');
     else await waitFor(() => expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument());
-    expect(stageSignal.aborted).toBe(true);
-    expect(exportSignal.aborted).toBe(true);
+    expect(stageSignal?.aborted).toBe(true);
+    expect(exportSignal?.aborted).toBe(true);
     await act(async () => {
       staleStages.resolve([...stages, { stageName: 'stale', deploymentId: 'stale' }]);
       staleAddress.resolve(invokeUrl('prod') + '?deployment=stale');
@@ -280,7 +309,9 @@ it.each(['deploy', 'delete'] as const)(
     expect(screen.queryByRole('rowheader', { name: 'stale' })).not.toBeInTheDocument();
     if (action === 'deploy') expect(screen.getByRole('rowheader', { name: 'sandbox' })).toBeVisible();
     else expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument();
-    expect(row('prod').getByText(invokeUrl('prod') + '?deployment=latest')).toBeVisible();
+    expect(row('prod').getByRole('button', { name: 'Copy Invoke URL' }).closest('td')).toHaveTextContent(
+      invokeUrl('prod') + '?deployment=latest',
+    );
     expect(notifications).toHaveTextContent(message);
   },
 );
