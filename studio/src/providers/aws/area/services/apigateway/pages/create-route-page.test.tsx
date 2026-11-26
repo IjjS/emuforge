@@ -123,7 +123,7 @@ it('shows the API name directly below the Create route heading', async () => {
     .find((entry) => entry.getElement().contains(heading));
   const description = header?.findDescription()?.getElement();
   expect(description).toBeVisible();
-  expect(description).toHaveTextContent(`Target API ${apiName}`);
+  expect(description).toHaveTextContent(`API: ${apiName}`);
 });
 
 it('describes every route and integration choice and reads existing integrations only when opened', async () => {
