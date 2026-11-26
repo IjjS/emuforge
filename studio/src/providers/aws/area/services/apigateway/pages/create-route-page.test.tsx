@@ -269,6 +269,9 @@ it.each([removalFailure, { kind: 'not-implemented', operation: 'DeleteIntegratio
     if (cleanup.kind === 'not-implemented') {
       expect(error).toHaveTextContent('Not implemented by the emulator');
       expect(error).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteIntegration.');
+      expect(error).toHaveTextContent(
+        'Switch to “Use an existing integration” and choose the integration that was kept, or another one.',
+      );
       expect(submit).toBeDisabled();
     } else {
       expect(error).toHaveTextContent('DeleteIntegration: BadRequestException: Removal refused.');
@@ -286,6 +289,7 @@ it.each([removalFailure, { kind: 'not-implemented', operation: 'DeleteIntegratio
     expect(submit).toBeEnabled();
     expect(integrations).toHaveBeenCalledTimes(1);
     await form.choose('Existing integration', 'int-new');
+    expect(error).toBeVisible();
     expect(integrations).toHaveBeenCalledTimes(2);
     await form.submit();
     await waitFor(() =>

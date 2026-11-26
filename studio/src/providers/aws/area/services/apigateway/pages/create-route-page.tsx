@@ -144,6 +144,9 @@ function failureItem(outcome: Exclude<RouteOutcome, { kind: 'created' }>, endpoi
             without a route and could not be removed: {cleanup?.content ?? requestReason(removalFailure)}
           </Box>
           {cleanup && <StatusIndicator type="info">{cleanup.header}</StatusIndicator>}
+          {cleanup && (
+            <Box>Switch to “Use an existing integration” and choose the integration that was kept, or another one.</Box>
+          )}
         </SpaceBetween>
       ),
     };
