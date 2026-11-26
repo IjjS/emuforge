@@ -11,6 +11,7 @@ import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 're
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CheckResult } from '../../../lib/engine/engine-client';
+import { preloadArea } from '../../../test/area-preload';
 import type { AreaConnection } from './components/emulator-line';
 import { AreaModal } from './components/area-modal';
 import { usePageFlash, type FlashResult } from './components/page-flash';
@@ -50,6 +51,8 @@ vi.mock('./entries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./entries')>()),
   ENTRIES: registry.entries,
 }));
+
+const { SCREENS: realScreens } = await preloadArea(() => vi.importActual<typeof import('./screens')>('./screens'));
 
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
@@ -688,40 +691,34 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     expect(links).toEqual(SERVICES);
   });
 
-  // Bound: This case awaits the real screens module, which loads every service screen.
-  it(
-    'on /aws with the real build\'s registry: the description of "Services" is the registry\'s sentence, not "No service has a Studio screen yet."; the emulator line, and neither the notice nor "About the local emulator" (issue 61, R4, R6)',
-    { timeout: 15_000 },
-    async () => {
-      const actual = await vi.importActual<typeof import('./screens')>('./screens');
-      registry.screens.push(...actual.SCREENS);
-      try {
-        const registered = new Set(actual.SCREENS.map(({ service }) => service));
-        const routes = SERVICES.map(([, path]) => path.replace(/^\/aws/, ''));
-        const screens = routes.filter((route) => registered.has(route)).length;
-        expect(screens).toBeGreaterThan(0);
-        const count = String(SERVICES.length);
-        const expected =
-          screens === SERVICES.length
-            ? 'Every service has a Studio screen.'
-            : screens === 1
-              ? `1 of ${count} services has a Studio screen.`
-              : `${String(screens)} of ${count} services have a Studio screen.`;
+  it('on /aws with the real build\'s registry: the description of "Services" is the registry\'s sentence, not "No service has a Studio screen yet."; the emulator line, and neither the notice nor "About the local emulator" (issue 61, R4, R6)', () => {
+    registry.screens.push(...realScreens);
+    try {
+      const registered = new Set(realScreens.map(({ service }) => service));
+      const routes = SERVICES.map(([, path]) => path.replace(/^\/aws/, ''));
+      const screens = routes.filter((route) => registered.has(route)).length;
+      expect(screens).toBeGreaterThan(0);
+      const count = String(SERVICES.length);
+      const expected =
+        screens === SERVICES.length
+          ? 'Every service has a Studio screen.'
+          : screens === 1
+            ? `1 of ${count} services has a Studio screen.`
+            : `${String(screens)} of ${count} services have a Studio screen.`;
 
-        const { wrapper } = open('/aws');
-        const container = wrapper.findContentLayout()?.findContent()?.findContainer();
-        const description = container?.findHeader()?.findHeader()?.findDescription()?.getElement();
-        expect(description).toHaveTextContent(expected);
-        expect(description).not.toHaveTextContent('No service has a Studio screen yet.');
-        expect(screen.queryByText('No service has a Studio screen yet.')).toBeNull();
-        expect(emulatorLine()).toBeInTheDocument();
-        expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
-        expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
-      } finally {
-        registry.screens.length = 0;
-      }
-    },
-  );
+      const { wrapper } = open('/aws');
+      const container = wrapper.findContentLayout()?.findContent()?.findContainer();
+      const description = container?.findHeader()?.findHeader()?.findDescription()?.getElement();
+      expect(description).toHaveTextContent(expected);
+      expect(description).not.toHaveTextContent('No service has a Studio screen yet.');
+      expect(screen.queryByText('No service has a Studio screen yet.')).toBeNull();
+      expect(emulatorLine()).toBeInTheDocument();
+      expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+    } finally {
+      registry.screens.length = 0;
+    }
+  });
 
   it.each([
     [NO_SCREEN_SERVICE.path, NO_SCREEN_SENTENCE],

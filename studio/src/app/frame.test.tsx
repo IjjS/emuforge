@@ -7,11 +7,12 @@ import userEvent from '@testing-library/user-event';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUNDLED_CATALOGUES } from '../i18n/bundled';
 import { STORAGE_KEY } from '../i18n/language';
 import { LanguageProvider } from '../i18n/language-provider';
+import { preloadArea } from '../test/area-preload';
 import {
   advance,
   buildOnceToggle,
@@ -30,12 +31,39 @@ import {
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
 import { serviceLinks, SERVICES_DIR } from '../test/service-files';
 import { Frame, ProviderPage } from './frame';
-import { PROVIDERS, type ProviderAreaProps } from './provider-list';
+import type { ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
 import { routes } from './routes';
 
-/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
-const AREA_LOAD_MS = 10_000;
+// Keep the preloaded area available even when a case resets the module cache to inspect Studio's startup.
+vi.mock('../providers/aws/provider', async (importOriginal) => {
+  const { AWS_PROVIDER } = await importOriginal<typeof import('../providers/aws/provider')>();
+  const { preloadArea } = await import('../test/area-preload');
+  const area = await preloadArea(AWS_PROVIDER.loadArea);
+  return { AWS_PROVIDER: { ...AWS_PROVIDER, loadArea: () => Promise.resolve(area) } };
+});
+
+const AREA_WAIT_MS = 5000;
+
+// Fresh routes keep the already evaluated area pending until the focus case releases it.
+let releaseArea: () => void = () => undefined;
+const heldArea = new Promise<void>((resolve) => {
+  releaseArea = resolve;
+});
+vi.resetModules();
+vi.doMock('./provider-list', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./provider-list')>();
+  const providers = actual.PROVIDERS.map((provider) => ({
+    ...provider,
+    loadArea: async () => {
+      await heldArea;
+      return provider.loadArea();
+    },
+  }));
+  return { ...actual, PROVIDERS: providers };
+});
+const [fresh, freshProviders] = await preloadArea(() => Promise.all([import('./routes'), import('./providers')]));
+vi.doUnmock('./provider-list');
 
 /**
  * The first link of "Services" on /aws: the first, in label order, of the services whose folder holds a `screens.ts`,
@@ -66,7 +94,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.doUnmock('./provider-list');
 });
 
 /** The frame alone at `path`, above an empty page, in the browser's language. */
@@ -370,7 +397,7 @@ describe('Studio’s frame', () => {
       openStudio(path);
       if (path.startsWith('/aws')) {
         // The area is on the page beside the frame.
-        await screen.findByRole('main', {}, { timeout: AREA_LOAD_MS });
+        await screen.findByRole('main', {}, { timeout: AREA_WAIT_MS });
       }
       const { banner } = frameLinks();
 
@@ -395,7 +422,7 @@ describe('Studio’s frame', () => {
         () => {
           expect(document.title).toBe(title);
         },
-        { timeout: AREA_LOAD_MS },
+        { timeout: AREA_WAIT_MS },
       );
     });
   });
@@ -426,7 +453,7 @@ describe('"Skip to content" and a route change', () => {
     // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
     vi.stubGlobal('fetch', new FakeEngine().fetch);
     const { router } = openStudio('/aws');
-    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
+    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_WAIT_MS });
 
     await activateSkip();
 
@@ -473,38 +500,19 @@ describe('"Skip to content" and a route change', () => {
   it("from / to /aws before the area has loaded: focus on the area's content target once it shows its h1", async () => {
     // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
     vi.stubGlobal('fetch', new FakeEngine().fetch);
-    // Routes evaluated afresh, with the area's code held back until the route change has happened.
-    let release: () => void = () => undefined;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    vi.resetModules();
-    vi.doMock('./provider-list', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('./provider-list')>();
-      const providers = actual.PROVIDERS.map((provider) => ({
-        ...provider,
-        loadArea: async () => {
-          await held;
-          return provider.loadArea();
-        },
-      }));
-      return { ...actual, PROVIDERS: providers };
-    });
-    const fresh = await import('./routes');
-    const freshProviders = await import('./providers');
     const { router } = openStudio('/', fresh.routes, freshProviders.Providers);
 
     await act(() => router.navigate('/aws'));
     expect(screen.queryByRole('heading', { level: 1, name: 'Amazon Web Services' })).toBeNull();
-    release();
+    releaseArea();
 
-    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
+    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_WAIT_MS });
     await expectFocusOnTarget('Amazon Web Services', FIRST_INDEX_LINK);
   });
 
   it('from /aws, once the area has loaded, to /: focus on the content target named Home', async () => {
     const { router } = openStudio('/aws');
-    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
+    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_WAIT_MS });
 
     await act(() => router.navigate('/'));
 
@@ -530,7 +538,7 @@ describe('"Skip to content" and a route change', () => {
   ])('on a first load of %s: focus stays on the body once the page shows its h1', async (path, name, role, first) => {
     openStudio(path);
 
-    await screen.findByRole('heading', { level: 1, name }, { timeout: AREA_LOAD_MS });
+    await screen.findByRole('heading', { level: 1, name }, { timeout: AREA_WAIT_MS });
     // The page's content past its h1 is on screen too: its first content stop.
     await screen.findAllByRole(role, { name: first });
 
@@ -569,7 +577,6 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
     document.title = '';
   });
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, in every catalogue (issue 17 s3, 2e26d93).
   it.each([...BUNDLED_CATALOGUES.byTag.keys()])(
     "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/kinesis, the area's",
     async (tag) => {
@@ -583,16 +590,14 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
       await act(() => router.navigate('/'));
       await expectFocusOnTarget(messageIn(tag, 'home.title'), messageIn(tag, 'home.refresh'));
       await act(() => router.navigate(AREA_PATH));
-      const areaTitle = await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
+      const areaTitle = await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_WAIT_MS });
       await expectFocusOnTarget(AREA_TITLE, 'Go to Home');
       // The area page title the announcement reads, and the target it names, are in an element with lang="en".
       expect(areaTitle.closest('[lang]')).toHaveAttribute('lang', 'en');
       expect(document.activeElement?.closest('[lang]')).toHaveAttribute('lang', 'en');
     },
-    20_000,
   );
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, after Home and "Page not found" (issue 17 s3, 2e26d93).
   it('German: the document title is EmuForge Studio on Home, the German page title on "Page not found", English in the area', async () => {
     const { router } = openStudioIn('/', 'de');
     await waitFor(() => {
@@ -610,9 +615,9 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
       () => {
         expect(document.title).toBe(`${AREA_TITLE} | EmuForge Studio`);
       },
-      { timeout: AREA_LOAD_MS },
+      { timeout: AREA_WAIT_MS },
     );
-  }, 20_000);
+  });
 
   it('the app started with stored th: <html lang> is th before the first render, whose first content is Thai', async () => {
     localStorage.setItem(STORAGE_KEY, 'th');
@@ -737,13 +742,12 @@ describe('the language control (R3)', () => {
     document.documentElement.lang = 'en';
   });
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, on /aws (issue 17 s4, d5949df).
   it.each(['/', '/does-not-exist', AREA_PATH])(
     'on %s: the banner holds the control, after the navigation "Studio"',
     async (path) => {
       openStudio(path);
       if (path.startsWith('/aws')) {
-        await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
+        await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_WAIT_MS });
       }
       const { banner, nav } = frameLinks();
       const control = languageControl();
@@ -753,7 +757,6 @@ describe('the language control (R3)', () => {
       expect(follows(nav, control)).toBe(true);
       expect(control.closest('.st-area')).toBeNull();
     },
-    20_000,
   );
 
   it('in English, nothing stored: named "Language: English", it shows "English" in an element with lang="en"', () => {
@@ -1082,7 +1085,7 @@ describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R
   /** The AWS area's index at `/aws`, once its service links are shown. */
   async function openArea(user = userEvent.setup()) {
     const opened = openStudio('/aws');
-    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
+    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_WAIT_MS });
     return { ...opened, user, path: () => opened.router.state.location.pathname };
   }
 
@@ -1184,7 +1187,6 @@ describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R
     expect(path()).toBe('/aws');
   });
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, opened by openArea (issue 32 s2, ec365be).
   it('on /aws with the menu open, a click on a service link inside the area: closed, the path is still /aws; again: the service', async () => {
     const { user, path } = await openArea();
     await openMenu(user);
@@ -1198,7 +1200,7 @@ describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R
     await user.click(areaService());
 
     expect(path()).toBe(SERVICE.path);
-  }, 20_000);
+  });
 
   it('a touch on a service link that the browser cancels (a drag): closed, the path unchanged; then a click opens it', async () => {
     const { user, path } = await openHome();
@@ -1372,13 +1374,12 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
     expect(follows(tile, screen.getByText('EmuForge'))).toBe(true);
   });
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, on its paths (issue 36 s3, 26bb25c).
   it.each(['/', '/does-not-exist', '/aws', NO_SCREEN_SERVICE.below])(
     'on %s: the banner holds exactly one tile, inside the wordmark link, and no other image',
     async (path) => {
       openStudio(path);
       if (path.startsWith('/aws')) {
-        await screen.findByRole('main', {}, { timeout: AREA_LOAD_MS });
+        await screen.findByRole('main', {}, { timeout: AREA_WAIT_MS });
       }
       const banner = screen.getByRole('banner');
       const { tile } = wordmark();
@@ -1392,7 +1393,6 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
       }
       expect(banner.querySelectorAll('.st-tile')).toHaveLength(1);
     },
-    20_000,
   );
 
   it.each(['de', 'th', 'pl'])(
@@ -1444,11 +1444,6 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
 describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", () => {
   let engine: FakeEngine;
 
-  beforeAll(async () => {
-    // The area's first import is real work, not a timer: done before the clock is faked.
-    await PROVIDERS[0]?.loadArea();
-  });
-
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     engine = new FakeEngine();
@@ -1475,7 +1470,7 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
         await advance();
         expect(screen.getByRole('heading', { level: 1, name: h1 })).toBeInTheDocument();
       },
-      { timeout: AREA_LOAD_MS, interval: 20 },
+      { timeout: AREA_WAIT_MS, interval: 20 },
     );
     return opened;
   }
