@@ -12,6 +12,8 @@ import { KEY_PAGE_SIZE } from '../api';
 import { KEYS_PATH } from '../paths';
 import { KeysPage } from './keys';
 
+await preloadArea(AWS_PROVIDER.loadArea);
+
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../../../../lib/aws/client-factory', () => ({
   createAwsClient: () => ({ send: (...args: unknown[]) => Promise.resolve(send(...args) as unknown) }),
@@ -262,7 +264,6 @@ describe('customer managed keys', () => {
     },
   );
 
-  // Bound: Loads the AWS area and its service screens before mounting the frame and starting the health check.
   it.each([
     {
       cause: 'an engine network rejection',
@@ -289,56 +290,51 @@ describe('customer managed keys', () => {
       },
       status: 'The emulator did not answer',
     },
-  ])(
-    'recovers a list read from $cause while first health is pending',
-    async ({ failure, status }) => {
-      const engine = new FakeEngine();
-      engine.configPort = 8311;
-      engine.healthAnswers = [{ hang: true }];
-      vi.stubGlobal('fetch', engine.fetch);
-      vi.stubGlobal('matchMedia', () => ({
-        matches: false,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-      }));
-      send.mockRejectedValue(failure);
-      await AWS_PROVIDER.loadArea();
-      renderApp(KEYS_PATH);
+  ])('recovers a list read from $cause while first health is pending', async ({ failure, status }) => {
+    const engine = new FakeEngine();
+    engine.configPort = 8311;
+    engine.healthAnswers = [{ hang: true }];
+    vi.stubGlobal('fetch', engine.fetch);
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    send.mockRejectedValue(failure);
+    renderApp(KEYS_PATH);
 
-      const frame = createWrapper(
-        await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
-      );
-      const expectChecking = () => {
-        const indicator = frame.findStatusIndicator()?.getElement();
-        expect(indicator).toBeVisible();
-        expect(indicator).toHaveTextContent('Checking');
-      };
-      await waitFor(() => {
-        const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
-        expect(indicator).toBeVisible();
-        expect(indicator).toHaveTextContent(status);
-      });
-      expectChecking();
-      const empty = withinEmptySlot();
-      if (!(failure instanceof TypeError)) expect(empty.getByText(failure.message)).toBeVisible();
-      const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
-      expect(connectionStatus).toBeVisible();
-      expect(connectionStatus).toHaveAttribute('href', '/');
-      const retry = empty.getByRole('button', { name: 'Retry' });
-      expect(retry).toBeVisible();
+    const frame = createWrapper(
+      await screen.findByRole('group', { name: 'Local emulator, not AWS' }, { timeout: 4000 }),
+    );
+    const expectChecking = () => {
+      const indicator = frame.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent('Checking');
+    };
+    await waitFor(() => {
+      const indicator = page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement();
+      expect(indicator).toBeVisible();
+      expect(indicator).toHaveTextContent(status);
+    });
+    expectChecking();
+    const empty = withinEmptySlot();
+    if (!(failure instanceof TypeError)) expect(empty.getByText(failure.message)).toBeVisible();
+    const connectionStatus = empty.getByRole('link', { name: 'Connection status' });
+    expect(connectionStatus).toBeVisible();
+    expect(connectionStatus).toHaveAttribute('href', '/');
+    const retry = empty.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeVisible();
 
-      send.mockImplementation((command: ListKeysCommand | DescribeKeyCommand | ListAliasesCommand) =>
-        command instanceof ListKeysCommand ? { Keys: [keyEntry('recovered')] } : answerKeyReads(command),
-      );
-      fireEvent.click(retry);
-      const row = await expectRow('recovered');
-      expect(row).toHaveTextContent('Description of recovered');
-      expectChecking();
-      expect(engine.healths).toHaveLength(1);
-      expect(engine.healths[0]?.aborted()).toBe(false);
-    },
-    15_000,
-  );
+    send.mockImplementation((command: ListKeysCommand | DescribeKeyCommand | ListAliasesCommand) =>
+      command instanceof ListKeysCommand ? { Keys: [keyEntry('recovered')] } : answerKeyReads(command),
+    );
+    fireEvent.click(retry);
+    const row = await expectRow('recovered');
+    expect(row).toHaveTextContent('Description of recovered');
+    expectChecking();
+    expect(engine.healths).toHaveLength(1);
+    expect(engine.healths[0]?.aborted()).toBe(false);
+  });
 
   it('names ListKeys when the emulator returns 501', async () => {
     send.mockRejectedValueOnce({ $metadata: { httpStatusCode: 501 } });
