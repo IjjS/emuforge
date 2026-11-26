@@ -12,7 +12,8 @@ import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { CREATE_LOG_STREAM, createLogStream } from '../stream-change-api';
 
-const NAME_RULE = 'Enter 1 to 512 characters, without ":" or "*".';
+const NAME_RULE = 'Enter 1 to 512 characters, without ":", "*", or line breaks.';
+const LINE_BREAK_ERROR = 'Remove line breaks. The browser can change them in the name field.';
 
 interface CreateLogStreamDialogProps {
   endpoint: string;
@@ -45,6 +46,10 @@ export function CreateLogStreamDialog({
   const handleCreate = async () => {
     if (inFlight.current || unavailable) return;
     setFailure(undefined);
+    if (/[\r\n]/.test(name)) {
+      setNameError(LINE_BREAK_ERROR);
+      return;
+    }
     if (name === '' || [...name].length > 512 || /[:*]/.test(name)) {
       setNameError(name === '' ? 'Enter a log stream name.' : NAME_RULE);
       return;

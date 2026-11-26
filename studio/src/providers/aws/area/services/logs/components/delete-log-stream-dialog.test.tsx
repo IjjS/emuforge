@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -16,8 +16,9 @@ const remove = vi.mocked(deleteLogStream);
 const name = 'a b/[$LATEST]';
 
 beforeEach(() => remove.mockReset());
+afterEach(() => vi.unstubAllGlobals());
 
-async function renderDialog() {
+async function renderDialog(streamName = name) {
   const deleted = vi.fn();
   function Area() {
     const root = useRef<HTMLDivElement>(null);
@@ -30,7 +31,7 @@ async function renderDialog() {
             <DeleteLogStreamDialog
               endpoint="http://127.0.0.1:8310"
               group="/app#Group"
-              name={name}
+              name={streamName}
               unavailable={unavailable}
               onUnavailable={() => setUnavailable(true)}
               onDeleted={deleted}
@@ -42,10 +43,11 @@ async function renderDialog() {
     );
   }
   render(<Area />);
-  const element = await screen.findByRole('dialog', { name: `Delete log stream ${name}?` });
+  const element = await screen.findByRole('dialog', { name: /^Delete log stream / });
   const dialog = within(element);
   return {
     dialog,
+    element,
     field: dialog.getByRole('textbox', { name: "To confirm, type the log stream's name." }),
     action: dialog.getByRole('button', { name: 'Delete' }),
     deleted,
@@ -53,7 +55,8 @@ async function renderDialog() {
 }
 
 it('describes what is deleted and requires the exact stream name', async () => {
-  const { dialog, field, action } = await renderDialog();
+  const { dialog, element, field, action } = await renderDialog();
+  expect(element).toHaveAccessibleName('Delete log stream a b/[$LATEST]?');
   expect(dialog.getByText('Its log events are removed from your local emulator. This cannot be undone.')).toBeVisible();
   expect(action).toBeDisabled();
   fireEvent.change(field, { target: { value: name.toLowerCase() } });
@@ -61,6 +64,50 @@ it('describes what is deleted and requires the exact stream name', async () => {
   fireEvent.change(field, { target: { value: name } });
   expect(action).toBeEnabled();
   expect(remove).not.toHaveBeenCalled();
+});
+
+it('shows stored line breaks in the title and copies the original name exactly', async () => {
+  const stored = 'first\rsecond\r\n\rthird\n';
+  const displayed = 'first\nsecond\n\nthird\n';
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  const { dialog } = await renderDialog(stored);
+
+  const titleName = dialog.getByText((_, element) => element?.textContent === displayed);
+  expect(titleName).toBeVisible();
+  expect(titleName).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  fireEvent.click(dialog.getByRole('button', { name: 'Copy log stream name' }));
+
+  expect(await dialog.findByText('Log stream name copied')).toBeVisible();
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(stored);
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it.each(['\r', '\n', '\r\n'])('accepts the entered line break %# and deletes the stored name', async (lineBreak) => {
+  const stored = 'first\rsecond\nthird\r\nfourth';
+  remove.mockResolvedValueOnce(undefined);
+  const { field, action, deleted } = await renderDialog(stored);
+
+  for (const wrong of [
+    'first second\nthird\nfourth',
+    'first\n\nsecond\nthird\nfourth',
+    'First\nsecond\nthird\nfourth',
+  ]) {
+    fireEvent.change(field, { target: { value: wrong } });
+    expect(action).toBeDisabled();
+  }
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.change(field, { target: { value: ['first', 'second', 'third', 'fourth'].join(lineBreak) } });
+  expect(action).toBeEnabled();
+  fireEvent.click(action);
+
+  expect(remove).toHaveBeenCalledExactlyOnceWith(
+    'http://127.0.0.1:8310',
+    '/app#Group',
+    stored,
+    expect.any(AbortSignal),
+  );
+  await waitFor(() => expect(deleted).toHaveBeenCalledExactlyOnceWith(stored));
 });
 
 it('keeps the open confirmation and explains the refusal', async () => {

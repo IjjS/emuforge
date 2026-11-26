@@ -17,6 +17,7 @@ interface ConfirmNameDialogProps {
   action: string;
   pending: boolean;
   multiline?: boolean;
+  nameCopy?: ReactNode;
   unavailable?: ReactNode;
   feedback?: ReactNode;
   onConfirm: () => void;
@@ -31,13 +32,15 @@ function Dialog({
   action,
   pending,
   multiline,
+  nameCopy,
   unavailable,
   feedback,
   onConfirm,
   onDismiss,
 }: Omit<ConfirmNameDialogProps, 'visible'>) {
   const [typed, setTyped] = useState('');
-  const canConfirm = typed === name && !pending && unavailable === undefined;
+  const enteredName = multiline ? typed.replace(/\r\n?/g, '\n') : typed;
+  const canConfirm = enteredName === name && !pending && unavailable === undefined;
   const handleConfirm = () => {
     if (canConfirm) onConfirm();
   };
@@ -68,6 +71,7 @@ function Dialog({
         <Box variant="p">{body}</Box>
         {unavailable}
         {feedback}
+        {nameCopy}
         <FormField label={label}>
           {multiline ? (
             <Textarea

@@ -1,4 +1,5 @@
 import Alert from '@cloudscape-design/components/alert';
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
 import { useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -27,6 +28,8 @@ export function DeleteLogStreamDialog({
   onDeleted,
   onDismiss,
 }: DeleteLogStreamDialogProps) {
+  const confirmationName = name.replace(/\r\n?/g, '\n');
+  const hasLineBreaks = confirmationName.includes('\n');
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
@@ -71,15 +74,33 @@ export function DeleteLogStreamDialog({
       visible
       header={
         <>
-          Delete log stream <ValueText kind="name" value={name} />?
+          Delete log stream{' '}
+          {hasLineBreaks ? (
+            <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{confirmationName}</span>
+          ) : (
+            <ValueText kind="name" value={name} />
+          )}
+          ?
         </>
       }
       body="Its log events are removed from your local emulator. This cannot be undone."
       label="To confirm, type the log stream's name."
-      name={name}
+      name={confirmationName}
       action="Delete"
       pending={pending}
       multiline
+      nameCopy={
+        hasLineBreaks ? (
+          <CopyToClipboard
+            variant="button"
+            textToCopy={name}
+            copyButtonText="Copy log stream name"
+            copySuccessText="Log stream name copied"
+            copyErrorText="Log stream name could not be copied"
+            popoverRenderWithPortal={false}
+          />
+        ) : undefined
+      }
       unavailable={unavailable ? feedback : undefined}
       feedback={unavailable ? undefined : feedback}
       onConfirm={() => void handleConfirm()}
