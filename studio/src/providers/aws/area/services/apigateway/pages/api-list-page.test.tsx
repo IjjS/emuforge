@@ -1,13 +1,20 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
+import { PageFlashContext } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
+import type { TokenPage } from '../../../components/use-token-listing';
+import { deleteApi } from '../api-delete-api';
 import { readRestApis, readV2Apis, type ApiRow } from '../apis-api';
 import { ApiListPage } from './api-list-page';
 
@@ -15,6 +22,11 @@ vi.mock('../apis-api', async (original) => ({
   ...(await original<typeof import('../apis-api')>()),
   readRestApis: vi.fn(),
   readV2Apis: vi.fn(),
+}));
+
+vi.mock('../api-delete-api', async (original) => ({
+  ...(await original<typeof import('../api-delete-api')>()),
+  deleteApi: vi.fn(),
 }));
 
 const engineOrigin = 'http://127.0.0.1:9681';
@@ -70,11 +82,28 @@ afterEach(() => {
   client.clear();
 });
 
+function InArea() {
+  const root = useRef<HTMLDivElement>(null);
+  const flash = useAreaFlash('/aws/apigateway/apis', 0, true);
+  return (
+    <div ref={root}>
+      <AreaRootContext value={root}>
+        <PageFlashContext value={flash.pageFlash}>
+          {flash.shown !== null && (
+            <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
+          )}
+          <ApiListPage connection={connection} params={{}} />
+        </PageFlashContext>
+      </AreaRootContext>
+    </div>
+  );
+}
+
 function open() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <ApiListPage connection={connection} params={{}} />
+        <InArea />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -259,3 +288,82 @@ it('copies the selected ID verbatim and reports both clipboard outcomes', async 
   await user.click(copy);
   expect(screen.getAllByText('ID could not be copied').length).toBeGreaterThan(0);
 });
+
+async function selectApi(container: HTMLElement, api: ApiRow) {
+  await screen.findByRole('link', { name: api.name });
+  const table = createWrapper(container).findTable();
+  const rowIndex = table
+    ?.findRows()
+    .findIndex((row) => within(row.getElement()).queryByRole('link', { name: api.name }) !== null);
+  if (table === null || rowIndex === undefined || rowIndex < 0) throw new Error('Missing API row');
+  const radio = table.findRowSelectionArea(rowIndex + 1)?.find('input');
+  if (radio === null || radio === undefined) throw new Error('Missing API selection');
+  await userEvent.click(radio.getElement());
+}
+
+async function confirmDelete(api: ApiRow) {
+  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  const dialog = await screen.findByRole('dialog', { name: `Delete API ${api.name}?` });
+  const input = createWrapper(dialog).findInput()?.findNativeInput().getElement();
+  if (input === undefined) throw new Error('Missing name confirmation input');
+  fireEvent.change(input, { target: { value: api.name } });
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+}
+
+it('enables Delete when a row is selected, then closes the dialog, shows the result and reads both lists', async () => {
+  vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
+  vi.mocked(readRestApis)
+    .mockResolvedValueOnce({ items: [rest] })
+    .mockResolvedValueOnce({ items: [] });
+  const { container } = open();
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  await selectApi(container, rest);
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  await confirmDelete(rest);
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Notifications' })).getByRole('listitem')).toHaveTextContent(
+      'API Payroll deleted.',
+    );
+  });
+  expect(deleteApi).toHaveBeenCalledExactlyOnceWith(engineOrigin, rest, expect.any(AbortSignal));
+  expect(readRestApis).toHaveBeenCalledTimes(2);
+  expect(readV2Apis).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole('link', { name: 'Payroll' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+});
+
+it.each([
+  ['REST APIs', readRestApis, rest, rest2, 'rest-position'],
+  ['HTTP and WebSocket APIs', readV2Apis, http, webSocket, 'v2-token'],
+] as const)(
+  'drops an old %s page that arrives after the post-delete read',
+  async (label, read, api, current, token) => {
+    let resolveOldPage!: (page: TokenPage<ApiRow>) => void;
+    const oldPage = new Promise<TokenPage<ApiRow>>((resolve) => {
+      resolveOldPage = resolve;
+    });
+    vi.mocked(read)
+      .mockResolvedValueOnce({ items: [api], next: token })
+      .mockReturnValueOnce(oldPage)
+      .mockResolvedValueOnce({ items: [current] });
+    vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
+    const { container } = open();
+    await selectApi(container, api);
+    await userEvent.click(screen.getByRole('button', { name: `Load more ${label}` }));
+    expect(read).toHaveBeenNthCalledWith(2, engineOrigin, token, expect.any(AbortSignal));
+
+    await confirmDelete(api);
+    await screen.findByRole('link', { name: current.name });
+    expect(read).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
+    expect(vi.mocked(read).mock.calls[1]?.[2].aborted).toBe(true);
+
+    await act(async () => resolveOldPage({ items: [api] }));
+
+    expect(screen.getByRole('link', { name: current.name })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: api.name })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Notifications' })).getByRole('listitem')).toHaveTextContent(
+      `API ${api.name} deleted.`,
+    );
+  },
+);
