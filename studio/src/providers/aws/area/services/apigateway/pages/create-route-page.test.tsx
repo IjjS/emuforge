@@ -91,7 +91,13 @@ function open() {
   const shown = () => screen.findByRole('heading', { name: 'Route settings' });
   const submit = () => user.click(screen.getByRole('button', { name: 'Create route' }));
   const cancel = () => user.click(screen.getByRole('button', { name: 'Cancel' }));
-  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel };
+  const findAlert = () =>
+    waitFor(() => {
+      const alert = wrapper.findAlert()?.getElement();
+      if (!alert) throw new Error('Missing form alert');
+      return alert;
+    });
+  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel, findAlert };
 }
 
 const methods = {
@@ -220,7 +226,7 @@ it('displays the integration left behind and reads it again as a selectable exis
   await form.choose('Existing integration', 'int-existing');
   await fillNewHttp(form);
   await form.submit();
-  const error = await screen.findByRole('alert');
+  const error = await form.findAlert();
   expect(error).toHaveTextContent('CreateRoute: ConflictException: Route already exists.');
   expect(error).toHaveTextContent(
     'Integration int-new was created without a route and could not be removed: DeleteIntegration: BadRequestException: Removal refused.',
@@ -253,7 +259,7 @@ it('states that no route was created when taking back the integration succeeds',
   const form = open();
   await fillNewHttp(form);
   await form.submit();
-  const error = await screen.findByRole('alert');
+  const error = await form.findAlert();
   expect(error).toHaveTextContent('CreateRoute: ConflictException: Route already exists. No route was created.');
   expect(screen.getByRole('textbox', { name: 'HTTP address' })).toHaveValue(`${endpoint}/orders`);
   expect(form.handOver).not.toHaveBeenCalled();
@@ -347,13 +353,14 @@ for (const operation of ['CreateIntegration', 'CreateRoute']) {
     const form = open();
     await fillNewHttp(form);
     await form.submit();
-    expect(await screen.findByRole('alert')).toHaveTextContent(operation);
+    const alert = await form.findAlert();
+    expect(alert).toHaveTextContent(operation);
     expect(screen.getByRole('textbox', { name: 'HTTP address' })).toHaveValue(`${endpoint}/orders`);
     expect(form.handOver).not.toHaveBeenCalled();
     const submit = screen.getByRole('button', { name: 'Create route' });
     if (failure.kind === 'not-implemented') {
       expect(submit).toBeDisabled();
-      expect(screen.getByRole('alert')).toHaveTextContent('Not implemented by the emulator');
+      expect(alert).toHaveTextContent('Not implemented by the emulator');
     } else expect(submit).toBeEnabled();
   });
 }
@@ -374,7 +381,7 @@ it('asks before discarding and keeps the values if the developer stays', async (
   await form.user.click(screen.getByRole('button', { name: 'Keep editing' }));
   expect(screen.getByRole('textbox', { name: 'Path' })).toHaveValue('/orders');
   await form.cancel();
-  await form.user.click(screen.getByRole('button', { name: 'Discard changes' }));
+  await form.user.click(screen.getByRole('button', { name: 'Discard' }));
   expect(await screen.findByText(`Destination ${v2ApiPath(apiId)}`)).toBeVisible();
 });
 
