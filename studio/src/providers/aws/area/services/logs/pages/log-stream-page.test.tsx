@@ -4,6 +4,15 @@ import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  boxText,
+  buttonIn,
+  expectModalAlert,
+  modal as openModal,
+  modalAlert,
+  requiredElement,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -79,11 +88,23 @@ function page(messages: string[]): EventPage {
   };
 }
 
-const log = () => screen.getByRole('log', { name: 'Log events' });
-const messages = () => Array.from(log().querySelectorAll('pre'), (block) => block.textContent);
+const streamBody = () => aws().findContainer()?.findContent();
+const messageBlocks = () =>
+  streamBody()
+    ?.findAllBoxes()
+    .filter((box) => box.getElement().localName === 'pre') ?? [];
+const messages = () => messageBlocks().map((block) => block.getElement().textContent);
+const messageBlock = (text: string) =>
+  messageBlocks()
+    .find((block) => block.getElement().textContent === text)
+    ?.getElement();
+const waitForMessage = (text: string) => waitFor(() => expect(messageBlock(text)).toBeVisible());
+const initialStatus = () => streamBody()?.findStatusIndicator()?.getElement();
+const initialRetry = () => buttonIn(streamBody(), 'Retry');
+const emptyStream = () => boxText(streamBody(), 'No log events');
 const control = (direction: 'older' | 'newer') => screen.getByRole('group', { name: `Load ${direction} events` });
 const button = (direction: 'older' | 'newer') =>
-  within(control(direction)).getByRole('button', { name: `Load ${direction} events` });
+  requiredElement(buttonIn(createWrapper(control(direction)), `Load ${direction} events`));
 
 it.each([
   { path: address, group, stream, groupHref: '/aws/logs/log-groups/group/%2Fapp%23group' },
@@ -96,7 +117,7 @@ it.each([
 ])('uses decoded names, a group crumb and a log events notice at $path', async ({ path, group, stream, groupHref }) => {
   read.mockResolvedValueOnce(page(['event']));
   const { resources, params } = renderPage(CONNECTED, path);
-  expect(await screen.findByText('event')).toBeVisible();
+  await waitForMessage('event');
   expect(screen.getByRole('heading', { level: 1, name: stream })).toBeVisible();
   expect(resources).toHaveBeenCalledWith({ word: 'log events' });
   expect(read).toHaveBeenCalledWith(ENGINE, group, stream, { kind: 'newest' }, expect.any(AbortSignal));
@@ -119,10 +140,11 @@ it.each([
   read.mockResolvedValueOnce(page([]));
   renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
 
-  const heading = screen.getByRole('heading', { level: 1, name: 'multiline\nworker' });
-  const name = within(heading).getByText('multiline\nworker', { normalizer: (text) => text });
-  expect(name.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  expect(await screen.findByText('No log events')).toBeVisible();
+  expect(aws().findHeader()?.find('h1')?.getElement()).toHaveAccessibleName('multiline\nworker');
+  const name = aws().findHeader()?.findHeadingText().find('span[style]')?.getElement();
+  expect(name?.textContent).toBe('multiline\nworker');
+  expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  await waitFor(() => expect(emptyStream()).toBeVisible());
   expect(read).toHaveBeenCalledWith(
     ENGINE,
     group,
@@ -136,13 +158,12 @@ it('shows loading and renders each timestamp and message in chronological order'
   const answer = page(['first', 'second']);
   read.mockResolvedValueOnce(answer);
   renderPage();
-  expect(screen.getByText('Loading log events')).toBeVisible();
-  await screen.findByText('second');
+  expect(initialStatus()).toBeVisible();
+  expect(initialStatus()).toHaveTextContent('Loading log events');
+  await waitForMessage('second');
   expect(messages()).toEqual(['first', 'second']);
   for (const { message, timestamp } of answer.events) {
-    const block = within(log())
-      .getByText(message ?? '')
-      .closest('pre');
+    const block = messageBlock(message ?? '');
     expect(block?.parentElement).toHaveTextContent(creationDateText(new Date(timestamp ?? 0)));
   }
 });
@@ -150,14 +171,14 @@ it('shows loading and renders each timestamp and message in chronological order'
 it('shows an empty initial read', async () => {
   read.mockResolvedValueOnce(page([]));
   renderPage();
-  expect(await screen.findByText('No log events')).toBeVisible();
+  await waitFor(() => expect(emptyStream()).toBeVisible());
   expect(screen.queryByRole('log')).not.toBeInTheDocument();
 });
 
 it('closes the older end on an empty page and keeps the newer control available', async () => {
   read.mockResolvedValueOnce(page(['event'])).mockResolvedValue(page([]));
   renderPage();
-  await screen.findByText('event');
+  await waitForMessage('event');
   fireEvent.click(button('newer'));
   expect(await within(control('newer')).findByText('No newer events.')).toBeVisible();
   expect(button('newer')).not.toBeDisabled();
@@ -184,20 +205,25 @@ it.each([
       )
       .mockResolvedValueOnce(page(['after retry']));
     renderPage();
-    expect(await screen.findByText(`Log ${kind} not found`)).toBeVisible();
-    expect(screen.queryByText('No log events')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(initialStatus()).toBeVisible();
+      expect(initialStatus()).toHaveTextContent(`Log ${kind} not found`);
+    });
+    expect(emptyStream() ?? null).not.toBeInTheDocument();
 
     const putButton = screen.getByRole('button', { name: 'Put log events' });
     expect(putButton).toHaveAttribute('aria-disabled', 'true');
     expect(putButton).toHaveAccessibleDescription(`The log ${kind} must exist to put events.`);
     fireEvent.click(putButton);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: link })).toHaveAttribute('href', href);
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
+    const back = streamBody()?.findLink()?.getElement();
+    expect(back).toHaveAccessibleName(link);
+    expect(back).toHaveAttribute('href', href);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('after retry')).toBeVisible();
+    fireEvent.click(requiredElement(initialRetry()));
+    await waitForMessage('after retry');
     expect(putButton).not.toHaveAttribute('aria-disabled', 'true');
-    expect(screen.queryByRole('link', { name: link })).not.toBeInTheDocument();
+    expect(streamBody()?.findLink()?.getElement() ?? null).not.toBeInTheDocument();
   },
 );
 
@@ -207,11 +233,14 @@ it('explains the Standard class restriction and shows the emulator reason', asyn
     new RequestError({ kind: 'other', operation, code: 'ValidationException', message: reason }),
   );
   renderPage();
-  expect(
-    await screen.findByText('The emulator reads and searches log events only in log groups of the Standard class.'),
-  ).toBeVisible();
-  expect(screen.getByText(reason)).toBeVisible();
-  expect(screen.queryByText('No log events')).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(initialStatus()).toBeVisible();
+    expect(initialStatus()).toHaveTextContent(
+      'The emulator reads and searches log events only in log groups of the Standard class.',
+    );
+  });
+  expect(boxText(streamBody(), reason)).toBeVisible();
+  expect(emptyStream() ?? null).not.toBeInTheDocument();
 });
 
 const unreachable = (reason: string): AreaConnection['result'] => ({
@@ -255,12 +284,13 @@ it.each(failures)(
   'shows %s in place of events and retries the initial request',
   async (_name, failure, connection, text) => {
     read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce(page(['after retry']));
-    const { container } = renderPage(connection);
-    const retry = await screen.findByRole('button', { name: 'Retry' });
-    expect(container).toHaveTextContent(text);
+    renderPage(connection);
+    await waitFor(() => expect(initialRetry()).toBeVisible());
+    const retry = requiredElement(initialRetry());
+    expect(streamBody()?.getElement()).toHaveTextContent(text);
     expect(screen.queryByRole('log')).not.toBeInTheDocument();
     fireEvent.click(retry);
-    expect(await screen.findByText('after retry')).toBeVisible();
+    await waitForMessage('after retry');
     expect(read.mock.calls.map(([, , , request]) => request)).toEqual([{ kind: 'newest' }, { kind: 'newest' }]);
   },
 );
@@ -273,14 +303,14 @@ it.each(['older', 'newer'] as const)('keeps events and retries alongside the %s 
     )
     .mockResolvedValueOnce(page(['retried']));
   renderPage();
-  await screen.findByText('initial');
+  await waitForMessage('initial');
   fireEvent.click(button(direction));
-  const retry = await within(control(direction)).findByRole('button', { name: 'Retry' });
+  const retryButton = () => buttonIn(createWrapper(control(direction)), 'Retry');
+  await waitFor(() => expect(retryButton()).toBeVisible());
+  const retry = requiredElement(retryButton());
   expect(control(direction)).toHaveTextContent('GetLogEvents');
   expect(control(direction)).toHaveTextContent('InvalidParameterException: page failed');
-  expect(
-    within(control(direction === 'older' ? 'newer' : 'older')).queryByRole('button', { name: 'Retry' }),
-  ).toBeNull();
+  expect(buttonIn(createWrapper(control(direction === 'older' ? 'newer' : 'older')), 'Retry') ?? null).toBeNull();
   expect(messages()).toEqual(['initial']);
   fireEvent.click(retry);
   await waitFor(() =>
@@ -295,9 +325,13 @@ it('shows a continuation 501 beside its own control and keeps the log visible', 
     .mockResolvedValueOnce(page(['initial']))
     .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
   renderPage();
-  await screen.findByText('initial');
+  await waitForMessage('initial');
   fireEvent.click(button('newer'));
-  expect(await within(control('newer')).findByText('Not implemented by the emulator')).toBeVisible();
+  await waitFor(() => {
+    const status = createWrapper(control('newer')).findStatusIndicator()?.getElement();
+    expect(status).toBeVisible();
+    expect(status).toHaveTextContent('Not implemented by the emulator');
+  });
   expect(control('newer')).toHaveTextContent('501 Not Implemented for GetLogEvents');
   expect(button('newer')).toBeDisabled();
   expect(messages()).toEqual(['initial']);
@@ -305,9 +339,9 @@ it('shows a continuation 501 beside its own control and keeps the log visible', 
 
 async function openPutForm() {
   fireEvent.click(screen.getByRole('button', { name: 'Put log events' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Put log events' });
-  const editor = createWrapper(dialog).findAttributeEditor();
-  const submit = createWrapper().findModal()?.findFooter()?.findAllButtons().at(-1);
+  const dialog = await openModal('Put log events');
+  const editor = dialog.findContent().findAttributeEditor();
+  const submit = dialog.findFooter()?.findAllButtons().at(-1);
   if (!editor || !submit) throw new Error('Put form controls missing');
   return { dialog, editor, submit };
 }
@@ -361,11 +395,11 @@ it.each([
   read.mockResolvedValueOnce(page(['initial'])).mockResolvedValueOnce(page(['submitted']));
   put.mockResolvedValueOnce(bounds);
   renderPage();
-  await screen.findByText('initial');
+  await waitForMessage('initial');
 
   await submitMessages(values);
   await waitFor(() => expect(show).toHaveBeenCalledExactlyOnceWith(expected));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   const time = put.mock.lastCall?.[3][0]?.timestamp;
   expect(time).toEqual(expect.any(Number));
   expect(put).toHaveBeenCalledWith(
@@ -377,7 +411,7 @@ it.each([
   );
 
   if (expected[0]?.type === 'success') {
-    expect(await screen.findByText('submitted')).toBeVisible();
+    await waitForMessage('submitted');
     expect(read).toHaveBeenLastCalledWith(ENGINE, group, stream, { kind: 'from-time', time }, expect.any(AbortSignal));
   } else {
     expect(read).toHaveBeenCalledTimes(1);
@@ -396,10 +430,10 @@ it('keeps the put result and the submitted-time events when a previous newer rea
     .mockResolvedValueOnce(page(['submitted']));
   put.mockResolvedValueOnce(undefined);
   renderPage();
-  await screen.findByText('initial');
+  await waitForMessage('initial');
   fireEvent.click(button('newer'));
   await submitMessages(['my message']);
-  await screen.findByText('submitted');
+  await waitForMessage('submitted');
 
   await act(async () => answerNewer(page(['late'])));
   expect(messages()).toEqual(['submitted']);
@@ -414,14 +448,15 @@ it('shows the put result when the read from the put time fails and retries that 
     )
     .mockResolvedValueOnce(page(['after retry']));
   put.mockResolvedValueOnce(undefined);
-  const { container } = renderPage();
-  await screen.findByText('initial');
+  renderPage();
+  await waitForMessage('initial');
   await submitMessages(['my message']);
-  const retry = await screen.findByRole('button', { name: 'Retry' });
-  expect(container).toHaveTextContent('InvalidParameterException: read failed');
+  await waitFor(() => expect(initialRetry()).toBeVisible());
+  const retry = requiredElement(initialRetry());
+  expect(streamBody()?.getElement()).toHaveTextContent('InvalidParameterException: read failed');
   expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]);
   fireEvent.click(retry);
-  expect(await screen.findByText('after retry')).toBeVisible();
+  await waitForMessage('after retry');
   expect(read.mock.calls[2]?.[3]).toEqual(read.mock.calls[1]?.[3]);
   expect(read.mock.calls[2]?.[3]).toMatchObject({ kind: 'from-time' });
 });
@@ -436,25 +471,30 @@ it('offers the put form while the emulator refuses to read a non-Standard stream
   read.mockRejectedValue(refusal);
   put.mockResolvedValueOnce(undefined);
   renderPage();
-  await screen.findByText('This operation is only supported on the Standard log class.');
+  await waitFor(() =>
+    expect(boxText(streamBody(), 'This operation is only supported on the Standard log class.')).toBeVisible(),
+  );
   await submitMessages(['my message']);
   await waitFor(() =>
     expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]),
   );
-  expect(await screen.findByText('This operation is only supported on the Standard log class.')).toBeVisible();
+  await waitFor(() =>
+    expect(boxText(streamBody(), 'This operation is only supported on the Standard log class.')).toBeVisible(),
+  );
 });
 
 it('keeps Put log events available after the put operation answers 501', async () => {
   read.mockResolvedValueOnce(page(['initial']));
   put.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'PutLogEvents' }));
   renderPage();
-  await screen.findByText('initial');
+  await waitForMessage('initial');
   await submitMessages(['my message']);
-  await screen.findByText('Not implemented by the emulator');
-  createWrapper().findModal()?.findFooter()?.findAllButtons()[0]?.click();
+  const open = await openModal('Put log events');
+  await expectModalAlert(open, 'Not implemented by the emulator');
+  open.findFooter()?.findAllButtons()[0]?.click();
   expect(screen.getByRole('button', { name: 'Put log events' })).toBeEnabled();
   const { dialog, submit } = await openPutForm();
-  expect(dialog).toHaveTextContent('501 Not Implemented for PutLogEvents');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('501 Not Implemented for PutLogEvents');
   expect(submit.getElement()).toBeDisabled();
   expect(show).not.toHaveBeenCalled();
 });

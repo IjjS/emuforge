@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { aws, boxText, buttonIn, waitForLink, requiredElement } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -35,6 +36,7 @@ const unreachable = (reason: string): AreaConnection['result'] => ({
 const group = '/app#Group';
 const found = { kind: 'found', group: { logGroupName: group } } as const;
 const groups = vi.mocked(listLogGroups);
+const streamTable = () => aws().findTable();
 const lookup = vi.mocked(getLogGroup);
 const streams = vi.mocked(listLogStreams);
 
@@ -109,15 +111,15 @@ function renderPage(search = '', result: AreaConnection['result'] = connected) {
 
 it('asks for a group before reading any streams, then writes the choice to the address and lists its streams', async () => {
   const select = renderPage();
-  expect(screen.getByText('Choose a log group.')).toBeVisible();
+  expect(boxText(aws(), 'Choose a log group.')).toBeVisible();
   expect(lookup).not.toHaveBeenCalled();
   expect(streams).not.toHaveBeenCalled();
 
   select.openDropdown();
   await waitFor(() => expect(select.findDropdown().findOptionByValue(group)?.getElement()).toBeVisible());
   select.selectOptionByValue(group);
-  expect(await screen.findByRole('link', { name: 'some stream' })).toBeVisible();
-  expect(screen.queryByText('Choose a log group.')).not.toBeInTheDocument();
+  expect(await waitForLink(streamTable, 'some stream')).toBeVisible();
+  expect(boxText(aws(), 'Choose a log group.') ?? null).not.toBeInTheDocument();
   expect(screen.getByLabelText('Address')).toHaveTextContent('?group=%2Fapp%23Group');
   expect(streams).toHaveBeenCalledWith(engineOrigin, group, '', undefined, expect.any(AbortSignal));
 });
@@ -125,19 +127,19 @@ it('asks for a group before reading any streams, then writes the choice to the a
 it('selects the group from a direct address and lists its streams without mutation controls', async () => {
   const select = renderPage('?group=%2Fapp%23Group');
   expect(select.findTrigger().getElement()).toHaveTextContent(group);
-  expect(await screen.findByRole('link', { name: 'some stream' })).toHaveAttribute(
+  expect(await waitForLink(streamTable, 'some stream')).toHaveAttribute(
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/some%20stream',
   );
-  expect(screen.queryByRole('button', { name: 'Create log stream' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Delete log stream' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  expect(buttonIn(streamTable()?.findHeaderSlot(), 'Create log stream') ?? null).not.toBeInTheDocument();
+  expect(buttonIn(streamTable()?.findHeaderSlot(), 'Delete log stream') ?? null).not.toBeInTheDocument();
+  expect(streamTable()?.findRowSelectionArea(1)?.getElement() ?? null).not.toBeInTheDocument();
 });
 
 it('shows the missing group below the choice and does not read streams for it', async () => {
   lookup.mockResolvedValueOnce({ kind: 'not-found' });
   renderPage('?group=missing');
-  expect(await screen.findByText('Log group not found', { selector: 'strong' })).toBeVisible();
+  await waitFor(() => expect(boxText(aws(), 'Log group not found', 'strong')).toBeVisible());
   expect(lookup).toHaveBeenCalledWith(engineOrigin, 'missing', expect.any(AbortSignal));
   expect(streams).not.toHaveBeenCalled();
 });
@@ -147,8 +149,12 @@ it.each(failures)('shows %s in the group choices and retries the first page', as
   const select = renderPage('', result);
   select.openDropdown();
   const dropdown = select.findDropdown();
-  await waitFor(() => expect(dropdown.getElement()).toHaveTextContent(`The log groups could not be loaded: ${words}`));
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() =>
+    expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(
+      `The log groups could not be loaded: ${words}`,
+    ),
+  );
+  select.findErrorRecoveryButton()?.click();
   await waitFor(() => expect(dropdown.findOptionByValue(group)?.getElement()).toBeVisible());
   expect(groups).toHaveBeenCalledTimes(2);
   expect(groups).toHaveBeenLastCalledWith(engineOrigin, '', undefined, expect.any(AbortSignal));
@@ -163,11 +169,14 @@ it('keeps earlier choices when the second page fails and retries that same token
   select.openDropdown();
   const dropdown = select.findDropdown();
   await waitFor(() => expect(dropdown.findOptionByValue(group)?.getElement()).toBeVisible());
-  fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
-  const retry = await screen.findByRole('button', { name: 'Retry' });
+  fireEvent.click(requiredElement(buttonIn(select.findDropdownFooter(), 'Load more')));
+  const retry = () => select.findErrorRecoveryButton()?.getElement();
+  await waitFor(() => expect(retry()).toBeVisible());
   expect(dropdown.findOptionByValue(group)?.getElement()).toBeVisible();
-  expect(dropdown.getElement()).toHaveTextContent(`${group} The log groups could not be loaded: Read failed`);
-  fireEvent.click(retry);
+  expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(
+    `The log groups could not be loaded: Read failed`,
+  );
+  fireEvent.click(requiredElement(retry()));
   await waitFor(() => expect(dropdown.findOptionByValue('second group')?.getElement()).toBeVisible());
   const labels = dropdown.findOptions()?.map((option) => option.findLabel().getElement().textContent);
   expect(labels).toEqual([group, 'second group']);

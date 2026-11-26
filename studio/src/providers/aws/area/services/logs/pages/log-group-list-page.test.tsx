@@ -1,11 +1,27 @@
 import type { LogGroup } from '@aws-sdk/client-cloudwatch-logs';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  boxText,
+  buttonIn,
+  expectEmpty,
+  expectModalAlert,
+  modal as openModal,
+  modalAlert,
+  modalButton,
+  modalInput,
+  rowLink,
+  rowRadio,
+  type Modal,
+  waitForLink,
+  requiredElement,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
@@ -33,6 +49,7 @@ const ENGINE = 'http://127.0.0.1:8306';
 const EMULATOR = { port: 9306, endpoint: 'https://127.0.0.1:9306' };
 const CONNECTED = { kind: 'connected', checkedAt: 0, emulator: EMULATOR } as const;
 const operation = 'DescribeLogGroups';
+const groupTable = () => aws().findTable();
 const read = vi.mocked(listLogGroups);
 const remove = vi.mocked(deleteLogGroup);
 
@@ -86,13 +103,18 @@ function deferred<T>() {
 }
 
 function changeFilter(value: string) {
-  fireEvent.change(screen.getByRole('searchbox', { name: 'Filter by name' }), { target: { value } });
+  fireEvent.change(
+    requiredElement(groupTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()),
+    {
+      target: { value },
+    },
+  );
 }
 
-const nextPage = () => screen.getByRole('button', { name: 'Next page' });
+const nextPage = () => requiredElement(groupTable()?.findPagination()?.findNextPageButton().getElement());
 
 function refresh() {
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh')));
 }
 
 function expectRead(pattern: string, token?: string) {
@@ -115,7 +137,7 @@ it('shows the group values, the name link and the resource notice word', async (
   });
   const { container, resources } = renderPage();
   expect(resources).toHaveBeenCalledWith({ word: 'log groups' });
-  expect(await screen.findByRole('link', { name: '/app#Cold' })).toHaveAttribute(
+  expect(await waitForLink(groupTable, '/app#Cold')).toHaveAttribute(
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Cold',
   );
@@ -130,10 +152,12 @@ it('shows the group values, the name link and the resource notice word', async (
 it('shows loading, an empty emulator and a filter with no matches', async () => {
   read.mockResolvedValue({ items: [] });
   renderPage();
-  expect(screen.getByText('Loading log groups')).toBeVisible();
-  expect(await screen.findByText('No log groups')).toBeVisible();
+  const loading = groupTable()?.findLoadingText()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading log groups');
+  await expectEmpty(groupTable, 'No log groups');
   changeFilter('absent');
-  expect(await screen.findByText('No log groups match')).toBeVisible();
+  await expectEmpty(groupTable, 'No log groups match');
   expectRead('absent');
 });
 
@@ -143,16 +167,19 @@ it('waits for the entered filter and reads its first page after paging the unfil
     .mockResolvedValueOnce(group('unfiltered second'))
     .mockResolvedValueOnce(group('mixed-case match'));
   renderPage();
-  await screen.findByRole('link', { name: 'first' });
+  await waitForLink(groupTable, 'first');
   fireEvent.click(nextPage());
-  await screen.findByRole('link', { name: 'unfiltered second' });
+  await waitForLink(groupTable, 'unfiltered second');
   expectRead('', 'second');
 
   changeFilter('MiXeD');
   expect(read).toHaveBeenCalledTimes(2);
-  expect(await screen.findByRole('link', { name: 'mixed-case match' })).toBeVisible();
+  expect(await waitForLink(groupTable, 'mixed-case match')).toBeVisible();
   expectRead('MiXeD');
-  expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
+  expect(groupTable()?.findPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
 });
 
 async function endFilteredList() {
@@ -161,11 +188,11 @@ async function endFilteredList() {
     .mockResolvedValueOnce({ ...group('Keep 1'), next: 'second' })
     .mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
   renderPage();
-  await screen.findByRole('link', { name: 'all' });
+  await waitForLink(groupTable, 'all');
   changeFilter('Keep');
-  await screen.findByRole('link', { name: 'Keep 1' });
+  await waitForLink(groupTable, 'Keep 1');
   fireEvent.click(nextPage());
-  await screen.findByRole('link', { name: 'Keep 2' });
+  await waitForLink(groupTable, 'Keep 2');
   expectRead('Keep', 'second');
 
   let resolveEnd!: (value: TokenPage<LogGroup>) => void;
@@ -175,20 +202,26 @@ async function endFilteredList() {
   read.mockReturnValueOnce(end).mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
   fireEvent.click(nextPage());
   await waitFor(() => expectRead('Keep', 'third'));
-  expect(screen.getByRole('link', { name: 'Keep 2' })).toBeVisible();
+  expect(rowLink(groupTable(), 'Keep 2')).toBeVisible();
   await act(async () => resolveEnd({ items: [] }));
   await waitFor(() => expectRead('Keep', 'second'));
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Refresh' })).not.toHaveAttribute('aria-disabled', 'true'),
+    expect(requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh'))).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    ),
   );
 }
 
 function expectEnd() {
-  expect(screen.getByRole('link', { name: 'Keep 2' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
-  expect(screen.queryByRole('button', { name: 'Page 3' })).not.toBeInTheDocument();
+  expect(rowLink(groupTable(), 'Keep 2')).toBeVisible();
+  expect(groupTable()?.findPagination()?.findPageNumberByIndex(2)?.getElement()).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  expect(groupTable()?.findPagination()?.findPageNumbers()[2]?.getElement() ?? null).not.toBeInTheDocument();
   expect(nextPage()).toHaveAttribute('aria-disabled', 'true');
-  expect(within(screen.getByRole('main')).getAllByText('No more log groups.').length).toBeGreaterThan(0);
+  expect(boxText(createWrapper(screen.getByRole('main')), 'No more log groups.')).toBeVisible();
 }
 
 describe('after the end of a filtered list', () => {
@@ -201,10 +234,13 @@ describe('after the end of a filtered list', () => {
     await endFilteredList();
     read.mockResolvedValueOnce({ ...group('New 1'), next: 'new second' });
     changeFilter('New');
-    expect(await screen.findByRole('link', { name: 'New 1' })).toBeVisible();
+    expect(await waitForLink(groupTable, 'New 1')).toBeVisible();
     expectRead('New');
-    expect(screen.queryByText('No more log groups.')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
+    expect(boxText(aws(), 'No more log groups.') ?? null).not.toBeInTheDocument();
+    expect(groupTable()?.findPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
     expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -212,9 +248,9 @@ describe('after the end of a filtered list', () => {
     await endFilteredList();
     read.mockResolvedValueOnce({ ...group('Keep 2 refreshed'), next: 'third' });
     refresh();
-    expect(await screen.findByRole('link', { name: 'Keep 2 refreshed' })).toBeVisible();
+    expect(await waitForLink(groupTable, 'Keep 2 refreshed')).toBeVisible();
     expectRead('Keep', 'second');
-    expect(screen.queryByText('No more log groups.')).not.toBeInTheDocument();
+    expect(boxText(aws(), 'No more log groups.') ?? null).not.toBeInTheDocument();
     expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
 
     read.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
@@ -227,12 +263,12 @@ describe('after the end of a filtered list', () => {
     read
       .mockResolvedValueOnce({ ...group('Keep 1'), next: 'second' })
       .mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
-    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-    expect(await screen.findByRole('link', { name: 'Keep 1' })).toBeVisible();
+    fireEvent.click(requiredElement(groupTable()?.findPagination()?.findPreviousPageButton().getElement()));
+    expect(await waitForLink(groupTable, 'Keep 1')).toBeVisible();
     expectRead('Keep');
     expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(nextPage());
-    expect(await screen.findByRole('link', { name: 'Keep 2' })).toBeVisible();
+    expect(await waitForLink(groupTable, 'Keep 2')).toBeVisible();
     expectRead('Keep', 'second');
   });
 });
@@ -278,23 +314,25 @@ it.each(failures)('shows %s in the table and lets Retry read again', async (_nam
   read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce(group('retried'));
   const { container } = renderPage(connection);
   const table = createWrapper(container).findTable();
-  await waitFor(() => expect(table?.getElement()).toHaveTextContent(text));
+  await waitFor(() => expect(table?.findEmptySlot()?.getElement()).toHaveTextContent(text));
   if (failure.kind === 'not-implemented') {
-    expect(table?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('Not implemented by the emulator');
   }
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('link', { name: 'retried' })).toBeVisible();
+  fireEvent.click(requiredElement(buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry')));
+  expect(await waitForLink(groupTable, 'retried')).toBeVisible();
   expectRead('');
 });
 
 it('links to the create form and disables Delete until a row is selected', async () => {
   read.mockResolvedValueOnce(group('selectable'));
   renderPage();
-  await screen.findByRole('link', { name: 'selectable' });
-  expect(screen.getByRole('link', { name: 'Create log group' })).toHaveAttribute('href', '/aws/logs/log-groups/create');
-  const remove = screen.getByRole('button', { name: 'Delete' });
+  await waitForLink(groupTable, 'selectable');
+  const create = groupTable()?.findHeaderSlot()?.findButton('a[href="/aws/logs/log-groups/create"]')?.getElement();
+  expect(create).toHaveAccessibleName('Create log group');
+  expect(create).toHaveAttribute('href', '/aws/logs/log-groups/create');
+  const remove = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
   expect(remove).toHaveAttribute('aria-disabled', 'true');
-  fireEvent.click(screen.getByRole('radio', { name: 'selectable' }));
+  fireEvent.click(rowRadio(groupTable(), 'selectable'));
   expect(remove).toBeEnabled();
   expect(remove).not.toHaveAttribute('aria-disabled', 'true');
 });
@@ -311,30 +349,30 @@ describe('deleting a log group', () => {
   });
 
   async function openDelete() {
-    await screen.findByRole('link', { name });
-    fireEvent.click(screen.getByRole('radio', { name }));
-    const opener = screen.getByRole('button', { name: 'Delete' });
+    await waitForLink(groupTable, name);
+    fireEvent.click(rowRadio(groupTable(), name));
+    const opener = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
     opener.focus();
     fireEvent.click(opener);
-    const modal = await screen.findByRole('dialog', { name: `Delete log group ${name}?` });
-    return within(modal);
+    const dialog = await openModal(`Delete log group ${name}?`);
+    return dialog;
   }
 
-  function enterName(dialog: ReturnType<typeof within>) {
-    const field = dialog.getByRole('textbox', { name: "To confirm, type the log group's name." });
+  function enterName(dialog: Modal) {
+    const field = modalInput(dialog, "To confirm, type the log group's name.");
     fireEvent.change(field, { target: { value: name } });
     return field;
   }
 
-  function confirm(dialog: ReturnType<typeof within>) {
+  function confirm(dialog: Modal) {
     enterName(dialog);
-    fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(modalButton(dialog, 'Delete'));
   }
 
   function expectSuccess(container: HTMLElement) {
     const result = createWrapper(container).findFlashbar()?.findItemsByType('success')[0];
     expect(result?.getElement()).toHaveTextContent(`Log group ${name} deleted.`);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   }
 
   it('shows the result, closes the dialog and reads the shown page again', async () => {
@@ -344,13 +382,16 @@ describe('deleting a log group', () => {
       .mockResolvedValueOnce(afterDelete);
     remove.mockResolvedValueOnce(undefined);
     const { container } = renderPage();
-    await screen.findByRole('link', { name: 'first' });
+    await waitForLink(groupTable, 'first');
     fireEvent.click(nextPage());
     confirm(await openDelete());
 
-    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    expect(await waitForLink(groupTable, 'remaining')).toBeVisible();
     expectRead('', 'second');
-    expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
+    expect(groupTable()?.findPagination()?.findPageNumberByIndex(2)?.getElement()).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
     expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
     expectSuccess(container);
   });
@@ -370,7 +411,9 @@ describe('deleting a log group', () => {
     const dialog = await openDelete();
 
     // Refresh has started independently of the open confirmation. The dialog still owns the group it opened for.
-    fireEvent.click(within(container).getByRole('button', { name: 'Refresh', hidden: true }));
+    fireEvent.click(
+      requiredElement(buttonIn(createWrapper(container).findTable()?.findHeaderSlot() ?? null, 'Refresh')),
+    );
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     confirm(dialog);
     await act(async () => deletion.resolve(undefined));
@@ -385,17 +428,17 @@ describe('deleting a log group', () => {
     };
     if (when === 'before') {
       await finishPrevious();
-      expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+      expect(rowLink(groupTable(), name) ?? null).not.toBeInTheDocument();
+      expect(buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry') ?? null).not.toBeInTheDocument();
     }
     await act(async () => updated.resolve(afterDelete));
-    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    expect(await waitForLink(groupTable, 'remaining')).toBeVisible();
     if (when === 'after') await finishPrevious();
 
     expectSuccess(container);
-    expect(screen.getByRole('link', { name: 'remaining' })).toBeVisible();
-    expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(rowLink(groupTable(), 'remaining')).toBeVisible();
+    expect(rowLink(groupTable(), name) ?? null).not.toBeInTheDocument();
+    expect(buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry') ?? null).not.toBeInTheDocument();
   });
 
   it('keeps the successful deletion result when the subsequent page read fails', async () => {
@@ -404,11 +447,12 @@ describe('deleting a log group', () => {
     const { container } = renderPage();
     confirm(await openDelete());
 
-    const retry = await screen.findByRole('button', { name: 'Retry' });
-    expect(screen.getByRole('table')).toHaveTextContent('List read refused.');
+    const retry = () => buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry');
+    await waitFor(() => expect(retry()).toBeVisible());
+    expect(groupTable()?.findEmptySlot()?.getElement()).toHaveTextContent('List read refused.');
     expectSuccess(container);
-    fireEvent.click(retry);
-    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    fireEvent.click(requiredElement(retry()));
+    expect(await waitForLink(groupTable, 'remaining')).toBeVisible();
     expectSuccess(container);
   });
 
@@ -419,21 +463,21 @@ describe('deleting a log group', () => {
     const dialog = await openDelete();
     confirm(dialog);
 
-    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.getByRole('alert')).toHaveTextContent('DeleteLogGroup');
-    expect(dialog.getByRole('button', { name: 'Delete' })).toBeDisabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    const opener = screen.getByRole('button', { name: 'Delete' });
+    await expectModalAlert(dialog, 'Not implemented by the emulator');
+    expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('DeleteLogGroup');
+    expect(modalButton(dialog, 'Delete')).toBeDisabled();
+    fireEvent.click(modalButton(dialog, 'Cancel'));
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
+    const opener = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
     await waitFor(() => expect(opener).toHaveFocus());
     fireEvent.click(opener);
 
-    const reopened = within(await screen.findByRole('dialog'));
-    const field = reopened.getByRole('textbox');
+    const reopened = await openModal();
+    const field = modalInput(reopened);
     expect(field).toHaveValue('');
-    expect(reopened.getByText('Not implemented by the emulator')).toBeVisible();
+    await expectModalAlert(reopened, 'Not implemented by the emulator');
     enterName(reopened);
-    expect(reopened.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(modalButton(reopened, 'Delete')).toBeDisabled();
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(remove).toHaveBeenCalledTimes(1);
   });

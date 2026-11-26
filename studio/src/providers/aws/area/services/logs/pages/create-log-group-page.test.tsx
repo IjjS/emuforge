@@ -1,10 +1,11 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { aws, buttonIn, modal as openModal, modalButton } from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
@@ -82,7 +83,7 @@ function nativeInput(control: Element) {
 
 const nameInput = () => nativeInput(field('Log group name').getElement());
 const select = (label: string) => required(createWrapper(field(label).getElement()).findSelect(), label);
-const submitButton = () => screen.getByRole('button', { name: 'Create log group' });
+const submitButton = () => required(buttonIn(page.findForm()?.findActions(), 'Create log group'), 'Create log group');
 
 function nameGroup(name: string) {
   fireEvent.change(nameInput(), { target: { value: name } });
@@ -132,7 +133,7 @@ function deferred<T>() {
 }
 
 const submit = () => fireEvent.click(submitButton());
-const cancel = () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+const cancel = () => fireEvent.click(required(buttonIn(page.findForm()?.findActions(), 'Cancel'), 'Cancel'));
 const expectSuccess = () =>
   expect(handOver).toHaveBeenCalledWith(GROUP_PATH, [{ type: 'success', content: `Log group ${NAME} created.` }]);
 
@@ -369,7 +370,9 @@ it('reports an invalid name and an invalid tag on their fields without sending a
   nameGroup(NAME);
   addTag('aws:team', 'core');
   submit();
-  expect(screen.getByText('A tag key cannot start with aws:.')).toBeVisible();
+  const error = page.findAttributeEditor()?.findRows().at(-1)?.findField(1)?.findError()?.getElement();
+  expect(error).toBeVisible();
+  expect(error).toHaveTextContent('A tag key cannot start with aws:.');
   expect(create).not.toHaveBeenCalled();
   expect(put).not.toHaveBeenCalled();
 });
@@ -378,7 +381,7 @@ it('cancels an untouched form immediately', () => {
   open();
   cancel();
   expect(screen.getByRole('heading', { name: 'Log groups' })).toBeVisible();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   expect(create).not.toHaveBeenCalled();
 });
 
@@ -386,14 +389,14 @@ it('offers to discard edits, keeps them on request and discards without sending 
   open();
   fill();
   cancel();
-  const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  const dialog = await openModal('Discard what you entered?');
+  fireEvent.click(modalButton(dialog, 'Keep editing'));
+  await waitFor(() => expect(dialog.getElement()).not.toBeInTheDocument());
   expectFormKept();
 
   cancel();
-  const reopened = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-  fireEvent.click(within(reopened).getByRole('button', { name: 'Discard' }));
+  const reopened = await openModal('Discard what you entered?');
+  fireEvent.click(modalButton(reopened, 'Discard'));
   expect(screen.getByRole('heading', { name: 'Log groups' })).toBeVisible();
   expect(create).not.toHaveBeenCalled();
   expect(put).not.toHaveBeenCalled();

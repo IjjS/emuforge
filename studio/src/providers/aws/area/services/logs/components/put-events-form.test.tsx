@@ -1,8 +1,8 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { modal as openModal, modalAlert, expectModalAlert } from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { putLogEvents } from '../put-events-api';
@@ -48,9 +48,8 @@ function Harness() {
 
 async function openForm() {
   fireEvent.click(screen.getByRole('button', { name: 'Open put form' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Put log events' });
-  const modal = createWrapper().findModal();
-  const editor = createWrapper(dialog).findAttributeEditor();
+  const modal = await openModal('Put log events');
+  const editor = modal.findContent().findAttributeEditor();
   const [cancel, submit] = modal?.findFooter()?.findAllButtons() ?? [];
   if (!modal || !editor || !submit || !cancel) throw new Error('Put form controls missing');
   return { modal, editor, submit, cancel };
@@ -66,9 +65,9 @@ it('opens with one empty message and the batch rule, and adds and removes rows',
     '',
   );
   editor.findAddButton().click();
-  expect(await screen.findAllByRole('textbox')).toHaveLength(2);
+  await waitFor(() => expect(modal.findContent().findAllTextareas()).toHaveLength(2));
   editor.findRow(2)?.findRemoveButton()?.click();
-  expect(await screen.findAllByRole('textbox')).toHaveLength(1);
+  await waitFor(() => expect(modal.findContent().findAllTextareas()).toHaveLength(1));
 });
 
 it('keeps the message and shows the operation and reason on refusal', async () => {
@@ -76,11 +75,12 @@ it('keeps the message and shows the operation and reason on refusal', async () =
     new RequestError({ kind: 'other', operation, code: 'InvalidParameterException', message: 'refused batch' }),
   );
   render(<Harness />);
-  const { editor, submit } = await openForm();
+  const { modal, editor, submit } = await openForm();
   editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.setTextareaValue('keep me');
   submit.click();
-  expect(await screen.findByText('PutLogEvents failed')).toBeVisible();
-  expect(screen.getByText('refused batch', { exact: false })).toBeVisible();
+  await expectModalAlert(modal, 'PutLogEvents failed');
+  expect(modalAlert(modal)?.findContent().getElement()).toBeVisible();
+  expect(modalAlert(modal)?.findContent().getElement()).toHaveTextContent('refused batch');
   expect(editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.findNativeTextarea().getElement()).toHaveValue(
     'keep me',
   );
@@ -94,15 +94,15 @@ it('remembers a 501 across dismissing and reopening the form', async () => {
   editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.setTextareaValue('keep me');
   submit.click();
 
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(modal.findContent().getElement()).toHaveTextContent('501 Not Implemented for PutLogEvents');
+  await expectModalAlert(modal, 'Not implemented by the emulator');
+  expect(modalAlert(modal)?.findContent().getElement()).toHaveTextContent('501 Not Implemented for PutLogEvents');
   expect(editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.findNativeTextarea().getElement()).toHaveValue(
     'keep me',
   );
   expect(submit.getElement()).toBeDisabled();
   cancel.click();
   const reopened = await openForm();
-  expect(reopened.modal.findContent().getElement()).toHaveTextContent('PutLogEvents');
+  expect(modalAlert(reopened.modal)?.findContent().getElement()).toHaveTextContent('PutLogEvents');
   expect(reopened.submit.getElement()).toBeDisabled();
   reopened.submit.click();
   expect(put).toHaveBeenCalledTimes(1);

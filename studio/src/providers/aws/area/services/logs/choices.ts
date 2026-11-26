@@ -6,6 +6,13 @@ function nameOption(name: string) {
   return { label: name, value: name };
 }
 
+const streamLineBreak = /\r\n|[\r\n\u2028\u2029]/g;
+
+export function multilineStreamLabel(name: string) {
+  const singleLine = name.replace(streamLineBreak, ' ');
+  return singleLine === name ? undefined : `${singleLine} (contains a line break)`;
+}
+
 export function logGroupChoices(endpoint: string | undefined): ChoiceSource<string> {
   return {
     key: ['logs', 'choices', 'groups'],
@@ -33,6 +40,6 @@ export function logStreamChoices(endpoint: string | undefined, group: string | u
       const page = await listLogStreams(at, group, text, token, signal);
       return { ...page, items: page.items.flatMap(({ logStreamName }) => logStreamName ?? []) };
     },
-    optionOf: nameOption,
+    optionOf: (name) => ({ label: multilineStreamLabel(name) ?? name, value: name }),
   };
 }

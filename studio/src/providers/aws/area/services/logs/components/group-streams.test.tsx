@@ -1,11 +1,24 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import type { LogStream } from '@aws-sdk/client-cloudwatch-logs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  buttonIn,
+  expectModalAlert,
+  modal as openModal,
+  modalAlert,
+  modalButton,
+  modalInput,
+  rowLink,
+  rowRadio,
+  waitForLink,
+  requiredElement,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
@@ -29,6 +42,7 @@ vi.mock('../stream-change-api', async (importOriginal) => ({
 
 const engineOrigin = 'http://127.0.0.1:8310';
 const group = '/app#Group';
+const streamTable = () => aws().findTable();
 const read = vi.mocked(listLogStreams);
 const create = vi.mocked(createLogStream);
 const remove = vi.mocked(deleteLogStream);
@@ -80,17 +94,19 @@ function deferred<T>() {
 }
 
 function opener(action: 'create' | 'delete') {
-  return screen.getByRole('button', { name: action === 'create' ? 'Create log stream' : 'Delete log stream' });
+  return requiredElement(
+    buttonIn(streamTable()?.findHeaderSlot(), action === 'create' ? 'Create log stream' : 'Delete log stream'),
+  );
 }
 
 async function open(action: 'create' | 'delete', name: string) {
-  if (action === 'delete') fireEvent.click(screen.getByRole('radio', { name }));
+  if (action === 'delete') fireEvent.click(rowRadio(streamTable(), name));
   fireEvent.click(opener(action));
-  const element = await screen.findByRole('dialog');
-  const dialog = within(element);
-  const field = dialog.getByRole('textbox');
+  const dialog = await openModal();
+
+  const field = modalInput(dialog);
   fireEvent.change(field, { target: { value: name } });
-  return { dialog, submit: dialog.getByRole('button', { name: action === 'create' ? 'Create log stream' : 'Delete' }) };
+  return { dialog, submit: modalButton(dialog, action === 'create' ? 'Create log stream' : 'Delete') };
 }
 
 async function expectResult(text: string) {
@@ -99,7 +115,7 @@ async function expectResult(text: string) {
       text,
     ),
   );
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 }
 
 it('offers both actions, and after create and delete rereads the shown page', async () => {
@@ -111,20 +127,20 @@ it('offers both actions, and after create and delete rereads the shown page', as
   renderGroupStreams();
   expect(opener('create')).toBeVisible();
   expect(opener('delete')).toHaveAttribute('aria-disabled', 'true');
-  expect(await screen.findByRole('link', { name: 'first stream' })).toBeVisible();
+  expect(await waitForLink(streamTable, 'first stream')).toBeVisible();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-  await screen.findByRole('link', { name: 'second stream' });
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findNextPageButton().getElement()));
+  await waitForLink(streamTable, 'second stream');
   fireEvent.click((await open('create', 'new stream')).submit);
   await expectResult('Log stream new stream created.');
-  expect(await screen.findByRole('link', { name: 'new stream' })).toBeVisible();
+  expect(await waitForLink(streamTable, 'new stream')).toBeVisible();
   expect(create).toHaveBeenCalledExactlyOnceWith(engineOrigin, group, 'new stream', expect.any(AbortSignal));
   expect(read).toHaveBeenLastCalledWith(engineOrigin, group, '', 'second', expect.any(AbortSignal));
 
   fireEvent.click((await open('delete', 'new stream')).submit);
   await expectResult('Log stream new stream deleted.');
-  await screen.findByRole('link', { name: 'second stream' });
-  expect(screen.queryByRole('link', { name: 'new stream' })).not.toBeInTheDocument();
+  await waitForLink(streamTable, 'second stream');
+  expect(rowLink(streamTable(), 'new stream') ?? null).not.toBeInTheDocument();
   expect(opener('delete')).toHaveAttribute('aria-disabled', 'true');
   expect(remove).toHaveBeenCalledExactlyOnceWith(engineOrigin, group, 'new stream', expect.any(AbortSignal));
   expect(read).toHaveBeenLastCalledWith(engineOrigin, group, '', 'second', expect.any(AbortSignal));
@@ -139,19 +155,19 @@ it.each([
     read.mockResolvedValue(page('stream'));
     write.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
     renderGroupStreams();
-    await screen.findByRole('link', { name: 'stream' });
+    await waitForLink(streamTable, 'stream');
 
     const { dialog, submit } = await open(action, 'stream');
     fireEvent.click(submit);
-    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    await expectModalAlert(dialog, 'Not implemented by the emulator');
+    fireEvent.click(modalButton(dialog, 'Cancel'));
     expect(opener('create')).toBeVisible();
     expect(opener('delete')).toBeVisible();
     const reopened = await open(action, 'stream');
-    expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
+    expect(modalAlert(reopened.dialog)?.findContent().getElement()).toHaveTextContent(operation);
     expect(reopened.submit).toBeDisabled();
     expect(write).toHaveBeenCalledTimes(1);
-    fireEvent.click(reopened.dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(modalButton(reopened.dialog, 'Cancel'));
     const other = await open(action === 'create' ? 'delete' : 'create', 'stream');
     expect(other.submit).toBeEnabled();
   },
@@ -174,7 +190,7 @@ it.each([
   read.mockResolvedValueOnce(original).mockReturnValueOnce(before.promise).mockReturnValueOnce(after.promise);
   (isCreate ? create : remove).mockReturnValueOnce(written.promise);
   const { client } = renderGroupStreams();
-  await screen.findByRole('link', { name: 'kept' });
+  await waitForLink(streamTable, 'kept');
 
   const { submit } = await open(action, name);
   // A background refetch keeps the shown rows while its newer answer is outstanding.
@@ -197,7 +213,7 @@ it.each([
     await act(async () => after.resolve(isCreate ? page('fresh', name) : page('fresh')));
   }
   if (order === 'fresh answer first') {
-    await screen.findByRole('link', { name: 'fresh' });
+    await waitForLink(streamTable, 'fresh');
     await act(async () => {
       before.reject(new RequestError({ kind: 'other', operation: 'DescribeLogStreams', code: 'Late failure' }));
     });
@@ -207,14 +223,17 @@ it.each([
   }
 
   await expectResult(`Log stream ${name} ${isCreate ? 'created' : 'deleted'}.`);
-  const table = within(screen.getByRole('table'));
+  const empty = () => streamTable()?.findEmptySlot();
   if (order === 'fresh read fails') {
-    expect(await table.findByText('Read failed')).toBeVisible();
-    expect(table.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await waitFor(() => {
+      expect(empty()?.getElement()).toBeVisible();
+      expect(empty()?.getElement()).toHaveTextContent('Read failed');
+    });
+    expect(buttonIn(empty() ?? null, 'Retry')).toBeVisible();
   } else {
-    expect(await table.findByRole('link', { name: 'fresh' })).toBeVisible();
-    expect(table.queryByText('Late failure')).not.toBeInTheDocument();
+    expect(await waitForLink(streamTable, 'fresh')).toBeVisible();
+    expect(empty()?.getElement()?.textContent ?? '').not.toContain('Late failure');
   }
-  expect(table.queryByRole('link', { name: 'kept' })).not.toBeInTheDocument();
-  if (!isCreate) expect(table.queryByRole('link', { name })).not.toBeInTheDocument();
+  expect(rowLink(streamTable(), 'kept') ?? null).not.toBeInTheDocument();
+  if (!isCreate) expect(rowLink(streamTable(), name) ?? null).not.toBeInTheDocument();
 });

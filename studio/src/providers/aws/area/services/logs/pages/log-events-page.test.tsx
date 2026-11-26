@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { aws, boxText, buttonIn, requiredElement } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
@@ -61,7 +62,13 @@ function choice(index: number) {
 
 const option = (index: number, value: string) => choice(index).findDropdown().findOptionByValue(value)?.getElement();
 const resultsTable = () => createWrapper(document.body).findTable();
-const resultMessage = () => resultsTable()?.findBodyCell(1, 3)?.getElement();
+const resultDescription = () => resultsTable()?.findHeaderSlot()?.findHeader()?.findDescription()?.getElement();
+const resultEmpty = () => resultsTable()?.findEmptySlot();
+const resultRetry = () => resultEmpty()?.findButton()?.getElement();
+const resultStatus = () => resultEmpty()?.findStatusIndicator()?.getElement();
+const messageCell = () => resultsTable()?.findBodyCell(1, 3);
+const resultMessage = () => messageCell()?.getElement();
+const resultPagination = () => resultsTable()?.findPagination();
 
 function expectResult(message: string) {
   const cell = resultMessage();
@@ -69,8 +76,24 @@ function expectResult(message: string) {
   expect(cell?.textContent).toBe(message);
 }
 
-const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-const field = (name: string) => screen.getByRole('textbox', { name });
+const searchButton = () => requiredElement(buttonIn(aws().findContainer()?.findFooter(), 'Search'));
+const submit = () => fireEvent.click(searchButton());
+const timeRange = () =>
+  createWrapper(document.body)
+    .findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === 'Time range');
+function field(name: string) {
+  const label = name.replace(/^Time range /, '');
+  const control = aws()
+    .findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === label)
+    ?.findControl();
+  const input = (control?.findInput() ?? control?.findDateInput() ?? control?.findTimeInput())
+    ?.findNativeInput()
+    ?.getElement();
+  expect(input).toHaveAccessibleName(name);
+  return requiredElement(input);
+}
 
 function enter(name: string, value: string) {
   fireEvent.change(field(name), { target: { value } });
@@ -85,8 +108,8 @@ function page(message: string, next?: string) {
 
 it('asks for a group on the bare route and opens a linked group and stream already selected', () => {
   const bare = open(LOG_EVENTS_PATH);
-  expect(screen.getByText('Choose a log group.')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
+  expect(boxText(aws(), 'Choose a log group.')).toBeVisible();
+  expect(searchButton()).toBeDisabled();
   expect(search).not.toHaveBeenCalled();
   bare.unmount();
 
@@ -147,28 +170,27 @@ it('keeps the submitted group and filters beside the results while the draft cha
   enterRange();
   submit();
 
-  const results = () => screen.getByRole('region', { name: 'Search results' });
   await waitFor(() => expectResult('first result'));
-  expect(results()).toHaveTextContent(`Log group: ${group}`);
-  expect(results()).toHaveTextContent(`Log stream: ${stream}`);
-  expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
-  expect(results()).toHaveTextContent(`Start: ${creationDateText(new Date(timestamp))}`);
-  expect(results()).toHaveTextContent(`End: ${creationDateText(new Date(2026, 10, 26, 12, 35, 57))}`);
+  expect(resultDescription()).toHaveTextContent(`Log group: ${group}`);
+  expect(resultDescription()).toHaveTextContent(`Log stream: ${stream}`);
+  expect(resultDescription()).toHaveTextContent('Filter pattern: submitted pattern');
+  expect(resultDescription()).toHaveTextContent(`Start: ${creationDateText(new Date(timestamp))}`);
+  expect(resultDescription()).toHaveTextContent(`End: ${creationDateText(new Date(2026, 10, 26, 12, 35, 57))}`);
 
   choice(0).openDropdown();
   await waitFor(() => expect(option(0, '/different')).toBeVisible());
   choice(0).selectOptionByValue('/different');
   enter('Filter pattern', 'edited pattern');
-  expect(results()).toHaveTextContent(`Log group: ${group}`);
-  expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
-  expect(results()).not.toHaveTextContent('/different');
+  expect(resultDescription()).toHaveTextContent(`Log group: ${group}`);
+  expect(resultDescription()).toHaveTextContent('Filter pattern: submitted pattern');
+  expect(resultDescription()).not.toHaveTextContent('/different');
   expectResult('first result');
 
   submit();
   await waitFor(() => expectResult('next result'));
-  expect(results()).toHaveTextContent('Log group: /different');
-  expect(results()).toHaveTextContent('Filter pattern: edited pattern');
-  expect(results()).not.toHaveTextContent(`Log stream: ${stream}`);
+  expect(resultDescription()).toHaveTextContent('Log group: /different');
+  expect(resultDescription()).toHaveTextContent('Filter pattern: edited pattern');
+  expect(resultDescription()).not.toHaveTextContent(`Log stream: ${stream}`);
 });
 
 it('focuses and reveals the results on each submission, then announces the outcome', async () => {
@@ -207,7 +229,8 @@ it('focuses and reveals the results on each submission, then announces the outco
 
 it('explains browser-local optional pairs and announces an incomplete pair before searching', () => {
   open();
-  expect(screen.getByText(/Times are read in your browser’s time zone/)).toHaveTextContent(
+  expect(timeRange()?.findDescription()?.getElement()).toHaveTextContent('Times are read in your browser’s time zone');
+  expect(timeRange()?.findDescription()?.getElement()).toHaveTextContent(
     'Each date and time pair is optional. Enter both fields for any pair you use.',
   );
   enter('Time range Start date', '2026-11-26');
@@ -215,7 +238,7 @@ it('explains browser-local optional pairs and announces an incomplete pair befor
 
   const time = field('Time range Start time');
   expect(time).toHaveAccessibleDescription(/Enter a valid start date and time/);
-  const announcement = time.closest('form')?.querySelector('[aria-live="polite"][aria-atomic="true"]');
+  const announcement = document.querySelector('form [aria-live="polite"][aria-atomic="true"]');
   expect(announcement).toHaveTextContent('Enter a valid start date and time.');
   expect(search).not.toHaveBeenCalled();
   enter('Time range Start time', '12:34:56');
@@ -234,7 +257,7 @@ it('bounds long messages while preserving their text, whitespace, timestamp and 
   expect(row?.getElement()).toHaveTextContent(creationDateText(new Date(timestamp)));
   expect(link).toHaveAccessibleName(stream);
   expect(link).toHaveAttribute('href', logStreamPath(group, stream));
-  const pre = resultMessage()?.querySelector('pre');
+  const pre = messageCell()?.findBox('pre')?.getElement();
   expect(pre?.textContent).toBe(message);
   expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap' });
   const width = document.createElement('div').style;
@@ -253,9 +276,9 @@ it('pages with the submitted pattern, times and stream even while the form holds
 
   enter('Filter pattern', 'edited');
   enter('Time range End time', '12:36:00');
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  resultPagination()?.findNextPageButton().click();
   await waitFor(() => expectResult('second page'));
-  expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
+  expect(resultPagination()?.findPageNumberByIndex(2)?.getElement()).toHaveAttribute('aria-current', 'true');
   const request = {
     logGroupName: group,
     logStreamNames: [stream],
@@ -277,11 +300,11 @@ it('submits the unchanged form from page 2 as a new first-page request', async (
   open();
   submit();
   await waitFor(() => expectResult('original'));
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  resultPagination()?.findNextPageButton().click();
   await waitFor(() => expectResult('second'));
   submit();
   await waitFor(() => expectResult('fresh first'));
-  expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
+  expect(resultPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute('aria-current', 'true');
   expect(search.mock.calls.map(([, request, token]) => [request, token])).toEqual([
     [{ logGroupName: group, logStreamNames: [stream] }, undefined],
     [{ logGroupName: group, logStreamNames: [stream] }, 'page-token'],
@@ -302,8 +325,14 @@ it('shows loading then the empty search state', async () => {
   search.mockResolvedValueOnce({ items: [] });
   open();
   submit();
-  expect(screen.getByText('Loading log events')).toBeVisible();
-  expect(await screen.findByText('No log events match')).toBeVisible();
+  const loading = resultsTable()?.findLoadingText()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading log events');
+  await waitFor(() => {
+    const empty = resultEmpty()?.getElement();
+    expect(empty).toBeVisible();
+    expect(empty).toHaveTextContent('No log events match');
+  });
 });
 
 const badPattern = '{ $.a = }';
@@ -320,8 +349,11 @@ it('shows a refused pattern in the results with the form kept as entered', async
   open();
   enter('Filter pattern', badPattern);
   submit();
-  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
-  expect(screen.getByRole('table')).toHaveTextContent('InvalidParameterException: Invalid filter pattern');
+  await waitFor(() => {
+    expect(resultRetry()).toBeVisible();
+    expect(resultRetry()).toHaveAccessibleName('Retry');
+  });
+  expect(resultEmpty()?.getElement()).toHaveTextContent('InvalidParameterException: Invalid filter pattern');
   expect(field('Filter pattern')).toHaveValue(badPattern);
   expect(choice(0).findTrigger().getElement()).toHaveTextContent(group);
 });
@@ -419,10 +451,11 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
       .mockResolvedValueOnce(answer('after-retry'));
     open(chosenPath, example.connection);
     choice(index).openDropdown();
-    const retry = await screen.findByRole('button', { name: 'Retry' });
-    const dropdown = choice(index).findDropdown().getElement();
-    expect(dropdown).toHaveTextContent(`The ${word} could not be loaded: ${example.choiceMessage(operation)}`);
-    fireEvent.click(retry);
+    const retry = () => choice(index).findErrorRecoveryButton()?.getElement();
+    await waitFor(() => expect(retry()).toBeVisible());
+    const dropdownStatus = choice(index).findStatusIndicator()?.getElement();
+    expect(dropdownStatus).toHaveTextContent(`The ${word} could not be loaded: ${example.choiceMessage(operation)}`);
+    fireEvent.click(requiredElement(retry()));
     await waitFor(() => expect(option(index, 'after-retry')).toBeVisible());
     expect(mock).toHaveBeenCalledTimes(2);
     expect(mock).toHaveBeenLastCalledWith(...args(undefined));
@@ -436,12 +469,15 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
     open();
     choice(index).openDropdown();
     await waitFor(() => expect(option(index, 'first-option')).toBeVisible());
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
-    const retry = await screen.findByRole('button', { name: 'Retry' });
+    fireEvent.click(requiredElement(buttonIn(choice(index).findDropdownFooter(), 'Load more')));
+    const retry = () => choice(index).findErrorRecoveryButton()?.getElement();
+    await waitFor(() => expect(retry()).toBeVisible());
     const first = option(index, 'first-option');
     expect(first).toBeVisible();
-    expect((first?.compareDocumentPosition(retry) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(retry);
+    expect(
+      (first?.compareDocumentPosition(requiredElement(retry())) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(requiredElement(retry()));
     await waitFor(() => expect(option(index, 'second-option')).toBeVisible());
     expect(option(index, 'first-option')).toBeVisible();
     expect(mock).toHaveBeenCalledTimes(3);
@@ -455,8 +491,12 @@ it.each(failures)('shows $name in place of search results and retries the submit
   open(chosenPath, example.connection);
   enter('Filter pattern', 'submitted');
   submit();
-  const retry = await screen.findByRole('button', { name: 'Retry' });
-  expect(screen.getByRole('table')).toHaveTextContent(example.resultMessage(FILTER_LOG_EVENTS));
+  await waitFor(() => {
+    expect(resultRetry()).toBeVisible();
+    expect(resultRetry()).toHaveAccessibleName('Retry');
+  });
+  const retry = requiredElement(resultRetry());
+  expect(resultEmpty()?.getElement()).toHaveTextContent(example.resultMessage(FILTER_LOG_EVENTS));
   enter('Filter pattern', 'edited');
   fireEvent.click(retry);
   await waitFor(() => expectResult('retried'));
@@ -473,8 +513,63 @@ it('explains the Standard class restriction with the emulator’s reason', async
   );
   open();
   submit();
-  expect(
-    await screen.findByText('The emulator reads and searches log events only in log groups of the Standard class.'),
-  ).toBeVisible();
-  expect(screen.getByText(reason)).toBeVisible();
+  await waitFor(() => {
+    expect(resultStatus()).toBeVisible();
+    expect(resultStatus()).toHaveTextContent(
+      'The emulator reads and searches log events only in log groups of the Standard class.',
+    );
+  });
+  const detail = resultEmpty()
+    ?.findAllBoxes()
+    .find((box) => box.getElement().textContent === reason)
+    ?.getElement();
+  expect(detail).toBeVisible();
+  expect(detail).toHaveTextContent(reason);
+});
+
+it('keeps line breaks in submitted stream names and distinguishes a newline from a space', async () => {
+  const multiline = 'first\nsecond';
+  const spaced = 'first second';
+  const multilineLabel = 'first second (contains a line break)';
+  streams.mockResolvedValueOnce({ items: [{ logStreamName: multiline }, { logStreamName: spaced }] });
+  search.mockResolvedValueOnce({
+    items: [
+      { eventId: 'multiline', logStreamName: multiline, message: 'first event' },
+      { eventId: 'spaced', logStreamName: spaced, message: 'second event' },
+    ],
+  });
+  open(`${LOG_EVENTS_PATH}?${new URLSearchParams({ group })}`);
+  choice(1).openDropdown();
+  const dropdown = choice(1).findDropdown();
+  await waitFor(() => {
+    expect(dropdown.findOptionByValue(multiline)?.findLabel().getElement()).toHaveTextContent(multilineLabel);
+    expect(dropdown.findOptionByValue(spaced)?.findLabel().getElement().textContent).toBe(spaced);
+  });
+  choice(1).selectOptionByValue(multiline);
+  expect(choice(1).findTrigger().getElement()).toHaveTextContent(multilineLabel);
+  submit();
+  await waitFor(() => expectResult('first event'));
+  expect(search).toHaveBeenCalledExactlyOnceWith(
+    engineOrigin,
+    { logGroupName: group, logStreamNames: [multiline] },
+    undefined,
+    expect.any(AbortSignal),
+  );
+
+  const multilineLink = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
+  expect(multilineLink?.textContent).toBe(multiline);
+  expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(multilineLink).toHaveAccessibleName(multilineLabel);
+  expect(multilineLink).toHaveAttribute('href', logStreamPath(group, multiline));
+  const spacedLink = resultsTable()?.findBodyCell(2, 2)?.findLink()?.getElement();
+  expect(spacedLink).toHaveAccessibleName(spaced);
+  expect(spacedLink).toHaveAttribute('href', logStreamPath(group, spaced));
+  const summary = resultsTable()
+    ?.findHeaderSlot()
+    ?.findHeader()
+    ?.findDescription()
+    ?.find('span:nth-child(2)')
+    ?.getElement();
+  expect(summary?.textContent).toBe(`Log stream: ${multiline}`);
+  expect(summary).toHaveStyle({ whiteSpace: 'pre-wrap' });
 });

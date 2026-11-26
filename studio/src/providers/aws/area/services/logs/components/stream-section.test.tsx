@@ -2,6 +2,15 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import {
+  aws,
+  buttonIn,
+  expectEmpty,
+  rowLink,
+  rowRadio,
+  waitForLink,
+  requiredElement,
+} from '../../../../../../test/logs-test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -63,6 +72,7 @@ const failures: [string, RequestFailure, AreaConnection['result'], string][] = [
 ];
 
 const group = '/app#Group';
+const streamTable = () => aws().findTable();
 const read = vi.mocked(listLogStreams);
 
 beforeEach(() => read.mockReset());
@@ -81,7 +91,12 @@ function renderSection(
 }
 
 function enterPrefix(value: string) {
-  fireEvent.change(screen.getByRole('searchbox', { name: 'Filter by prefix' }), { target: { value } });
+  fireEvent.change(
+    requiredElement(streamTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()),
+    {
+      target: { value },
+    },
+  );
 }
 
 function expectRead(prefix: string, token?: string) {
@@ -102,7 +117,7 @@ it('lists the stream name as a single-segment link, then the last event, first e
     ],
   });
   const { container } = renderSection();
-  expect(await screen.findByRole('link', { name: 'a/b#c?d%e' })).toHaveAttribute(
+  expect(await waitForLink(streamTable, 'a/b#c?d%e')).toHaveAttribute(
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/a%2Fb%23c%3Fd%25e',
   );
@@ -122,10 +137,12 @@ it('lists the stream name as a single-segment link, then the last event, first e
 it('shows loading and distinguishes an empty list from an empty prefix result', async () => {
   read.mockResolvedValue({ items: [] });
   renderSection();
-  expect(screen.getByText('Loading log streams')).toBeVisible();
-  expect(await screen.findByText('No log streams')).toBeVisible();
+  const loading = streamTable()?.findLoadingText()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading log streams');
+  await expectEmpty(streamTable, 'No log streams');
   enterPrefix('Absent');
-  expect(await screen.findByText('No log streams match')).toBeVisible();
+  await expectEmpty(streamTable, 'No log streams match');
   expectRead('Absent');
 });
 
@@ -137,22 +154,22 @@ it.each(['selectable', 'read-only'])('distinguishes line breaks from spaces in t
   renderSection(connected, mode === 'selectable' ? { name: undefined, onChange } : undefined);
 
   const multilineLabel = 'multiline worker (contains a line break)';
-  const multilineLink = await screen.findByRole('link', { name: multilineLabel });
+  const multilineLink = await waitForLink(streamTable, multilineLabel);
   expect(multilineLink.textContent).toBe(name);
   expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
   expect(multilineLink).toHaveAttribute(
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/**multiline%250Aworker',
   );
-  expect(screen.getByRole('link', { name: spacedName })).toHaveAttribute(
+  expect(rowLink(streamTable(), spacedName)).toHaveAttribute(
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/multiline%20worker',
   );
 
   if (mode === 'selectable') {
-    fireEvent.click(screen.getByRole('radio', { name: spacedName }));
+    fireEvent.click(rowRadio(streamTable(), spacedName));
     expect(onChange).toHaveBeenLastCalledWith(spacedName);
-    fireEvent.click(screen.getByRole('radio', { name: multilineLabel }));
+    fireEvent.click(rowRadio(streamTable(), multilineLabel));
     expect(onChange).toHaveBeenLastCalledWith(name);
   }
 });
@@ -162,10 +179,12 @@ it('sends the typed prefix and explains that prefix matches are listed by name',
     .mockResolvedValueOnce({ items: [{ logStreamName: 'initial' }] })
     .mockResolvedValueOnce({ items: [{ logStreamName: 'MiXeD/match' }] });
   renderSection();
-  expect(screen.getByText('Streams that start with the prefix are listed by name.')).toBeVisible();
-  await screen.findByRole('link', { name: 'initial' });
+  const hint = streamTable()?.findFilterSlot()?.findFormField()?.findDescription()?.getElement();
+  expect(hint).toBeVisible();
+  expect(hint).toHaveTextContent('Streams that start with the prefix are listed by name.');
+  await waitForLink(streamTable, 'initial');
   enterPrefix('MiXeD');
-  expect(await screen.findByRole('link', { name: 'MiXeD/match' })).toBeVisible();
+  expect(await waitForLink(streamTable, 'MiXeD/match')).toBeVisible();
   expectRead('MiXeD');
 });
 
@@ -175,14 +194,20 @@ it('uses the returned token for the next page and rereads the first page when go
     .mockResolvedValueOnce({ items: [{ logStreamName: 'second' }] })
     .mockResolvedValueOnce({ items: [{ logStreamName: 'first again' }], next: 'second-token' });
   renderSection();
-  await screen.findByRole('link', { name: 'first' });
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-  expect(await screen.findByRole('link', { name: 'second' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
+  await waitForLink(streamTable, 'first');
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findNextPageButton().getElement()));
+  expect(await waitForLink(streamTable, 'second')).toBeVisible();
+  expect(streamTable()?.findPagination()?.findPageNumberByIndex(2)?.getElement()).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
   expectRead('', 'second-token');
-  fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-  expect(await screen.findByRole('link', { name: 'first again' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findPreviousPageButton().getElement()));
+  expect(await waitForLink(streamTable, 'first again')).toBeVisible();
+  expect(streamTable()?.findPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
   expectRead('');
   expect(read).toHaveBeenCalledTimes(3);
 });
@@ -192,11 +217,12 @@ it.each(failures)('shows %s in the table and retries the stream read', async (_l
     .mockRejectedValueOnce(new RequestError(failure))
     .mockResolvedValueOnce({ items: [{ logStreamName: 'retried' }] });
   const { container } = renderSection(result);
-  const table = createWrapper(container).findTable()?.getElement();
-  await waitFor(() => expect(table).toHaveTextContent(text));
-  if (failure.kind === 'not-implemented') expect(table).toHaveTextContent('Not implemented by the emulator');
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('link', { name: 'retried' })).toBeVisible();
+  const table = createWrapper(container).findTable();
+  await waitFor(() => expect(table?.findEmptySlot()?.getElement()).toHaveTextContent(text));
+  if (failure.kind === 'not-implemented')
+    expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+  fireEvent.click(requiredElement(buttonIn(streamTable()?.findEmptySlot() ?? null, 'Retry')));
+  expect(await waitForLink(streamTable, 'retried')).toBeVisible();
   expectRead('');
   expect(read).toHaveBeenCalledTimes(2);
 });
@@ -223,8 +249,8 @@ it('puts the supplied actions in the header and allows selecting only one row', 
   );
   const tableHeader = createWrapper(container).findHeader()?.getElement();
   expect(tableHeader).toContainElement(screen.getByRole('button', { name: 'Change stream' }));
-  const first = await screen.findByRole('radio', { name: 'first' });
-  const second = screen.getByRole('radio', { name: 'second' });
+  const first = await waitFor(() => rowRadio(streamTable(), 'first'));
+  const second = rowRadio(streamTable(), 'second');
   fireEvent.click(first);
   expect(first).toBeChecked();
   fireEvent.click(second);
@@ -235,7 +261,7 @@ it('puts the supplied actions in the header and allows selecting only one row', 
 it('omits the supplied actions and selection controls in the read-only listing', async () => {
   read.mockResolvedValueOnce({ items: [{ logStreamName: 'first' }] });
   renderSection();
-  expect(await screen.findByRole('link', { name: 'first' })).toBeVisible();
-  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  expect(await waitForLink(streamTable, 'first')).toBeVisible();
+  expect(streamTable()?.findRowSelectionArea(1)?.getElement() ?? null).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Change stream' })).not.toBeInTheDocument();
 });

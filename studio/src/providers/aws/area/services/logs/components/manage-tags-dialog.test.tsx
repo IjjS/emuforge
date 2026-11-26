@@ -1,18 +1,24 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-  type BoundFunctions,
-  type queries,
-} from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  flash,
+  aws,
+  buttonIn,
+  requiredElement,
+  tableByHeading,
+  modal as openModal,
+  modalButton,
+  modalAlert,
+  expectModalBox,
+  expectModalAlert,
+  modalTextInputs,
+  modalInputByValue,
+  type Modal,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import { getLogGroup, listLogGroupTags } from '../api';
@@ -120,17 +126,19 @@ async function waitForInitialTags() {
 }
 
 async function open() {
-  const action = screen.getByRole('button', { name: 'Manage tags' });
+  const action = await waitFor(() =>
+    requiredElement(buttonIn(tableByHeading('Tags')?.findHeaderSlot(), 'Manage tags')),
+  );
   await waitFor(() => expect(action).toBeEnabled());
   fireEvent.click(action);
-  const element = await screen.findByRole('dialog', { name: 'Manage tags' });
-  const dialog = within(element);
-  return { element, dialog, save: dialog.getByRole('button', { name: 'Save' }) };
+  const dialog = await openModal('Manage tags');
+  const element = dialog.getElement();
+  return { element, dialog, save: modalButton(dialog, 'Save') };
 }
 
-function addTag(dialog: BoundFunctions<typeof queries>, key: string, value: string) {
-  fireEvent.click(dialog.getByRole('button', { name: 'Add tag' }));
-  const inputs = dialog.getAllByRole('textbox');
+function addTag(dialog: Modal, key: string, value: string) {
+  fireEvent.click(modalButton(dialog, 'Add tag'));
+  const inputs = modalTextInputs(dialog);
   const keyInput = inputs.at(-2);
   const valueInput = inputs.at(-1);
   if (keyInput === undefined || valueInput === undefined) throw new Error('Tag fields were not found.');
@@ -138,18 +146,13 @@ function addTag(dialog: BoundFunctions<typeof queries>, key: string, value: stri
   fireEvent.change(valueInput, { target: { value } });
 }
 
-function replaceA(dialog: BoundFunctions<typeof queries>) {
-  fireEvent.click(dialog.getByRole('button', { name: 'Remove tag a' }));
+function replaceA(dialog: Modal) {
+  fireEvent.click(modalButton(dialog, 'Remove tag a'));
   addTag(dialog, 'c', 'refused');
 }
 
-function expectDraftKept(dialog: BoundFunctions<typeof queries>) {
-  expect(dialog.getAllByRole('textbox').map((input) => (input as HTMLInputElement).value)).toEqual([
-    'b',
-    'two',
-    'c',
-    'refused',
-  ]);
+function expectDraftKept(dialog: Modal) {
+  expect(modalTextInputs(dialog).map((input) => input.value)).toEqual(['b', 'two', 'c', 'refused']);
 }
 
 it('opens with current tags, closes without requests for an unchanged save, and validates edits before sending', async () => {
@@ -157,15 +160,22 @@ it('opens with current tags, closes without requests for an unchanged save, and 
   renderGroup();
   await waitForInitialTags();
   const unchanged = await open();
-  expect(unchanged.dialog.getByDisplayValue('one')).toBeVisible();
-  expect(unchanged.dialog.getByDisplayValue('two')).toBeVisible();
+  expect(modalInputByValue(unchanged.dialog, 'one')).toBeVisible();
+  expect(modalInputByValue(unchanged.dialog, 'two')).toBeVisible();
   fireEvent.click(unchanged.save);
-  expect(screen.queryByRole('dialog', { name: 'Manage tags' })).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 
   const { dialog, save } = await open();
   addTag(dialog, 'aws:reserved', '');
   fireEvent.click(save);
-  expect(dialog.getByText('A tag key cannot start with aws:.')).toBeVisible();
+  const error = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((field) => field.findError())
+    ?.findError()
+    ?.getElement();
+  expect(error).toBeVisible();
+  expect(error).toHaveTextContent('A tag key cannot start with aws:.');
   expect(sent).toEqual([]);
 });
 
@@ -176,8 +186,8 @@ it('keeps the draft and stops before the tag call when untag is refused', async 
   const { dialog, save } = await open();
   replaceA(dialog);
   fireEvent.click(save);
-  expect(await dialog.findByText('UntagLogGroup failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('Value refused.');
+  await expectModalAlert(dialog, 'UntagLogGroup failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('Value refused.');
   expectDraftKept(dialog);
   expect(sent).toEqual([{ operation: 'UntagLogGroup', tags: ['a'] }]);
   expect(listTags).toHaveBeenCalledTimes(1);
@@ -198,10 +208,14 @@ it('blocks save after a partial write until a retry reads fresh tags, then saves
   replaceA(dialog);
   fireEvent.click(save);
 
-  expect(await dialog.findByText('TagLogGroup failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('Value refused.');
-  expect(dialog.getByText('The tags removed in this save are already removed.')).toBeVisible();
-  expect(dialog.getByText('Loading tags')).toBeVisible();
+  await expectModalAlert(dialog, 'TagLogGroup failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('Value refused.');
+  const warning = dialog.findContent().findAllAlerts()[1]?.findContent().getElement();
+  expect(warning).toBeVisible();
+  expect(warning).toHaveTextContent('The tags removed in this save are already removed.');
+  const loading = dialog.findContent().findStatusIndicator()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading tags');
   expect(save).toBeDisabled();
   expectDraftKept(dialog);
 
@@ -215,25 +229,24 @@ it('blocks save after a partial write until a retry reads fresh tags, then saves
       }),
     ),
   );
-  expect(await dialog.findByText('ListTagsLogGroup')).toBeVisible();
-  expect(dialog.getByText('ReadFailed')).toBeVisible();
+  await waitFor(() => expectModalBox(dialog, 'ListTagsLogGroup'));
+  expectModalBox(dialog, 'ReadFailed');
   expect(save).toBeDisabled();
   fireEvent.click(save);
   expect(sent).toHaveLength(2);
   expectDraftKept(dialog);
 
-  fireEvent.click(dialog.getByRole('button', { name: 'Retry' }));
+  fireEvent.click(modalButton(dialog, 'Retry'));
   expect(save).toBeDisabled();
   await act(async () => retry.resolve({ b: 'two' }));
   await waitFor(() => expect(save).toBeEnabled());
   expectDraftKept(dialog);
   expect(tagRows()).toEqual([['b', 'two']]);
 
-  fireEvent.change(dialog.getByDisplayValue('refused'), { target: { value: 'fixed' } });
+  fireEvent.change(modalInputByValue(dialog, 'refused'), { target: { value: 'fixed' } });
   fireEvent.click(save);
-  const notifications = await screen.findByRole('list', { name: 'Notifications' });
-  expect(notifications).toHaveTextContent(`Tags of ${name} saved.`);
-  expect(screen.queryByRole('dialog', { name: 'Manage tags' })).not.toBeInTheDocument();
+  await waitFor(() => expect(flash()?.getElement()).toHaveTextContent(`Tags of ${name} saved.`));
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   await waitFor(() =>
     expect(tagRows()).toEqual([
       ['b', 'two'],
@@ -260,34 +273,36 @@ it.each([
     const first = await open();
     replaceA(first.dialog);
     fireEvent.click(first.save);
-    expect(await first.dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(first.dialog.getByRole('alert')).toHaveTextContent(operation);
+    await expectModalAlert(first.dialog, 'Not implemented by the emulator');
+    expect(modalAlert(first.dialog)?.findContent().getElement()).toHaveTextContent(operation);
     expect(first.save).toBeDisabled();
     expectDraftKept(first.dialog);
     expect(sent).toHaveLength(statuses.length);
     if (operation === 'TagLogGroup') {
-      expect(first.dialog.getByText('The tags removed in this save are already removed.')).toBeVisible();
+      const warning = first.dialog.findContent().findAllAlerts()[1]?.findContent().getElement();
+      expect(warning).toBeVisible();
+      expect(warning).toHaveTextContent('The tags removed in this save are already removed.');
       await waitFor(() => expect(tagRows()).toEqual([['b', 'two']]));
     }
-    fireEvent.click(first.dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(modalButton(first.dialog, 'Cancel'));
 
     const reopened = await open();
     expect(reopened.save).toBeDisabled();
-    expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
+    expect(modalAlert(reopened.dialog)?.findContent().getElement()).toHaveTextContent(operation);
     fireEvent.click(reopened.save);
     expect(sent).toHaveLength(statuses.length);
     if (operation === 'UntagLogGroup') {
-      fireEvent.click(reopened.dialog.getByRole('button', { name: 'Remove tag a' }));
+      fireEvent.click(modalButton(reopened.dialog, 'Remove tag a'));
       expect(reopened.save).toBeDisabled();
-      expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
+      expect(modalAlert(reopened.dialog)?.findContent().getElement()).toHaveTextContent(operation);
       addTag(reopened.dialog, 'a', 'one');
-      fireEvent.change(reopened.dialog.getByDisplayValue('two'), { target: { value } });
+      fireEvent.change(modalInputByValue(reopened.dialog, 'two'), { target: { value } });
     } else {
       addTag(reopened.dialog, 'c', 'updated');
       expect(reopened.save).toBeDisabled();
-      expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
-      fireEvent.click(reopened.dialog.getByRole('button', { name: 'Remove tag c' }));
-      fireEvent.click(reopened.dialog.getByRole('button', { name: 'Remove tag b' }));
+      expect(modalAlert(reopened.dialog)?.findContent().getElement()).toHaveTextContent(operation);
+      fireEvent.click(modalButton(reopened.dialog, 'Remove tag c'));
+      fireEvent.click(modalButton(reopened.dialog, 'Remove tag b'));
     }
     expect(reopened.save).toBeEnabled();
     fireEvent.click(reopened.save);
