@@ -2832,8 +2832,8 @@ describe('a service that gives entries (issue 650, R4–R5)', () => {
       : [core];
     registry.entries.splice(0, 1, { service, groups });
 
-    const { wrapper, router } = open(widgets.path);
-    const nav = within(wrapper.findSideNavigation()!.getElement());
+    const { router } = open(widgets.path);
+    const nav = within(screen.getByRole('navigation', { name: 'Navigation' }));
     const buttons = nav.getAllByRole('button');
     expect(buttons.map((button) => button.textContent?.trim())).toEqual(
       grouped ? ['Core', 'A', 'B', 'C', 'Secondary'] : ['A', 'B', 'C'],
