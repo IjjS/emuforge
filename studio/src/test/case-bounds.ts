@@ -16,6 +16,18 @@ export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 /** The default bound of a case, in milliseconds. */
 export const DEFAULT_BOUND_MS = 5000;
 
+/** The suites whose waits are checked after moving their AWS area loads out of timed bodies (issue 466). */
+export const AREA_WAIT_FILES = [
+  'src/app/app.test.tsx',
+  'src/app/frame.test.tsx',
+  'src/app/routes.test.tsx',
+  'src/features/home/home-languages.test.tsx',
+  'src/providers/aws/area/area-layout.test.tsx',
+  'src/providers/aws/area/screens.test.ts',
+  'src/providers/aws/area/services/kms/pages/key.test.tsx',
+  'src/providers/aws/area/services/kms/pages/keys.test.tsx',
+] as const;
+
 /** The comment a raised bound carries on the line directly above its case. */
 export const BOUND_COMMENT = '// Bound:';
 
@@ -64,13 +76,22 @@ function raised(bound: ts.Expression): boolean {
   return true;
 }
 
+/** The name of a literal key, including a computed key with a literal value. */
+function literalKey(node: ts.Node): string | undefined {
+  const key = ts.isComputedPropertyName(node) ? unwrap(node.expression) : node;
+  return ts.isStringLiteralLike(key) ? key.text : undefined;
+}
+
 /** The `timeout` of an options object, or `undefined` when the argument is not one or has none. */
 function timeoutOption(argument: ts.Expression | undefined): ts.Expression | undefined {
   if (argument === undefined || !ts.isObjectLiteralExpression(argument)) {
     return undefined;
   }
   for (const property of argument.properties) {
-    if (ts.isPropertyAssignment(property) && property.name.getText() === 'timeout') {
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) ? property.name.text : literalKey(property.name)) === 'timeout'
+    ) {
       return property.initializer;
     }
     if (ts.isShorthandPropertyAssignment(property) && property.name.text === 'timeout') {
@@ -93,8 +114,9 @@ function caseBound(call: ts.CallExpression): ts.Expression | undefined {
   return undefined;
 }
 
-function parse(source: string): ts.SourceFile {
-  return ts.createSourceFile('case.test.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function parse(source: string, kind = ts.ScriptKind.TSX): ts.SourceFile {
+  const filename = kind === ts.ScriptKind.TSX ? 'case.test.tsx' : 'case.test.ts';
+  return ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, kind);
 }
 
 function lineOf(file: ts.SourceFile, node: ts.Node): number {
@@ -173,6 +195,108 @@ export function scanCaseBounds(source: string, name: string): Finding[] {
   return findings.sort((a, b) => a.line - b.line);
 }
 
+/** Syntax that leaves the value of a wait argument unchanged at runtime. */
+function unwrap(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
+function namedImport(expression: ts.Expression, checker: ts.TypeChecker): ts.ImportSpecifier | undefined {
+  return checker.getSymbolAtLocation(expression)?.declarations?.find(ts.isImportSpecifier);
+}
+
+function member(expression: ts.Expression) {
+  if (ts.isPropertyAccessExpression(expression)) {
+    return { name: expression.name.text, receiver: unwrap(expression.expression) };
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    return { name: literalKey(unwrap(expression.argumentExpression)), receiver: unwrap(expression.expression) };
+  }
+  return undefined;
+}
+
+/** The argument that can give this wait its timeout, and whether it accepts a number directly. */
+function waitArgument(call: ts.CallExpression, checker: ts.TypeChecker) {
+  const callee = unwrap(call.expression);
+  const access = member(callee);
+  const imported = namedImport(callee, checker);
+  const name = access?.name ?? imported?.propertyName?.text ?? calledName(callee);
+  if (name === 'waitFor' || name === 'waitForElementToBeRemoved') {
+    const receiver = access?.receiver;
+    const direct =
+      name === 'waitFor' &&
+      receiver !== undefined &&
+      ts.isIdentifier(receiver) &&
+      (namedImport(receiver, checker)?.propertyName?.text ?? receiver.text) === 'vi';
+    return { argument: call.arguments[1], direct };
+  }
+  if (name !== undefined && /^find(?:All)?By/.test(name)) {
+    // Unbound queries take a container before the matcher, query options and wait options.
+    const receiver = access?.receiver;
+    const queriesImport = receiver === undefined ? undefined : namedImport(receiver, checker);
+    const receiverMember = receiver === undefined ? undefined : member(receiver);
+    const namespace = receiverMember?.name === 'queries' ? receiverMember.receiver : receiver;
+    const unbound =
+      imported !== undefined ||
+      (queriesImport?.propertyName ?? queriesImport?.name)?.text === 'queries' ||
+      (namespace !== undefined && checker.getSymbolAtLocation(namespace)?.declarations?.some(ts.isNamespaceImport));
+    return { argument: call.arguments[unbound ? 3 : 2], direct: false };
+  }
+  return undefined;
+}
+
+/** Waits given more than 5000 ms in one of the AWS area suites. */
+export function scanWaitBounds(source: string, name: string): Finding[] {
+  const file = parse(source, name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  // Bind names in this source alone. Imports and library types are unnecessary for local declarations.
+  const options = { noLib: true, noResolve: true };
+  const host = ts.createCompilerHost(options);
+  host.getSourceFile = (path) => (path === file.fileName ? file : undefined);
+  const checker = ts.createProgram([file.fileName], options, host).getTypeChecker();
+
+  const resolve = (expression: ts.Expression): ts.Expression => {
+    let value = unwrap(expression);
+    const seen = new Set<ts.VariableDeclaration>();
+    while (ts.isIdentifier(value)) {
+      const binding = ts.isShorthandPropertyAssignment(value.parent)
+        ? checker.getShorthandAssignmentValueSymbol(value.parent)
+        : checker.getSymbolAtLocation(value);
+      const declaration = binding?.valueDeclaration;
+      if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer || seen.has(declaration)) {
+        break;
+      }
+      seen.add(declaration);
+      value = unwrap(declaration.initializer);
+    }
+    return value;
+  };
+  const findings: Finding[] = [];
+  for (const call of calls(file)) {
+    const wait = waitArgument(call, checker);
+    if (wait?.argument === undefined) continue;
+    const value = resolve(wait.argument);
+    const timeout = timeoutOption(value) ?? (wait.direct ? value : undefined);
+    if (timeout === undefined) continue;
+    const bound = resolve(timeout);
+    if (ts.isNumericLiteral(bound) && raised(bound)) {
+      findings.push({
+        file: name,
+        line: lineOf(file, call),
+        reason: `a wait with a timeout of ${bound.getText(file)} above ${String(DEFAULT_BOUND_MS)} ms`,
+      });
+    }
+  }
+  return findings;
+}
+
 /** Every unit-test file under `studio/src/`, the set `vite.config.ts`'s `include` reads, relative to `studio/`. */
 export function testFiles(): string[] {
   const src = path.join(STUDIO_DIR, 'src');
@@ -190,5 +314,10 @@ export function readStudioFile(file: string): string {
 
 /** What the scan names in every unit-test file under `studio/src/`. */
 export function scanRepository(): Finding[] {
-  return testFiles().flatMap((file) => scanCaseBounds(readStudioFile(file), file));
+  const waitFiles = new Set<string>(AREA_WAIT_FILES);
+  return testFiles().flatMap((file) => {
+    const source = readStudioFile(file);
+    const caseFindings = scanCaseBounds(source, file);
+    return waitFiles.has(file) ? [...caseFindings, ...scanWaitBounds(source, file)] : caseFindings;
+  });
 }
