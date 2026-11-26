@@ -40,7 +40,8 @@ export function GroupDetails({
   onManageTags,
 }: GroupDetailsProps) {
   const protectionOn = group.deletionProtectionEnabled === true;
-  const settingsDisabled = groupLoading || protectionPending || connection.engineOrigin === undefined;
+  const groupUnavailable = groupLoading || connection.engineOrigin === undefined;
+  const settingsDisabled = groupUnavailable || protectionPending;
   const [announcement, announce] = useAnnouncer();
   const failure = tags.failure && readFailureState(tags.failure, connection, 'log group tags');
   const message = failure?.firstText;
@@ -65,7 +66,7 @@ export function GroupDetails({
                   Edit retention
                 </Button>
                 <Button
-                  disabled={settingsDisabled || protectionUnavailable}
+                  disabled={groupUnavailable || protectionUnavailable}
                   loading={protectionPending}
                   disabledReason={groupLoading && !protectionUnavailable ? 'Loading log group.' : undefined}
                   onClick={onSwitchProtection}

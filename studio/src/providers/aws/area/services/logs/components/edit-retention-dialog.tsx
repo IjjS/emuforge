@@ -80,7 +80,7 @@ export function EditRetentionDialog({
             <Button variant="link" disabled={pending} onClick={dismiss}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={pending || unsupported} onClick={() => void save()}>
+            <Button variant="primary" loading={pending} disabled={unsupported} onClick={() => void save()}>
               Save
             </Button>
           </SpaceBetween>

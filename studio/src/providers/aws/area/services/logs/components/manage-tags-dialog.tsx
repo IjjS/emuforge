@@ -50,10 +50,14 @@ export function ManageTagsDialog({
   const [partial, setPartial] = useState<string>();
   const errors = tried ? validateTags(draft) : undefined;
   const changes = tags.value === undefined ? undefined : tagChanges(tags.value, tagsToRecord(draft));
-  const unsupported = [
+  const writes = [
     ...(changes?.remove.length ? [OPERATIONS.untag] : []),
     ...(changes && Object.keys(changes.put).length > 0 ? [OPERATIONS.tag] : []),
-  ].find((operation) => unavailable.has(operation));
+  ];
+  // A reopened editor names the unavailable operation before an edit determines which writes are needed.
+  const unsupported = (writes.length === 0 ? [OPERATIONS.untag, OPERATIONS.tag] : writes).find((operation) =>
+    unavailable.has(operation),
+  );
   const lastFailure = failure?.kind === 'not-implemented' && changes !== undefined ? undefined : failure;
   const shownFailure: RequestFailure | undefined =
     unsupported === undefined ? lastFailure : { kind: 'not-implemented', operation: unsupported };
@@ -139,7 +143,7 @@ export function ManageTagsDialog({
             <Button
               variant="primary"
               loading={pending}
-              disabled={pending || changes === undefined || unsupported !== undefined}
+              disabled={changes === undefined || unsupported !== undefined}
               onClick={() => void save()}
             >
               Save

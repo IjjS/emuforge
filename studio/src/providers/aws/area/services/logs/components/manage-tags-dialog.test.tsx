@@ -240,6 +240,10 @@ it.each([
     fireEvent.click(first.dialog.getByRole('button', { name: 'Cancel' }));
 
     const reopened = await open();
+    expect(reopened.save).toBeDisabled();
+    expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
+    fireEvent.click(reopened.save);
+    expect(sent).toHaveLength(statuses.length);
     if (operation === 'UntagLogGroup') {
       fireEvent.click(reopened.dialog.getByRole('button', { name: 'Remove tag a' }));
       expect(reopened.save).toBeDisabled();
