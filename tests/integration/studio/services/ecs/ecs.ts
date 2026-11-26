@@ -201,6 +201,8 @@ export interface DirectTask {
   launchType: string | undefined;
   stopCode: string | undefined;
   exitCode: number | undefined;
+  /** Every container of the answer, in its order, by name; `exitCode` is `undefined` for one that has none. */
+  containers: { name: string; exitCode: number | undefined }[];
   definition: string;
 }
 
@@ -216,6 +218,10 @@ export async function taskDirect(ctx: Ctx, port: number, cluster: string, id: st
     launchType: found.launchType as string | undefined,
     stopCode: found.stopCode as string | undefined,
     exitCode: (found.containers as Json[] | undefined)?.[0]?.exitCode as number | undefined,
+    containers: ((found.containers as Json[] | undefined) ?? []).map((container) => ({
+      name: container.name as string,
+      exitCode: container.exitCode as number | undefined,
+    })),
     definition: lastPart(found.taskDefinitionArn as string),
   };
 }
