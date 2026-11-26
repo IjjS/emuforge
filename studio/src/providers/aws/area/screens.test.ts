@@ -4,17 +4,25 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { preloadArea } from '../../../test/area-preload';
 import { readServiceFolders, SERVICES_DIR } from '../../../test/service-files';
 import { SERVICES } from '../services';
-import {
-  collectScreens,
-  registryFaults,
-  SCREEN_FOLDERS,
-  SCREENS,
-  screenFolders,
-  type ScreenCrumbs,
-  type ServiceScreen,
-} from './screens';
+import type { ScreenCrumbs, ServiceScreen } from './screens';
+
+const { collectScreens, registryFaults, SCREEN_FOLDERS, SCREENS, screenFolders } = await preloadArea(
+  () => import('./screens'),
+);
+
+const emptyScreens = collectScreens(screenFolders({ './services/sqs/screens.ts': { SCREENS: [] } }));
+
+vi.resetModules();
+vi.doMock('./screens', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./screens')>()),
+  SCREENS: emptyScreens,
+}));
+const { areaPage } = await preloadArea(() => import('./area-page'));
+vi.doUnmock('./screens');
+vi.resetModules();
 
 // The registry collected from every `services/*/screens.ts`, and its rules (issue 386, requirement R3.1 to R3.4,
 // R3.6). The folders on disk are read with `node:fs`, apart from the product's collection.
@@ -156,23 +164,11 @@ describe('the registry of the AWS area', () => {
     expect(marked).toEqual(registered);
   });
 
-  it('a service folder whose screens.ts gives an empty list → no screen; its route shows the "no screen yet" page', async () => {
-    const screens = collectScreens(screenFolders({ './services/sqs/screens.ts': { SCREENS: [] } }));
-    expect(screens).toEqual([]);
+  it('a service folder whose screens.ts gives an empty list → no screen; its route shows the "no screen yet" page', () => {
+    expect(emptyScreens).toEqual([]);
 
-    vi.resetModules();
-    vi.doMock('./screens', async (importOriginal) => ({
-      ...(await importOriginal<typeof import('./screens')>()),
-      SCREENS: screens,
-    }));
-    try {
-      const { areaPage } = await import('./area-page');
-      for (const address of ['/aws/sqs', '/aws/sqs/queues']) {
-        expect(areaPage(address)).toMatchObject({ kind: 'service', service: { route: '/sqs' } });
-      }
-    } finally {
-      vi.doUnmock('./screens');
-      vi.resetModules();
+    for (const address of ['/aws/sqs', '/aws/sqs/queues']) {
+      expect(areaPage(address)).toMatchObject({ kind: 'service', service: { route: '/sqs' } });
     }
   });
 

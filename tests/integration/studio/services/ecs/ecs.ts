@@ -160,7 +160,7 @@ export async function clusterNamesDirect(ctx: Ctx, port: number): Promise<string
 
 /** What a definition made outside differs in from the default of test-criteria.md. */
 export interface DefinitionOptions {
-  /** The container's command; `sh -c "sleep 3600"` when left out. */
+  /** The container's command; `sh -c "sleep infinity"` when left out, which the emulator keeps running (issue 652). */
   command?: string[];
   /** With `awslogs`: the log group's name (the stream prefix is `ecs`, the group is created). */
   logGroup?: string;
@@ -309,7 +309,7 @@ export class EcsSeeded {
       name: options.container ?? 'app',
       image: options.image ?? 'busybox',
       essential: true,
-      command: options.command ?? ['sh', '-c', 'sleep 3600'],
+      command: options.command ?? ['sh', '-c', 'sleep infinity'],
     };
     if (options.environment !== undefined) {
       container.environment = Object.entries(options.environment).map(([name, value]) => ({ name, value }));
