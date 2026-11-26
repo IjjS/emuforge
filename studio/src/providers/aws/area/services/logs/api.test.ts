@@ -47,17 +47,68 @@ afterEach(() => vi.unstubAllGlobals());
 
 const signal = () => new AbortController().signal;
 
-it('reads a page with the pattern, limit and token, returning the groups and the answer token', async () => {
-  const logGroups = [{ logGroupName: '/app#Cold', retentionInDays: 7, deletionProtectionEnabled: true }];
-  answer.mockResolvedValueOnce(response({ logGroups, nextToken: 'after' }));
+it('fills in filtered groups by name, keeping the pattern order, missing rows and page token', async () => {
+  const logs = { logGroupName: '/app#Cold', retentionInDays: 7, deletionProtectionEnabled: true };
+  const protectedLogs = { logGroupName: '/protected#Cold', retentionInDays: 30, deletionProtectionEnabled: true };
+  const missing = { logGroupName: '/missing#Cold', creationTime: 1000 };
+  answer
+    .mockResolvedValueOnce(
+      response({
+        logGroups: [{ logGroupName: logs.logGroupName }, missing, { logGroupName: protectedLogs.logGroupName }],
+        nextToken: 'after',
+      }),
+    )
+    .mockResolvedValueOnce(response({ logGroups: [protectedLogs, logs] }));
   await expect(listLogGroups(endpoint, 'Cold', 'before', signal())).resolves.toEqual({
-    items: logGroups,
+    items: [logs, missing, protectedLogs],
     next: 'after',
   });
   expect(sent).toEqual([
     { operation: 'DescribeLogGroups', body: { logGroupNamePattern: 'Cold', limit: 25, nextToken: 'before' } },
+    {
+      operation: 'DescribeLogGroups',
+      body: { logGroupIdentifiers: [logs.logGroupName, missing.logGroupName, protectedLogs.logGroupName] },
+    },
   ]);
 });
+
+it('reports a failed identifier read as a DescribeLogGroups listing failure', async () => {
+  answer.mockResolvedValueOnce(response({ logGroups: [{ logGroupName: 'match' }] })).mockResolvedValueOnce(
+    new Response(JSON.stringify({ __type: 'AccessDeniedException', message: 'denied' }), {
+      status: 403,
+      headers: { 'content-type': 'application/x-amz-json-1.1' },
+    }),
+  );
+
+  await expect(listLogGroups(endpoint, 'match', undefined, signal())).rejects.toMatchObject({
+    name: 'RequestError',
+    failure: { kind: 'access-denied', operation: 'DescribeLogGroups', message: 'denied' },
+  });
+  expect(sent).toEqual([
+    { operation: 'DescribeLogGroups', body: { limit: 25, logGroupNamePattern: 'match' } },
+    { operation: 'DescribeLogGroups', body: { logGroupIdentifiers: ['match'] } },
+  ]);
+});
+
+it.each([
+  { pattern: '', namesOnly: false, logGroups: [{ logGroupName: 'match', retentionInDays: 7 }] },
+  { pattern: 'match', namesOnly: true, logGroups: [{ logGroupName: 'match' }] },
+  { pattern: 'match', namesOnly: false, logGroups: [] },
+])(
+  'reads a page once with pattern "$pattern", namesOnly=$namesOnly and rows $logGroups',
+  async ({ pattern, namesOnly, logGroups }) => {
+    answer.mockResolvedValueOnce(response({ logGroups }));
+    await expect(listLogGroups(endpoint, pattern, undefined, signal(), { namesOnly })).resolves.toEqual({
+      items: logGroups,
+    });
+    expect(sent).toEqual([
+      {
+        operation: 'DescribeLogGroups',
+        body: { limit: 25, ...(pattern === '' ? {} : { logGroupNamePattern: pattern }) },
+      },
+    ]);
+  },
+);
 
 it.each([{ logGroups: [{ logGroupName: 'match' }], nextToken: 'after' }, { logGroups: [] }])(
   'reads on past an empty answer with a token, then returns %j',

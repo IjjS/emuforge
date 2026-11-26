@@ -34,8 +34,8 @@ it('passes the typed substring and page token to the group reader and uses the g
   expect(first).toEqual({ items: ['/app#Group'], next: 'more' });
   await expect(source.read(endpoint, 'Group', first.next, signal)).resolves.toEqual({ items: ['AnotherGroup'] });
   expect(groups.mock.calls).toEqual([
-    [endpoint, 'Group', undefined, signal],
-    [endpoint, 'Group', 'more', signal],
+    [endpoint, 'Group', undefined, signal, { namesOnly: true }],
+    [endpoint, 'Group', 'more', signal, { namesOnly: true }],
   ]);
   expect(first.items.map(source.optionOf)).toEqual([{ value: '/app#Group', label: '/app#Group' }]);
 });
