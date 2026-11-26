@@ -78,7 +78,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
   } else {
     const links = api.ProtocolType === 'WEBSOCKET' ? [...apiLinks, ...webSocketLinks] : apiLinks;
     content = (
-      <>
+      <SpaceBetween size="l">
         <V2Details api={api} id={id} endpoint={endpoint} onRefresh={() => void reading.refresh()} />
         {failure}
         <V2Routes
@@ -99,7 +99,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
             ))}
           </SpaceBetween>
         </Container>
-      </>
+      </SpaceBetween>
     );
   }
 
