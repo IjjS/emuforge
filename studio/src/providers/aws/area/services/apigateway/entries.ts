@@ -1,110 +1,204 @@
-import { apisPath, servicePath } from './format';
+import type { EntryGroup } from '../../entries';
 
-export type ApiChoiceDestination =
-  { model: 'rest'; part: 'resources' | 'stages' } | { model: 'v2'; part: 'routes' | 'integrations' | 'stages' };
-
-export interface ApiGatewayEntry {
-  group: 'core' | 'REST APIs' | 'HTTP and WebSocket APIs';
-  name: string;
-  path: string;
-  built: boolean;
-  chooseApi?: ApiChoiceDestination;
-}
-
-export const ENTRIES: readonly ApiGatewayEntry[] = [
-  { group: 'core', name: 'APIs', path: apisPath, built: true },
+export const ENTRIES: readonly EntryGroup[] = [
   {
-    group: 'REST APIs',
-    name: 'Resources',
-    path: `${servicePath}/resources`,
-    built: true,
-    chooseApi: { model: 'rest', part: 'resources' },
+    name: 'API Gateway',
+    entries: [
+      {
+        label: 'REST APIs',
+        path: '/aws/apigateway/rest-apis',
+        listedBy: 'GetRestApis',
+      },
+      {
+        label: 'Resources',
+        path: '/aws/apigateway/resources',
+        listedBy: 'GetResources',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Stages',
+        path: '/aws/apigateway/stages',
+        listedBy: 'GetStages',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'API keys',
+        path: '/aws/apigateway/api-keys',
+        listedBy: 'GetApiKeys',
+      },
+      {
+        label: 'Authorizers',
+        path: '/aws/apigateway/authorizers',
+        listedBy: 'GetAuthorizers',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Base path mappings',
+        path: '/aws/apigateway/base-path-mappings',
+        listedBy: 'GetBasePathMappings',
+        listedInside: '/aws/apigateway/domain-names',
+      },
+      {
+        label: 'Client certificates',
+        path: '/aws/apigateway/client-certificates',
+        listedBy: 'GetClientCertificates',
+      },
+      {
+        label: 'Deployments',
+        path: '/aws/apigateway/deployments',
+        listedBy: 'GetDeployments',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Documentation parts',
+        path: '/aws/apigateway/documentation-parts',
+        listedBy: 'GetDocumentationParts',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Documentation versions',
+        path: '/aws/apigateway/documentation-versions',
+        listedBy: 'GetDocumentationVersions',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Domain name access associations',
+        path: '/aws/apigateway/domain-name-access-associations',
+        listedBy: 'GetDomainNameAccessAssociations',
+      },
+      {
+        label: 'Domain names',
+        path: '/aws/apigateway/domain-names',
+        listedBy: 'GetDomainNames',
+      },
+      {
+        label: 'Gateway responses',
+        path: '/aws/apigateway/gateway-responses',
+        listedBy: 'GetGatewayResponses',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Models',
+        path: '/aws/apigateway/models',
+        listedBy: 'GetModels',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Request validators',
+        path: '/aws/apigateway/request-validators',
+        listedBy: 'GetRequestValidators',
+        listedInside: '/aws/apigateway/rest-apis',
+      },
+      {
+        label: 'Usage plan keys',
+        path: '/aws/apigateway/usage-plan-keys',
+        listedBy: 'GetUsagePlanKeys',
+        listedInside: '/aws/apigateway/usage-plans',
+      },
+      {
+        label: 'Usage plans',
+        path: '/aws/apigateway/usage-plans',
+        listedBy: 'GetUsagePlans',
+      },
+      {
+        label: 'VPC links',
+        path: '/aws/apigateway/vpc-links',
+        listedBy: 'GetVpcLinks',
+      },
+    ],
   },
   {
-    group: 'REST APIs',
-    name: 'Stages',
-    path: `${servicePath}/stages`,
-    built: true,
-    chooseApi: { model: 'rest', part: 'stages' },
-  },
-  { group: 'REST APIs', name: 'Deployments', path: `${servicePath}/deployments`, built: false },
-  { group: 'REST APIs', name: 'Authorizers', path: `${servicePath}/authorizers`, built: false },
-  { group: 'REST APIs', name: 'Models', path: `${servicePath}/models`, built: false },
-  { group: 'REST APIs', name: 'Request validators', path: `${servicePath}/request-validators`, built: false },
-  { group: 'REST APIs', name: 'Gateway responses', path: `${servicePath}/gateway-responses`, built: false },
-  { group: 'REST APIs', name: 'Documentation parts', path: `${servicePath}/documentation-parts`, built: false },
-  { group: 'REST APIs', name: 'Documentation versions', path: `${servicePath}/documentation-versions`, built: false },
-  { group: 'REST APIs', name: 'API keys', path: `${servicePath}/api-keys`, built: false },
-  { group: 'REST APIs', name: 'Usage plans', path: `${servicePath}/usage-plans`, built: false },
-  { group: 'REST APIs', name: 'Usage plan keys', path: `${servicePath}/usage-plan-keys`, built: false },
-  { group: 'REST APIs', name: 'Custom domain names', path: `${servicePath}/domain-names`, built: false },
-  { group: 'REST APIs', name: 'Base path mappings', path: `${servicePath}/base-path-mappings`, built: false },
-  {
-    group: 'REST APIs',
-    name: 'Domain name access associations',
-    path: `${servicePath}/domain-name-access-associations`,
-    built: false,
-  },
-  { group: 'REST APIs', name: 'VPC links', path: `${servicePath}/vpc-links`, built: false },
-  { group: 'REST APIs', name: 'Client certificates', path: `${servicePath}/client-certificates`, built: false },
-  { group: 'REST APIs', name: 'Account settings', path: `${servicePath}/account`, built: false },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Routes',
-    path: `${servicePath}/v2/routes`,
-    built: true,
-    chooseApi: { model: 'v2', part: 'routes' },
-  },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Integrations',
-    path: `${servicePath}/v2/integrations`,
-    built: true,
-    chooseApi: { model: 'v2', part: 'integrations' },
-  },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Stages',
-    path: `${servicePath}/v2/stages`,
-    built: true,
-    chooseApi: { model: 'v2', part: 'stages' },
-  },
-  { group: 'HTTP and WebSocket APIs', name: 'Deployments', path: `${servicePath}/v2/deployments`, built: false },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Route responses',
-    path: `${servicePath}/v2/route-responses`,
-    built: false,
-  },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Integration responses',
-    path: `${servicePath}/v2/integration-responses`,
-    built: false,
-  },
-  { group: 'HTTP and WebSocket APIs', name: 'Authorizers', path: `${servicePath}/v2/authorizers`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Models', path: `${servicePath}/v2/models`, built: false },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Custom domain names',
-    path: `${servicePath}/v2/domain-names`,
-    built: false,
-  },
-  { group: 'HTTP and WebSocket APIs', name: 'API mappings', path: `${servicePath}/v2/api-mappings`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Routing rules', path: `${servicePath}/v2/routing-rules`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'VPC links', path: `${servicePath}/v2/vpc-links`, built: false },
-  { group: 'HTTP and WebSocket APIs', name: 'Portals', path: `${servicePath}/v2/portals`, built: false },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Portal products',
-    path: `${servicePath}/v2/portal-products`,
-    built: false,
-  },
-  { group: 'HTTP and WebSocket APIs', name: 'Product pages', path: `${servicePath}/v2/product-pages`, built: false },
-  {
-    group: 'HTTP and WebSocket APIs',
-    name: 'Product REST endpoint pages',
-    path: `${servicePath}/v2/product-rest-endpoint-pages`,
-    built: false,
+    name: 'HTTP and WebSocket APIs',
+    subService: {
+      name: 'HTTP and WebSocket APIs',
+      path: '/aws/apigateway/v2',
+    },
+    entries: [
+      {
+        label: 'APIs',
+        path: '/aws/apigateway/apis',
+        listedBy: 'GetApis',
+      },
+      {
+        label: 'Routes',
+        path: '/aws/apigateway/routes',
+        listedBy: 'GetRoutes',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'Integrations',
+        path: '/aws/apigateway/integrations',
+        listedBy: 'GetIntegrations',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'V2 stages',
+        path: '/aws/apigateway/v2-stages',
+        listedBy: 'GetStages',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'API mappings',
+        path: '/aws/apigateway/api-mappings',
+        listedBy: 'GetApiMappings',
+        listedInside: '/aws/apigateway/v2-domain-names',
+      },
+      {
+        label: 'Integration responses',
+        path: '/aws/apigateway/integration-responses',
+        listedBy: 'GetIntegrationResponses',
+        listedInside: '/aws/apigateway/integrations',
+      },
+      {
+        label: 'Portal products',
+        path: '/aws/apigateway/portal-products',
+        listedBy: 'ListPortalProducts',
+      },
+      {
+        label: 'Portals',
+        path: '/aws/apigateway/portals',
+        listedBy: 'ListPortals',
+      },
+      {
+        label: 'Route responses',
+        path: '/aws/apigateway/route-responses',
+        listedBy: 'GetRouteResponses',
+        listedInside: '/aws/apigateway/routes',
+      },
+      {
+        label: 'Routing rules',
+        path: '/aws/apigateway/routing-rules',
+        listedBy: 'ListRoutingRules',
+        listedInside: '/aws/apigateway/v2-domain-names',
+      },
+      {
+        label: 'V2 authorizers',
+        path: '/aws/apigateway/v2-authorizers',
+        listedBy: 'GetAuthorizers',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'V2 deployments',
+        path: '/aws/apigateway/v2-deployments',
+        listedBy: 'GetDeployments',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'V2 domain names',
+        path: '/aws/apigateway/v2-domain-names',
+        listedBy: 'GetDomainNames',
+      },
+      {
+        label: 'V2 models',
+        path: '/aws/apigateway/v2-models',
+        listedBy: 'GetModels',
+        listedInside: '/aws/apigateway/apis',
+      },
+      {
+        label: 'V2 VPC links',
+        path: '/aws/apigateway/v2-vpc-links',
+        listedBy: 'GetVpcLinks',
+      },
+    ],
   },
 ];

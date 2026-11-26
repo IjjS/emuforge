@@ -182,23 +182,27 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
   vi.mocked(getV2Api).mockResolvedValue({ found: true, api: { ...api, ProtocolType } });
   open();
   const common = [
-    ['Deployments', 'deployments'],
-    ['Authorizers', 'authorizers'],
+    ['Deployments', 'v2-deployments'],
+    ['Authorizers', 'v2-authorizers'],
   ] as const;
   const webSocket = [
-    ['Models', 'models'],
+    ['Models', 'v2-models'],
     ['Route responses', 'route-responses'],
     ['Integration responses', 'integration-responses'],
   ] as const;
   const links = ProtocolType === 'WEBSOCKET' ? [...common, ...webSocket] : common;
   const content = within(await screen.findByRole('region', { name: 'Events' }));
   for (const [name, segment] of links) {
-    expect(content.getByRole('link', { name })).toHaveAttribute('href', `${path}/${segment}`);
-    expect(areaPage(`${path}/${segment}`)).toMatchObject({ kind: 'part', above: { params: { api_id: id } } });
+    const entryPath = `/aws/apigateway/${segment}`;
+    expect(content.getByRole('link', { name })).toHaveAttribute('href', entryPath);
+    expect(areaPage(entryPath)).toMatchObject({
+      kind: 'entry',
+      match: { resource: { path: entryPath } },
+    });
   }
   if (ProtocolType === 'HTTP') {
-    for (const [, segment] of webSocket) {
-      expect(document.querySelector(`a[href="${path}/${segment}"]`)).toBeNull();
+    for (const [name] of webSocket) {
+      expect(content.queryByRole('link', { name })).not.toBeInTheDocument();
     }
   }
 });

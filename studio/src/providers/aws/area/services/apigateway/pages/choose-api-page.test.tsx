@@ -76,9 +76,9 @@ async function openChoice(wrapper: ReturnType<typeof open>, user: ReturnType<typ
 it.each([
   ['resources', 'Resources', 'rest', 'resources', rest],
   ['stages', 'Stages', 'rest', 'stages', rest],
-  ['v2/routes', 'Routes', 'v2', 'routes', http],
-  ['v2/integrations', 'Integrations', 'v2', 'integrations', http],
-  ['v2/stages', 'Stages', 'v2', 'stages', webSocket],
+  ['routes', 'Routes', 'v2', 'routes', http],
+  ['integrations', 'Integrations', 'v2', 'integrations', http],
+  ['v2-stages', 'V2 stages', 'v2', 'stages', webSocket],
 ] as const)('offers the APIs for %s and opens its selected part', async (suffix, name, model, part, selected) => {
   const wrapper = open(suffix);
   const user = userEvent.setup();
@@ -131,7 +131,7 @@ it('loads a further page of APIs by the first page token', async () => {
 
 it.each([
   ['resources', readRestApis, 'No REST APIs'],
-  ['v2/routes', readV2Apis, 'No HTTP or WebSocket APIs'],
+  ['routes', readV2Apis, 'No HTTP or WebSocket APIs'],
 ] as const)('offers Create API when %s has no API of its model', async (suffix, read, empty) => {
   vi.mocked(read).mockResolvedValue({ items: [] });
   open(suffix);
@@ -160,14 +160,14 @@ const failureCases: FailureCase[] = [
     detail: 'The emulator answered 501 Not Implemented for GetRestApis, so Studio cannot show the REST APIs.',
   },
   {
-    suffix: 'v2/routes',
+    suffix: 'routes',
     read: readV2Apis,
     failure: { kind: 'access-denied', operation: 'GetApis', message: 'The API list was refused.' },
     first: 'Access denied',
     detail: 'GetApis was refused: The API list was refused.',
   },
   {
-    suffix: 'v2/integrations',
+    suffix: 'integrations',
     read: readV2Apis,
     failure: { kind: 'other', operation: 'GetApis', code: 'InternalError', message: 'Unexpected list error.' },
     first: 'The HTTP or WebSocket APIs could not be read',
@@ -191,7 +191,7 @@ const failureCases: FailureCase[] = [
     recovery: true,
   },
   {
-    suffix: 'v2/stages',
+    suffix: 'v2-stages',
     read: readV2Apis,
     failure: { kind: 'engine-did-not-answer', operation: 'GetApis' },
     first: 'The EmuForge engine at http://127.0.0.1:9681 is not answering',

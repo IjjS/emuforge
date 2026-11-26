@@ -1,6 +1,5 @@
 import type { ServiceScreen } from '../../../screens';
-import { apisPath, v2ApiPath } from '../format';
-import { apiGatewayNavigation } from '../navigation';
+import { apisPath, servicePath, v2ApiPath } from '../format';
 import { CreateRoutePage } from '../pages/create-route-page';
 
 export const SCREENS: readonly ServiceScreen[] = [
@@ -12,7 +11,7 @@ export const SCREENS: readonly ServiceScreen[] = [
       { text: api_id ?? 'HTTP API', href: v2ApiPath(api_id ?? '') },
       { text: 'Create route' },
     ],
-    navigation: apiGatewayNavigation(),
+    navigation: { header: { text: 'API Gateway', href: servicePath }, activeHref: apisPath },
     Page: CreateRoutePage,
   },
 ];

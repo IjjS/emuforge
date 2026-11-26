@@ -1,5 +1,6 @@
 export const servicePath = '/aws/apigateway';
 export const apisPath = `${servicePath}/apis`;
+export const restApisPath = `${servicePath}/rest-apis`;
 export const createApiPath = `${apisPath}/create`;
 
 export const REST_API_NAME_LIMIT = 512;

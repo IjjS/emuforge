@@ -15,16 +15,16 @@ import { V2Details } from '../components/v2-details';
 import { V2Integrations } from '../components/v2-integrations';
 import { V2Routes } from '../components/v2-routes';
 import { V2Stages } from '../components/v2-stages';
-import { apisPath, v2ApiPath } from '../format';
+import { apisPath, servicePath } from '../format';
 import { useV2Api, useV2Integrations, useV2Routes, useV2Stages } from '../v2-queries';
 
 const apiLinks = [
-  ['Deployments', 'deployments'],
-  ['Authorizers', 'authorizers'],
+  ['Deployments', 'v2-deployments'],
+  ['Authorizers', 'v2-authorizers'],
 ] as const;
 
 const webSocketLinks = [
-  ['Models', 'models'],
+  ['Models', 'v2-models'],
   ['Route responses', 'route-responses'],
   ['Integration responses', 'integration-responses'],
 ] as const;
@@ -92,7 +92,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
         <Container header={<Header variant="h2">More API settings</Header>}>
           <SpaceBetween size="xs">
             {links.map(([name, segment]) => (
-              <Link key={segment} href={`${v2ApiPath(id)}/${segment}`} onFollow={handleFollow}>
+              <Link key={segment} href={`${servicePath}/${segment}`} onFollow={handleFollow}>
                 {name}
               </Link>
             ))}

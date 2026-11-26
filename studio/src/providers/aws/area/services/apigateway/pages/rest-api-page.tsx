@@ -14,19 +14,18 @@ import { RequestReadFailure } from '../components/request-read-failure';
 import { RestDetails } from '../components/rest-details';
 import { RestResources } from '../components/rest-resources';
 import { RestStages } from '../components/rest-stages';
-import { ENTRIES } from '../entries';
-import { apisPath, restApiPath, servicePath } from '../format';
+import { apisPath, servicePath } from '../format';
 import { refreshRestApi, useRestApi, useRestResources } from '../rest-queries';
 
-const relatedParts = new Set([
-  'Deployments',
-  'Authorizers',
-  'Models',
-  'Request validators',
-  'Gateway responses',
-  'Documentation parts',
-  'Documentation versions',
-]);
+const relatedParts = [
+  ['Deployments', 'deployments'],
+  ['Authorizers', 'authorizers'],
+  ['Models', 'models'],
+  ['Request validators', 'request-validators'],
+  ['Gateway responses', 'gateway-responses'],
+  ['Documentation parts', 'documentation-parts'],
+  ['Documentation versions', 'documentation-versions'],
+] as const;
 
 export function RestApiPage({ connection, params }: ScreenPageProps) {
   useShowsResources('APIs');
@@ -64,13 +63,11 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
           <RestStages apiId={apiId} connection={connection} />
           <Container header={<Header variant="h2">Related API settings</Header>}>
             <SpaceBetween size="xs">
-              {ENTRIES.filter(({ group, name }) => group === 'REST APIs' && relatedParts.has(name)).map(
-                ({ name, path }) => (
-                  <Link key={path} href={restApiPath(apiId) + path.slice(servicePath.length)} onFollow={follow}>
-                    {name}
-                  </Link>
-                ),
-              )}
+              {relatedParts.map(([name, segment]) => (
+                <Link key={segment} href={`${servicePath}/${segment}`} onFollow={follow}>
+                  {name}
+                </Link>
+              ))}
             </SpaceBetween>
           </Container>
         </>
