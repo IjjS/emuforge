@@ -27,7 +27,7 @@ exposed to it. Other services' screens were not examined for it when this was fi
 
 The reference behavior is what Studio already does for line terminators in a stream's name (issue 71): the name is
 shown as it is, and where rendering would hide a difference its exact escaped identity is shown and announced with
-it (`escapedName` in `studio/src/providers/aws/area/services/logs/format.ts`).
+it (`streamNameLabel` in `studio/src/providers/aws/area/services/logs/format.ts`).
 
 ## Evidence
 
