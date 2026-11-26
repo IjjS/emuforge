@@ -40,6 +40,19 @@ function initialFailureState(failure: RequestFailure, connection: AreaConnection
   return { ...state, first, firstText: first, detail: failure.message };
 }
 
+function continuationFailureState(failure: RequestFailure, connection: AreaConnection, direction: 'older' | 'newer') {
+  const state = readFailureState(failure, connection, `${direction} log events`);
+  if (failure.kind === 'access-denied' || failure.kind === 'not-implemented') return state;
+  return {
+    ...state,
+    detail: (
+      <>
+        {failure.operation}: {state.detail}
+      </>
+    ),
+  };
+}
+
 type StreamEvents = ReturnType<typeof useStreamEvents>;
 
 function Continuation({
@@ -54,18 +67,11 @@ function Continuation({
   const { token, reading, empty, failure } = streamEvents[direction];
   const load = () => streamEvents.load(direction);
   const label = `Load ${direction} events`;
-  const failureState = failure && readFailureState(failure, connection, `${direction} log events`);
-  if (failureState !== undefined && failure?.kind !== 'access-denied' && failure?.kind !== 'not-implemented') {
-    failureState.detail = (
-      <>
-        {failure?.operation}: {failureState.detail}
-      </>
-    );
-  }
+  const failureState = failure && continuationFailureState(failure, connection, direction);
   return (
     <div role="group" aria-label={label}>
       <SpaceBetween size="xs">
-        <Button onClick={load} loading={reading} disabled={token === undefined || failure !== undefined}>
+        <Button onClick={load} loading={reading === true} disabled={token === undefined || failure !== undefined}>
           {label}
         </Button>
         {empty && <div role="status">{`No ${direction} events.`}</div>}

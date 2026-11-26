@@ -109,10 +109,10 @@ it('closes the older end on an empty page and keeps the newer control available'
   await screen.findByText('event');
   fireEvent.click(button('newer'));
   expect(await within(control('newer')).findByText('No newer events.')).toBeVisible();
-  expect(button('newer')).not.toHaveAttribute('aria-disabled', 'true');
+  expect(button('newer')).not.toBeDisabled();
   fireEvent.click(button('older'));
   expect(await within(control('older')).findByText('No older events.')).toBeVisible();
-  expect(button('older')).toHaveAttribute('aria-disabled', 'true');
+  expect(button('older')).toBeDisabled();
   expect(messages()).toEqual(['event']);
 });
 
@@ -228,6 +228,6 @@ it('shows a continuation 501 beside its own control and keeps the log visible', 
   fireEvent.click(button('newer'));
   expect(await within(control('newer')).findByText('Not implemented by the emulator')).toBeVisible();
   expect(control('newer')).toHaveTextContent('501 Not Implemented for GetLogEvents');
-  expect(button('newer')).toHaveAttribute('aria-disabled', 'true');
+  expect(button('newer')).toBeDisabled();
   expect(messages()).toEqual(['initial']);
 });

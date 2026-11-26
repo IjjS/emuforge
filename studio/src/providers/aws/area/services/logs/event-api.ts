@@ -12,8 +12,8 @@ export type EventRead =
 
 export interface EventPage {
   events: OutputLogEvent[];
-  nextBackwardToken?: string;
-  nextForwardToken?: string;
+  nextBackwardToken: string | undefined;
+  nextForwardToken: string | undefined;
 }
 
 export async function getLogEvents(

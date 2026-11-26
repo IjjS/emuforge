@@ -9,7 +9,7 @@ type End = 'older' | 'newer';
 type Direction = 'initial' | End;
 
 interface Continuation {
-  token?: string;
+  token: string | undefined;
   empty?: boolean;
   reading?: boolean;
   failure?: RequestFailure;
@@ -36,7 +36,7 @@ interface ReadSession {
   inFlight: Set<Direction>;
 }
 
-const INITIAL_STATE: StreamState = { prepended: 0, older: {}, newer: {} };
+const INITIAL_STATE: StreamState = { prepended: 0, older: { token: undefined }, newer: { token: undefined } };
 
 function acceptPage(state: StreamState, direction: Direction, page: EventPage): StreamState {
   if (direction === 'initial') {
