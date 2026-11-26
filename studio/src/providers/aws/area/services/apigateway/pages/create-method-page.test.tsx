@@ -31,7 +31,13 @@ const connected: AreaConnection = {
 };
 const stopped: AreaConnection = {
   engineOrigin,
-  result: { kind: 'emulator-unreachable', reason: 'not_started', checkedAt: 1, emulator: { port: 9682, endpoint } },
+  result: {
+    kind: 'emulator-unreachable',
+    reason: 'not_started',
+    message: 'The emulator is stopped.',
+    checkedAt: 1,
+    emulator: { port: 9682, endpoint },
+  },
 };
 const firstResource = { id: 'root', path: '/' };
 const linkedResource = { id: 'later-page', path: '/orders' };
@@ -83,7 +89,7 @@ function open(path = address, connection = connected) {
     return match;
   };
   const select = (label: string) => {
-    const match = field(label).findSelect();
+    const match = createWrapper(field(label).getElement()).findSelect();
     if (match === null) throw new Error(`Missing select ${label}`);
     return match;
   };
@@ -98,7 +104,7 @@ function open(path = address, connection = connected) {
     choice.selectOptionByValue(value);
   };
   const chooseKind = async (value: string) => {
-    const tile = field('Integration kind').findTiles()?.findInputByValue(value);
+    const tile = createWrapper(field('Integration kind').getElement()).findTiles()?.findInputByValue(value);
     if (!tile) throw new Error(`Missing integration option ${value}`);
     await user.click(tile.getElement());
   };
