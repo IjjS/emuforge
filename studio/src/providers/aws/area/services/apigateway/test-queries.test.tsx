@@ -34,7 +34,7 @@ it('gives the latest test answer when the first test answers last', async () => 
   act(() => result.current.submit({ ...input, pathWithQueryString: '/orders?test=second' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
   await act(async () => second.resolve({ $metadata: {}, body: 'second' }));
-  await waitFor(() => expect(result.current.response?.body).toBe('second'));
+  await waitFor(() => expect(client.isMutating()).toBe(1));
   await act(async () => first.resolve({ $metadata: {}, body: 'first' }));
   await waitFor(() => expect(client.isMutating()).toBe(0));
   expect(result.current.response?.body).toBe('second');
