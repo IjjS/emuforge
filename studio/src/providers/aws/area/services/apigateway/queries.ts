@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { failureOf, noEndpoint, type TokenPage } from '../../components/use-token-listing';
-import { GET_APIS, GET_REST_APIS, readRestApis, readV2Apis } from './apis-api';
+import { GET_APIS, GET_REST_APIS, readRestApis, readV2Apis, type ApiRow } from './apis-api';
 import type { ApiModel } from './format';
 
 const serviceKey = ['apigateway'] as const;

@@ -1,6 +1,6 @@
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useEffect, useRef } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 
 import { optional, useChoiceField, type ChoiceSelectProps } from '../../../components/choice-select';
 import { RequestReadFailure } from './request-read-failure';
@@ -30,8 +30,18 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
     props: field,
   } = useChoiceField({ ...props, source: { ...source, readAgainOnOpen: false } }, fixedOption);
   const select = useRef<HTMLDivElement>(null);
-  const { restart } = choices;
+  const firstPageRetry = useRef(false);
   const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
+
+  useEffect(() => {
+    if (!choices.loading) firstPageRetry.current = false;
+  }, [choices.loading]);
+
+  const handleReopen = useEffectEvent(() => {
+    // Retry below the field closes the dropdown. Reuse its first-page read if it is still pending.
+    if (firstPageRetry.current && choices.loading) return;
+    choices.restart();
+  });
 
   useEffect(() => {
     if (readAgainOnOpen !== true) return;
@@ -42,12 +52,17 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
     let opened = false;
     const observer = new MutationObserver(() => {
       if (trigger.getAttribute('aria-expanded') !== 'true') return;
-      if (opened) restart();
+      if (opened) handleReopen();
       opened = true;
     });
     observer.observe(trigger, { attributes: true, attributeFilter: ['aria-expanded'] });
     return () => observer.disconnect();
-  }, [readAgainOnOpen, restart]);
+  }, [readAgainOnOpen]);
+
+  const handleRetry = () => {
+    firstPageRetry.current = choices.choices === undefined;
+    choices.retry();
+  };
 
   const handleChange = ({ detail }: { detail: SelectProps.ChangeDetail }) => {
     if (detail.selectedOption.value === fixedOption?.value && fixedOption !== undefined) {
@@ -72,7 +87,7 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
         />
       </div>
       {choices.failure !== undefined && (
-        <RequestReadFailure failure={choices.failure} connection={connection} thing={things} onRetry={choices.retry} />
+        <RequestReadFailure failure={choices.failure} connection={connection} thing={things} onRetry={handleRetry} />
       )}
     </SpaceBetween>
   );
