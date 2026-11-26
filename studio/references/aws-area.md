@@ -54,8 +54,10 @@ answers at the service's entry, in the order of the service's `models` in `.pm/b
 emulator's answers and the API models, independently of the AWS console's navigation.
 
 1. Each model with entries is a group. The first model is the service itself. Each later model is a sub-service
-   with its own name and path, `/aws/<service>/<sub-service-name-in-kebab-case>`, in its group's navigation.
-   Show group names when there is more than one group.
+   with its own entry in its group's navigation. The requirement records the sub-service's chosen path segment
+   alongside its display name. The path is `/aws/<service>/<sub-service-segment>`, and the segment can be a short
+   name, as in `/aws/dynamodb/dax` for DynamoDB Accelerator (DAX) (issue 650, requirement R3). Show group names
+   when there is more than one group.
 2. A resource kind has a list read whose output model contains a list and a making operation in the same model.
    An account list is a `Describe*` or `List*` read from the probe table that answers 2xx without an argument of its
    own. For a scoped list outside the table, use a `List*` or plural `Describe*` with exactly one required input
