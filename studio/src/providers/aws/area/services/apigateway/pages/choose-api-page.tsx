@@ -4,7 +4,7 @@ import Container from '@cloudscape-design/components/container';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useRef, useState, type FocusEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
@@ -30,17 +30,24 @@ export function ChooseApiPage({ connection, name, destination: { model, part } }
   const [selected, setSelected] = useState<ApiRow>();
   const [empty, setEmpty] = useState(false);
   const [opening, setOpening] = useState(0);
-  const opened = useRef(false);
+  const choice = useRef<HTMLDivElement>(null);
   const things = model === 'rest' ? 'REST APIs' : 'HTTP or WebSocket APIs';
   const source = apiChoices(connection.engineOrigin, model);
 
-  const handleChoiceFocus = (event: FocusEvent<HTMLDivElement>) => {
-    // Cloudscape moves focus into the dropdown on each open, even if the trigger kept focus after closing.
-    const dropdown = event.target.closest('[role="dialog"]');
-    if (dropdown === null || dropdown.contains(event.relatedTarget)) return;
-    if (opened.current) setOpening((previous) => previous + 1);
-    opened.current = true;
-  };
+  useEffect(() => {
+    const trigger = choice.current?.querySelector('button[aria-haspopup="dialog"]');
+    if (trigger === undefined || trigger === null) return;
+
+    // Select requests its first page once. Its trigger exposes subsequent openings even when focus stays inside.
+    let opened = false;
+    const observer = new MutationObserver(() => {
+      if (trigger.getAttribute('aria-expanded') !== 'true') return;
+      if (opened) setOpening((previous) => previous + 1);
+      opened = true;
+    });
+    observer.observe(trigger, { attributes: true, attributeFilter: ['aria-expanded'] });
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <SpaceBetween size="l">
@@ -50,7 +57,7 @@ export function ChooseApiPage({ connection, name, destination: { model, part } }
       <Container>
         <SpaceBetween size="m">
           <FormField label="API">
-            <div onFocusCapture={handleChoiceFocus}>
+            <div ref={choice}>
               <PagedChoice
                 source={{
                   ...source,

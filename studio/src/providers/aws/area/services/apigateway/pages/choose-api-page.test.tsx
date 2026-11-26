@@ -137,7 +137,8 @@ it.each([
   expect(read).not.toHaveBeenCalled();
   const dropdown = await openChoice(select, user);
   await findApiOption(dropdown, original);
-  await user.keyboard('{Escape}');
+  await user.click(trigger);
+  expect(trigger).toHaveAttribute('aria-expanded', 'false');
 
   vi.mocked(read).mockResolvedValue({ items: [replacement] });
   await user.click(trigger);
