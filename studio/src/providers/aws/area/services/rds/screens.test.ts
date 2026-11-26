@@ -53,7 +53,7 @@ describe("RDS's screens", () => {
         expect(crumbs(path, sample).length).toBeGreaterThan(0);
       }
       expect(screen.navigation.header.text).toBe('RDS');
-      expect(screen.navigation.items.length).toBe(2);
+      expect(screen.navigation.items?.length).toBe(2);
     }
   });
 });

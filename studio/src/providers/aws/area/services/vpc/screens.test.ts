@@ -45,7 +45,7 @@ describe("VPC's screens", () => {
         expect(crumbs(path, sample).length).toBeGreaterThan(0);
       }
       expect(screen.navigation.header.text).toBe('VPC');
-      expect(screen.navigation.items.length).toBe(4);
+      expect(screen.navigation.items?.length).toBe(4);
     }
   });
 

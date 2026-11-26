@@ -26,6 +26,7 @@ import { useAreaFlash } from './components/use-area-flash';
 import { useFollow } from './components/use-follow';
 import { TargetChangeFlashContext } from './components/target-change-flash';
 import { useTargetChange } from './components/use-target-change';
+import { EntryPage } from './pages/entry-page';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
 import { NotFoundPage } from './pages/not-found-page';
@@ -107,6 +108,12 @@ function breadcrumbs(page: AreaPage, pathname: string, query: URLSearchParams): 
         })),
       ];
     }
+    case 'entry':
+      return [
+        ...AREA_CRUMBS,
+        { text: page.service.crumb, href: servicePath(page.service) },
+        { text: page.label, href: pathname },
+      ];
     case 'service':
       return [...AREA_CRUMBS, { text: page.service.crumb, href: servicePath(page.service) }];
     case 'part': {
@@ -134,9 +141,8 @@ function breadcrumbs(page: AreaPage, pathname: string, query: URLSearchParams): 
  * R4.4); else the area's header and services with the page's service active.
  */
 function navigation(page: AreaPage): SideNavigationProps {
-  if (page.kind === 'screen' || page.kind === 'part') {
-    const { header, items, activeHref } = page.kind === 'screen' ? page.screen.navigation : page.navigation;
-    return { header, items, activeHref };
+  if (page.kind === 'screen' || page.kind === 'part' || page.kind === 'entry') {
+    return page.navigation;
   }
   return {
     header: { text: AWS_NAME, href: AWS_PATH },
@@ -151,6 +157,8 @@ function PageContent({ page, pathname, connection }: { page: AreaPage; pathname:
       return <IndexPage />;
     case 'screen':
       return <page.screen.Page connection={connection} params={page.params} />;
+    case 'entry':
+      return <EntryPage page={page} />;
     case 'service':
       return <NoScreenPage service={page.service} />;
     case 'part':
@@ -232,7 +240,7 @@ export function AreaLayout({
   useColourMode(root);
   useModalReport(root, onModal);
 
-  const page = areaPage(pathname);
+  const page = useMemo(() => areaPage(pathname), [pathname]);
   const title = areaPageTitle(page, query);
   useEffect(() => {
     onPageTitle(title);

@@ -20,7 +20,7 @@ function crumbsOf(screen: ServiceScreen, query = '') {
 }
 
 function linksOf(screen: ServiceScreen): { text: string; href: string }[] {
-  return screen.navigation.items.flatMap((item) =>
+  return (screen.navigation.items ?? []).flatMap((item) =>
     item.type === 'section'
       ? item.items.flatMap((link) => (link.type === 'link' ? [{ text: link.text, href: link.href }] : []))
       : [],
