@@ -511,13 +511,29 @@ const EMPTIED_BOUND_MS = 20_000;
  * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
  */
 export async function withoutRoles(caller: Caller, port: number): Promise<void> {
-  for (const name of await roleNamesDirect(caller, port)) {
+  /** The names of every role the emulator lists; an `EnvError` when a `ListRoles` is not answered 200. */
+  const held = async (): Promise<string[]> => {
+    const names: string[] = [];
+    let marker: string | null = null;
+    for (let page = 0; page < 100; page++) {
+      const params: Record<string, string> = { MaxItems: DIRECT_PAGE };
+      if (marker !== null) params.Marker = marker;
+      const read = await iamAnswer(caller, port, 'ListRoles', params, 'before the check makes a role');
+      if (!read.ok) throw new EnvError(`direct ListRoles: ${shownRead(read)}`);
+      const result = at(read.xml, 'ListRolesResponse', 'ListRolesResult');
+      if (result === null) throw new EnvError('direct ListRoles: no ListRolesResult');
+      names.push(...members(result, 'Roles').map((m) => textAt(m, 'RoleName') ?? ''));
+      if (textAt(result, 'IsTruncated') !== 'true') return names;
+      marker = textAt(result, 'Marker');
+      if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
+    }
+    throw new EnvError('direct ListRoles: more than 100 pages');
+  };
+  for (const name of await held()) {
     const read = await iamAnswer(caller, port, 'DeleteServiceLinkedRole', { RoleName: name }, name);
     if (!read.ok) throw new EnvError(`direct DeleteServiceLinkedRole ${name}: ${shownRead(read)}`);
   }
-  const emptied = await waitFor(EMPTIED_BOUND_MS, async () =>
-    (await roleNamesDirect(caller, port)).length === 0 ? true : undefined,
-  );
+  const emptied = await waitFor(EMPTIED_BOUND_MS, async () => ((await held()).length === 0 ? true : undefined));
   if (!emptied) throw new EnvError('the emulator still lists a role after each was removed with DeleteServiceLinkedRole');
 }
 

@@ -804,17 +804,30 @@ const EMPTIED_BOUND_MS = 20_000;
  * Which roles there are is read from the emulator. An `EnvError` when one is not removed or the list does not empty.
  */
 export async function withoutRoles(caller: Caller, port: number): Promise<void> {
-  for (const role of await listRolesDirect(caller, port)) {
+  /** The names of every role the emulator lists; an `EnvError` when a `ListRoles` is not answered 200. */
+  const held = async (): Promise<string[]> => {
+    const names: string[] = [];
+    let marker: string | null = null;
+    for (let page = 0; page < 1000; page++) {
+      const params: Record<string, string> = { MaxItems: '100' };
+      if (marker !== null) params.Marker = marker;
+      const body = given(caller, await iamDirect(caller, port, 'ListRoles', params), 200, 'direct ListRoles');
+      names.push(...rolesOf(body).map((role) => role.name));
+      if (element(body, 'IsTruncated') !== 'true') return names;
+      marker = element(body, 'Marker');
+      if (marker === null) throw new EnvError('direct ListRoles: truncated without a Marker');
+    }
+    throw new EnvError('direct ListRoles: more than 1000 pages');
+  };
+  for (const name of await held()) {
     given(
       caller,
-      await iamDirect(caller, port, 'DeleteServiceLinkedRole', { RoleName: role.name }),
+      await iamDirect(caller, port, 'DeleteServiceLinkedRole', { RoleName: name }),
       200,
-      `direct DeleteServiceLinkedRole ${role.name}`,
+      `direct DeleteServiceLinkedRole ${name}`,
     );
   }
-  const emptied = await waitFor(EMPTIED_BOUND_MS, async () =>
-    (await listRolesDirect(caller, port)).length === 0 ? true : undefined,
-  );
+  const emptied = await waitFor(EMPTIED_BOUND_MS, async () => ((await held()).length === 0 ? true : undefined));
   if (!emptied) throw new EnvError('the emulator still lists a role after each was removed with DeleteServiceLinkedRole');
 }
 
