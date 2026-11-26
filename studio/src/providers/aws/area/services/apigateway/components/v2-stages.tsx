@@ -125,6 +125,7 @@ export function V2Stages({ api, stages, connection }: V2StagesProps) {
     columns.push({
       id: 'address',
       header: 'Invoke address',
+      minWidth: '28ch',
       cell: (stage) => <CopyValue label="invoke address" value={stageInvokeAddress(api, stage)} none="-" />,
     });
   }

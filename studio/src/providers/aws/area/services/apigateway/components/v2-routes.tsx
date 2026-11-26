@@ -151,6 +151,7 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
           {
             id: 'target',
             header: 'Target',
+            minWidth: '28ch',
             cell: (route) => {
               const { integration, id: integrationId } = routeIntegration(route, integrations);
               return integration === undefined ? (

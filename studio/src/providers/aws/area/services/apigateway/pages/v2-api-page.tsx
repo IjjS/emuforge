@@ -65,16 +65,14 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
     heading = 'API not found';
     content = (
       <Container>
-        <Box textAlign="center">
-          <SpaceBetween size="xxs">
-            <Box>
-              The emulator holds no HTTP or WebSocket API with the ID <ValueText kind="name" value={id} />.
-            </Box>
-            <Link href={apisPath} onFollow={handleFollow}>
-              View APIs
-            </Link>
-          </SpaceBetween>
-        </Box>
+        <SpaceBetween size="xxs">
+          <Box>
+            The emulator holds no HTTP or WebSocket API with the ID <ValueText kind="name" value={id} />.
+          </Box>
+          <Link href={apisPath} onFollow={handleFollow}>
+            View APIs
+          </Link>
+        </SpaceBetween>
       </Container>
     );
   } else {

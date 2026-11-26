@@ -148,6 +148,7 @@ export function RestStages({ apiId, connection }: { apiId: string; connection: A
           {
             id: 'address',
             header: 'Invoke URL',
+            minWidth: '28ch',
             cell: (stage) =>
               stage.stageName ? (
                 <StageAddress apiId={apiId} stageName={stage.stageName} connection={connection} onRetry={refresh} />
