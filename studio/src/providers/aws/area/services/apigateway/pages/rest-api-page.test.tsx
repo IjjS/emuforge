@@ -109,7 +109,7 @@ it('shows loading until the API answers, then shows its three parts', async () =
 it('shows the missing ID and a link back to APIs when the emulator has no REST API of that ID', async () => {
   apiReader.mockResolvedValueOnce(null);
   open();
-  expect(await screen.findByRole('heading', { name: 'API not found' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'API not found', level: 1 })).toBeVisible();
   expect(screen.getByText(/The emulator holds no REST API/)).toHaveTextContent(
     `The emulator holds no REST API with the ID ${id}.`,
   );
