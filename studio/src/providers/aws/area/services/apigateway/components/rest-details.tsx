@@ -2,9 +2,10 @@ import type { RestApi } from '@aws-sdk/client-api-gateway';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState } from 'react';
-import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import { flushSync } from 'react-dom';
 
 import { CopyValue } from '../../../components/copy-value';
 import { creationDateText } from '../../../components/format-date';
@@ -27,18 +28,21 @@ export function RestDetails({
   const [editing, setEditing] = useState(false);
   const flash = usePageFlash();
 
+  // Commit the feedback and close the dialog before the mutation refreshes the read.
   function handleSaved(name: string) {
-    flash.show([
-      {
-        type: 'success',
-        content: (
-          <>
-            API <ValueText kind="name" value={name} /> updated.
-          </>
-        ),
-      },
-    ]);
-    setEditing(false);
+    flushSync(() => {
+      flash.show([
+        {
+          type: 'success',
+          content: (
+            <>
+              API <ValueText kind="name" value={name} /> updated.
+            </>
+          ),
+        },
+      ]);
+      setEditing(false);
+    });
   }
   return (
     <Container

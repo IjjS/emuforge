@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor, within } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { assert, expect, it, vi } from 'vitest';
 
@@ -44,13 +44,15 @@ async function open() {
   const content = modal.findContent();
   const input = content.findFormField()?.findControl()?.findInput()?.findNativeInput();
   const footer = modal.findFooter();
-  assert(input && footer);
+  const submit = footer?.findAllButtons().at(-1)?.getElement();
+  expect(submit).toHaveTextContent('Delete');
+  assert(input && submit);
   return {
     user,
     onDeleted,
     content,
     input: input.getElement(),
-    submit: within(footer.getElement()).getByRole('button', { name: 'Delete' }),
+    submit: submit,
   };
 }
 

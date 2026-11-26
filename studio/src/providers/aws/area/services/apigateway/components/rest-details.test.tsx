@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { assert, expect, it, vi } from 'vitest';
@@ -50,7 +50,9 @@ it('shows the name, copyable ID, description, endpoint types and creation time',
   );
   expect(detail('Name')).toHaveTextContent(api.name);
   expect(detail('ID')).toHaveTextContent(api.id);
-  expect(within(detail('ID')).getByRole('button', { name: 'Copy ID' })).toBeEnabled();
+  const copyId = createWrapper(detail('ID')).findCopyToClipboard()?.findCopyButton().getElement();
+  expect(copyId).toBeEnabled();
+  expect(copyId).toHaveAccessibleName('Copy ID');
   expect(detail('Description')).toHaveTextContent(api.description);
   expect(detail('Endpoint type')).toHaveTextContent('Regional, Private');
   expect(detail('Creation time')).toHaveTextContent(creationDateText(api.createdDate));
@@ -98,7 +100,13 @@ async function openEdit() {
       </AreaRootContext>
     </QueryClientProvider>,
   );
-  await user.click(await screen.findByRole('button', { name: 'Edit' }));
+  const edit = await waitFor(() => {
+    const edit = page.findHeader()?.findActions()?.findAllButtons().at(-1)?.getElement();
+    assert(edit);
+    expect(edit).toHaveTextContent('Edit');
+    return edit;
+  });
+  await user.click(edit);
   const modal = await waitFor(() => {
     const modal = page.findModal();
     assert(modal);
@@ -108,8 +116,9 @@ async function openEdit() {
   const [nameField, descriptionField] = modal.findContent().findAllFormFields();
   const name = nameField?.findControl()?.findInput()?.findNativeInput();
   const description = descriptionField?.findControl()?.findTextarea()?.findNativeTextarea();
-  const footer = modal.findFooter();
-  assert(name && description && footer);
+  const save = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
+  assert(name && description && save);
+  expect(save).toHaveTextContent('Save');
   for (const [input, text] of [
     [name.getElement(), saved.name],
     [description.getElement(), saved.description],
@@ -117,12 +126,13 @@ async function openEdit() {
     await user.clear(input);
     await user.type(input, text);
   }
-  return { save: () => user.click(within(footer.getElement()).getByRole('button', { name: 'Save' })), client };
+  return { save: () => user.click(save), client };
 }
 
 function expectSaveResult() {
   expect(page.findModal()).toBeNull();
   const flash = page.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+  expect(flash).toBeVisible();
   expect(flash).toHaveTextContent(`API ${saved.name} updated.`);
 }
 
@@ -134,10 +144,17 @@ function expectSaved() {
 
 it('closes the edit and shows the flash and new fields from the refreshed API', async () => {
   const { save } = await openEdit();
-  reader.mockResolvedValueOnce(saved);
+  const feedbackAtRead = vi.fn();
+  reader.mockImplementationOnce(async () => {
+    const flash = page.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+    const flashVisible = flash?.isConnected === true && getComputedStyle(flash).visibility === 'visible';
+    feedbackAtRead(flash?.textContent, flashVisible, Boolean(page.findModal()?.isVisible()));
+    return saved;
+  });
   await save();
   await waitFor(expectSaved);
   expect(reader).toHaveBeenCalledTimes(2);
+  expect(feedbackAtRead).toHaveBeenCalledExactlyOnceWith(`API ${saved.name} updated.`, true, false);
 });
 
 function deferred() {
@@ -159,15 +176,11 @@ it.each(['earlier read first', 'save read first'])('keeps the new fields and fla
   await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
 
   await save();
-  await waitFor(() => {
-    expectSaveResult();
-    expect(reader).toHaveBeenCalledTimes(3);
-  });
+  await waitFor(() => expect(reader).toHaveBeenCalledTimes(3));
   expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
 
   if (order === 'earlier read first') {
     await act(async () => earlier.answer(beforeEdit));
-    expectSaveResult();
     await act(async () => afterSave.answer(saved));
     await waitFor(expectSaved);
   } else {

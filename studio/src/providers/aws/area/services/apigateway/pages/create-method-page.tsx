@@ -72,7 +72,11 @@ function MethodTarget({ input }: { input: MethodInput }) {
   return <ValueText kind="name" value={`${input.method} ${input.resource.path}`} />;
 }
 
-function createdResult(input: MethodInput, outcome: Extract<MethodOutcome, { kind: 'created' }>): FlashResult {
+function createdResult(
+  input: MethodInput,
+  outcome: Extract<MethodOutcome, { kind: 'created' }>,
+  endpoint: string,
+): FlashResult {
   const success: FlashItem = {
     type: 'success',
     content: (
@@ -83,14 +87,18 @@ function createdResult(input: MethodInput, outcome: Extract<MethodOutcome, { kin
   };
   const warning = outcome.permissionWarning;
   if (!warning) return [success];
+  const unsupported =
+    warning.failure?.kind === 'not-implemented' ? actionFailureItem(warning.failure, title, endpoint) : undefined;
   return [
     success,
     {
       type: 'warning',
+      header: unsupported?.header,
       content: (
         <>
           Method <MethodTarget input={input} /> created, but the permission was not added to{' '}
-          <ValueText kind="name" value={warning.functionName} />: <ValueText kind="text" value={warning.reason} />
+          <ValueText kind="name" value={warning.functionName} />:{' '}
+          {unsupported?.content ?? <ValueText kind="text" value={warning.reason} />}
         </>
       ),
     },
@@ -222,7 +230,7 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
       const outcome = await mutation.mutateAsync({ input, signal });
       if (signal.aborted) return;
       if (outcome.kind === 'created') {
-        flash.handOver(target, createdResult(input, outcome));
+        flash.handOver(target, createdResult(input, outcome, endpoint));
       } else {
         const item = failureItem(outcome, input, endpoint, target, follow);
         setFailure(item);
