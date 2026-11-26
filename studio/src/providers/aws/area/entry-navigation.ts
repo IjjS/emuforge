@@ -52,30 +52,27 @@ function navigationItems(links: SideNavigationProps.Link[], activeHref: string):
     .map((link) => ({ ...link, info: createElement(NavigationEntryStatus) }));
   if (unbuilt.length <= 24) return [...built, ...unbuilt];
 
-  const ranges: SideNavigationProps.Link[][] = [];
-  let range: SideNavigationProps.Link[] = [];
+  const ranges: { first: string; last: string; items: SideNavigationProps.Link[] }[] = [];
+  let range: (typeof ranges)[number] | undefined;
   for (const link of unbuilt) {
+    const initial = link.text.charAt(0);
     // Keep entries with a shared initial together so every label belongs to just one range.
-    if (range.length >= 10 && range.at(-1)?.text[0] !== link.text[0]) {
+    if (range === undefined || (range.items.length >= 10 && range.last !== initial)) {
+      range = { first: initial, last: initial, items: [] };
       ranges.push(range);
-      range = [];
     }
-    range.push(link);
+    range.last = initial;
+    range.items.push(link);
   }
-  ranges.push(range);
 
   return [
     ...built,
-    ...ranges.map<SideNavigationProps.Section>((items) => {
-      const first = items[0].text[0];
-      const last = items[items.length - 1].text[0];
-      return {
-        type: 'section',
-        text: first === last ? first : `${first}–${last}`,
-        items,
-        defaultExpanded: items.some((link) => link.href === activeHref),
-      };
-    }),
+    ...ranges.map<SideNavigationProps.Section>(({ first, last, items }) => ({
+      type: 'section',
+      text: first === last ? first : `${first}–${last}`,
+      items,
+      defaultExpanded: items.some((link) => link.href === activeHref),
+    })),
   ];
 }
 
