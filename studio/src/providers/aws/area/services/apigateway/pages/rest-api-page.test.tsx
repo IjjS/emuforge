@@ -143,7 +143,7 @@ it('shows the missing ID and a link back to APIs when the emulator has no REST A
   expect(screen.getByText(/The emulator holds no REST API/)).toHaveTextContent(
     `The emulator holds no REST API with the ID ${id}.`,
   );
-  expect(screen.getByRole('link', { name: 'APIs' })).toHaveAttribute('href', '/aws/apigateway/apis');
+  expect(screen.getByRole('link', { name: 'View APIs' })).toHaveAttribute('href', '/aws/apigateway/apis');
   expect(screen.queryByRole('heading', { name: 'Details' })).not.toBeInTheDocument();
 });
 

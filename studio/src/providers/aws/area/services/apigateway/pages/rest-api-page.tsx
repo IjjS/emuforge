@@ -51,7 +51,7 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
             The emulator holds no REST API with the ID <ValueText kind="name" value={apiId} />.
           </Box>
           <Link href={apisPath} onFollow={follow}>
-            APIs
+            View APIs
           </Link>
         </SpaceBetween>
       )}
