@@ -11,12 +11,24 @@ export const LOG_STREAMS_PATH = `${LOGS_PATH}/log-streams`;
 export const LOG_GROUPS_TITLE = 'Log groups';
 export const CREATE_LOG_GROUP_TITLE = 'Create log group';
 
+const LINE_BREAK_SEGMENT_PREFIX = '**';
+
 export function nameSegment(name: string): string {
-  return name === '.' || name === '..' ? `*${name}` : encodeURIComponent(name);
+  if (name === '.' || name === '..') return `*${name}`;
+  const encoded = encodeURIComponent(name);
+  // React Router decodes the path for matching, and its splat cannot match CR or LF.
+  return /[\r\n]/.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
 }
 
 /** The area has already percent-decoded the parameter once. */
 export function nameFromSegment(segment: string): string {
+  if (segment.startsWith(LINE_BREAK_SEGMENT_PREFIX)) {
+    try {
+      return decodeURIComponent(segment.slice(LINE_BREAK_SEGMENT_PREFIX.length));
+    } catch {
+      return segment;
+    }
+  }
   return segment.startsWith('*') ? segment.slice(1) : segment;
 }
 
