@@ -30,6 +30,7 @@ beforeEach(() => {
 
 async function open() {
   const client = new QueryClient();
+  const onSuccess = vi.fn();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -38,8 +39,8 @@ async function open() {
       stages: useRestStages(id, endpoint),
       address: useStageAddress(id, 'dev', endpoint),
       details: useRestApi(id, endpoint),
-      deploy: useDeployRestApi(id, endpoint),
-      remove: useDeleteRestStage(id, endpoint),
+      deploy: useDeployRestApi(id, endpoint, onSuccess),
+      remove: useDeleteRestStage(id, endpoint, onSuccess),
     }),
     { wrapper },
   );
@@ -49,11 +50,11 @@ async function open() {
     expect(result.current.address.data).toBe('https://127.0.0.1:9682/old/dev');
     expect(result.current.details.data).toEqual({ id });
   });
-  return result;
+  return { result, onSuccess };
 }
 
 it.each(['deploy', 'delete'] as const)('refreshes stages and addresses after %s', async (action) => {
-  const result = await open();
+  const { result, onSuccess } = await open();
   const updated = action === 'deploy' ? [{ stageName: 'dev', deploymentId: 'after' }] : [];
   stages.mockResolvedValue(updated);
   address.mockResolvedValue('https://127.0.0.1:9682/new/dev');
@@ -68,11 +69,12 @@ it.each(['deploy', 'delete'] as const)('refreshes stages and addresses after %s'
     expect(result.current.stages.data).toEqual(updated);
     expect(result.current.address.data).toBe('https://127.0.0.1:9682/new/dev');
   });
+  expect(onSuccess).toHaveBeenCalledExactlyOnceWith('dev');
   expect(details).toHaveBeenCalledOnce();
 });
 
 it.each(['deploy', 'delete'] as const)('keeps the reads when %s is refused', async (action) => {
-  const result = await open();
+  const { result, onSuccess } = await open();
   const failure = new Error('Request refused');
   deploy.mockRejectedValue(failure);
   remove.mockRejectedValue(failure);
@@ -83,6 +85,7 @@ it.each(['deploy', 'delete'] as const)('keeps the reads when %s is refused', asy
         : result.current.remove.mutateAsync('dev');
     await expect(request).rejects.toBe(failure);
   });
+  expect(onSuccess).not.toHaveBeenCalled();
   expect(stages).toHaveBeenCalledOnce();
   expect(address).toHaveBeenCalledOnce();
   expect(details).toHaveBeenCalledOnce();
