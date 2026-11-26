@@ -2,10 +2,20 @@ import type { Integration, Route, Stage } from '@aws-sdk/client-apigatewayv2';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi, type MockedFunction } from 'vitest';
 
+import { RequestError } from '../../../../../lib/aws/request';
 import type { TokenPage } from '../../components/use-token-listing';
-import { getV2Api, readV2Integrations, readV2Routes, readV2Stages, type V2ApiRead } from './v2-api';
+import {
+  GET_INTEGRATIONS,
+  GET_ROUTES,
+  GET_STAGES,
+  getV2Api,
+  readV2Integrations,
+  readV2Routes,
+  readV2Stages,
+  type V2ApiRead,
+} from './v2-api';
 import {
   refreshV2Api,
   refreshV2Routes,
@@ -45,10 +55,12 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function api(id: string): V2ApiRead {
@@ -134,6 +146,130 @@ it('refreshes stages and the API while their first reads are pending and discard
     expect(result.current.stages.items).toEqual([{ StageName: 'fresh' }]);
   });
 });
+
+function pagesAfterDelete<T>(
+  read: MockedFunction<
+    (origin: string, id: string, token: string | undefined, signal: AbortSignal) => Promise<TokenPage<T>>
+  >,
+  operation: string,
+  row: (id: string) => T,
+) {
+  const first = row('first');
+  const deleted = row('deleted');
+  const later = row('later');
+  const refresh = deferred<TokenPage<T>>();
+  const retry = deferred<TokenPage<T>>();
+  const failure = { kind: 'other', operation, code: 'BadRequestException' } as const;
+  read
+    .mockResolvedValueOnce({ items: [first], next: 'old-page-2' })
+    .mockResolvedValueOnce({ items: [deleted, later], next: 'old-page-3' })
+    .mockReturnValueOnce(refresh.promise)
+    .mockReturnValueOnce(retry.promise)
+    .mockResolvedValueOnce({ items: [later] });
+
+  return {
+    read,
+    failure,
+    initial: [first, deleted, later],
+    remaining: [first, later],
+    firstPage: [first],
+    fail: () => refresh.reject(new RequestError(failure)),
+    recover: () => retry.resolve({ items: [first], next: 'new-page-2' }),
+  };
+}
+
+it.each([true, false])(
+  'recovers v2 lists from a failed post-delete read (integration deleted: %s)',
+  async (integrationDeleted) => {
+    const routes = pagesAfterDelete(getRoutes, GET_ROUTES, (id) => ({ RouteId: id, RouteKey: `GET /${id}` }));
+    const integrations = pagesAfterDelete(getIntegrations, GET_INTEGRATIONS, (id) => ({ IntegrationId: id }));
+    const stages = pagesAfterDelete(getStages, GET_STAGES, (id) => ({ StageName: id }));
+
+    const { result } = renderHook(
+      () => ({
+        routes: useV2Routes(endpoint, apiId),
+        integrations: useV2Integrations(endpoint, apiId),
+        stages: useV2Stages(endpoint, apiId),
+      }),
+      { wrapper },
+    );
+    const lists = () => [
+      { list: result.current.routes, pages: routes, remaining: routes.remaining },
+      {
+        list: result.current.integrations,
+        pages: integrations,
+        remaining: integrationDeleted ? integrations.remaining : integrations.initial,
+      },
+      { list: result.current.stages, pages: stages, remaining: stages.remaining },
+    ];
+    await waitFor(() => {
+      for (const { list } of lists()) expect(list.more).toBe(true);
+    });
+    act(() => {
+      for (const { list } of lists()) list.loadMore();
+    });
+    await waitFor(() => {
+      for (const { list, pages } of lists()) expect(list.items).toEqual(pages.initial);
+    });
+
+    act(() => {
+      void refreshV2Routes(client, apiId, {
+        endpoint,
+        routeId: 'deleted',
+        ...(integrationDeleted ? { integrationId: 'deleted' } : {}),
+      });
+      void refreshV2Stages(client, apiId, { endpoint, stageName: 'deleted' });
+    });
+    await waitFor(() => {
+      for (const { list, pages, remaining } of lists()) {
+        expect(list.loading).toBe(true);
+        expect(list.items).toEqual(remaining);
+        expect(pages.read).toHaveBeenNthCalledWith(3, endpoint, apiId, undefined, expect.any(AbortSignal));
+      }
+    });
+    await act(async () => {
+      for (const { pages } of lists()) pages.fail();
+    });
+    await waitFor(() => {
+      for (const { list, pages, remaining } of lists()) {
+        expect(list.failure).toEqual(pages.failure);
+        expect(list.items).toEqual(remaining);
+        expect(list.more).toBe(false);
+      }
+    });
+
+    act(() => {
+      for (const { list } of lists()) list.retry();
+    });
+    await waitFor(() => {
+      for (const { list, remaining } of lists()) {
+        expect(list.loading).toBe(true);
+        expect(list.items).toEqual(remaining);
+      }
+    });
+    await act(async () => {
+      for (const { pages } of lists()) pages.recover();
+    });
+    await waitFor(() => {
+      for (const { list, pages } of lists()) {
+        expect(list.items).toEqual(pages.firstPage);
+        expect(list.failure).toBeUndefined();
+        expect(list.more).toBe(true);
+        expect(pages.read).toHaveBeenCalledTimes(4);
+        expect(pages.read).toHaveBeenLastCalledWith(endpoint, apiId, undefined, expect.any(AbortSignal));
+      }
+    });
+    act(() => {
+      for (const { list } of lists()) list.loadMore();
+    });
+    await waitFor(() => {
+      for (const { list, pages } of lists()) {
+        expect(list.items).toEqual(pages.remaining);
+        expect(pages.read).toHaveBeenLastCalledWith(endpoint, apiId, 'new-page-2', expect.any(AbortSignal));
+      }
+    });
+  },
+);
 
 it('starts all four reads for another ID without sharing an answer from the first ID', async () => {
   getApi.mockImplementation(async (_, id) => api(id));

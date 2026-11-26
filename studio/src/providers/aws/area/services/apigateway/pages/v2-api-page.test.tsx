@@ -59,7 +59,6 @@ const api = { ApiId: id, Name: 'Events', ProtocolType: 'HTTP', Description: 'Eve
 const operation = 'GetApi';
 const refused = { kind: 'other', operation, code: 'BadRequestException', message: 'Rejected API read.' } as const;
 const emulatorFailure = { kind: 'emulator-did-not-answer', operation, message: 'Emulator request timed out.' } as const;
-const parts = ['Details', 'Routes', 'Integrations', 'Stages'];
 
 let client: QueryClient;
 beforeEach(() => {
@@ -118,20 +117,28 @@ function deferred<T>() {
 }
 
 const page = () => createWrapper(document.body);
-const headingText = () =>
-  page()
-    .findAllHeaders()
-    .map((header) => header.findHeadingText().getElement());
-const pageHeading = () => headingText().find((text) => text.closest('h1'));
-const partHeading = (name: string) =>
-  headingText()
-    .find((text) => text.textContent === name)
-    ?.closest('h2');
+const content = () => page().find('section.aws-area-content');
+const pageHeading = () =>
+  content()
+    ?.findAllHeaders()
+    .map((header) => header.findHeadingText().getElement().closest('h1'))
+    .find((heading) => heading !== null);
 const successFlash = () => page().findFlashbar()?.findItemsByType('success')[0]?.getElement();
 const details = () =>
-  page()
-    .findAllContainers()
-    .find((part) => part.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Details');
+  content()
+    ?.findAllContainers()
+    .find((part) => part.findContent().findKeyValuePairs());
+const detailsHeader = () => details()?.findHeader()?.findHeader();
+type TablePartLabel = 'Routes' | 'Integrations' | 'Stages';
+const tablePart = (label: TablePartLabel) =>
+  content()
+    ?.findAllTables()
+    .find((table) => table.find(`table[aria-label="${label}"]`));
+const tableHeader = (label: TablePartLabel) => tablePart(label)?.findHeaderSlot()?.findHeader();
+const partHeadings = () =>
+  [detailsHeader(), tableHeader('Routes'), tableHeader('Integrations'), tableHeader('Stages')].map((header) =>
+    header?.findHeadingText().getElement(),
+  );
 const readFailure = () =>
   page()
     .findAllContainers()
@@ -148,7 +155,11 @@ it('registers the screen without registry faults and reads the ID from its route
 it('shows all four read parts of the API', async () => {
   open();
   await waitFor(() => {
-    for (const name of parts) expect(partHeading(name)).toHaveTextContent(name);
+    const [details, routes, integrations, stages] = partHeadings();
+    expect(details).toHaveTextContent('Details');
+    expect(routes).toHaveTextContent('Routes');
+    expect(integrations).toHaveTextContent('Integrations');
+    expect(stages).toHaveTextContent('Stages');
   });
 });
 
@@ -227,8 +238,7 @@ it('keeps all parts and delivers a pending stage creation after a failed Details
   open();
 
   const existingHeadings = await waitFor(() =>
-    parts.map((name) => {
-      const heading = partHeading(name);
+    partHeadings().map((heading) => {
       assert(heading);
       return heading;
     }),
@@ -274,7 +284,7 @@ it('keeps all parts and delivers a pending stage creation after a failed Details
 
 it('focuses the Integrations heading when the part named in show is drawn', async () => {
   open(`${path}?show=integrations`);
-  await waitFor(() => expect(partHeading('Integrations')).toHaveFocus());
+  await waitFor(() => expect(tableHeader('Integrations')?.findHeadingText().getElement().closest('h2')).toHaveFocus());
 });
 
 it.each(['routes', 'API'] as const)('keeps the handed-over result when %s answers first', async (first) => {
@@ -298,12 +308,8 @@ it.each(['routes', 'API'] as const)('keeps the handed-over result when %s answer
     await act(async () => finish());
   }
 
-  const routes = () =>
-    page()
-      .findAllTables()
-      .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Routes');
   await waitFor(() => {
-    expect(routes()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
+    expect(tablePart('Routes')?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
     expect(successFlash()).toHaveTextContent(resultText);
   });
 });
@@ -321,10 +327,14 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
     ['Integration responses', 'integration-responses'],
   ] as const;
   const links = ProtocolType === 'WEBSOCKET' ? [...common, ...webSocket] : common;
-  const content = within(await screen.findByRole('region', { name: 'Events' }));
+  await waitFor(() => expect(pageHeading()).toHaveTextContent('Events'));
+  const target = content()?.getElement();
+  assert(target);
+  expect(target).toHaveAccessibleName('Events');
+  const linksInContent = within(target);
   for (const [name, segment] of links) {
     const entryPath = `/aws/apigateway/${segment}`;
-    expect(content.getByRole('link', { name })).toHaveAttribute('href', entryPath);
+    expect(linksInContent.getByRole('link', { name })).toHaveAttribute('href', entryPath);
     expect(areaPage(entryPath)).toMatchObject({
       kind: 'entry',
       match: { resource: { path: entryPath } },
@@ -332,7 +342,7 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
   }
   if (ProtocolType === 'HTTP') {
     for (const [name] of webSocket) {
-      expect(content.queryByRole('link', { name })).not.toBeInTheDocument();
+      expect(linksInContent.queryByRole('link', { name })).not.toBeInTheDocument();
     }
   }
 });
