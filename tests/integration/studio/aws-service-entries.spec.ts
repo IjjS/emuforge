@@ -14,7 +14,8 @@
 // `studio.aws-entries-path-below-an-entry-shows-the-generic-page`.
 //
 // These are checks of the area's shared way, over fourteen services, and carry no `service` in the manifest; so they
-// import no service's support, and a list screen they arrive at is known by its `h1` or its crumbs. No check makes or
+// import no service's support, and a list screen they arrive at is known by its `h1` or its crumbs and by its own
+// columns (`LISTS`). No check makes or
 // changes a resource: the navigation and the page of an entry read nothing of the emulator, so what other checks hold
 // on the run's emulator at the same time does not reach them.
 //
@@ -35,6 +36,8 @@ import {
   groupLinks,
   groupsOf,
   INVENTORY,
+  type ListIdentity,
+  LISTS,
   navigationLink,
   navigationTree,
   NO_SCREEN_FOR_THIS,
@@ -83,17 +86,21 @@ async function expectEntryPage(page: Page, path: string, label: string): Promise
   await expect(nothingChanged(page), 'the sentence that opening the page changed nothing').toBeVisible();
 }
 
-/** A list screen: its address (when the line names it), its `h1`, and its list settled, read and not failed. */
-async function expectList(page: Page, path: string | null, name: string): Promise<void> {
+/** A list screen: its address (when the line names it), its `h1`, and its own list settled, read and not failed. */
+async function expectList(page: Page, path: string | null, name: string, list: ListIdentity): Promise<void> {
   if (path !== null) await expect(page).toHaveURL(addressOf(path));
   await expect(heading(page, name), `the h1 "${name}"`).toBeVisible();
-  await expectSettledList(page, `the list "${name}"`);
+  await expectSettledList(page, `the list "${name}"`, list);
 }
 
-/** A list screen known by its crumbs: the crumbs, and its list settled; what tells the list from another. */
-async function expectListByCrumbs(page: Page, trail: string[]): Promise<{ heading: string | null; columns: string[] }> {
+/** A list screen known by its crumbs and its own columns: both, and its list settled; its heading and columns. */
+async function expectListByCrumbs(
+  page: Page,
+  trail: string[],
+  identity: ListIdentity,
+): Promise<{ heading: string | null; columns: string[] }> {
   await expect.poll(() => crumbs(page), { message: `the crumbs ${trail.join(' > ')}`, ...ACTION }).toEqual(trail);
-  const list = await expectSettledList(page, `the list at ${trail.join(' > ')}`);
+  const list = await expectSettledList(page, `the list at ${trail.join(' > ')}`, identity);
   return { heading: list.heading, columns: list.columns };
 }
 
@@ -231,12 +238,19 @@ test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-scr
           text: link.text,
           description: link.description,
           beside: link.beside,
+          descriptionDrawn: link.descriptionDrawn,
           current: link.current,
         })),
         'the links',
       ).toEqual([
-        { text: 'Queues', description: '', beside: '', current: true },
-        { text: 'Message move tasks', description: NO_SCREEN_STATUS, beside: NO_SCREEN_STATUS, current: false },
+        { text: 'Queues', description: '', beside: '', descriptionDrawn: false, current: true },
+        {
+          text: 'Message move tasks',
+          description: NO_SCREEN_STATUS,
+          beside: NO_SCREEN_STATUS,
+          descriptionDrawn: true,
+          current: false,
+        },
       ]);
     },
   );
@@ -256,27 +270,35 @@ test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', asyn
     'On `/aws/ec2/instances`, follow "Volumes" in the navigation → the address is `/aws/ec2/volumes`, the `h1` is the volume list\'s, and "Volumes" is the one current link',
     async () => {
       await page.goto(EC2_INSTANCES);
-      await expectList(page, EC2_INSTANCES, 'Instances');
+      await expectList(page, EC2_INSTANCES, 'Instances', LISTS.instances);
       const volumes = navigationLink(page, EC2_VOLUMES);
       await expect(volumes, 'the link "Volumes"').toHaveText('Volumes');
       await volumes.click(ACTION);
-      await expectList(page, EC2_VOLUMES, 'Volumes');
+      await expectList(page, EC2_VOLUMES, 'Volumes', LISTS.volumes);
       await expectOneCurrent(page, 'Volumes');
     },
   );
 
   /** A service whose list screen has a second path: the route opens the list, the entry takes the second path. */
-  async function listWithSecondPath(route: string, entryPath: string, entry: string, trail: string[]) {
+  async function listWithSecondPath(
+    route: string,
+    entryPath: string,
+    entry: string,
+    trail: string[],
+    identity: ListIdentity,
+  ) {
     await page.goto(route);
     await expect(page).toHaveURL(addressOf(route));
-    const atRoute = await expectListByCrumbs(page, trail);
+    const atRoute = await expectListByCrumbs(page, trail, identity);
     const link = navigationLink(page, entryPath);
     await expect(link, `the link at ${entryPath}`).toHaveText(entry);
     await expectOneCurrent(page, entry);
     await markPage(page);
     await link.click(ACTION);
     await expect(page).toHaveURL(addressOf(entryPath));
-    expect(await expectListByCrumbs(page, trail), 'the same list: its heading and its columns').toEqual(atRoute);
+    expect(await expectListByCrumbs(page, trail, identity), 'the same list: its heading and its columns').toEqual(
+      atRoute,
+    );
     await expectOneCurrent(page, entry);
     expect(await stillSamePage(page), 'no document was loaded').toBe(true);
   }
@@ -284,24 +306,26 @@ test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', asyn
   await lines.line(
     'Open `/aws/kms` → the key list; the navigation\'s "Customer managed keys" has the address `/aws/kms/keys` and is current, and exactly one link of the whole navigation, its header included, is current; follow it → the address is `/aws/kms/keys` and the same list is shown, the same one link current',
     async () => {
-      await listWithSecondPath('/aws/kms', '/aws/kms/keys', 'Customer managed keys', [
-        'EmuForge',
-        'AWS',
-        'KMS',
+      await listWithSecondPath(
+        '/aws/kms',
+        '/aws/kms/keys',
         'Customer managed keys',
-      ]);
+        ['EmuForge', 'AWS', 'KMS', 'Customer managed keys'],
+        LISTS.keys,
+      );
     },
   );
 
   await lines.line(
     'Open `/aws/ssm` → the parameter list; "Parameter Store" has the address `/aws/ssm/parameters` and is current, exactly one link of the whole navigation, its header included; follow it → `/aws/ssm/parameters`, the same list',
     async () => {
-      await listWithSecondPath('/aws/ssm', '/aws/ssm/parameters', 'Parameter Store', [
-        'EmuForge',
-        'AWS',
-        'Systems Manager',
+      await listWithSecondPath(
+        '/aws/ssm',
+        '/aws/ssm/parameters',
         'Parameter Store',
-      ]);
+        ['EmuForge', 'AWS', 'Systems Manager', 'Parameter Store'],
+        LISTS.parameters,
+      );
     },
   );
 
@@ -333,7 +357,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
     'On `/aws/ec2/instances`, open the group "Elastic Load Balancing" in the navigation and follow "Load balancers" → the address is `/aws/ec2/load-balancers`; the `h1` is "Load balancers"; the document title is "Load balancers | EmuForge Studio"; the crumbs are "EmuForge", "AWS", "EC2", "Load balancers"; the statement "Studio has no screen for this yet."; the values "Resource kind" "Load balancers", "Part of" "Elastic Load Balancing", "Listed by" `DescribeLoadBalancers`; the sentence "Opening this page changed nothing in your local emulator."; the actions "Go to Instances" and "Go to Home"; "Load balancers" is the one current link and its group is open',
     async () => {
       await page.goto(EC2_INSTANCES);
-      await expectList(page, EC2_INSTANCES, 'Instances');
+      await expectList(page, EC2_INSTANCES, 'Instances', LISTS.instances);
       await openSection(page, ELB);
       const link = navigationLink(page, EC2_LOAD_BALANCERS);
       await expect(link, 'the link "Load balancers"').toHaveText('Load balancers');
@@ -395,7 +419,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
       await page.goto(EC2_LOAD_BALANCERS);
       await expectEntryPage(page, EC2_LOAD_BALANCERS, 'Load balancers');
       await action(page, goTo('Instances')).click(ACTION);
-      await expectList(page, '/aws/ec2', 'Instances');
+      await expectList(page, '/aws/ec2', 'Instances', LISTS.instances);
     },
   );
 
@@ -424,7 +448,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
     async () => {
       const path = '/aws/s3/directory-buckets';
       await page.goto('/aws/s3');
-      await expectList(page, '/aws/s3', 'Buckets');
+      await expectList(page, '/aws/s3', 'Buckets', LISTS.buckets);
       const link = navigationLink(page, path);
       await expect(link, 'the link "Directory buckets"').toHaveText('Directory buckets');
       await link.click(ACTION);
@@ -462,7 +486,7 @@ test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, pa
         href: '/aws/ecs/clusters',
       });
       await action(page, goTo('Clusters')).click(ACTION);
-      await expectList(page, '/aws/ecs/clusters', 'Clusters');
+      await expectList(page, '/aws/ecs/clusters', 'Clusters', LISTS.clusters);
     },
   );
 
@@ -479,7 +503,7 @@ test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, pa
       ).toBeVisible();
       await expectPairs(page, { 'Resource kind': entryAt('ec2', path).label }, ['Listed inside']);
       await action(page, goTo('Security groups')).click(ACTION);
-      await expectList(page, '/aws/ec2/security-groups', 'Security groups');
+      await expectList(page, '/aws/ec2/security-groups', 'Security groups', LISTS.securityGroups);
     },
   );
 
@@ -504,7 +528,7 @@ test('studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent', async
       await expectPairs(page, { 'Listed inside': 'General purpose buckets' });
       await expect(page.getByRole('main').getByText(/^It shows them/), 'no sentence "It shows them …"').toHaveCount(0);
       await action(page, goTo('General purpose buckets')).click(ACTION);
-      await expectList(page, '/aws/s3/buckets', 'Buckets');
+      await expectList(page, '/aws/s3/buckets', 'Buckets', LISTS.buckets);
     },
   );
 
@@ -544,6 +568,7 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page, 
           text: entry.label,
           href: entry.path,
           description: NO_SCREEN_STATUS,
+          beside: NO_SCREEN_STATUS,
           descriptionDrawn: true,
         }))
         .sort((a, b) => a.href.localeCompare(b.href));
@@ -576,7 +601,7 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page, 
       await page.goto(path);
       await expectEntryPage(page, path, 'DynamoDB Accelerator (DAX)');
       await action(page, goTo('Tables')).click(ACTION);
-      await expectList(page, null, 'Tables');
+      await expectList(page, null, 'Tables', LISTS.tables);
       await expect
         .poll(() => crumbs(page), { message: 'the crumbs of the table list', ...ACTION })
         .toEqual(['EmuForge', 'AWS', 'DynamoDB', 'Tables']);

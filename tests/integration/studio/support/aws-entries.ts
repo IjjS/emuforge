@@ -149,11 +149,20 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
       const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
       const button = (section: Element) => section.querySelector(selectors.button);
       const around = (el: Element) => el.parentElement?.closest(selectors.section) ?? null;
-      const drawn = (el: Element | null): boolean => {
-        if (el === null || el.getClientRects().length === 0) return false;
-        const style = getComputedStyle(el);
-        return style.visibility === 'visible' && style.opacity !== '0';
+      // Not drawn, as the text readers of `screen-rules.ts` tell it: the element or one around it is taken out,
+      // made invisible or transparent, or clipped away (the screen-reader-only forms).
+      const hidden = (el: Element): boolean => {
+        for (let a: Element | null = el; a !== null; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+          if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+          if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+          const box = a.getBoundingClientRect();
+          if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+        }
+        return false;
       };
+      const drawn = (el: Element | null): boolean => el !== null && el.getClientRects().length > 0 && !hidden(el);
       const header = root.querySelector(selectors.header);
       const links = [...root.querySelectorAll('a[href]')]
         .filter((link) => link !== header)
@@ -309,32 +318,76 @@ const FIRST_PAIR = createWrapper().findKeyValuePairs().findItems().get(1);
 const PAIR_LABEL = FIRST_PAIR.findLabel().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
 const PAIR_VALUE = FIRST_PAIR.findValue().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
 
-/** The page's values as label and value, in order (Cloudscape's key-value pairs inside `main`). */
-export async function pagePairs(page: Page): Promise<Record<string, string>> {
-  const pairs = page.getByRole('main').locator(PAIR.replace(/^body /, ''));
-  const read = await pairs.evaluateAll(
-    (els, selectors) =>
-      els.map((el) => {
-        const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
-        return [
-          clean(el.querySelector(selectors.label)?.textContent),
-          clean(el.querySelector(selectors.value)?.textContent),
-        ];
-      }),
-    { label: PAIR_LABEL, value: PAIR_VALUE },
-  );
-  return Object.fromEntries(read) as Record<string, string>;
+/** The page's key-value pairs (Cloudscape's, inside `main`) as read now. */
+export interface PagePairs {
+  /** Label and value of each pair whose label and value are both drawn, in order. */
+  drawn: Record<string, string>;
+  /** The label of every pair in the page, drawn or not. */
+  labels: string[];
 }
 
-/** Waits until the page's values hold each of `wanted`, and none of the labels `absent`. */
+/** Reads the page's pairs now; never waits. A label or value that is in the page and not drawn is no drawn pair. */
+export async function pagePairs(page: Page): Promise<PagePairs> {
+  const pairs = page.getByRole('main').locator(PAIR.replace(/^body /, ''));
+  const read = await pairs.evaluateAll(
+    (els, selectors) => {
+      const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+      const hidden = (el: Element): boolean => {
+        for (let a: Element | null = el; a !== null; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+          if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+          if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+          const box = a.getBoundingClientRect();
+          if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+        }
+        return false;
+      };
+      const drawn = (el: Element | null): boolean => el !== null && el.getClientRects().length > 0 && !hidden(el);
+      // The drawn text of an element: its text nodes whose own element is drawn.
+      const drawnText = (el: Element | null): string => {
+        if (el === null) return '';
+        const parts: string[] = [];
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+        }
+        return clean(parts.join(''));
+      };
+      return els.map((el) => {
+        const label = el.querySelector(selectors.label);
+        const value = el.querySelector(selectors.value);
+        return {
+          label: clean(label?.textContent),
+          drawnLabel: drawnText(label),
+          drawnValue: drawnText(value),
+        };
+      });
+    },
+    { label: PAIR_LABEL, value: PAIR_VALUE },
+  );
+  return {
+    drawn: Object.fromEntries(
+      read
+        .filter((pair) => pair.drawnLabel !== '' && pair.drawnValue !== '')
+        .map((pair) => [pair.drawnLabel, pair.drawnValue]),
+    ),
+    labels: read.map((pair) => pair.label),
+  };
+}
+
+/**
+ * Waits until the page draws each of `wanted`, label and value in one pair, and holds none of the labels `absent`,
+ * drawn or not.
+ */
 export async function expectPairs(page: Page, wanted: Record<string, string>, absent: string[] = []): Promise<void> {
   await expect
     .poll(
       async () => {
         const shown = await pagePairs(page);
         return {
-          wanted: Object.fromEntries(Object.keys(wanted).map((label) => [label, shown[label] ?? null])),
-          absent: absent.filter((label) => label in shown),
+          wanted: Object.fromEntries(Object.keys(wanted).map((label) => [label, shown.drawn[label] ?? null])),
+          absent: absent.filter((label) => shown.labels.includes(label)),
         };
       },
       { message: `the values ${JSON.stringify(wanted)}, none of ${JSON.stringify(absent)}`, ...ACTION },
@@ -364,6 +417,8 @@ export function resourceKinds(page: Page): Locator {
 export interface ResourceKindLink extends LinkPair {
   /** The text the link is described by (`aria-describedby`); empty when it has none. */
   description: string;
+  /** The words drawn beside the link, in its own item of the list and outside the link; empty when there are none. */
+  beside: string;
   /** Every element the link is described by is drawn, in the link's own item of the list. */
   descriptionDrawn: boolean;
 }
@@ -375,12 +430,31 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
     .evaluateAll((els) =>
       els.map((el) => {
         const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
-        const drawn = (target: Element | null): boolean => {
-          if (target === null || target.getClientRects().length === 0) return false;
-          const style = getComputedStyle(target);
-          return style.visibility === 'visible' && style.opacity !== '0';
+        const hidden = (el: Element): boolean => {
+          for (let a: Element | null = el; a !== null; a = a.parentElement) {
+            const cs = getComputedStyle(a);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+            if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+            if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+            const box = a.getBoundingClientRect();
+            if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+          }
+          return false;
         };
+        const drawn = (target: Element | null): boolean =>
+          target !== null && target.getClientRects().length > 0 && !hidden(target);
         const item = el.closest('li');
+        // The words drawn beside the link: the drawn texts of its item outside the link.
+        const beside: string[] = [];
+        if (item !== null) {
+          const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+            const parent = node.parentElement;
+            const text = clean(node.textContent);
+            if (text === '' || parent === null || el.contains(node) || !drawn(parent)) continue;
+            beside.push(text);
+          }
+        }
         const described = (el.getAttribute('aria-describedby') ?? '')
           .split(/\s+/)
           .filter((id) => id !== '')
@@ -389,6 +463,7 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
           text: clean(el.textContent),
           href: el.getAttribute('href') ?? '',
           description: described.map((target) => clean(target?.textContent)).join(' '),
+          beside: beside.join(' '),
           descriptionDrawn:
             described.length > 0 &&
             described.every((target) => drawn(target) && item !== null && item.contains(target)),
@@ -472,65 +547,120 @@ export function navigationStops<S extends NavigationStop>(
 // ---------------------------------------------------------------------------------------------------------------
 
 const TABLE = createWrapper().findTable();
+const TABLE_SELECTOR = TABLE.toSelector();
+/** A selector of Cloudscape's below the table, made relative to the table it is read in. */
+const inTable = (selector: string) => selector.slice(TABLE_SELECTOR.length).trim();
+const TABLE_COLUMNS = inTable(TABLE.findColumnHeaders().toSelector());
+const TABLE_ROWS = inTable(TABLE.findRows().toSelector());
+const TABLE_EMPTY = inTable(TABLE.findEmptySlot().toSelector());
+const TABLE_LOADING = inTable(TABLE.findLoadingText().toSelector());
+const TABLE_EMPTY_STATUS = inTable(TABLE.findEmptySlot().findStatusIndicator().toSelector());
 const H1_HEADING_TEXT = createWrapper().findHeader().findHeadingText().toSelector();
 
-/** A list screen as shown now: its table in `main`, read through Cloudscape's selectors. */
+/**
+ * What tells one list from another: columns it has, in this order among its columns, and the words of its empty
+ * state when the emulator holds none of the kind. These checks are of no service and import no service's support,
+ * so the words each list is known by are held here.
+ */
+export interface ListIdentity {
+  columns: string[];
+  empty: string;
+}
+
+/** The lists the lines of issue 650 lead to. */
+export const LISTS = {
+  instances: { columns: ['Instance ID', 'State', 'Availability Zone'], empty: 'No instances' },
+  volumes: { columns: ['Volume ID', 'State', 'Size'], empty: 'No volumes' },
+  securityGroups: { columns: ['Group ID', 'VPC ID', 'Description'], empty: 'No security groups' },
+  buckets: { columns: ['Name', 'AWS Region', 'Creation date'], empty: 'No buckets' },
+  clusters: { columns: ['Name', 'Status', 'Running tasks', 'Pending tasks'], empty: 'No clusters' },
+  tables: { columns: ['Name', 'Partition key', 'Sort key', 'Capacity mode'], empty: 'No tables' },
+  keys: { columns: ['Status', 'Key ID', 'Aliases', 'Description'], empty: 'No customer managed keys' },
+  parameters: { columns: ['Name', 'Type', 'Version', 'Last modified'], empty: 'No parameters' },
+} satisfies Record<string, ListIdentity>;
+
+/** A list screen as shown now: the one table of `main` that has the list's columns, read inside that table. */
 export interface ListShown {
   /** The `h1`'s heading text, its counter apart (Cloudscape's header); the `h1`'s text when it is no such header. */
   heading: string | null;
   /** The table's column headers, in order. */
   columns: string[];
+  /** The table's drawn rows. */
   rows: number;
-  /** The table shows its empty slot. */
-  empty: boolean;
+  /** The drawn text of the table's empty slot; `null` when it shows none. */
+  emptyText: string | null;
+  /** The empty slot draws the list's own words of an empty list, whole. */
+  emptyAsKnown: boolean;
   /** The table shows its loading text. */
   loading: boolean;
-  /** The empty slot holds a status (the area's failure state), not the words of an empty list. */
+  /** The empty slot holds a status (the area's failure state). */
   failed: boolean;
 }
 
-/** Reads the list now; `null` when `main` shows no table. Never waits. */
-export async function listShown(page: Page): Promise<ListShown | null> {
-  const drawn = (selector: string) => page.locator(selector).filter({ visible: true });
-  if (
-    (await page
-      .getByRole('main')
-      .locator(TABLE.toSelector().replace(/^body /, ''))
-      .count()) === 0
-  )
-    return null;
+/** `wanted` are among `columns`, in that order. */
+function holdsInOrder(columns: string[], wanted: string[]): boolean {
+  let at = -1;
+  for (const column of wanted) {
+    at = columns.indexOf(column, at + 1);
+    if (at < 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Reads the list `identity` now: the drawn tables of `main` whose columns hold the list's. `null` when no table or
+ * more than one has them. Rows, the empty slot, the loading text and the status are read inside that table. Never
+ * waits.
+ */
+export async function listShown(page: Page, identity: ListIdentity): Promise<ListShown | null> {
   const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const tables = page
+    .getByRole('main')
+    .locator(TABLE_SELECTOR.replace(/^body /, ''))
+    .filter({ visible: true });
+  const found: { table: Locator; columns: string[] }[] = [];
+  for (const table of await tables.all()) {
+    const columns = (await table.locator(TABLE_COLUMNS).filter({ visible: true }).allInnerTexts()).map(clean);
+    if (holdsInOrder(columns, identity.columns)) found.push({ table, columns });
+  }
+  if (found.length !== 1) return null;
+  const { table, columns } = found[0];
+  const drawn = (selector: string) => table.locator(selector).filter({ visible: true });
   const ofHeader = page.locator(H1_HEADING_TEXT).and(page.locator('h1, h1 *'));
   const h1 = (await ofHeader.count()) > 0 ? ofHeader.first() : page.getByRole('heading', { level: 1 }).first();
+  const empty = drawn(TABLE_EMPTY);
+  const shownEmpty = (await empty.count()) > 0;
   return {
     heading: (await h1.count()) > 0 ? clean(await h1.innerText(ACTION)) : null,
-    columns: (await drawn(TABLE.findColumnHeaders().toSelector()).allInnerTexts()).map(clean),
-    rows: await drawn(TABLE.findRows().toSelector()).count(),
-    empty: (await drawn(TABLE.findEmptySlot().toSelector()).count()) > 0,
-    loading: (await drawn(TABLE.findLoadingText().toSelector()).count()) > 0,
-    failed: (await drawn(TABLE.findEmptySlot().findStatusIndicator().toSelector()).count()) > 0,
+    columns,
+    rows: await drawn(TABLE_ROWS).count(),
+    emptyText: shownEmpty ? clean(await empty.first().innerText(ACTION)) : null,
+    emptyAsKnown:
+      shownEmpty &&
+      (await empty.first().getByText(identity.empty, { exact: true }).filter({ visible: true }).count()) > 0,
+    loading: (await drawn(TABLE_LOADING).count()) > 0,
+    failed: (await drawn(TABLE_EMPTY_STATUS).count()) > 0,
   };
 }
 
 /**
- * Waits until the list of `main` has settled as a list that was read: its table shown, the loading text gone, and
- * either rows or the empty slot with no failure status in it (other checks hold resources on the run's emulator, so
- * a list is populated or empty). Returns the list as settled.
+ * Waits until the list `identity` has settled as a list that was read: its own table shown, the loading text gone,
+ * and inside it either drawn rows or the list's own empty state with no failure status (other checks hold resources
+ * on the run's emulator, so a list is populated or empty). An empty slot with other words (a failure, a placeholder)
+ * is not settled. Returns the list as settled.
  */
-export async function expectSettledList(page: Page, what: string): Promise<ListShown> {
-  await expect
-    .poll(
-      async () => {
-        const list = await listShown(page);
-        if (list === null) return 'no table';
-        if (list.loading) return 'loading';
-        return list.rows > 0 || list.empty ? 'settled' : 'neither rows nor the empty slot';
-      },
-      { message: `${what}: the list has settled`, ...ACTION },
-    )
-    .toBe('settled');
-  const list = await listShown(page);
+export async function expectSettledList(page: Page, what: string, identity: ListIdentity): Promise<ListShown> {
+  const state = async () => {
+    const list = await listShown(page, identity);
+    if (list === null) return `not one table with the columns ${identity.columns.join(', ')}`;
+    if (list.loading) return 'loading';
+    if (list.failed) return `a failure in the empty slot: ${String(list.emptyText)}`;
+    if (list.rows > 0) return 'settled';
+    if (list.emptyText === null) return 'neither rows nor the empty slot';
+    return list.emptyAsKnown ? 'settled' : `an empty slot that is not "${identity.empty}": ${list.emptyText}`;
+  };
+  await expect.poll(state, { message: `${what}: the list has settled`, ...ACTION }).toBe('settled');
+  const list = await listShown(page, identity);
   if (list === null) throw new Error(`${what}: the table went away`);
-  expect(list.failed, `${what}: the list shows a failure, not rows or an empty list`).toBe(false);
   return list;
 }
