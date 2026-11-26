@@ -38,11 +38,13 @@ export function DeleteLogGroupDialog({
     : failure;
   const item = shownFailure && actionFailureItem(shownFailure, DELETE_LOG_GROUP, endpoint);
   const feedback = item && (
-    <Alert type={item.type} header={item.header}>
-      {(shownFailure?.kind === 'engine-did-not-answer' || shownFailure?.kind === 'emulator-did-not-answer') &&
-        `${DELETE_LOG_GROUP} failed. `}
-      {item.content}
-    </Alert>
+    <div role="alert">
+      <Alert type={item.type} header={item.header}>
+        {(shownFailure?.kind === 'engine-did-not-answer' || shownFailure?.kind === 'emulator-did-not-answer') &&
+          `${DELETE_LOG_GROUP} failed. `}
+        {item.content}
+      </Alert>
+    </div>
   );
   const protection = protectedFromDeletion ? (
     <Alert type="warning">Deletion protection is on. Turn it off before deleting this log group.</Alert>

@@ -362,7 +362,7 @@ describe('deleting a log group', () => {
     ['after', 'failure'],
   ] as const)('keeps the post-delete result when the previous read answers %s it with %s', async (when, outcome) => {
     const previous = deferred<TokenPage<LogGroup>>();
-    const deletion = deferred<void>();
+    const deletion = deferred<undefined>();
     const updated = deferred<TokenPage<LogGroup>>();
     read.mockResolvedValueOnce(current).mockReturnValueOnce(previous.promise).mockReturnValueOnce(updated.promise);
     remove.mockReturnValueOnce(deletion.promise);
@@ -373,7 +373,7 @@ describe('deleting a log group', () => {
     fireEvent.click(within(container).getByRole('button', { name: 'Refresh', hidden: true }));
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     confirm(dialog);
-    await act(async () => deletion.resolve());
+    await act(async () => deletion.resolve(undefined));
     await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
     expectSuccess(container);
 
