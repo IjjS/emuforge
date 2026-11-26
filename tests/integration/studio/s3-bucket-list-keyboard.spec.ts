@@ -17,6 +17,7 @@
 import type { Page, Request } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
+import { focusInNavigation, navigationStops } from './support/aws-entries';
 import { areaImages, documentIcons, emulatorLine, expectLine, connectedAt, notStartedOn } from './support/aws-area';
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
@@ -35,7 +36,6 @@ import {
   HELP_OPEN,
   INFO,
   LONGEST_NAME,
-  NAV_DIRECTORY,
   NAV_GENERAL,
   NAV_HEADER,
   NO_BUCKETS,
@@ -56,6 +56,8 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
+  /** Inside the side navigation. */
+  inNavigation: boolean;
   inPagination: boolean;
   /** The focus indicator it draws; `null` when none. */
   ring: string | null;
@@ -72,7 +74,13 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     }
     return { inArea, inPagination: active?.closest(pagination) != null };
   }, PAGINATION);
-  return { role: ax.role, name: ax.name, ...where, ring: await focusRing(page) };
+  return {
+    role: ax.role,
+    name: ax.name,
+    ...where,
+    inNavigation: await focusInNavigation(page),
+    ring: await focusRing(page),
+  };
 }
 
 const shown = (stop: Stop) => `${stop.role} "${stop.name}"`;
@@ -96,13 +104,8 @@ function r9Order(names: string[]): Expected[] {
   const rest = names.slice(1);
   return [
     { what: '"Close navigation" (Cloudscape\'s layout)', match: named('Close navigation', 'button'), optional: true },
-    { what: `the side navigation's header "${NAV_HEADER}"`, match: named(NAV_HEADER, 'link') },
-    {
-      what: "the toggle of the navigation's section (Cloudscape's)",
-      match: named('Buckets', 'button'),
-      optional: true,
-    },
-    { what: `"${NAV_GENERAL}"`, match: named(NAV_GENERAL, 'link') },
+    // Issue 650 (design.md, D6 C): the navigation holds every entry of the service, each a stop.
+    ...navigationStops<Stop>(NAV_HEADER, [NAV_GENERAL]),
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "S3"', match: named('S3', 'link') },
@@ -199,7 +202,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
   const s = screen(page);
 
   await lines.line(
-    'Fresh load with two buckets under the filter, Tab from the document start, past Studio\'s frame → the stops inside the area come in the order of R9 (the side navigation\'s header and its link, the crumbs, the help toggle, the (i) control, the notice\'s close, "Info" — issue 480: "Directory buckets" and with it the tab bar went — the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator',
+    'Fresh load with two buckets under the filter, Tab from the document start, past Studio\'s frame → the stops inside the area come in the order of R9 (the side navigation\'s header and its links, the crumbs, the help toggle, the (i) control, the notice\'s close, "Info" — issue 480: "Directory buckets" and with it the tab bar went — the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator',
     async () => {
       await openList(page);
       await expectNames(page, two, 'the two rows');
@@ -329,7 +332,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
   );
 
   await lines.line(
-    'The screen at 390 wide → the side navigation is closed, "Open navigation" opens it with the link "General purpose buckets" (issue 480: "Directory buckets" went), and the emulator line is visible without opening anything',
+    'The screen at 390 wide → the side navigation is closed, "Open navigation" opens it with the link "General purpose buckets", and the emulator line is visible without opening anything',
     async () => {
       await sizeTo(page, 390);
       await openList(page);
@@ -341,7 +344,6 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
       await page.locator(NAVIGATION_TOGGLE).filter({ visible: true }).first().click(ACTION);
       const nav = page.locator(SIDE_NAVIGATION).filter({ visible: true });
       await expect(nav.getByRole('link', { name: NAV_GENERAL, exact: true })).toBeVisible();
-      await expect(nav.getByRole('link', { name: NAV_DIRECTORY, exact: true })).toHaveCount(0);
       await sizeTo(page, 1280);
     },
   );

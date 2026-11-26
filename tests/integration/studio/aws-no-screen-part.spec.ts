@@ -21,9 +21,11 @@
 // tabs of a function's page that lead to it are Lambda's own check (`lambda-function-list.spec.ts`).
 //
 // The Tab walk of the keyboard check allows Cloudscape's own stops where Cloudscape places them, as the bucket list's
-// keyboard check does: "Close navigation" before the navigation's header, the toggle of the navigation's section
-// after it, and the current-page crumb, which Cloudscape's breadcrumb group renders as a Tab stop
-// (`support/aws-area.ts`, `currentCrumb`). Every other stop must be the next one the criteria line names.
+// keyboard check does: "Close navigation" before the navigation's header, the navigation's other stops after it (its
+// other entries and the toggles of its sections, since issue 650 gave every service its entries: design.md, D6 C;
+// `navigationStops` of `support/aws-entries.ts`), and the current-page crumb, which Cloudscape's breadcrumb group
+// renders as a Tab stop (`support/aws-area.ts`, `currentCrumb`). Every other stop must be the next one the criteria
+// line names.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Page } from '@playwright/test';
@@ -82,11 +84,11 @@ import {
   pathLayout,
   pathPlaceProblems,
 } from './support/no-screen-part';
+import { focusInNavigation, navigationStops } from './support/aws-entries';
 import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   H1 as BUCKETS_H1,
   LONGEST_NAME,
-  NAV_DIRECTORY,
   NAV_GENERAL,
   NAV_HEADER,
   NO_BUCKETS,
@@ -114,7 +116,12 @@ const IAM = PART_SERVICES.iam;
 /** The first action under S3 (R4.7). */
 const GO_TO_BUCKETS = goTo(S3.first);
 
-const DIRECTORY_PATH = '/aws/s3/directory-buckets';
+/**
+ * A path of S3 that is no part: no screen matches it and it is no entry's path, so it opens the generic page. Until
+ * issue 650 the checks opened `/aws/s3/directory-buckets` for it, which is the page of the entry "Directory buckets"
+ * again (design.md, D6 B; `aws-service-entries.spec.ts` reads that page).
+ */
+const NO_SUCH_PART_PATH = '/aws/s3/no-such-part';
 
 /**
  * "Edit" of "Tags" and of "Static website hosting", for `name` (R2's table; the website section stands
@@ -196,7 +203,7 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   );
 
   await lines.line(
-    'On that page → the crumbs are "EmuForge", "AWS", "S3", "Buckets", "`<p>-b`", "No screen yet", the last no link; the side navigation has the header "Amazon S3" and the one link "General purpose buckets", which is current, and no link "Amazon Kinesis"',
+    'On that page → the crumbs are "EmuForge", "AWS", "S3", "Buckets", "`<p>-b`", "No screen yet", the last no link; the side navigation has the header "Amazon S3" and the link "General purpose buckets", which is current, and no link "Amazon Kinesis"',
     async () => {
       await fromTagsEdit();
       await expectNoScreenPart(page, S3.label, edit);
@@ -209,7 +216,8 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
       const nav = await navigationShown(page);
       ctx.log(`side navigation: ${JSON.stringify(nav)}`);
       expect(nav.header, 'the navigation header').toBe(NAV_HEADER);
-      expect(nav.links, 'the navigation links').toEqual([NAV_GENERAL]);
+      // Issue 650 (design.md, D6 A): the navigation holds every entry of S3; this link is among them.
+      expect(nav.links, 'the navigation links').toContain(NAV_GENERAL);
       expect(nav.links, `no link "${NO_SCREEN_SERVICE.label}"`).not.toContain(NO_SCREEN_SERVICE.label);
     },
   );
@@ -487,16 +495,13 @@ test('studio.aws-no-screen-part-same-page-at-every-unlisted-path', async ({ ctx,
   );
 
   await lines.line(
-    'Open `/aws/s3/directory-buckets` directly → the changed page, no navigation link shown current and no link "Directory buckets"; reload → the same page',
+    'Open `/aws/s3/no-such-part` directly → the changed page, no navigation link shown current; reload → the same page',
     async () => {
-      await openPart(DIRECTORY_PATH);
+      await openPart(NO_SUCH_PART_PATH);
       await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'no current navigation link').toHaveCount(0);
-      const nav = await navigationShown(page);
-      ctx.log(`side navigation: ${JSON.stringify(nav)}`);
-      expect(nav.links, `no link "${NAV_DIRECTORY}"`).not.toContain(NAV_DIRECTORY);
       await page.reload();
-      await expectNoScreenPart(page, S3.label, DIRECTORY_PATH);
-      await expectPath(page, DIRECTORY_PATH);
+      await expectNoScreenPart(page, S3.label, NO_SUCH_PART_PATH);
+      await expectPath(page, NO_SUCH_PART_PATH);
       await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'no current navigation link after reload').toHaveCount(0);
     },
   );
@@ -565,10 +570,10 @@ test('studio.aws-no-screen-part-same-page-at-every-unlisted-path', async ({ ctx,
   );
 
   await lines.line(
-    'With Studio\'s language set to Korean by a stored choice, as a user\'s browser holds it, open `/aws/s3/directory-buckets` → the `h1`, statement, "Path", sentence and both actions read exactly as in English',
+    'With Studio\'s language set to Korean by a stored choice, as a user\'s browser holds it, open `/aws/s3/no-such-part` → the `h1`, statement, "Path", sentence and both actions read exactly as in English',
     async () => {
       const { page: korean } = await languageContext(ctx, browser, proxy, stack.studio, { stored: 'ko' });
-      await openPart(DIRECTORY_PATH, S3.label, korean);
+      await openPart(NO_SUCH_PART_PATH, S3.label, korean);
       expect(await korean.evaluate(() => document.documentElement.lang), "Studio's language is Korean").toBe('ko');
       await expect(nothingChanged(korean), 'the sentence in English').toBeVisible();
       await expect(korean.getByRole('main').getByText(PATH_LABEL, { exact: true }), `"${PATH_LABEL}"`).toHaveCount(1);
@@ -579,7 +584,7 @@ test('studio.aws-no-screen-part-same-page-at-every-unlisted-path', async ({ ctx,
       expect(await partShown(korean, S3.label), 'the page in Korean Studio').toEqual({
         h1: NO_SCREEN_PART_H1,
         statement: true,
-        path: DIRECTORY_PATH,
+        path: NO_SUCH_PART_PATH,
         sentence: true,
         actions: [GO_TO_BUCKETS, GO_HOME],
       });
@@ -611,11 +616,11 @@ test('studio.aws-no-screen-part-follows-emulator-stop-and-start', async ({ ctx, 
   const port = emulator.port;
   const lines = new Lines(ctx);
 
-  /** Opens the page at `/aws/s3/directory-buckets` and waits for it and for the line to read `status`. */
+  /** Opens the page at `/aws/s3/no-such-part` and waits for it and for the line to read `status`. */
   async function openPart(status: RegExp): Promise<void> {
-    await page.goto(DIRECTORY_PATH);
-    await expectNoScreenPart(page, S3.label, DIRECTORY_PATH);
-    await expectPath(page, DIRECTORY_PATH);
+    await page.goto(NO_SUCH_PART_PATH);
+    await expectNoScreenPart(page, S3.label, NO_SUCH_PART_PATH);
+    await expectPath(page, NO_SUCH_PART_PATH);
     await expectLine(page, status, LINE_CHANGE_BOUND_MS * 2);
   }
 
@@ -623,13 +628,13 @@ test('studio.aws-no-screen-part-follows-emulator-stop-and-start', async ({ ctx, 
   const expected = {
     h1: NO_SCREEN_PART_H1,
     statement: true,
-    path: DIRECTORY_PATH,
+    path: NO_SUCH_PART_PATH,
     sentence: true,
     actions: [GO_TO_BUCKETS, GO_HOME],
   };
 
   await lines.line(
-    'Open `/aws/s3/directory-buckets` with the emulator running → the line reads "Connected at `<endpoint>`" and the changed page is shown',
+    'Open `/aws/s3/no-such-part` with the emulator running → the line reads "Connected at `<endpoint>`" and the changed page is shown',
     async () => {
       await openPart(connectedAt(port));
       expect(await partShown(page, S3.label), 'the page while connected').toEqual(expected);
@@ -661,7 +666,7 @@ test('studio.aws-no-screen-part-follows-emulator-stop-and-start', async ({ ctx, 
       await connectionStatusLink(page).click(ACTION);
       await expectHome(page);
       await page.goBack();
-      await expectNoScreenPart(page, S3.label, DIRECTORY_PATH);
+      await expectNoScreenPart(page, S3.label, NO_SUCH_PART_PATH);
       await expectLine(page, notStartedOn(port));
       expect(await partShown(page, S3.label), 'the page after Back').toEqual(expected);
     },
@@ -694,6 +699,8 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
+  /** Inside the side navigation. */
+  inNavigation: boolean;
   /** The focus indicator it draws; `null` when none. */
   ring: string | null;
 }
@@ -707,7 +714,13 @@ async function areaStop(page: Page): Promise<Stop | null> {
     }
     return false;
   });
-  return { role: ax.role, name: ax.name, inArea, ring: await focusRing(page) };
+  return {
+    role: ax.role,
+    name: ax.name,
+    inArea,
+    inNavigation: await focusInNavigation(page),
+    ring: await focusRing(page),
+  };
 }
 
 const shownStop = (stop: Stop) => `${stop.role} "${stop.name}"`;
@@ -716,6 +729,8 @@ interface Expected {
   what: string;
   match: (stop: Stop) => boolean;
   optional?: boolean;
+  /** Takes every next stop that matches. */
+  many?: boolean;
 }
 
 const named =
@@ -731,16 +746,8 @@ function keyboardOrder(name: string): Expected[] {
       match: named('Close navigation', 'button'),
       optional: true,
     },
-    {
-      what: `the navigation's header "${NAV_HEADER}"`,
-      match: named(NAV_HEADER, 'link'),
-    },
-    {
-      what: "the toggle of the navigation's section (Cloudscape's)",
-      match: named('Buckets', 'button'),
-      optional: true,
-    },
-    { what: `"${NAV_GENERAL}"`, match: named(NAV_GENERAL, 'link') },
+    // Issue 650 (design.md, D6 C): the navigation holds every entry of S3, each a stop.
+    ...navigationStops<Stop>(NAV_HEADER, [NAV_GENERAL]),
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: `the crumb "${S3.crumb}"`, match: named(S3.crumb, 'link') },
@@ -762,6 +769,7 @@ function orderProblems(stops: Stop[], expected: Expected[]): string[] {
     const stop = stops[at] as Stop | undefined;
     if (stop !== undefined && want.match(stop)) {
       at++;
+      while (want.many && stops[at] !== undefined && want.match(stops[at])) at++;
       continue;
     }
     if (want.optional) continue;
@@ -801,7 +809,7 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of `/aws/s3/buckets/<p>-b/metrics`, Tab from the document start, past Studio\'s frame → the stops inside the area come in this order: "Close navigation" (Cloudscape\'s layout; an optional stop, named as the bucket list\'s keyboard check names it, where Cloudscape places it), the navigation\'s header and its one link "General purpose buckets", the crumbs\' links ("EmuForge", "AWS", "S3", "Buckets", "`<p>-b`"), "Go to Buckets", "Go to Home"; each has a visible focus indicator',
+    'Fresh load of `/aws/s3/buckets/<p>-b/metrics`, Tab from the document start, past Studio\'s frame → the stops inside the area come in this order: "Close navigation" (Cloudscape\'s layout; an optional stop, named as the bucket list\'s keyboard check names it, where Cloudscape places it), the navigation\'s header and its links, "General purpose buckets" among them, the crumbs\' links ("EmuForge", "AWS", "S3", "Buckets", "`<p>-b`"), "Go to Buckets", "Go to Home"; each has a visible focus indicator',
     async () => {
       await openPart(metrics);
       const stops: Stop[] = [];
@@ -825,9 +833,9 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3/directory-buckets`, Tab to "Skip to content", Enter → focus is on the content target named "No screen yet", and the next Tab reaches "Go to Buckets"',
+    'Fresh load of `/aws/s3/no-such-part`, Tab to "Skip to content", Enter → focus is on the content target named "No screen yet", and the next Tab reaches "Go to Buckets"',
     async () => {
-      await openPart(DIRECTORY_PATH);
+      await openPart(NO_SUCH_PART_PATH);
       const skip = await pressTab(page);
       expect(skip?.name, `the first Tab reaches "Skip to content" (it reached ${describeStop(skip)})`).toBe(
         'Skip to content',
@@ -839,7 +847,7 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
   );
 
   await lines.line('With the keyboard only: focus "Go to Buckets", Enter → the bucket list at `/aws/s3`', async () => {
-    await openPart(DIRECTORY_PATH);
+    await openPart(NO_SUCH_PART_PATH);
     await action(page, GO_TO_BUCKETS).focus(ACTION);
     await page.keyboard.press('Enter');
     await expectBucketList(page, S3.firstPath);
@@ -891,10 +899,10 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'On `/aws/s3/directory-buckets` and on the 114-character path → the label "Path" is above the path\'s box with the same left edge, and the box that holds the two is centred in the container (its left and right distances to the container\'s edges differ by no more than 1 px) — 1280 and 390 wide',
+    'On `/aws/s3/no-such-part` and on the 114-character path → the label "Path" is above the path\'s box with the same left edge, and the box that holds the two is centred in the container (its left and right distances to the container\'s edges differ by no more than 1 px) — 1280 and 390 wide',
     async () => {
       const found: string[] = [];
-      for (const path of [DIRECTORY_PATH, long114]) {
+      for (const path of [NO_SUCH_PART_PATH, long114]) {
         for (const width of WIDTHS) {
           const where = `${path}, ${String(width)} wide`;
           await sizeTo(page, width);
@@ -910,7 +918,7 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    '`/aws/s3/buckets/<63>/metrics` — 390 wide → the side navigation is closed, "Open navigation" opens it with the header and the one link "General purpose buckets" (no link "Directory buckets"), and the emulator line is visible without opening anything',
+    '`/aws/s3/buckets/<63>/metrics` — 390 wide → the side navigation is closed, "Open navigation" opens it with the header and the link "General purpose buckets", and the emulator line is visible without opening anything',
     async () => {
       await sizeTo(page, 390);
       await openPart(long87);
@@ -923,7 +931,6 @@ test('studio.aws-no-screen-part-keyboard-and-layout', async ({ ctx, page }) => {
       const nav = page.locator(SIDE_NAVIGATION).filter({ visible: true });
       await expect(nav.getByRole('link', { name: NAV_HEADER, exact: true })).toBeVisible();
       await expect(nav.getByRole('link', { name: NAV_GENERAL, exact: true })).toBeVisible();
-      await expect(nav.getByRole('link', { name: NAV_DIRECTORY, exact: true })).toHaveCount(0);
       await sizeTo(page, 1280);
     },
   );

@@ -60,7 +60,6 @@ export const CRUMBS = ['EmuForge', 'AWS', 'S3', 'Buckets'];
 /** The side navigation of the screen (R5.1). */
 export const NAV_HEADER = 'Amazon S3';
 export const NAV_GENERAL = 'General purpose buckets';
-export const NAV_DIRECTORY = 'Directory buckets';
 
 /** The tabs (R3 rows 4 and 6) and the table's title (R5.4). */
 export const TAB_GENERAL = 'General purpose buckets';

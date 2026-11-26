@@ -24,6 +24,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
+import { focusInNavigation, navigationStops } from './support/aws-entries';
 import {
   areaImages,
   connectedAt,
@@ -85,6 +86,8 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
+  /** Inside the side navigation. */
+  inNavigation: boolean;
   inPagination: boolean;
   inFilter: boolean;
   /** The focus indicator it draws; `null` when none. */
@@ -109,7 +112,13 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     },
     [PAGINATION, PROPERTY_FILTER],
   );
-  return { role: ax.role, name: ax.name, ...where, ring: await focusRing(page) };
+  return {
+    role: ax.role,
+    name: ax.name,
+    ...where,
+    inNavigation: await focusInNavigation(page),
+    ring: await focusRing(page),
+  };
 }
 
 const shown = (stop: Stop | null) => (stop === null ? 'nothing' : `${stop.role} "${stop.name}"`);
@@ -131,8 +140,8 @@ const named =
 function listOrder(first: string): Expected[] {
   return [
     { what: '"Close navigation" (Cloudscape\'s layout)', match: named('Close navigation', 'button'), optional: true },
-    { what: 'the side navigation\'s header "Lambda"', match: named('Lambda', 'link') },
-    { what: `the side navigation's link "${EVENT_FUNCTIONS}"`, match: named(EVENT_FUNCTIONS, 'link') },
+    // Issue 650 (design.md, D6 C): the navigation holds every entry of the service, each a stop.
+    ...navigationStops<Stop>('Lambda', [EVENT_FUNCTIONS]),
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "Lambda"', match: named('Lambda', 'link') },
@@ -290,7 +299,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
   }
 
   await lines.line(
-    "Fresh load of the function list with two functions under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R11 (the side navigation's header and its link, the crumbs, the (i) control, the notice's close, the three actions with the disabled one as Cloudscape places it, the filter, pagination, preferences, the heading's check box, the first row's check box, the first name link), each with a visible focus indicator",
+    "Fresh load of the function list with two functions under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R11 (the side navigation's header and its links, the crumbs, the (i) control, the notice's close, the three actions with the disabled one as Cloudscape places it, the filter, pagination, preferences, the heading's check box, the first row's check box, the first name link), each with a visible focus indicator",
     async () => {
       await listOfTwo();
       await focusDocumentStart(page);

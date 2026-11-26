@@ -173,12 +173,14 @@ test.describe(() => {
     // Issue 467 (requirement R9, rule 1) replaced "the notice reads …, and the description names the same endpoint"
     // with the notice's body of R3, nothing between the `h1` and the table's controls, and the endpoint drawn once.
     await lines.line(
-      'On the screen → the side navigation has the header "Amazon S3" and the link "General purpose buckets" (current), and no other (issue 480: "Directory buckets" went); the emulator line reads "Connected at `<endpoint>`"; the notice reads "These buckets are in your local emulator" with the body "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; nothing stands between the `h1` and the table\'s controls; the endpoint the emulator line shows is on the page once',
+      'On the screen → the side navigation has the header "Amazon S3" and the link "General purpose buckets" (current); the emulator line reads "Connected at `<endpoint>`"; the notice reads "These buckets are in your local emulator" with the body "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; nothing stands between the `h1` and the table\'s controls; the endpoint the emulator line shows is on the page once',
       async () => {
         await expectListAt(page, BUCKETS_PATH);
+        // Issue 650 (design.md, D6 A): the navigation holds every entry of S3, so the header and this link are
+        // among its links; that it holds every entry and nothing else is `studio.aws-entries-navigation-holds-…`.
         await expect
           .poll(() => navigation(page), { message: 'the side navigation' })
-          .toEqual({ links: [NAV_HEADER, NAV_GENERAL], current: [NAV_GENERAL] });
+          .toEqual({ links: expect.arrayContaining([NAV_HEADER, NAV_GENERAL]), current: [NAV_GENERAL] });
         await expectLine(page, connectedAt(port));
         await expect(screen(page).notice, `the notice "${NOTICE}"`).toBeVisible();
         const s = screen(page);
