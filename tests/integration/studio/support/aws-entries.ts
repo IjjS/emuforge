@@ -277,9 +277,11 @@ export async function openEverySection(page: Page): Promise<void> {
 }
 
 /**
- * The addresses of the navigation's links below its header that are not painted where they stand: each link is
- * brought into view inside the navigation (it scrolls) and the element at the middle of its label must be the link
- * or inside it, so a link farther down, or one covered by something else, is read as a user would find it.
+ * The addresses of the navigation's links below its header whose label is not painted where it stands: each link is
+ * brought into view inside the navigation (it scrolls); its label must then have text rectangles that are not empty,
+ * each of them whole inside the part of the navigation that is in the window, and the element at the middle of each
+ * must be the link or inside it. So a link farther down, a label moved out of the navigation's box, and a label under
+ * something else are read as a user would find them.
  */
 export async function linksNotPainted(page: Page): Promise<string[]> {
   const nav = page.locator(SIDE_NAVIGATION).filter({ visible: true });
@@ -289,11 +291,29 @@ export async function linksNotPainted(page: Page): Promise<string[]> {
     for (const link of root.querySelectorAll('a[href]')) {
       if (link.matches(header)) continue;
       link.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-      const box = link.getBoundingClientRect();
-      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-      if (box.width === 0 || box.height === 0 || at === null || !(at === link || link.contains(at))) {
-        missing.push(link.getAttribute('href') ?? '');
+      // The part of the navigation in the window, read after the scroll.
+      const frame = root.getBoundingClientRect();
+      const left = Math.max(frame.left, 0);
+      const top = Math.max(frame.top, 0);
+      const right = Math.min(frame.right, window.innerWidth);
+      const bottom = Math.min(frame.bottom, window.innerHeight);
+      const rects: DOMRect[] = [];
+      const texts = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+      for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
+        if ((node.textContent ?? '').trim() === '') continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rects.push(...range.getClientRects());
       }
+      const painted =
+        rects.length > 0 &&
+        rects.every((box) => {
+          if (box.width <= 0 || box.height <= 0) return false;
+          if (box.left < left || box.top < top || box.right > right || box.bottom > bottom) return false;
+          const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return at !== null && (at === link || link.contains(at));
+        });
+      if (!painted) missing.push(link.getAttribute('href') ?? '');
     }
     return missing;
   }, HEADER_LINK);
