@@ -1,7 +1,16 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  modal as openModal,
+  modalInput,
+  modalButton,
+  modalAlert,
+  expectModalBox,
+  expectModalAlert,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { DELETE_LOG_STREAM, deleteLogStream } from '../stream-change-api';
@@ -43,13 +52,13 @@ async function renderDialog(streamName = name) {
     );
   }
   render(<Area />);
-  const element = await screen.findByRole('dialog', { name: /^Delete log stream / });
-  const dialog = within(element);
+  const dialog = await openModal(/^Delete log stream /);
+  const element = dialog.getElement();
   return {
     dialog,
     element,
-    field: dialog.getByRole('textbox', { name: "To confirm, type the log stream's name." }),
-    action: dialog.getByRole('button', { name: 'Delete' }),
+    field: modalInput(dialog, "To confirm, type the log stream's name."),
+    action: modalButton(dialog, 'Delete'),
     deleted,
   };
 }
@@ -57,7 +66,7 @@ async function renderDialog(streamName = name) {
 it('describes what is deleted and requires the exact stream name', async () => {
   const { dialog, element, field, action } = await renderDialog();
   expect(element).toHaveAccessibleName('Delete log stream a b/[$LATEST]?');
-  expect(dialog.getByText('Its log events are removed from your local emulator. This cannot be undone.')).toBeVisible();
+  expectModalBox(dialog, 'Its log events are removed from your local emulator. This cannot be undone.');
   expect(action).toBeDisabled();
   fireEvent.change(field, { target: { value: name.toLowerCase() } });
   expect(action).toBeDisabled();
@@ -73,12 +82,19 @@ it('shows stored line breaks in the title and copies the original name exactly',
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
   const { dialog } = await renderDialog(stored);
 
-  const titleName = dialog.getByText((_, element) => element?.textContent === displayed);
+  const titleName = dialog.findHeader().find('span[style]')?.getElement();
+  expect(titleName?.textContent).toBe(displayed);
   expect(titleName).toBeVisible();
   expect(titleName).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  fireEvent.click(dialog.getByRole('button', { name: 'Copy log stream name' }));
+  const copy = dialog.findContent().findCopyToClipboard();
+  expect(copy?.findCopyButton().getElement()).toHaveAccessibleName('Copy log stream name');
+  copy?.findCopyButton().click();
 
-  expect(await dialog.findByText('Log stream name copied')).toBeVisible();
+  await waitFor(() => {
+    const status = copy?.findStatusText({ popoverRenderWithPortal: false })?.getElement();
+    expect(status).toBeVisible();
+    expect(status).toHaveTextContent('Log stream name copied');
+  });
   expect(writeText).toHaveBeenCalledExactlyOnceWith(stored);
   expect(remove).not.toHaveBeenCalled();
 });
@@ -122,8 +138,10 @@ it('keeps the open confirmation and explains the refusal', async () => {
   const { dialog, field, action, deleted } = await renderDialog();
   fireEvent.change(field, { target: { value: name } });
   fireEvent.click(action);
-  expect(await dialog.findByText('DeleteLogStream failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('ResourceNotFoundException: The stream is missing.');
+  await expectModalAlert(dialog, 'DeleteLogStream failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent(
+    'ResourceNotFoundException: The stream is missing.',
+  );
   expect(field).toHaveValue(name);
   expect(action).toBeEnabled();
   expect(deleted).not.toHaveBeenCalled();
@@ -134,16 +152,16 @@ it.each(['Cancel', 'Escape', 'Close dialog'])('lets %s dismiss the confirmation 
   const { dialog, field, action, deleted } = await renderDialog();
   fireEvent.change(field, { target: { value: name } });
   fireEvent.click(action);
-  expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('501 Not Implemented for DeleteLogStream');
+  await expectModalAlert(dialog, 'Not implemented by the emulator');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('501 Not Implemented for DeleteLogStream');
   expect(field).toHaveValue(name);
   expect(action).toBeDisabled();
   if (close === 'Escape') {
     fireEvent.keyDown(field, { key: 'Escape', code: 'Escape', keyCode: 27 });
   } else {
-    fireEvent.click(dialog.getByRole('button', { name: close }));
+    fireEvent.click(modalButton(dialog, close));
   }
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   expect(remove).toHaveBeenCalledTimes(1);
   expect(deleted).not.toHaveBeenCalled();
 });

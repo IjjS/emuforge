@@ -1,10 +1,20 @@
 import type { LogGroup } from '@aws-sdk/client-cloudwatch-logs';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  boxText,
+  detailValue,
+  flash,
+  modal as openModal,
+  modalButton,
+  modalInputByValue,
+  rowLink,
+  tableByHeading,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -157,16 +167,17 @@ it('shows the group values, the copy control, and tag keys and values as text', 
   const { container } = renderDetails();
   expect(screen.getByRole('button', { name: 'Copy ARN' })).toBeVisible();
   expect(container).toHaveTextContent(group.logGroupArn);
-  expect(screen.getByText('Infrequent')).toBeVisible();
-  expect(screen.getByText('Access')).toBeVisible();
-  expect(screen.getByText('7')).toBeVisible();
-  expect(screen.getByText('days')).toBeVisible();
-  expect(screen.getByText('On')).toBeVisible();
+  expect(detailValue('Class')).toBeVisible();
+  expect(detailValue('Class')).toHaveTextContent('Infrequent Access');
+  expect(detailValue('Retention')).toBeVisible();
+  expect(detailValue('Retention')).toHaveTextContent('7 days');
+  expect(detailValue('Deletion protection')).toBeVisible();
+  expect(detailValue('Deletion protection')).toHaveTextContent('On');
   expect(container).toHaveTextContent(creationDateText(new Date(group.creationTime)));
   const table = createWrapper(container).findTable();
   await waitFor(() => expect(table?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('team'));
   expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(value);
-  expect(screen.queryByRole('link', { name: 'example' })).not.toBeInTheDocument();
+  expect(rowLink(tableByHeading('Tags'), 'example') ?? null).not.toBeInTheDocument();
   expect(read).toHaveBeenCalledWith(engineOrigin, group.logGroupName, expect.any(AbortSignal));
 });
 
@@ -232,12 +243,12 @@ it.each([
   } else {
     const label = setting === 'retention' ? 'Edit retention' : 'Manage tags';
     fireEvent.click(screen.getByRole('button', { name: label }));
-    const dialog = within(await screen.findByRole('dialog', { name: label }));
-    if (setting === 'tags') fireEvent.change(dialog.getByDisplayValue('old-tag'), { target: { value: 'new-tag' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    const dialog = await openModal(label);
+    if (setting === 'tags') fireEvent.change(modalInputByValue(dialog, 'old-tag'), { target: { value: 'new-tag' } });
+    fireEvent.click(modalButton(dialog, 'Save'));
   }
-  expect(await screen.findByRole('list', { name: 'Notifications' })).toHaveTextContent(result);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await waitFor(() => expect(flash()?.getElement()).toHaveTextContent(result));
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   await waitFor(() => expect(firstTagValue()).toHaveTextContent('new-tag'));
   expect(getGroup).toHaveBeenCalledTimes(2);
   expect(read).toHaveBeenCalledTimes(2);
@@ -256,16 +267,21 @@ it.each(['refused', '501'])('keeps the details when a protection switch is %s', 
   renderGroup();
   const action = await screen.findByRole('button', { name: 'Turn off deletion protection' });
   fireEvent.click(action);
-  const flash = await screen.findByRole('list', { name: 'Notifications' });
-  expect(flash).toHaveTextContent(operation);
+  const notification = await waitFor(() => {
+    const item = flash()?.getElement();
+    expect(item).toBeVisible();
+    return item;
+  });
+  expect(notification).toHaveTextContent(operation);
   if (kind === '501') {
-    expect(flash).toHaveTextContent('Not implemented by the emulator');
+    expect(notification).toHaveTextContent('Not implemented by the emulator');
     expect(action).toBeDisabled();
   } else {
-    expect(flash).toHaveTextContent('Protection refused.');
+    expect(notification).toHaveTextContent('Protection refused.');
     expect(action).toBeEnabled();
   }
-  expect(screen.getByText('On')).toBeVisible();
+  expect(detailValue('Deletion protection')).toBeVisible();
+  expect(detailValue('Deletion protection')).toHaveTextContent('On');
   await waitFor(() => expect(firstTagValue()).toHaveTextContent('unchanged-tag'));
   expect(getGroup).toHaveBeenCalledTimes(1);
   expect(read).toHaveBeenCalledTimes(1);
@@ -280,7 +296,9 @@ it('keeps Manage tags unavailable while the tags are loading or failed', async (
   );
   renderDetails();
   expect(screen.getByRole('button', { name: 'Manage tags' })).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByText('Loading tags')).toBeVisible();
+  const loading = tableByHeading('Tags')?.findLoadingText()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading tags');
   refuseTags(
     new RequestError({
       kind: 'other',
@@ -289,6 +307,6 @@ it('keeps Manage tags unavailable while the tags are loading or failed', async (
       message: 'Failed to read tags.',
     }),
   );
-  expect(await screen.findByText('ReadFailed')).toBeVisible();
+  await waitFor(() => expect(boxText(tableByHeading('Tags')?.findEmptySlot(), 'ReadFailed', 'code')).toBeVisible());
   expect(screen.getByRole('button', { name: 'Manage tags' })).toBeDisabled();
 });

@@ -1,10 +1,25 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  boxText,
+  expectEmpty,
+  expectModalAlert,
+  flash,
+  modal as openModal,
+  modalAlert,
+  modalButton,
+  modalInput,
+  rowLink,
+  rowRadio,
+  tableByHeading,
+  waitForLink,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import { AreaRootContext } from '../../../area-root';
@@ -89,6 +104,8 @@ function renderGroupPage() {
   );
 }
 
+const streamTable = () => tableByHeading('Log streams');
+
 it('creates and deletes the exact stream name through the registered log group page', async () => {
   const stream = 'a b/[$LATEST] second';
   const streams = new Set<string>();
@@ -103,38 +120,38 @@ it('creates and deletes the exact stream name through the registered log group p
   });
 
   renderGroupPage();
-  expect(await screen.findByText('No log streams')).toBeVisible();
+  await expectEmpty(streamTable, 'No log streams');
   const create = screen.getByRole('button', { name: 'Create log stream' });
   const remove = screen.getByRole('button', { name: 'Delete log stream' });
   expect(remove).toBeVisible();
   fireEvent.click(create);
-  const creating = within(await screen.findByRole('dialog', { name: 'Create log stream' }));
-  const createName = creating.getByRole('textbox', { name: 'Log stream name' });
+  const creating = await openModal('Create log stream');
+  const createName = modalInput(creating, 'Log stream name');
   fireEvent.change(createName, { target: { value: stream } });
   expect(createName).toHaveValue(stream);
-  fireEvent.click(creating.getByRole('button', { name: 'Create log stream' }));
-  expect(await screen.findByRole('link', { name: stream })).toBeVisible();
+  fireEvent.click(modalButton(creating, 'Create log stream'));
+  expect(await waitForLink(streamTable, stream)).toBeVisible();
   expect(createLogStream).toHaveBeenCalledExactlyOnceWith(engineOrigin, group, stream, expect.any(AbortSignal));
-  const flash = createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.getElement();
-  expect(flash).toHaveTextContent(`Log stream ${stream} created.`);
+  const notification = createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.getElement();
+  expect(notification).toHaveTextContent(`Log stream ${stream} created.`);
 
-  fireEvent.click(screen.getByRole('radio', { name: stream }));
+  fireEvent.click(rowRadio(streamTable(), stream));
   fireEvent.click(remove);
-  const deleting = within(await screen.findByRole('dialog', { name: `Delete log stream ${stream}?` }));
-  const confirmName = deleting.getByRole('textbox', { name: "To confirm, type the log stream's name." });
+  const deleting = await openModal(`Delete log stream ${stream}?`);
+  const confirmName = modalInput(deleting, "To confirm, type the log stream's name.");
   fireEvent.change(confirmName, { target: { value: stream.toLowerCase() } });
-  expect(deleting.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  expect(modalButton(deleting, 'Delete')).toBeDisabled();
   fireEvent.change(confirmName, { target: { value: stream } });
   expect(confirmName).toHaveValue(stream);
-  fireEvent.click(deleting.getByRole('button', { name: 'Delete' }));
-  expect(await screen.findByText('No log streams')).toBeVisible();
+  fireEvent.click(modalButton(deleting, 'Delete'));
+  await expectEmpty(streamTable, 'No log streams');
   await waitFor(() =>
     expect(createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.getElement()).toHaveTextContent(
       `Log stream ${stream} deleted.`,
     ),
   );
   expect(deleteLogStream).toHaveBeenCalledExactlyOnceWith(engineOrigin, group, stream, expect.any(AbortSignal));
-  expect(screen.queryByRole('link', { name: stream })).not.toBeInTheDocument();
+  expect(rowLink(streamTable(), stream) ?? null).not.toBeInTheDocument();
 });
 
 it.each([
@@ -154,31 +171,27 @@ it.each([
   renderGroupPage();
 
   const openStreamDialog = async () => {
-    if (!creating) fireEvent.click(await screen.findByRole('radio', { name: stream }));
+    if (!creating) fireEvent.click(await waitFor(() => rowRadio(streamTable(), stream)));
     fireEvent.click(await screen.findByRole('button', { name: creating ? 'Create log stream' : 'Delete log stream' }));
-    return within(
-      await screen.findByRole('dialog', { name: creating ? 'Create log stream' : `Delete log stream ${stream}?` }),
-    );
+    return await openModal(creating ? 'Create log stream' : `Delete log stream ${stream}?`);
   };
-  if (creating) await screen.findByText('No log streams');
-  else await screen.findByRole('link', { name: stream });
+  if (creating) await expectEmpty(streamTable, 'No log streams');
+  else await waitForLink(streamTable, stream);
 
   fireEvent.click(screen.getByRole('button', { name: 'Edit retention' }));
-  const retention = await screen.findByRole('dialog', { name: 'Edit retention' });
-  const select = createWrapper(retention).findSelect();
+  const retention = await openModal('Edit retention');
+  const select = retention.findContent().findSelect();
   if (select === null) throw new Error('Retention select not found.');
   act(() => select.openDropdown());
   act(() => select.selectOptionByValue('30'));
-  fireEvent.click(within(retention).getByRole('button', { name: 'Save' }));
+  fireEvent.click(modalButton(retention, 'Save'));
   await waitFor(() => expect(getLogGroup).toHaveBeenCalledTimes(2));
 
   const dialog = await openStreamDialog();
-  const field = dialog.getByRole('textbox', {
-    name: creating ? 'Log stream name' : "To confirm, type the log stream's name.",
-  });
+  const field = modalInput(dialog, creating ? 'Log stream name' : "To confirm, type the log stream's name.");
   const action = creating ? 'Create log stream' : 'Delete';
   fireEvent.change(field, { target: { value: stream } });
-  fireEvent.click(dialog.getByRole('button', { name: action }));
+  fireEvent.click(modalButton(dialog, action));
   expect(send).toHaveBeenCalledExactlyOnceWith(engineOrigin, group, stream, expect.any(AbortSignal));
   const signal = send.mock.calls[0]?.[3];
 
@@ -192,30 +205,33 @@ it.each([
       }),
     ),
   );
-  expect(await screen.findByText('GroupReadFailed')).toBeVisible();
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  await waitFor(() => expect(boxText(aws(), 'GroupReadFailed', 'code')).toBeVisible());
+  expect(aws().findTable()?.getElement() ?? null).not.toBeInTheDocument();
   expect(field).toBeVisible();
   expect(field).toHaveValue(stream);
   expect(signal?.aborted).toBe(false);
 
   if (unavailable) {
     await act(async () => write.reject(new RequestError({ kind: 'not-implemented', operation })));
-    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    await expectModalAlert(dialog, 'Not implemented by the emulator');
+    fireEvent.click(modalButton(dialog, 'Cancel'));
   } else {
     vi.mocked(listLogStreams).mockResolvedValue({ items: [{ logStreamName: stream }] });
     await act(async () => write.resolve(undefined));
-    expect(await screen.findByText(/created\./)).toBeVisible();
+    await waitFor(() => {
+      expect(flash()?.getElement()).toBeVisible();
+      expect(flash()?.getElement()).toHaveTextContent(/created\./);
+    });
   }
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   if (unavailable) {
     const reopened = await openStreamDialog();
-    expect(reopened.getByRole('alert')).toHaveTextContent(`501 Not Implemented for ${operation}`);
-    expect(reopened.getByRole('button', { name: action })).toBeDisabled();
+    expect(modalAlert(reopened)?.findContent().getElement()).toHaveTextContent(`501 Not Implemented for ${operation}`);
+    expect(modalButton(reopened, action)).toBeDisabled();
     expect(send).toHaveBeenCalledTimes(1);
   } else {
-    expect(await screen.findByRole('link', { name: stream })).toBeVisible();
+    expect(await waitForLink(streamTable, stream)).toBeVisible();
   }
 });

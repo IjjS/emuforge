@@ -1,11 +1,23 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  boxText,
+  detailValue,
+  flash,
+  modal as openModal,
+  modalButton,
+  modalInput,
+  modalInputByValue,
+  tableByHeading,
+  waitForLink,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import { areaPage, areaPageTitle } from '../../../area-page';
@@ -95,6 +107,7 @@ const failures: [string, RequestFailure, AreaConnection['result'], string][] = [
 
 const group = '/app#Group';
 const path = '/aws/logs/log-groups/group/%2Fapp%23Group';
+const streamTable = () => tableByHeading('Log streams');
 const read = vi.mocked(getLogGroup);
 const tags = vi.mocked(listLogGroupTags);
 const streams = vi.mocked(listLogStreams);
@@ -169,17 +182,21 @@ it('opens the address by group name, uses it for the title and crumb, and shows 
   expect(screenCrumbs(route.screen, route.params, new URLSearchParams()).at(-1)).toEqual({ text: group });
   expect(screen.getByRole('heading', { level: 1, name: group })).toBeVisible();
   expect(resources).toHaveBeenCalledWith({ word: 'log streams' });
-  expect(await screen.findByText('Standard')).toBeVisible();
+  await waitFor(() => {
+    const value = detailValue('Class');
+    expect(value).toBeVisible();
+    expect(value).toHaveTextContent('Standard');
+  });
   await waitFor(() => expect(firstTagValue()).toHaveTextContent('web'));
-  expect(await screen.findByRole('link', { name: 'some-stream' })).toBeVisible();
+  expect(await waitForLink(streamTable, 'some-stream')).toBeVisible();
   expect(read).toHaveBeenCalledWith(engineOrigin, group, expect.any(AbortSignal));
 });
 
 it('shows a not-found state in place of the details and streams when the group is absent', async () => {
   read.mockResolvedValueOnce({ kind: 'not-found' });
   renderPage();
-  expect(await screen.findByText('Log group not found', { selector: 'strong' })).toBeVisible();
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  await waitFor(() => expect(boxText(aws(), 'Log group not found', 'strong')).toBeVisible());
+  expect(aws().findTable()?.getElement() ?? null).not.toBeInTheDocument();
   expect(streams).not.toHaveBeenCalled();
   expect(tags).not.toHaveBeenCalled();
 });
@@ -189,9 +206,9 @@ it.each(failures)('shows %s in the page and retries the group read', async (_lab
   const { container } = renderPage(result);
   await waitFor(() => expect(container).toHaveTextContent(text));
   if (failure.kind === 'not-implemented') expect(container).toHaveTextContent('Not implemented by the emulator');
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(aws().findTable()?.getElement() ?? null).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('link', { name: 'some-stream' })).toBeVisible();
+  expect(await waitForLink(streamTable, 'some-stream')).toBeVisible();
   expect(read).toHaveBeenCalledTimes(2);
   expect(read).toHaveBeenLastCalledWith(engineOrigin, group, expect.any(AbortSignal));
 });
@@ -199,8 +216,16 @@ it.each(failures)('shows %s in the page and retries the group read', async (_lab
 it('links Search log events to the events page with the group chosen', async () => {
   read.mockResolvedValueOnce(found);
   const { container } = renderPage();
-  await screen.findByText('Standard');
-  const search = container.querySelector('a[href^="/aws/logs/log-events?"]');
+  await waitFor(() => {
+    const value = detailValue('Class');
+    expect(value).toBeVisible();
+    expect(value).toHaveTextContent('Standard');
+  });
+  const search = createWrapper(container)
+    .findContentLayout()
+    ?.findHeader()
+    ?.findLink('a[href^="/aws/logs/log-events?"]')
+    ?.getElement();
   expect(search).toHaveAccessibleName('Search log events');
   expect(search).toHaveAttribute('href', '/aws/logs/log-events?group=%2Fapp%23Group');
 });
@@ -215,7 +240,7 @@ it('jumps from the header to the log streams table on keyboard activation', asyn
   expect(header).toContainElement(screen.getByRole('link', { name: 'Search log events' }));
   const section = screen.getByRole('region', { name: 'Log streams' });
   expect(jump).toHaveAttribute('href', `#${section.id}`);
-  expect(await within(section).findByRole('table')).toBeVisible();
+  await waitFor(() => expect(createWrapper(section).findTable()?.getElement()).toBeVisible());
   const scroll = vi.fn();
   Object.defineProperty(section, 'scrollIntoView', { value: scroll });
 
@@ -229,7 +254,7 @@ it('jumps from the header to the log streams table on keyboard activation', asyn
 it('omits the jump when there is no streams section', async () => {
   read.mockResolvedValueOnce({ kind: 'not-found' });
   renderPage();
-  await screen.findByText('Log group not found', { selector: 'strong' });
+  await waitFor(() => expect(boxText(aws(), 'Log group not found', 'strong')).toBeVisible());
 
   expect(screen.queryByRole('link', { name: 'Jump to log streams' })).not.toBeInTheDocument();
 });
@@ -268,10 +293,10 @@ function openLayout(initialPath = path) {
 
 async function startDelete() {
   fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  const element = await screen.findByRole('dialog', { name: `Delete log group ${group}?` });
-  const dialog = within(element);
-  fireEvent.change(dialog.getByRole('textbox'), { target: { value: group } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+  const dialog = await openModal(`Delete log group ${group}?`);
+
+  fireEvent.change(modalInput(dialog), { target: { value: group } });
+  fireEvent.click(modalButton(dialog, 'Delete'));
 }
 
 it('hands the deletion result to Log groups without restarting the deleted group’s reads', async () => {
@@ -279,7 +304,7 @@ it('hands the deletion result to Log groups without restarting the deleted group
   openLayout();
   await startDelete();
   expect(await screen.findByRole('heading', { level: 1, name: 'Log groups' })).toBeVisible();
-  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent(`Log group ${group} deleted.`);
+  expect(flash()?.getElement()).toHaveTextContent(`Log group ${group} deleted.`);
   expect(deleteGroup).toHaveBeenCalledWith(engineOrigin, group, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(1);
 });
@@ -322,10 +347,10 @@ it('still hands over the result if an outstanding group read finds the deleted g
   expect(deleteGroup).toHaveBeenCalledTimes(1);
   await act(async () => oldRead.resolve({ kind: 'not-found' }));
   await waitFor(() => expect(client.getQueryData(readKey(client))).toEqual({ kind: 'not-found' }));
-  expect(screen.queryByText('Log group not found')).not.toBeInTheDocument();
+  expect(boxText(aws(), 'Log group not found', 'strong') ?? null).not.toBeInTheDocument();
   await act(async () => write.resolve(undefined));
   expect(handOver).toHaveBeenCalledWith(LOG_GROUPS_PATH, [expect.objectContaining({ type: 'success' })]);
-  expect(screen.queryByText('Log group not found')).not.toBeInTheDocument();
+  expect(boxText(aws(), 'Log group not found', 'strong') ?? null).not.toBeInTheDocument();
   expect(read).toHaveBeenCalledTimes(2);
 });
 
@@ -368,29 +393,33 @@ it.each(
     } else {
       const label = setting === 'retention' ? 'Edit retention' : 'Manage tags';
       fireEvent.click(screen.getByRole('button', { name: label }));
-      const element = await screen.findByRole('dialog', { name: label });
-      const dialog = within(element);
+      const dialog = await openModal(label);
+
       if (setting === 'retention') {
-        const select = createWrapper(element).findSelect();
+        const select = dialog.findContent().findSelect();
         if (select === null) throw new Error('Retention select not found.');
         act(() => select.openDropdown());
         act(() => select.selectOptionByValue('30'));
       } else {
-        fireEvent.change(dialog.getByDisplayValue('old-team'), { target: { value: 'new-team' } });
+        fireEvent.change(modalInputByValue(dialog, 'old-team'), { target: { value: 'new-team' } });
       }
-      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+      fireEvent.click(modalButton(dialog, 'Save'));
     }
     await act(async () => write.resolve({ $metadata: {} }));
-    const flash = await screen.findByRole('list', { name: 'Notifications' });
-    expect(flash).toHaveTextContent(result);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const notification = await waitFor(() => {
+      const item = flash()?.getElement();
+      expect(item).toBeVisible();
+      return item;
+    });
+    expect(notification).toHaveTextContent(result);
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
     await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
 
     await act(async () => oldRead.resolve(original));
     await act(async () => newTags.resolve({ team: 'new-team' }));
     await waitFor(() => expect(firstTagValue()).toHaveTextContent('new-team'));
-    expect(flash).toHaveTextContent(result);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(notification).toHaveTextContent(result);
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 
     if (outcome === 'fails') {
       await act(async () =>
@@ -403,7 +432,7 @@ it.each(
           }),
         ),
       );
-      expect(await screen.findByText('NewReadFailure')).toBeVisible();
+      await waitFor(() => expect(boxText(aws(), 'NewReadFailure', 'code')).toBeVisible());
     } else {
       await act(async () =>
         newRead.resolve({
@@ -413,8 +442,8 @@ it.each(
       );
       expect(await screen.findByRole('button', { name: 'Turn off deletion protection' })).toBeEnabled();
     }
-    expect(flash).toHaveTextContent(result);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(notification).toHaveTextContent(result);
+    expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   },
 );
 
@@ -458,10 +487,12 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
     fireEvent.click(screen.getByRole('button', { name: 'Create log group' }));
 
     expect(await screen.findByRole('heading', { level: 1, name: group })).toBeVisible();
-    expect(screen.getByText('Loading log group')).toBeVisible();
-    const flash = screen.getByRole('list', { name: 'Notifications' });
-    expect(flash).toHaveTextContent(result);
-    if (partial) expect(flash).toHaveTextContent('Retention refused.');
+    const loading = aws().findStatusIndicator()?.getElement();
+    expect(loading).toBeVisible();
+    expect(loading).toHaveTextContent('Loading log group');
+    const notification = flash()?.getElement();
+    expect(notification).toHaveTextContent(result);
+    if (partial) expect(notification).toHaveTextContent('Retention refused.');
 
     if (order === 'group fails') {
       await act(async () =>
@@ -474,18 +505,20 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
           }),
         ),
       );
-      expect(await screen.findByText('GroupReadFailure')).toBeVisible();
+      await waitFor(() => expect(boxText(aws(), 'GroupReadFailure', 'code')).toBeVisible());
       expect(tags).not.toHaveBeenCalled();
       expect(streams).not.toHaveBeenCalled();
     } else {
       await act(async () => groupRead.resolve(found));
       await screen.findByRole('heading', { name: 'Details' });
-      expect(flash).toHaveTextContent(result);
+      expect(notification).toHaveTextContent(result);
       if (order === 'streams first') {
         await act(async () => streamsRead.resolve({ items: [{ logStreamName: 'first-stream' }] }));
-        expect(await screen.findByRole('link', { name: 'first-stream' })).toBeVisible();
-        expect(screen.getByText('Loading tags')).toBeVisible();
-        expect(flash).toHaveTextContent(result);
+        expect(await waitForLink(streamTable, 'first-stream')).toBeVisible();
+        const loading = tableByHeading('Tags')?.findLoadingText()?.getElement();
+        expect(loading).toBeVisible();
+        expect(loading).toHaveTextContent('Loading tags');
+        expect(notification).toHaveTextContent(result);
         await act(async () => tagsRead.resolve({ team: 'last-tag' }));
         await waitFor(() => expect(firstTagValue()).toHaveTextContent('last-tag'));
       } else {
@@ -500,16 +533,18 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
               }),
             ),
           );
-          expect(await screen.findByText('TagsReadFailure')).toBeVisible();
+          await waitFor(() =>
+            expect(boxText(tableByHeading('Tags')?.findEmptySlot(), 'TagsReadFailure', 'code')).toBeVisible(),
+          );
         } else {
           await act(async () => tagsRead.resolve({ team: 'first-tag' }));
           await waitFor(() => expect(firstTagValue()).toHaveTextContent('first-tag'));
         }
-        expect(flash).toHaveTextContent(result);
+        expect(notification).toHaveTextContent(result);
         await act(async () => streamsRead.resolve({ items: [{ logStreamName: 'last-stream' }] }));
-        expect(await screen.findByRole('link', { name: 'last-stream' })).toBeVisible();
+        expect(await waitForLink(streamTable, 'last-stream')).toBeVisible();
       }
     }
-    expect(flash).toHaveTextContent(result);
+    expect(notification).toHaveTextContent(result);
   },
 );

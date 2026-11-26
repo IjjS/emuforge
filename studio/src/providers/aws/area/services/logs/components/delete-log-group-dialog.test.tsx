@@ -1,7 +1,16 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  modal as openModal,
+  modalInput,
+  modalButton,
+  modalAlert,
+  expectModalBox,
+  expectModalAlert,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { deleteLogGroup } from '../group-delete-api';
@@ -48,12 +57,12 @@ function renderDialog(protectedFromDeletion = false) {
 }
 
 async function controls() {
-  const dialog = within(await screen.findByRole('dialog', { name: `Delete log group ${name}?` }));
+  const dialog = await openModal(`Delete log group ${name}?`);
   return {
     dialog,
-    field: dialog.getByRole('textbox', { name: "To confirm, type the log group's name." }),
-    action: dialog.getByRole('button', { name: 'Delete' }),
-    cancel: dialog.getByRole('button', { name: 'Cancel' }),
+    field: modalInput(dialog, "To confirm, type the log group's name."),
+    action: modalButton(dialog, 'Delete'),
+    cancel: modalButton(dialog, 'Cancel'),
   };
 }
 
@@ -64,9 +73,7 @@ function type(field: HTMLElement, value = name) {
 it('names the group, describes the deletion and requires its exact name', async () => {
   renderDialog();
   const { dialog, field, action } = await controls();
-  expect(
-    dialog.getByText('Its log streams and log events are removed from your local emulator. This cannot be undone.'),
-  ).toBeVisible();
+  expectModalBox(dialog, 'Its log streams and log events are removed from your local emulator. This cannot be undone.');
   expect(action).toBeDisabled();
   type(field, name.toLowerCase());
   expect(action).toBeDisabled();
@@ -78,11 +85,13 @@ it('names the group, describes the deletion and requires its exact name', async 
 it('explains deletion protection and lets Cancel close without a request', async () => {
   renderDialog(true);
   const { dialog, field, action, cancel } = await controls();
-  expect(dialog.getByText('Deletion protection is on. Turn it off before deleting this log group.')).toBeVisible();
+  const warning = modalAlert(dialog)?.findContent().getElement();
+  expect(warning).toBeVisible();
+  expect(warning).toHaveTextContent('Deletion protection is on. Turn it off before deleting this log group.');
   type(field);
   expect(action).toBeDisabled();
   fireEvent.click(cancel);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   expect(remove).not.toHaveBeenCalled();
 });
 
@@ -99,8 +108,8 @@ it('keeps the typed name and shows a refusal in the open dialog', async () => {
   const { dialog, field, action } = await controls();
   type(field);
   fireEvent.click(action);
-  expect(await dialog.findByText('DeleteLogGroup failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('LogGroup has delete protection enabled.');
+  await expectModalAlert(dialog, 'DeleteLogGroup failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('LogGroup has delete protection enabled.');
   expect(field).toHaveValue(name);
   expect(action).toBeEnabled();
   expect(deleted).not.toHaveBeenCalled();
@@ -121,7 +130,7 @@ it('blocks the buttons until the delete answers', async () => {
   expect(cancel).toBeDisabled();
   fireEvent.click(action);
   fireEvent.click(cancel);
-  expect(screen.getByRole('dialog')).toBeVisible();
+  expect(aws().findModal()?.getElement()).toBeVisible();
   expect(remove).toHaveBeenCalledExactlyOnceWith(endpoint, name, expect.any(AbortSignal));
   expect(deleted).not.toHaveBeenCalled();
   await act(async () => finish());

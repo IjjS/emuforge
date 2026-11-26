@@ -1,8 +1,14 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  aws,
+  modal as openModal,
+  modalButton,
+  modalAlert,
+  expectModalAlert,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { putRetentionPolicy } from '../group-create-api';
@@ -59,10 +65,10 @@ function Harness({ retention }: { retention: number | undefined }) {
 
 async function open() {
   fireEvent.click(screen.getByRole('button', { name: 'Edit retention' }));
-  const element = await screen.findByRole('dialog', { name: 'Edit retention' });
-  const select = createWrapper(element).findSelect();
+  const dialog = await openModal('Edit retention');
+  const select = dialog.findContent().findSelect();
   if (select === null) throw new Error('Retention select was not found.');
-  return { dialog: within(element), select, save: within(element).getByRole('button', { name: 'Save' }) };
+  return { dialog, select, save: modalButton(dialog, 'Save') };
 }
 
 it('starts on the current retention and describes every option', async () => {
@@ -94,7 +100,7 @@ it.each([
     expect(remove).not.toHaveBeenCalled();
   }
   expect(saved).toHaveBeenCalledWith(days);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 });
 
 it('shows the operation and refusal while keeping the chosen value', async () => {
@@ -111,8 +117,8 @@ it('shows the operation and refusal while keeping the chosen value', async () =>
   act(() => select.openDropdown());
   act(() => select.selectOptionByValue('30'));
   fireEvent.click(save);
-  expect(await dialog.findByText('PutRetentionPolicy failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('Value refused.');
+  await expectModalAlert(dialog, 'PutRetentionPolicy failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('Value refused.');
   expect(select.findTrigger().getElement()).toHaveTextContent('30 days');
   expect(saved).not.toHaveBeenCalled();
 });
@@ -128,13 +134,13 @@ it.each([
     render(<Harness retention={retention} />);
     const initial = await open();
     fireEvent.click(initial.save);
-    expect(await initial.dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(initial.dialog.getByRole('alert')).toHaveTextContent(operation);
+    await expectModalAlert(initial.dialog, 'Not implemented by the emulator');
+    expect(modalAlert(initial.dialog)?.findContent().getElement()).toHaveTextContent(operation);
     expect(initial.save).toBeDisabled();
-    fireEvent.click(initial.dialog.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(modalButton(initial.dialog, 'Cancel'));
     const reopened = await open();
     expect(reopened.save).toBeDisabled();
-    expect(reopened.dialog.getByRole('alert')).toHaveTextContent(operation);
+    expect(modalAlert(reopened.dialog)?.findContent().getElement()).toHaveTextContent(operation);
     act(() => reopened.select.openDropdown());
     act(() => reopened.select.selectOptionByValue(next));
     await act(async () => fireEvent.click(reopened.save));

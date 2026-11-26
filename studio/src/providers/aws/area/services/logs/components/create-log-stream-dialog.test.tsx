@@ -1,7 +1,14 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import {
+  modal as openModal,
+  modalInput,
+  modalButton,
+  modalAlert,
+  expectModalAlert,
+} from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { CREATE_LOG_STREAM, createLogStream } from '../stream-change-api';
@@ -38,18 +45,20 @@ async function renderDialog() {
     );
   }
   render(<Area />);
-  const dialog = within(await screen.findByRole('dialog', { name: 'Create log stream' }));
+  const dialog = await openModal('Create log stream');
   return {
     dialog,
-    name: dialog.getByRole('textbox', { name: 'Log stream name' }),
-    action: dialog.getByRole('button', { name: 'Create log stream' }),
+    name: modalInput(dialog, 'Log stream name'),
+    action: modalButton(dialog, 'Create log stream'),
     created,
   };
 }
 
 it.each(['a:b', 'a*b', '', 'a'.repeat(513)])('shows the rule and rejects an invalid name %#', async (value) => {
   const { dialog, name, action } = await renderDialog();
-  expect(dialog.getByText(rule)).toBeVisible();
+  const constraint = dialog.findContent().findFormField()?.findConstraint()?.getElement();
+  expect(constraint).toBeVisible();
+  expect(constraint).toHaveTextContent(rule);
   fireEvent.change(name, { target: { value } });
   fireEvent.click(action);
   expect(name).toHaveAccessibleDescription(
@@ -83,8 +92,10 @@ it('keeps the name and shows the operation and reason in the dialog when refused
   const { dialog, name, action, created } = await renderDialog();
   fireEvent.change(name, { target: { value: 'a b/[$LATEST]' } });
   fireEvent.click(action);
-  expect(await dialog.findByText('CreateLogStream failed')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('ResourceAlreadyExistsException: The stream exists.');
+  await expectModalAlert(dialog, 'CreateLogStream failed');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent(
+    'ResourceAlreadyExistsException: The stream exists.',
+  );
   expect(name).toHaveValue('a b/[$LATEST]');
   expect(action).toBeEnabled();
   expect(created).not.toHaveBeenCalled();
@@ -95,8 +106,8 @@ it('keeps the name and disables the action when CreateLogStream answers 501', as
   const { dialog, name, action, created } = await renderDialog();
   fireEvent.change(name, { target: { value: 'stream' } });
   fireEvent.click(action);
-  expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(dialog.getByRole('alert')).toHaveTextContent('501 Not Implemented for CreateLogStream');
+  await expectModalAlert(dialog, 'Not implemented by the emulator');
+  expect(modalAlert(dialog)?.findContent().getElement()).toHaveTextContent('501 Not Implemented for CreateLogStream');
   expect(name).toHaveValue('stream');
   expect(action).toBeDisabled();
   fireEvent.keyDown(name, { key: 'Enter' });
