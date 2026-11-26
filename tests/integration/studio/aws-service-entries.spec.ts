@@ -38,6 +38,7 @@ import {
   INVENTORY,
   type ListIdentity,
   LISTS,
+  linksNotPainted,
   navigationLink,
   navigationTree,
   NO_SCREEN_FOR_THIS,
@@ -144,6 +145,10 @@ test('studio.aws-entries-navigation-holds-every-entry-of-the-inventory', async (
         await openEverySection(page);
         const tree = await navigationTree(page);
         const found = entryLinkProblems(tree, service);
+        // Each link's label is drawn (`entryLinkProblems`, by the link as read) and painted where it stands, the
+        // ones farther down the navigation included.
+        const unpainted = await linksNotPainted(page);
+        if (unpainted.length > 0) found.push(`not painted in the navigation: ${unpainted.join('; ')}`);
         ctx.log(`${route}: ${String(tree.links.length)} links, ${String(tree.sections.length)} sections`);
         if (found.length > 0) problems.push(`${route}: ${found.join(' | ')}`);
       }
@@ -186,10 +191,14 @@ test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-scr
       ).toBe(true);
       const current = tree.links.find((link) => link.current);
       expect(current?.sections[0], 'the group of "Instances"').toBe('Amazon EC2');
+      // The links of the group are drawn once it is open; the group of the current link stays open beside it.
+      await openSection(page, ELB);
+      const opened = await navigationTree(page);
       for (const text of [ELB, 'Load balancers', 'Target groups', 'Trust stores', 'Listeners']) {
         const pair = groupLinks(elb ?? ec2Groups[0]).find((link) => link.text === text);
-        const link = tree.links.find((shown) => shown.href === pair?.href);
+        const link = opened.links.find((shown) => shown.href === pair?.href);
         expect(link?.text, `the link at ${String(pair?.href)}`).toBe(text);
+        expect(link?.shown, `the link "${text}" is drawn`).toBe(true);
         expect(link?.sections[0], `the group of "${text}"`).toBe(ELB);
       }
     },

@@ -117,12 +117,16 @@ export interface NavigationLink extends LinkPair {
   /** Every element the link is described by is drawn, in the link's own item. */
   descriptionDrawn: boolean;
   current: boolean;
-  /** The link is drawn: no section around it is closed. */
+  /**
+   * The link's label is drawn, whole: no section around it is closed, and neither the link nor anything around it
+   * or inside it is taken out, invisible, transparent or clipped away.
+   */
   shown: boolean;
 }
 
 /** A section of the navigation as shown. */
 export interface NavigationSection {
+  /** The title as drawn: the drawn text of the section's expand button (empty when it is not drawn). */
   title: string;
   /** No other section is around it. */
   outermost: boolean;
@@ -131,7 +135,7 @@ export interface NavigationSection {
 
 /** The navigation as shown now. */
 export interface NavigationTree {
-  /** The header link's text; `null` when the page shows no navigation. */
+  /** The header link's text as drawn; `null` when the page shows no navigation. */
   header: string | null;
   headerCurrent: boolean;
   /** The links below the header, in document order. */
@@ -163,13 +167,23 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
         return false;
       };
       const drawn = (el: Element | null): boolean => el !== null && el.getClientRects().length > 0 && !hidden(el);
+      // The drawn text of an element: its text nodes whose own element is drawn.
+      const drawnText = (el: Element | null | undefined): string => {
+        if (el == null) return '';
+        const parts: string[] = [];
+        const texts = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
+          if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+        }
+        return clean(parts.join(''));
+      };
       const header = root.querySelector(selectors.header);
       const links = [...root.querySelectorAll('a[href]')]
         .filter((link) => link !== header)
         .map((link) => {
           const sections: string[] = [];
           for (let section = link.closest(selectors.section); section !== null; section = around(section)) {
-            sections.unshift(clean(button(section)?.textContent));
+            sections.unshift(drawnText(button(section)));
           }
           const ids = (link.getAttribute('aria-describedby') ?? '').split(/\s+/).filter((id) => id !== '');
           const described = ids.map((id) => document.getElementById(id));
@@ -198,16 +212,16 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
             descriptionDrawn:
               described.length > 0 && described.every((el) => drawn(el) && item !== null && item.contains(el)),
             current: link.getAttribute('aria-current') === 'page',
-            shown: link.getClientRects().length > 0,
+            shown: drawn(link) && drawnText(link) === clean(link.textContent) && drawnText(link) !== '',
           };
         });
       const sections = [...root.querySelectorAll(selectors.section)].map((section) => ({
-        title: clean(button(section)?.textContent),
+        title: drawnText(button(section)),
         outermost: around(section) === null,
         open: button(section)?.getAttribute('aria-expanded') === 'true',
       }));
       return {
-        header: header === null ? null : clean(header.textContent),
+        header: header === null ? null : drawnText(header),
         headerCurrent: header?.getAttribute('aria-current') === 'page',
         links,
         sections,
@@ -251,6 +265,29 @@ export async function openEverySection(page: Page): Promise<void> {
     await expect(button, 'the section just chosen is open').toHaveAttribute('aria-expanded', 'true');
   }
   expect(await firstClosed(), 'the place of a section still closed (-1: none)').toBe(-1);
+}
+
+/**
+ * The addresses of the navigation's links below its header that are not painted where they stand: each link is
+ * brought into view inside the navigation (it scrolls) and the element at the middle of its label must be the link
+ * or inside it, so a link farther down, or one covered by something else, is read as a user would find it.
+ */
+export async function linksNotPainted(page: Page): Promise<string[]> {
+  const nav = page.locator(SIDE_NAVIGATION).filter({ visible: true });
+  if ((await nav.count()) === 0) return ['no side navigation'];
+  return nav.first().evaluate((root, header) => {
+    const missing: string[] = [];
+    for (const link of root.querySelectorAll('a[href]')) {
+      if (link.matches(header)) continue;
+      link.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      const box = link.getBoundingClientRect();
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      if (box.width === 0 || box.height === 0 || at === null || !(at === link || link.contains(at))) {
+        missing.push(link.getAttribute('href') ?? '');
+      }
+    }
+    return missing;
+  }, HEADER_LINK);
 }
 
 /** The navigation's link to `href`, by Cloudscape's own selector. */
@@ -415,6 +452,7 @@ export function resourceKinds(page: Page): Locator {
 
 /** A link under the page's heading "Resource kinds". */
 export interface ResourceKindLink extends LinkPair {
+  // `text` is the link's label as drawn: empty for a link that is in the page and not drawn.
   /** The text the link is described by (`aria-describedby`); empty when it has none. */
   description: string;
   /** The words drawn beside the link, in its own item of the list and outside the link; empty when there are none. */
@@ -443,6 +481,15 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
         };
         const drawn = (target: Element | null): boolean =>
           target !== null && target.getClientRects().length > 0 && !hidden(target);
+        // The link's label as drawn: its text nodes whose own element is drawn; empty for a link that is not drawn.
+        const drawnLabel = (link: Element): string => {
+          const parts: string[] = [];
+          const texts = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+          for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
+            if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+          }
+          return clean(parts.join(''));
+        };
         const item = el.closest('li');
         // The words drawn beside the link: the drawn texts of its item outside the link.
         const beside: string[] = [];
@@ -460,7 +507,7 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
           .filter((id) => id !== '')
           .map((id) => document.getElementById(id));
         return {
-          text: clean(el.textContent),
+          text: drawnLabel(el),
           href: el.getAttribute('href') ?? '',
           description: described.map((target) => clean(target?.textContent)).join(' '),
           beside: beside.join(' '),
