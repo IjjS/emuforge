@@ -17,6 +17,7 @@ import {
   dialogFooter,
   dialogHeader,
   escapeText,
+  expectExecutionLog,
   expectPairs,
   expectResult,
   exportedAddress,
@@ -90,9 +91,8 @@ async function testFromScreen(page: Page, resourcePath: string, verb: string, bo
   await expect.poll(() => pairValue(panel, 'Method')).toBe(verb);
   await button(panel, 'Test').click();
   await expect.poll(() => pairValue(panel, 'Status code')).toBe('200');
-  await expect(panel.getByRole('heading', { name: 'Log', exact: true })).toBeVisible();
   await expect(panel.locator('pre').nth(0)).toHaveText(body);
-  await expect(panel.locator('pre').nth(1)).toHaveText(/\S/);
+  await expectExecutionLog(panel, verb, resourcePath);
 }
 
 test('studio.apigateway-build-a-rest-api-with-a-mock-and-call-it', async ({ ctx, page }) => {

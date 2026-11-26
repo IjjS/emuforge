@@ -10,6 +10,7 @@ import {
   button,
   cellOf,
   expandHeader,
+  expectExecutionLog,
   expectNamed,
   pairGroups,
   responsesOf,
@@ -172,9 +173,8 @@ test('studio.apigateway-test-a-method-shows-answer-and-log', async ({ ctx, page 
   await button(panel, 'Test').click();
   await answered('200');
   await expect(panel.getByRole('heading', { name: 'Response', exact: true })).toBeVisible();
-  await expect(panel.getByRole('heading', { name: 'Log', exact: true })).toBeVisible();
   await expect(panel.locator('pre').nth(0)).toHaveText(known);
-  await expect(panel.locator('pre').nth(1)).toHaveText(/\S+\s+\S+/);
+  await expectExecutionLog(panel, 'GET', '/echo');
 
   await button(methodOf(resourceOf(page, '/any'), 'ANY'), 'Test').click();
   await expect.poll(() => pairValue(panel, 'Method')).toBe('ANY');
@@ -182,6 +182,7 @@ test('studio.apigateway-test-a-method-shows-answer-and-log', async ({ ctx, page 
   await expect(panel.getByRole('radio')).toHaveCount(0);
   await button(panel, 'Test').click();
   await expect(panel.locator('pre').nth(0)).toHaveText(anyKnown);
+  await expectExecutionLog(panel, 'ANY', '/any');
   await answered('200');
 
   await button(methodOf(resourceOf(page, '/echo'), 'POST'), 'Test').click();

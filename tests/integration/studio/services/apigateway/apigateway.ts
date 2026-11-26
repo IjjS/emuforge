@@ -691,6 +691,17 @@ export const expandControl = (scope: Locator) => scope.locator(sel(ui.findExpand
 /** The open "Test method" panel. */
 export const testPanel = (page: Page) => page.getByRole('region', { name: 'Test method', exact: true });
 
+/**
+ * The open "Test method" panel shows, drawn, the emulator's execution log of an invocation of `verb` on
+ * `resourcePath`: the line of the log that names both.
+ */
+export async function expectExecutionLog(panel: Locator, verb: string, resourcePath: string): Promise<void> {
+  await expect(panel.getByRole('heading', { name: 'Log', exact: true })).toBeVisible();
+  const log = panel.locator('pre').nth(1);
+  await expect(log).toBeVisible();
+  await expect(log).toContainText(`HTTP Method: ${verb}, Resource Path: ${resourcePath}`);
+}
+
 /** A Cloudscape alert below `scope`. */
 export const alertIn = (scope: Page | Locator) => scope.locator(sel(ui.findAlert()));
 
