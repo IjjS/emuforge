@@ -108,7 +108,7 @@ function open(path = REGISTER_PATH) {
 // The form as a user reads and fills it.
 
 const FIELD_DESCRIPTION =
-  "The emulator plays a task from its containers' command: what it echoes becomes the task's log, and a sleep keeps the task running.";
+  "The emulator plays a task from its containers' command: what a container with the awslogs log driver echoes becomes the task's log, and the task stops when an essential container's command ends. The command of Studio's starter ends with sleep infinity, which keeps its task running.";
 const PAGE_DESCRIPTION =
   'A task definition is registered from its JSON, the same document aws ecs register-task-definition --cli-input-json takes. A family that exists gets a new revision.';
 
@@ -123,6 +123,17 @@ function field() {
     throw new Error('no field Task definition JSON');
   }
   return found;
+}
+
+function expectFieldDescription() {
+  const description = field().findDescription()?.getElement();
+  expect(text(description)).toBe(FIELD_DESCRIPTION);
+  expect(Array.from(description?.querySelectorAll('code') ?? [], (part) => part.textContent)).toEqual([
+    'command',
+    'awslogs',
+    'echo',
+    'sleep infinity',
+  ]);
 }
 
 /** The field's text box, found by its label without Cloudscape's wrappers, which mark the DOM as they search. */
@@ -220,21 +231,22 @@ const REFUSAL = new RequestError({
 });
 
 describe('Register task definition', () => {
-  it('without from → the field holds the starter, with the description of R4', async () => {
+  it('without from → the field holds the starter, with the description of issue 657 R3', async () => {
     open();
     await opened();
     expect(textarea().value).toBe(STARTER);
-    expect(text(field().findDescription()?.getElement())).toBe(FIELD_DESCRIPTION);
+    expectFieldDescription();
     expect(text(document.body)).toContain(PAGE_DESCRIPTION);
     expect(definitions.getRevision).not.toHaveBeenCalled();
   });
 
-  it("with from of a revision that is read → the field holds that revision's members", async () => {
+  it("with from of a revision that is read → the field holds that revision's members with the same description", async () => {
     open(`${REGISTER_PATH}?from=web%3A3`);
     await opened();
     await waitFor(() => {
       expect(textarea().value).toBe(documentOf(answerOf('web', 3)));
     });
+    expectFieldDescription();
     expect(vi.mocked(definitions.getRevision).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'web', 3]);
     expect(definitions.getRevision).toHaveBeenCalledTimes(1);
     expect(textarea().value).not.toContain('taskDefinitionArn');
