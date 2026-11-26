@@ -28,7 +28,7 @@ const renderPanel = () => {
       />
     </QueryClientProvider>,
   );
-  return { client, container, user };
+  return { client, panel: createWrapper(container), user };
 };
 
 beforeEach(() => {
@@ -44,12 +44,17 @@ function deferred<T>() {
 }
 
 it('shows the registered method as text and fills in the resource path', () => {
-  const { container } = renderPanel();
+  const { panel } = renderPanel();
+  const fields = panel.findAllFormFields();
   expect(screen.getByText('ANY')).toBeVisible();
-  expect(screen.getByRole('textbox', { name: 'Path with query' })).toHaveValue('/orders');
+  expect(fields.map((field) => field.findLabel()?.getElement().textContent)).toEqual([
+    'Path with query',
+    'Headers',
+    'Body',
+  ]);
+  expect(fields[0]?.findControl()?.findInput()?.findNativeInput().getElement()).toHaveValue('/orders');
   expect(screen.getByText('Calls the method in the emulator without a deployment.')).toBeVisible();
-  expect(createWrapper(container).findSelect()).toBeNull();
-  expect(screen.queryByRole('textbox', { name: 'Method' })).not.toBeInTheDocument();
+  expect(panel.findSelect()).toBeNull();
 });
 
 it('shows the status, latency, headers, and preformatted body and log as text', async () => {
@@ -87,15 +92,23 @@ it('shows the refusal and then leaves Test unavailable after a 501', async () =>
       }),
     )
     .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: TEST_INVOKE_METHOD }));
-  const { user } = renderPanel();
+  const { panel, user } = renderPanel();
   const test = screen.getByRole('button', { name: 'Test' });
 
   await user.click(test);
-  expect(await screen.findByText('TestInvokeMethod failed')).toBeVisible();
-  expect(screen.getByText(/No integration defined for method/)).toBeVisible();
+  await waitFor(() => {
+    const alert = panel.findAlert();
+    expect(alert?.findHeader()?.getElement()).toHaveTextContent('TestInvokeMethod failed');
+    expect(alert?.findContent().getElement()).toHaveTextContent('No integration defined for method');
+  });
   await user.click(test);
-  expect(await screen.findByText(/The emulator answered 501 Not Implemented for TestInvokeMethod/)).toBeVisible();
-  expect(screen.getByText('Not implemented by the emulator', { selector: '[role="alert"] *' })).toBeVisible();
+  await waitFor(() => {
+    const alert = panel.findAlert();
+    expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(alert?.findContent().getElement()).toHaveTextContent(
+      'The emulator answered 501 Not Implemented for TestInvokeMethod',
+    );
+  });
   expect(test).toHaveAttribute('aria-disabled', 'true');
   await user.click(test);
   expect(invoke).toHaveBeenCalledTimes(2);
@@ -103,17 +116,21 @@ it('shows the refusal and then leaves Test unavailable after a 501', async () =>
 
 it('validates headers before sending and submits the edited request', async () => {
   invoke.mockResolvedValueOnce({ $metadata: {} });
-  const { user } = renderPanel();
+  const { panel, user } = renderPanel();
   const test = screen.getByRole('button', { name: 'Test' });
-  const headers = screen.getByRole('textbox', { name: 'Headers' });
+  const [pathField, headersField, bodyField] = panel.findAllFormFields();
+  const path = pathField?.findControl()?.findInput()?.findNativeInput().getElement();
+  const headers = headersField?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
+  const body = bodyField?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
+  if (!path || !headersField || !headers || !body) throw new Error('Missing request form fields');
   await user.type(headers, 'X-Mode');
   await user.click(test);
-  expect(screen.getByText('Write each header as Name: value.')).toBeVisible();
+  expect(headersField.findError()?.getElement()).toHaveTextContent('Write each header as Name: value.');
   expect(invoke).not.toHaveBeenCalled();
 
   await user.type(headers, ': preview');
-  await user.type(screen.getByRole('textbox', { name: 'Path with query' }), '?limit=2');
-  await user.type(screen.getByRole('textbox', { name: 'Body' }), 'request body');
+  await user.type(path, '?limit=2');
+  await user.type(body, 'request body');
   await user.click(test);
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith(

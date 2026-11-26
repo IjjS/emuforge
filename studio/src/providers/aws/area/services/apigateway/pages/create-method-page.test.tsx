@@ -1,6 +1,7 @@
+import type { Resource, RestApi } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -8,13 +9,16 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { PageFlashContext } from '../../../components/page-flash';
+import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
+import type { TokenPage } from '../../../components/use-token-listing';
 import { registryFaults } from '../../../screens';
 import { createMethodPath, restApiPath } from '../format';
 import { readFunctions } from '../lambda-api';
 import { createMethod } from '../method-create-api';
-import { readRestApi, readRestResource, readRestResources } from '../rest-api';
+import { readRestApi, readRestResource, readRestResources, readRestStages } from '../rest-api';
 import { SCREENS } from '../screens';
 
 vi.mock('../rest-api', { spy: true });
@@ -53,19 +57,45 @@ beforeEach(() => {
   api.mockResolvedValue({ id: apiId, name: 'Orders' });
   linked.mockResolvedValue(linkedResource);
   resources.mockResolvedValue({ items: [firstResource], next: 'next-page' });
+  vi.mocked(readRestStages).mockResolvedValue([]);
   functions.mockResolvedValue({ items: [fn] });
   create.mockResolvedValue({ kind: 'created' });
 });
 
-function RegisteredPage({ connection }: { connection: AreaConnection }) {
+function RegisteredPage({
+  connection,
+  stubDestination = false,
+}: {
+  connection: AreaConnection;
+  stubDestination?: boolean;
+}) {
   const { pathname, search } = useLocation();
-  if (pathname === restApiPath(apiId)) return <p>Destination {pathname + search}</p>;
+  if (stubDestination && pathname === restApiPath(apiId)) return <p>Destination {pathname + search}</p>;
   const match = areaPage(pathname);
   if (match.kind !== 'screen') throw new Error(`No matching screen for ${pathname}`);
   return <match.screen.Page connection={connection} params={match.params} />;
 }
 
-function open(path = address, connection = connected) {
+function HandoverPage({ connection, onHandover }: { connection: AreaConnection; onHandover: PageFlash['handOver'] }) {
+  const { pathname } = useLocation();
+  const { shown, pageFlash, dismiss, announce } = useAreaFlash(pathname, pathname === address ? 0 : 1, true);
+  return (
+    <PageFlashContext.Provider
+      value={{
+        ...pageFlash,
+        handOver: (to, result) => {
+          onHandover(to, result);
+          pageFlash.handOver(to, result);
+        },
+      }}
+    >
+      {shown && <AreaFlash result={shown} onDismiss={dismiss} onAnnounce={announce} />}
+      <RegisteredPage connection={connection} />
+    </PageFlashContext.Provider>
+  );
+}
+
+function open(path = address, connection = connected, followHandover = false) {
   const handOver = vi.fn();
   const user = userEvent.setup();
   const root = { current: null as HTMLDivElement | null };
@@ -75,7 +105,11 @@ function open(path = address, connection = connected) {
         <PageFlashContext.Provider value={{ handOver, show: vi.fn() }}>
           <AreaRootContext.Provider value={root}>
             <div ref={root}>
-              <RegisteredPage connection={connection} />
+              {followHandover ? (
+                <HandoverPage connection={connection} onHandover={handOver} />
+              ) : (
+                <RegisteredPage connection={connection} stubDestination />
+              )}
             </div>
           </AreaRootContext.Provider>
         </PageFlashContext.Provider>
@@ -112,7 +146,28 @@ function open(path = address, connection = connected) {
   const headingDescription = () => wrapper.findHeader()?.findDescription()?.getElement();
   const submit = () => user.click(screen.getByRole('button', { name: 'Create method' }));
   const cancel = () => user.click(screen.getByRole('button', { name: 'Cancel' }));
-  return { handOver, user, field, select, openSelect, choose, chooseKind, shown, headingDescription, submit, cancel };
+  const findAlert = () =>
+    waitFor(() => {
+      const alert = wrapper.findAlert()?.getElement();
+      if (!alert) throw new Error('Missing failure alert');
+      expect(alert).toBeVisible();
+      return alert;
+    });
+  return {
+    handOver,
+    user,
+    wrapper,
+    field,
+    select,
+    openSelect,
+    choose,
+    chooseKind,
+    shown,
+    headingDescription,
+    submit,
+    cancel,
+    findAlert,
+  };
 }
 
 const methods = {
@@ -157,11 +212,9 @@ it('reads resources when opened and describes the resource and each known form o
   expect(integration).toHaveTextContent('The request is passed to an HTTP address.');
   expect(integration).toHaveTextContent('A fixed answer, without a backend.');
   await form.chooseKind('http');
-  expect(
-    screen.getByText(
-      "The emulator sends no request to this address. It answers only for an address it serves itself, such as another API's invoke URL.",
-    ),
-  ).toBeVisible();
+  expect(form.field('HTTP address').findDescription()?.getElement()).toHaveTextContent(
+    "The emulator sends no request to this address. It answers only for an address it serves itself, such as another API's invoke URL.",
+  );
 });
 
 it('uses the independent HTTP integration method and offers all eight described values', async () => {
@@ -176,7 +229,9 @@ it('uses the independent HTTP integration method and offers all eight described 
   }
   choice.selectOptionByValue('POST');
   const url = `${endpoint}/_aws/execute-api/sibling/dev`;
-  await form.user.type(screen.getByRole('textbox', { name: 'HTTP address' }), url);
+  const input = createWrapper(form.field('HTTP address').getElement()).findInput();
+  if (!input) throw new Error('Missing HTTP address input');
+  await form.user.type(input.findNativeInput().getElement(), url);
   await form.submit();
   await waitFor(() =>
     expect(create).toHaveBeenCalledExactlyOnceWith(
@@ -215,7 +270,7 @@ it('leaves the resource choice empty without an alert when the linked ID is abse
   await waitFor(() =>
     expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('Choose a resource'),
   );
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(form.wrapper.findAlert()).toBeNull();
   expect(screen.getByRole('button', { name: 'Create method' })).toBeEnabled();
 });
 
@@ -277,62 +332,180 @@ it.each(readFailures)(
   },
 );
 
+const emulatorFailure = { kind: 'emulator-did-not-answer', message: 'Request timed out.' } as const;
+const engineFailure = { kind: 'engine-did-not-answer' } as const;
+
 const getFailures = [
-  [{ kind: 'not-implemented' }, 'Not implemented by the emulator'],
-  [{ kind: 'access-denied', message: 'Refused here.' }, 'Access denied'],
-  [{ kind: 'other', code: 'BadRequest', message: 'Entire message.' }, 'BadRequest: Entire message.'],
-  [{ kind: 'emulator-did-not-answer', message: 'Timed out' }, 'Not answering at'],
-  [{ kind: 'engine-did-not-answer' }, 'The EmuForge engine at'],
+  {
+    failure: { kind: 'not-implemented' },
+    heading: 'Not implemented by the emulator',
+    detail: '501 Not Implemented for GetRestApi',
+  },
+  {
+    failure: { kind: 'access-denied', message: 'Refused here.' },
+    heading: 'Access denied',
+    detail: 'GetRestApi was refused: Refused here.',
+  },
+  {
+    failure: { kind: 'other', code: 'BadRequest', message: 'Entire message.' },
+    heading: 'The REST API could not be read',
+    detail: 'GetRestApi: BadRequest: Entire message.',
+  },
+  {
+    failure: emulatorFailure,
+    connection: stopped,
+    heading: 'Not started on port 9682',
+    detail: 'GetRestApi got no answer from the emulator. Request timed out.',
+    recovery: true,
+  },
+  {
+    failure: emulatorFailure,
+    heading: `Not answering at ${endpoint}`,
+    detail: 'GetRestApi got no answer from the emulator. Request timed out.',
+    recovery: true,
+  },
+  {
+    failure: engineFailure,
+    heading: `The EmuForge engine at ${engineOrigin} is not answering`,
+    detail: 'GetRestApi got no answer.',
+    recovery: true,
+  },
 ] as const;
 
-it.each(getFailures)('uses the GetRestApi read state for $0.kind', async (failure, text) => {
+it.each(getFailures)('shows $heading for GetRestApi and restores the form on Retry', async (scenario) => {
+  const { failure, heading, detail } = scenario;
   api.mockRejectedValueOnce(new RequestError({ ...failure, operation: 'GetRestApi' }));
-  open();
-  expect(
-    await screen.findByText(text, { exact: failure.kind === 'not-implemented' || failure.kind === 'access-denied' }),
-  ).toBeVisible();
-  expect(screen.getByText(/GetRestApi(?:\b|:)/)).toBeVisible();
+  const form = open(address, 'connection' in scenario ? scenario.connection : connected);
+  await waitFor(() => expect(form.wrapper.findStatusIndicator()?.getElement()).toHaveTextContent(heading));
+  expect(form.wrapper.getElement()).toHaveTextContent(detail);
+  if ('recovery' in scenario) expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
+  else expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Create method' })).not.toBeInTheDocument();
+  await form.user.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await form.shown()).toBeVisible();
+  expect(form.headingDescription()).toHaveTextContent('API: Orders');
+  expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('Choose a resource');
 });
 
-it.each(['GetResources', 'ListFunctions'])('names a %s read failure at its own choice', async (operation) => {
-  const error = new RequestError({ kind: 'other', operation, code: 'BadRequest', message: 'Choice refused.' });
-  if (operation === 'GetResources') resources.mockRejectedValueOnce(error);
-  else functions.mockRejectedValueOnce(error);
-  const form = open();
-  await form.shown();
-  await form.openSelect(operation === 'GetResources' ? 'Resource' : 'Lambda function');
-  expect(await screen.findByText(`${operation}: BadRequest: Choice refused.`)).toBeVisible();
-});
+const choiceFailures = [
+  {
+    failure: { kind: 'not-implemented' },
+    heading: 'Not implemented by the emulator',
+    dropdown: 'Not implemented by the emulator',
+    detail: (operation: string) => `501 Not Implemented for ${operation}`,
+  },
+  {
+    failure: { kind: 'other', code: 'BadRequest', message: 'Choice refused.' },
+    connection: stopped,
+    dropdown: 'BadRequest: Choice refused.',
+    detail: (operation: string) => `${operation}: BadRequest: Choice refused.`,
+  },
+  {
+    failure: emulatorFailure,
+    heading: `Not answering at ${endpoint}`,
+    dropdown: 'The emulator did not answer',
+    detail: (operation: string) => `${operation} got no answer from the emulator. Request timed out.`,
+    recovery: true,
+  },
+  {
+    failure: engineFailure,
+    heading: `The EmuForge engine at ${engineOrigin} is not answering`,
+    dropdown: `The EmuForge engine at ${engineOrigin} did not answer`,
+    detail: (operation: string) => `${operation} got no answer.`,
+    recovery: true,
+  },
+] as const;
 
-it.each([false, true])('hands off the success and the optional permission warning (warning = %s)', async (warn) => {
+const choices = [
+  { operation: 'GetResources', label: 'Resource', read: resources, value: firstResource.id, text: 'ID root' },
+  { operation: 'ListFunctions', label: 'Lambda function', read: functions, value: fn.arn, text: fn.name },
+];
+
+it.each(choices.flatMap((choice) => choiceFailures.map((scenario) => ({ ...choice, scenario }))))(
+  'shows $scenario.failure.kind at $operation and restores the choice on Retry',
+  async ({ operation, label, read, value, text, scenario }) => {
+    read.mockRejectedValueOnce(new RequestError({ ...scenario.failure, operation }));
+    const form = open(address, 'connection' in scenario ? scenario.connection : connected);
+    await form.shown();
+    const choice = await form.openSelect(label);
+    await waitFor(() => expect(choice.findStatusIndicator()?.getElement()).toHaveTextContent(scenario.dropdown));
+    const retry = choice.findErrorRecoveryButton()?.getElement();
+    if (!retry) throw new Error('Missing Retry in the choice');
+    expect(retry).toHaveTextContent('Retry');
+    const field = form.field(label).getElement();
+    const heading =
+      'heading' in scenario
+        ? scenario.heading
+        : `The ${operation === 'GetResources' ? 'resources' : 'Lambda functions'} could not be read`;
+    const dropdown = choice.findDropdown().getElement();
+    const status = createWrapper(field)
+      .findAllStatusIndicators()
+      .find((entry) => !dropdown.contains(entry.getElement()));
+    expect(status?.getElement()).toHaveTextContent(heading);
+    expect(field).toHaveTextContent(scenario.detail(operation));
+    const below = within(field);
+    if ('recovery' in scenario) expect(below.getByRole('link', { name: 'Connection status' })).toBeVisible();
+    else expect(below.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+    expect(choice.findDropdown().findOptionByValue(value)).toBeNull();
+    expect(createWrapper(field).findButton()?.getElement()).toHaveTextContent('Retry');
+    await form.user.click(retry);
+    await waitFor(() => expect(choice.findDropdown().findOptionByValue(value)?.getElement()).toHaveTextContent(text));
+  },
+);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each([
+  { first: 'api', warn: false },
+  { first: 'resources', warn: false },
+  { first: 'api', warn: true },
+  { first: 'resources', warn: true },
+])('keeps the handed-over result when $first answers first (warning = $warn)', async ({ first, warn }) => {
   if (warn)
     create.mockResolvedValueOnce({
       kind: 'created',
       permissionWarning: { functionName: 'orders', reason: 'No permission' },
     });
-  const form = open(`${address}?resource=later-page`);
+  const pendingApi = deferred<RestApi>();
+  const pendingResources = deferred<TokenPage<Resource>>();
+  const form = open(`${address}?resource=later-page`, connected, true);
   await form.shown();
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
   await form.choose('Lambda function', fn.arn);
+  api.mockReturnValueOnce(pendingApi.promise);
+  resources.mockReturnValueOnce(pendingResources.promise);
   await form.submit();
-  await waitFor(() => expect(form.handOver).toHaveBeenCalledOnce());
-  const [to, items] = form.handOver.mock.calls[0] ?? [];
-  expect(to).toBe(restApiPath(apiId, 'resources'));
-  const result = items as { type: string; content: React.ReactNode }[];
-  const { container } = render(
-    <>
-      {result.map(({ type, content }) => (
-        <p key={type}>{content}</p>
-      ))}
-    </>,
-  );
-  expect(container).toHaveTextContent('Method GET /orders created.');
-  expect(result.map(({ type }) => type)).toEqual(warn ? ['success', 'warning'] : ['success']);
-  if (warn)
-    expect(container).toHaveTextContent(
-      'Method GET /orders created, but the permission was not added to orders: No permission',
-    );
+
+  const expectResult = () => {
+    const flashes = form.wrapper.findFlashbar();
+    expect(flashes?.findItemsByType('success')[0]?.getElement()).toHaveTextContent('Method GET /orders created.');
+    expect(flashes?.findItemsByType('warning')).toHaveLength(warn ? 1 : 0);
+    if (warn)
+      expect(flashes?.findItemsByType('warning')[0]?.getElement()).toHaveTextContent(
+        'Method GET /orders created, but the permission was not added to orders: No permission',
+      );
+  };
+  await waitFor(() => {
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(resources).toHaveBeenCalledOnce();
+    expectResult();
+  });
+  expect(form.handOver).toHaveBeenCalledExactlyOnceWith(restApiPath(apiId, 'resources'), expect.any(Array));
+  const answerApi = () => pendingApi.resolve({ id: apiId, name: 'Orders' });
+  const answerResources = () => pendingResources.resolve({ items: [linkedResource] });
+  const answers = first === 'api' ? [answerApi, answerResources] : [answerResources, answerApi];
+  for (const answer of answers) {
+    await act(async () => answer());
+    expectResult();
+  }
+  expect(await screen.findByRole('heading', { name: '/orders' })).toBeVisible();
+  expectResult();
 });
 
 it('keeps the form after PutMethod is refused and sends it again on the next submit', async () => {
@@ -350,10 +523,12 @@ it('keeps the form after PutMethod is refused and sends it again on the next sub
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
   await form.chooseKind('mock');
   await form.submit();
+  expect(await form.findAlert()).toHaveTextContent(
+    'PutMethod: ConflictException: Method already exists for this resource',
+  );
   expect(
-    await screen.findByText('PutMethod: ConflictException: Method already exists for this resource'),
-  ).toBeVisible();
-  expect(screen.getByRole('textbox', { name: 'Response body' })).toHaveValue('{"message": "ok"}');
+    createWrapper(form.field('Response body').getElement()).findTextarea()?.findNativeTextarea().getElement(),
+  ).toHaveValue('{"message": "ok"}');
   await form.submit();
   await waitFor(() => expect(form.handOver).toHaveBeenCalledOnce());
   expect(create).toHaveBeenCalledTimes(2);
@@ -381,16 +556,15 @@ it.each([false, true])('explains failed integration and the take-back outcome (l
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
   await form.chooseKind('mock');
   await form.submit();
-  expect(await screen.findByText('PutIntegration: BadRequest: Integration refused')).toBeVisible();
+  const alert = await form.findAlert();
+  expect(alert).toHaveTextContent('PutIntegration: BadRequest: Integration refused');
   if (left) {
-    const link = screen.getByRole('link', { name: 'View API resources' });
+    const link = within(alert).getByRole('link', { name: 'View API resources' });
     expect(link).toHaveAttribute('href', restApiPath(apiId, 'resources'));
-    expect(
-      link.closest('[role="alert"]') ?? screen.getByText('DeleteMethod: Denied: Delete refused').parentElement,
-    ).toHaveTextContent(
+    expect(alert).toHaveTextContent(
       'Method GET /orders was created without a working integration and could not be removed: DeleteMethod: Denied: Delete refused',
     );
-  } else expect(screen.getByText('No method was created.')).toBeVisible();
+  } else expect(alert).toHaveTextContent('No method was created.');
   expect(form.handOver).not.toHaveBeenCalled();
 });
 
@@ -401,8 +575,9 @@ it('shows a write 501 with its operation and keeps Create method visible and una
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
   await form.chooseKind('mock');
   await form.submit();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText('PutMethod: 501 Not Implemented')).toBeVisible();
+  const alert = await form.findAlert();
+  expect(alert).toHaveTextContent('Not implemented by the emulator');
+  expect(alert).toHaveTextContent('PutMethod: 501 Not Implemented');
   expect(screen.getByRole('button', { name: 'Create method' })).toBeDisabled();
 });
 
@@ -420,8 +595,16 @@ it.each([false, true])('leaves on Cancel and only asks after an edit (changed = 
   if (changed) await form.chooseKind('mock');
   await form.cancel();
   if (changed) {
-    const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-    await form.user.click(within(dialog).getByRole('button', { name: 'Discard' }));
-  } else expect(screen.queryByRole('dialog', { name: 'Discard what you entered?' })).not.toBeInTheDocument();
+    const modal = await waitFor(() => {
+      const match = form.wrapper.findModal();
+      if (!match) throw new Error('Missing discard dialog');
+      expect(match.isVisible()).toBe(true);
+      return match;
+    });
+    expect(modal.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
+    const footer = modal.findFooter();
+    if (!footer) throw new Error('Missing discard dialog footer');
+    await form.user.click(within(footer.getElement()).getByRole('button', { name: 'Discard' }));
+  } else expect(form.wrapper.findModal()).toBeNull();
   expect(await screen.findByText(`Destination ${restApiPath(apiId)}`)).toBeVisible();
 });

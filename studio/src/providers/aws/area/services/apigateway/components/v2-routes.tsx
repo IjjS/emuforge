@@ -6,7 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import { useState } from 'react';
 
-import { refusalMessage } from '../../../../../../lib/aws/request';
+import { reportedNotImplementedMessage } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
@@ -41,15 +41,24 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
     );
 
   function integrationWarning(routeKey: string, { integrationId, failure }: IntegrationDeletionWarning): FlashItem {
-    const message = refusalMessage(failure);
     const item = actionFailureItem(failure, failure.operation, connection.engineOrigin);
+    const message = reportedNotImplementedMessage(failure);
     return {
       type: 'warning',
       content: (
         <>
           Route <ValueText kind="name" value={routeKey} /> deleted, but its integration{' '}
           <CopyValue kind="name" label="integration ID" value={integrationId} /> was not:{' '}
-          {message ? <ValueText kind="text" value={message} /> : item.content || item.header}
+          {(failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') &&
+            `${failure.operation}: `}
+          {item.header}
+          {item.content && <>. {item.content}</>}
+          {message && (
+            <>
+              {' '}
+              <ValueText kind="text" value={message} />
+            </>
+          )}
         </>
       ),
     };

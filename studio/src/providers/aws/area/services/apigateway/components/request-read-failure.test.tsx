@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
@@ -26,7 +27,7 @@ function show(failure: RequestFailure, result?: AreaConnection['result'], origin
       />
     </MemoryRouter>,
   );
-  return { container, onRetry };
+  return { container, onRetry, status: createWrapper(container).findStatusIndicator()?.getElement() };
 }
 
 it.each([
@@ -36,18 +37,25 @@ it.each([
     'The emulator answered 501 Not Implemented for GetIntegrations, so Studio cannot show the integrations.',
   ],
   ['access-denied', 'Access denied', 'GetIntegrations was refused: Full denial reason.'],
-] as const)('reports %s by operation without connection recovery', (kind, first, detail) => {
-  const { container } = show({ kind, operation, message: 'Full denial reason.' }, stopped);
-  expect(container).toHaveTextContent(first);
+] as const)('reports %s by operation without connection recovery', async (kind, first, detail) => {
+  const { container, onRetry, status } = show({ kind, operation, message: 'Full denial reason.' }, stopped);
+  expect(status).toHaveTextContent(first);
   expect(container).toHaveTextContent(detail);
   expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(onRetry).toHaveBeenCalledOnce();
 });
 
-it.each([connected, unavailable, stopped])('keeps an ordinary refusal even when health is %j', (result) => {
-  const { container } = show({ kind: 'other', operation, code: 'InvalidId', message: 'Full failure reason.' }, result);
-  expect(container).toHaveTextContent('The integrations could not be read');
+it.each([connected, unavailable, stopped])('keeps an ordinary refusal even when health is %j', async (result) => {
+  const { container, onRetry, status } = show(
+    { kind: 'other', operation, code: 'InvalidId', message: 'Full failure reason.' },
+    result,
+  );
+  expect(status).toHaveTextContent('The integrations could not be read');
   expect(container).toHaveTextContent('GetIntegrations: InvalidId: Full failure reason.');
   expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(onRetry).toHaveBeenCalledOnce();
 });
 
 it('shows the code alone when a refusal has no message', () => {
@@ -61,8 +69,11 @@ it.each([
   [connected, 'Not answering at https://127.0.0.1:9682'],
   [undefined, 'The emulator did not answer'],
 ] as const)('uses health only for the details of an emulator connection failure', async (result, first) => {
-  const { container, onRetry } = show({ kind: 'emulator-did-not-answer', operation, message: 'Timed out.' }, result);
-  expect(container).toHaveTextContent(first);
+  const { container, onRetry, status } = show(
+    { kind: 'emulator-did-not-answer', operation, message: 'Timed out.' },
+    result,
+  );
+  expect(status).toHaveTextContent(first);
   expect(container).toHaveTextContent('GetIntegrations got no answer from the emulator. Timed out.');
   expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -75,11 +86,12 @@ it.each([
   [connected, null, 'The EmuForge engine is not answering'],
 ] as const)(
   'reports the engine failure immediately with its configured address when available',
-  (result, origin, first) => {
-    const { container } = show({ kind: 'engine-did-not-answer', operation }, result, origin);
-    expect(container).toHaveTextContent(first);
+  async (result, origin, first) => {
+    const { container, onRetry, status } = show({ kind: 'engine-did-not-answer', operation }, result, origin);
+    expect(status).toHaveTextContent(first);
     expect(container).toHaveTextContent('GetIntegrations got no answer.');
     expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledOnce();
   },
 );

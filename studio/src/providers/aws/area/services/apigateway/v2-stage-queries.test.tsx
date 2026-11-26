@@ -34,7 +34,7 @@ beforeEach(() => {
   remove.mockResolvedValue(undefined);
 });
 
-async function open() {
+async function open(success: () => void) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -45,9 +45,9 @@ async function open() {
       api: useV2Api(endpoint, id),
       routes: useV2Routes(endpoint, id),
       integrations: useV2Integrations(endpoint, id),
-      create: useCreateV2Stage(id, endpoint),
-      deploy: useDeployV2Stage(id, endpoint),
-      delete: useDeleteV2Stage(id, endpoint),
+      create: useCreateV2Stage(id, endpoint, success),
+      deploy: useDeployV2Stage(id, endpoint, success),
+      delete: useDeleteV2Stage(id, endpoint, success),
     }),
     { wrapper },
   );
@@ -59,10 +59,10 @@ async function open() {
     expect(result.current.integrations.items).toEqual([]);
   });
 
-  function submit(action: (typeof actions)[number], success: () => void) {
+  function submit(action: (typeof actions)[number]) {
     act(() => {
-      if (action === 'create') result.current.create.submit({ stageName: 'test', autoDeploy: true }, success);
-      else result.current[action].submit('dev', success);
+      if (action === 'create') result.current.create.submit({ stageName: 'test', autoDeploy: true });
+      else result.current[action].submit('dev');
     });
   }
 
@@ -70,16 +70,15 @@ async function open() {
 }
 
 it.each(actions)('refreshes only the stages after %s succeeds', async (action) => {
-  const { result, submit } = await open();
+  const success = vi.fn();
+  const { result, submit } = await open(success);
   const updated = {
     create: [present, { StageName: 'test', AutoDeploy: true }],
     deploy: [{ ...present, DeploymentId: 'd-1' }],
     delete: [],
   }[action];
   stages.mockResolvedValueOnce({ items: updated });
-  const success = vi.fn();
-
-  submit(action, success);
+  submit(action);
 
   await waitFor(() => expect(result.current.stages.items).toEqual(updated));
   expect(success).toHaveBeenCalledOnce();
@@ -90,12 +89,11 @@ it.each(actions)('refreshes only the stages after %s succeeds', async (action) =
 });
 
 it.each(actions)('does not refresh any reads after %s fails', async (action) => {
-  const { result, submit } = await open();
+  const success = vi.fn();
+  const { result, submit } = await open(success);
   const request = { create, deploy, delete: remove }[action];
   request.mockRejectedValueOnce(new Error('Request refused'));
-  const success = vi.fn();
-
-  submit(action, success);
+  submit(action);
 
   await waitFor(() => expect(result.current[action].failure).toMatchObject({ kind: 'other' }));
   expect(success).not.toHaveBeenCalled();
