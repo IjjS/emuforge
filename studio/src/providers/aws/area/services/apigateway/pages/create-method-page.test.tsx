@@ -91,9 +91,10 @@ function open(path = address, connection = connected) {
     await waitFor(() => expect(choice.findDropdown().findOptionByValue(value)).not.toBeNull());
     choice.selectOptionByValue(value);
   };
-  const chooseKind = async (label: string) => {
-    const tile = within(field('Integration kind').getElement()).getByRole('radio', { name: label });
-    await user.click(tile);
+  const chooseKind = async (value: string) => {
+    const tile = field('Integration kind').findTiles()?.findInputByValue(value);
+    if (!tile) throw new Error(`Missing integration option ${value}`);
+    await user.click(tile.getElement());
   };
   const shown = () => screen.findByRole('heading', { name: 'Method settings' });
   const submit = () => user.click(screen.getByRole('button', { name: 'Create method' }));
@@ -140,7 +141,7 @@ it('reads resources when opened and describes the resource and each known form o
   expect(integration).toHaveTextContent('A Lambda function the emulator holds is invoked.');
   expect(integration).toHaveTextContent('The request is passed to an HTTP address.');
   expect(integration).toHaveTextContent('A fixed answer, without a backend.');
-  await form.chooseKind('HTTP endpoint');
+  await form.chooseKind('http');
   expect(
     screen.getByText(
       "The emulator sends no request to this address. It answers only for an address it serves itself, such as another API's invoke URL.",
@@ -153,7 +154,7 @@ it('uses the independent HTTP integration method and offers all eight described 
   await form.shown();
   await form.choose('Resource', 'root');
   await form.choose('HTTP method', 'PATCH');
-  await form.chooseKind('HTTP endpoint');
+  await form.chooseKind('http');
   const choice = await form.openSelect('Integration HTTP method');
   for (const [value, description] of Object.entries(methods)) {
     expect(choice.findDropdown().findOptionByValue(value)?.getElement()).toHaveTextContent(description);
@@ -180,7 +181,7 @@ it('registers the create route and reads and sends a linked resource that is abs
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
   expect(linked).toHaveBeenCalledExactlyOnceWith(engineOrigin, apiId, 'later-page', expect.any(AbortSignal));
   expect(resources).not.toHaveBeenCalled();
-  await form.chooseKind('Mock');
+  await form.chooseKind('mock');
   await form.submit();
   await waitFor(() =>
     expect(create).toHaveBeenCalledExactlyOnceWith(
@@ -332,7 +333,7 @@ it('keeps the form after PutMethod is refused and sends it again on the next sub
   const form = open(`${address}?resource=later-page`);
   await form.shown();
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
-  await form.chooseKind('Mock');
+  await form.chooseKind('mock');
   await form.submit();
   expect(
     await screen.findByText('PutMethod: ConflictException: Method already exists for this resource'),
@@ -363,7 +364,7 @@ it.each([false, true])('explains failed integration and the take-back outcome (l
   const form = open(`${address}?resource=later-page`);
   await form.shown();
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
-  await form.chooseKind('Mock');
+  await form.chooseKind('mock');
   await form.submit();
   expect(await screen.findByText('PutIntegration: BadRequest: Integration refused')).toBeVisible();
   if (left) {
@@ -383,7 +384,7 @@ it('shows a write 501 with its operation and keeps Create method visible and una
   const form = open(`${address}?resource=later-page`);
   await form.shown();
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
-  await form.chooseKind('Mock');
+  await form.chooseKind('mock');
   await form.submit();
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
   expect(screen.getByText('PutMethod: 501 Not Implemented')).toBeVisible();
@@ -401,7 +402,7 @@ it.each([false, true])('leaves on Cancel and only asks after an edit (changed = 
   const form = open(`${address}?resource=later-page`);
   await form.shown();
   await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
-  if (changed) await form.chooseKind('Mock');
+  if (changed) await form.chooseKind('mock');
   await form.cancel();
   if (changed) {
     const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
