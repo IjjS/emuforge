@@ -13,7 +13,7 @@ vi.mock('../stream-change-api', async (importOriginal) => ({
 }));
 
 const create = vi.mocked(createLogStream);
-const rule = 'Enter 1 to 512 characters, without ":" or "*".';
+const rule = 'Enter 1 to 512 characters, without ":", "*", or line breaks.';
 
 beforeEach(() => create.mockReset());
 
@@ -57,6 +57,18 @@ it.each(['a:b', 'a*b', '', 'a'.repeat(513)])('shows the rule and rejects an inva
   );
   expect(name).toHaveAttribute('aria-invalid', 'true');
   expect(create).not.toHaveBeenCalled();
+});
+
+it.each(['\r', '\n', '\r\n'])('rejects a name containing a line break %# at the name field', async (lineBreak) => {
+  const { name, action, created } = await renderDialog();
+  fireEvent.change(name, { target: { value: 'first' + lineBreak + 'second' } });
+  fireEvent.click(action);
+  expect(name).toHaveAccessibleDescription(
+    expect.stringContaining('Remove line breaks. The browser can change them in the name field.'),
+  );
+  expect(name).toHaveAttribute('aria-invalid', 'true');
+  expect(create).not.toHaveBeenCalled();
+  expect(created).not.toHaveBeenCalled();
 });
 
 it('keeps the name and shows the operation and reason in the dialog when refused', async () => {
