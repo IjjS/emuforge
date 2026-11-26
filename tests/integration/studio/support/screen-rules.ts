@@ -18,7 +18,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, Locator, Page } from '@playwright/test';
 
 import { type Ctx } from './check';
-import { ACTION } from './frame';
+import { ACTION, SIDE_NAVIGATION } from './frame';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Names.
@@ -643,6 +643,10 @@ export async function scrollRegionProblems(cell: Locator, root: Locator): Promis
  * `below` (viewport coordinates, as the page is scrolled now), leaving out the texts of headings (a title with its
  * counter), links, buttons and tab lists: what stands between two parts of a page besides their own controls. Each
  * text node is one entry, white space collapsed. `null` when `above` or every `below` is not shown. Never waits.
+ *
+ * The area's `main` holds the side navigation beside the content, and since issue 650 the navigation shows words
+ * that are no link ("No screen yet" beside an entry without a screen): the navigation's texts are left out, as its
+ * links always were, since they stand beside the page's parts and never between them.
  */
 export async function textsBetween(page: Page, above: Locator, below: Locator[]): Promise<string[] | null> {
   const top =
@@ -660,7 +664,7 @@ export async function textsBetween(page: Page, above: Locator, below: Locator[])
   }
   if (top === null || bottoms.length === 0) return null;
   return page.evaluate(
-    ([from, to]) => {
+    ([from, to, navigation]) => {
       const hidden = (el: Element): boolean => {
         for (let a: Element | null = el; a; a = a.parentElement) {
           const cs = getComputedStyle(a);
@@ -681,6 +685,7 @@ export async function textsBetween(page: Page, above: Locator, below: Locator[])
         const text = (n as Text).data.replace(/\s+/g, ' ').trim();
         const el = n.parentElement;
         if (text === '' || !el || el.closest(`script, style, template, noscript, ${own}`) || hidden(el)) continue;
+        if (el.closest(navigation)) continue;
         const range = document.createRange();
         range.selectNodeContents(n);
         const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
@@ -688,6 +693,6 @@ export async function textsBetween(page: Page, above: Locator, below: Locator[])
       }
       return found;
     },
-    [top.y + top.height, Math.min(...bottoms)] as const,
+    [top.y + top.height, Math.min(...bottoms), SIDE_NAVIGATION] as const,
   );
 }

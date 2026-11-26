@@ -1,6 +1,6 @@
 import { expect, startStack, test } from './support';
 import { connectedAt, expectLine, notStartedOn } from './support/aws-area';
-import { ACTION, addressOf } from './support/frame';
+import { ACTION, addressOf, SIDE_NAVIGATION } from './support/frame';
 import {
   clusterFixture, ownSnapshot, seedSnapshot, SNAPSHOT_ID, SNAPSHOTS, snapshotDirect, xmlField,
 } from './services/rds/cluster-actions';
@@ -60,7 +60,11 @@ test('studio.rds-restore-an-orphaned-cluster-snapshot', async ({ ctx, page }) =>
   expect(await reportsNoCluster(ctx, port, cluster.id)).toBe(true);
   await open(page, CLUSTERS_PATH, 'DB clusters');
   const main = page.getByRole('main');
-  await main.getByRole('link', { name: 'DB cluster snapshots' }).click(ACTION);
+  // The page's own link: the side navigation, inside `main`, holds an entry of the same name (issue 650).
+  await main
+    .getByRole('link', { name: 'DB cluster snapshots' })
+    .and(page.locator(`:not(${SIDE_NAVIGATION} *)`))
+    .click(ACTION);
   await expect(page).toHaveURL(addressOf(SNAPSHOTS));
   const table = tableOf(main, 'DB cluster snapshots');
   await expectCell(table, SNAPSHOT_ID, id, 'Source DB cluster', cluster.id);

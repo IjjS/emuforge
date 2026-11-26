@@ -6,7 +6,6 @@ import { SECRET_CREATE_PATH, SECRET_DETAIL_PATH, SECRETS_MANAGER_PATH, SECRETS_P
 
 const NAVIGATION: ScreenNavigation = {
   header: { text: 'Secrets Manager', href: SECRETS_MANAGER_PATH },
-  items: [{ type: 'link', text: 'Secrets', href: SECRETS_PATH }],
   activeHref: SECRETS_PATH,
 };
 

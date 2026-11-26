@@ -11,7 +11,6 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: STACKS_TITLE }],
     navigation: {
       header: { text: 'CloudFormation', href: SERVICE_PATH },
-      items: [{ type: 'link', text: STACKS_TITLE, href: STACKS_PATH }],
       activeHref: STACKS_PATH,
     },
     Page: StacksPage,

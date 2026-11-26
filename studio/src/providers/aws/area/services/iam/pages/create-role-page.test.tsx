@@ -586,7 +586,6 @@ describe('step 1, "Select trusted entity"', () => {
       'href',
       '/aws/iam',
     );
-    expect(within(sideElement).getByText('Access Management')).toBeInTheDocument();
     expect(within(sideElement).getByRole('link', { name: 'Roles' })).toHaveAttribute('aria-current', 'page');
     await waitFor(() => {
       expect(document.title).toBe('Create role | EmuForge Studio');
