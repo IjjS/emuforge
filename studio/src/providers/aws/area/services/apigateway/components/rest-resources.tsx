@@ -8,6 +8,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -266,39 +267,44 @@ export function RestResources({
     setTesting(undefined);
   }
 
+  // Commit the feedback and close the dialog before the mutation refreshes the read.
   function handleCreated(path: string) {
-    flash.show([
-      {
-        type: 'success',
-        content: (
-          <>
-            Resource <ValueText kind="address" value={path} /> created.
-          </>
-        ),
-      },
-    ]);
-    setCreating(false);
+    flushSync(() => {
+      flash.show([
+        {
+          type: 'success',
+          content: (
+            <>
+              Resource <ValueText kind="address" value={path} /> created.
+            </>
+          ),
+        },
+      ]);
+      setCreating(false);
+    });
   }
 
   function handleDeleted(target: DeleteTarget) {
-    flash.show([
-      {
-        type: 'success',
-        content: (
-          <>
-            {target.kind === 'resource' ? (
-              'Resource'
-            ) : (
-              <>
-                Method <ValueText kind="fixed" value={target.method} />
-              </>
-            )}{' '}
-            <ValueText kind="address" value={target.path} /> deleted.
-          </>
-        ),
-      },
-    ]);
-    setDeleting(undefined);
+    flushSync(() => {
+      flash.show([
+        {
+          type: 'success',
+          content: (
+            <>
+              {target.kind === 'resource' ? (
+                'Resource'
+              ) : (
+                <>
+                  Method <ValueText kind="fixed" value={target.method} />
+                </>
+              )}{' '}
+              <ValueText kind="address" value={target.path} /> deleted.
+            </>
+          ),
+        },
+      ]);
+      setDeleting(undefined);
+    });
   }
   return (
     <section aria-label="Resources">
