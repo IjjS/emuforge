@@ -76,7 +76,7 @@ it('uses unique labels and paths, with built entries before the rest in each gro
     const built = entries.filter(({ path }) => entryHasScreen(SCREENS, service, path));
     const unbuilt = entries
       .filter(({ path }) => !entryHasScreen(SCREENS, service, path))
-      .toSorted((a, b) => a.label.localeCompare(b.label, 'en'));
+      .sort((a, b) => a.label.localeCompare(b.label, 'en'));
     expect(entries).toEqual([...built, ...unbuilt]);
   }
 });
