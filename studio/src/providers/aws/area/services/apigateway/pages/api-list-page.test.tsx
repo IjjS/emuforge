@@ -436,11 +436,19 @@ function expectDeleted(container: HTMLElement, api: ApiRow) {
 
 it('enables Delete when a row is selected, then closes the dialog, shows the result and reads both lists', async () => {
   vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
-  vi.mocked(readRestApis)
-    .mockResolvedValueOnce({ items: [rest] })
-    .mockResolvedValueOnce({ items: [] });
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
+  const feedbackAtRead: { modalOpen: boolean; message: string | null | undefined }[] = [];
+  function recordFeedback(items: ApiRow[]) {
+    const wrapper = createWrapper(container);
+    feedbackAtRead.push({
+      modalOpen: wrapper.findModal() !== null,
+      message: wrapper.findFlashbar()?.findItemsByType('success')[0]?.getElement().textContent,
+    });
+    return Promise.resolve({ items });
+  }
+  vi.mocked(readRestApis).mockImplementationOnce(() => recordFeedback([]));
+  vi.mocked(readV2Apis).mockImplementationOnce(() => recordFeedback([http]));
   expect(headerAction(container, 2, 'Delete')).toBeDisabled();
   await selectApi(container, 2);
   expect(headerAction(container, 2, 'Delete')).toBeEnabled();
@@ -449,6 +457,10 @@ it('enables Delete when a row is selected, then closes the dialog, shows the res
     expectDeleted(container, rest);
     expectApiNames(container, [http.name]);
   });
+  expect(feedbackAtRead).toEqual([
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+  ]);
   expect(deleteApi).toHaveBeenCalledExactlyOnceWith(engineOrigin, rest, expect.any(AbortSignal));
   expect(readRestApis).toHaveBeenCalledTimes(2);
   expect(readV2Apis).toHaveBeenCalledTimes(2);
@@ -464,22 +476,29 @@ function deferred<T>() {
 }
 
 describe.each([
-  ['REST APIs', readRestApis, rest, rest2, http, 2, 'rest-position'],
-  ['HTTP and WebSocket APIs', readV2Apis, http, webSocket, rest, 1, 'v2-token'],
-] as const)('%s post-delete reads', (label, read, api, current, other, rowIndex, token) => {
+  ['REST APIs', readRestApis, readV2Apis, rest, rest2, http, 'rest-position'],
+  ['HTTP and WebSocket APIs', readV2Apis, readRestApis, http, webSocket, rest, 'v2-token'],
+] as const)('%s post-delete reads', (label, read, readOther, api, survivor, other, token) => {
   it.each(['old page first', 'refreshed page first'] as const)(
     'keeps the delete result and drops the old page when the %s answers',
     async (order) => {
       const oldPage = deferred<TokenPage<ApiRow>>();
       const refreshed = deferred<TokenPage<ApiRow>>();
+      const otherRefreshed = deferred<TokenPage<ApiRow>>();
+      const updatedOther = { ...other, name: `Updated ${other.name}` };
+      const initialNames = [api.name, survivor.name, other.name].sort();
+      const survivingNames = [survivor.name, other.name].sort();
       vi.mocked(read)
-        .mockResolvedValueOnce({ items: [api], next: token })
+        .mockResolvedValueOnce({ items: [api, survivor], next: token })
         .mockReturnValueOnce(oldPage.promise)
         .mockReturnValueOnce(refreshed.promise);
+      vi.mocked(readOther)
+        .mockResolvedValueOnce({ items: [other] })
+        .mockReturnValueOnce(otherRefreshed.promise);
       vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
       const { container } = open();
-      await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-      await selectApi(container, rowIndex);
+      await waitFor(() => expectApiNames(container, initialNames));
+      await selectApi(container, initialNames.indexOf(api.name) + 1);
       await userEvent.click(await loadMoreButton(container, label));
       expect(read).toHaveBeenNthCalledWith(2, engineOrigin, token, expect.any(AbortSignal));
 
@@ -487,10 +506,12 @@ describe.each([
       await waitFor(() => {
         expectDeleted(container, api);
         expect(read).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
+        expect(readOther).toHaveBeenNthCalledWith(2, engineOrigin, undefined, expect.any(AbortSignal));
+        expect(apiNames(container)).toEqual(expect.arrayContaining(survivingNames));
       });
       expect(vi.mocked(read).mock.calls[1]?.[2].aborted).toBe(true);
       const resolveOld = () => act(async () => oldPage.resolve({ items: [api] }));
-      const resolveRefreshed = () => act(async () => refreshed.resolve({ items: [current] }));
+      const resolveRefreshed = () => act(async () => refreshed.resolve({ items: [survivor] }));
 
       if (order === 'old page first') {
         await resolveOld();
@@ -499,14 +520,15 @@ describe.each([
         await resolveRefreshed();
         await waitFor(() => {
           expectDeleted(container, api);
-          expectApiNames(container, [current.name, other.name].sort());
+          expectApiNames(container, survivingNames);
         });
         await resolveOld();
       }
 
+      await act(async () => otherRefreshed.resolve({ items: [updatedOther] }));
       await waitFor(() => {
         expectDeleted(container, api);
-        expectApiNames(container, [current.name, other.name].sort());
+        expectApiNames(container, [survivor.name, updatedOther.name].sort());
       });
     },
   );
