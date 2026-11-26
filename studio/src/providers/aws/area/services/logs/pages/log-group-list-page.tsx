@@ -8,14 +8,16 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
+import { DeleteLogGroupDialog } from '../components/delete-log-group-dialog';
 import {
   CREATE_LOG_GROUP_PATH,
   CREATE_LOG_GROUP_TITLE,
@@ -34,11 +36,19 @@ export function LogGroupListPage({ connection }: { connection: AreaConnection })
   useShowsResources('log groups');
   const handleFollow = useFollow();
   const [announcement, announce] = useAnnouncer();
+  const flash = usePageFlash();
   const [filterText, setFilterText] = useState('');
   const [pattern, setPattern] = useState('');
   const [selectedName, setSelectedName] = useState<string>();
+  const [deleteTarget, setDeleteTarget] = useState<{ name: string; protectedFromDeletion: boolean }>();
+  const [deleteUnavailable, setDeleteUnavailable] = useState(false);
 
   const listing = useGroupListing(connection.engineOrigin, pattern);
+  const refreshAfterDelete = useRef(listing.refresh);
+  useLayoutEffect(() => {
+    // A delayed filter change can start a new listing while the dialog is open.
+    refreshAfterDelete.current = listing.refresh;
+  }, [listing.refresh]);
   const rows = listing.items ?? [];
   const selected = rows.find((row) => row.logGroupName !== undefined && row.logGroupName === selectedName);
   const failure = listing.failure && readFailureState(listing.failure, connection, 'log group list');
@@ -56,6 +66,31 @@ export function LogGroupListPage({ connection }: { connection: AreaConnection })
   const handleFilter = (next: string) => {
     setSelectedName(undefined);
     setPattern(next);
+  };
+
+  const handleOpenDelete = () => {
+    if (selected?.logGroupName !== undefined) {
+      setDeleteTarget({
+        name: selected.logGroupName,
+        protectedFromDeletion: selected.deletionProtectionEnabled === true,
+      });
+    }
+  };
+
+  const handleDeleted = (name: string) => {
+    flash.show([
+      {
+        type: 'success',
+        content: (
+          <>
+            Log group <ValueText kind="name" value={name} /> deleted.
+          </>
+        ),
+      },
+    ]);
+    setDeleteTarget(undefined);
+    setSelectedName(undefined);
+    refreshAfterDelete.current();
   };
 
   const columns: TableProps.ColumnDefinition<LogGroup>[] = [
@@ -127,7 +162,11 @@ export function LogGroupListPage({ connection }: { connection: AreaConnection })
             actions={
               <SpaceBetween size="xs" direction="horizontal">
                 <Button ariaLabel="Refresh" iconName="refresh" loading={listing.loading} onClick={handleRefresh} />
-                <Button disabled={selected === undefined || listing.loading} disabledReason="Select a log group.">
+                <Button
+                  disabled={selected === undefined || listing.loading}
+                  disabledReason="Select a log group."
+                  onClick={handleOpenDelete}
+                >
                   Delete
                 </Button>
                 <Button variant="primary" href={CREATE_LOG_GROUP_PATH} onFollow={handleFollow}>
@@ -185,6 +224,17 @@ export function LogGroupListPage({ connection }: { connection: AreaConnection })
       />
       {listing.endedHere && <Box margin={{ top: 's' }}>{NO_MORE}</Box>}
       {announcement}
+      {deleteTarget !== undefined && connection.engineOrigin !== undefined && (
+        <DeleteLogGroupDialog
+          endpoint={connection.engineOrigin}
+          name={deleteTarget.name}
+          protectedFromDeletion={deleteTarget.protectedFromDeletion}
+          unavailable={deleteUnavailable}
+          onUnavailable={() => setDeleteUnavailable(true)}
+          onDeleted={handleDeleted}
+          onDismiss={() => setDeleteTarget(undefined)}
+        />
+      )}
     </>
   );
 }
