@@ -97,7 +97,8 @@ function open() {
       if (!alert) throw new Error('Missing form alert');
       return alert;
     });
-  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel, findAlert };
+  const readStatus = () => wrapper.findStatusIndicator()?.getElement();
+  return { handOver, user, field, openSelect, choose, chooseKind, shown, submit, cancel, findAlert, readStatus };
 }
 
 const methods = {
@@ -137,7 +138,7 @@ it('describes every route and integration choice and reads existing integrations
   expect(
     screen.getByText("Creating a route with an existing integration does not change the Lambda function's permission."),
   ).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Lambda function' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Lambda function/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('checkbox', { name: 'Allow API Gateway to invoke this function' })).not.toBeInTheDocument();
 
   const choice = await form.openSelect('Existing integration');
@@ -162,7 +163,7 @@ it('shows the Lambda controls and payload options and sends the independent HTTP
   expect(form.field('Integration kind').getElement()).toHaveTextContent(
     'The emulator returns a redirect to an HTTP address.',
   );
-  expect(screen.getByRole('button', { name: 'Lambda function' })).toBeVisible();
+  expect(screen.getByRole('button', { name: /^Lambda function/ })).toBeVisible();
   expect(screen.getByRole('checkbox', { name: 'Allow API Gateway to invoke this function' })).toBeChecked();
 
   const formats = await form.openSelect('Payload format');
@@ -284,15 +285,24 @@ function describeReads(operation: 'GetApi' | 'GetIntegrations', read: typeof api
       await form.shown();
       await form.openSelect('Existing integration');
     }
-    expect(
-      await screen.findByText(text, { exact: failure.kind === 'not-implemented' || failure.kind === 'access-denied' }),
-    ).toBeVisible();
-    expect(screen.getByText(new RegExp(operation))).toBeVisible();
+    await waitFor(() =>
+      expect(form.readStatus()).toHaveTextContent(failure.kind === 'other' ? 'could not be read' : text),
+    );
+    const detail = screen.getByText(
+      (content) =>
+        content.startsWith(operation) ||
+        content.startsWith(`The emulator answered 501 Not Implemented for ${operation}`),
+    );
+    expect(detail).toBeVisible();
+    if (failure.kind === 'other' || failure.kind === 'access-denied' || failure.kind === 'emulator-did-not-answer') {
+      expect(detail).toHaveTextContent(failure.message);
+    }
     if (failure.kind === 'emulator-did-not-answer' || failure.kind === 'engine-did-not-answer') {
       expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
     }
-    if (operation === 'GetIntegrations') await form.user.keyboard('{Escape}');
-    await form.user.click(screen.getByRole('button', { name: 'Retry' }));
+    const retry = screen.getAllByRole('button', { name: 'Retry' }).find((element) => element.tagName === 'BUTTON');
+    if (!retry) throw new Error('Missing Retry below the read failure');
+    await form.user.click(retry);
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     await form.shown();
     expect(create).not.toHaveBeenCalled();
