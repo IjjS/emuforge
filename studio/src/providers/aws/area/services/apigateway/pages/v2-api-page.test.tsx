@@ -191,9 +191,9 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
     ['Integration responses', 'integration-responses'],
   ];
   const links = ProtocolType === 'WEBSOCKET' ? [...common, ...webSocket] : common;
-  const settings = within(await screen.findByRole('region', { name: 'More API settings' }));
+  const content = within(await screen.findByRole('region', { name: 'Events' }));
   for (const [name, segment] of links) {
-    expect(settings.getByRole('link', { name })).toHaveAttribute('href', `${path}/${segment}`);
+    expect(content.getByRole('link', { name })).toHaveAttribute('href', `${path}/${segment}`);
     expect(areaPage(`${path}/${segment}`)).toMatchObject({ kind: 'part', above: { params: { api_id: id } } });
   }
   if (ProtocolType === 'HTTP') {

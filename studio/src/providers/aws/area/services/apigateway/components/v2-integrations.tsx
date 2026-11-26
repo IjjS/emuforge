@@ -20,7 +20,7 @@ interface V2IntegrationsProps {
 }
 
 export function V2Integrations({ integrations, routes, connection }: V2IntegrationsProps) {
-  const routesComplete = routes.items !== undefined && !routes.more && routes.failure === undefined;
+  const routesComplete = routes.items !== undefined && !routes.loading && !routes.more && routes.failure === undefined;
   const failure =
     integrations.failure === undefined ? null : (
       <RequestReadFailure

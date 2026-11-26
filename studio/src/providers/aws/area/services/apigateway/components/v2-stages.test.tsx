@@ -1,4 +1,4 @@
-import type { Api, Stage } from '@aws-sdk/client-apigatewayv2';
+import type { GetApiResponse, Stage } from '@aws-sdk/client-apigatewayv2';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
@@ -35,7 +35,7 @@ function catalog(items?: Stage[]): AppendedPages<Stage> {
   };
 }
 
-function view(stages: AppendedPages<Stage>, ProtocolType: Api['ProtocolType'] = 'HTTP') {
+function view(stages: AppendedPages<Stage>, ProtocolType: GetApiResponse['ProtocolType'] = 'HTTP') {
   return (
     <MemoryRouter>
       <V2Stages api={{ ApiEndpoint: endpoint, ProtocolType }} stages={stages} connection={connection} />

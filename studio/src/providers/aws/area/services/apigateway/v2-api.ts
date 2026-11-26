@@ -3,7 +3,7 @@ import {
   GetIntegrationsCommand,
   GetRoutesCommand,
   GetStagesCommand,
-  type Api,
+  type GetApiResponse,
   type Integration,
   type Route,
   type Stage,
@@ -20,7 +20,7 @@ export const GET_STAGES = 'GetStages';
 
 const PAGE_SIZE = '100';
 
-export type V2ApiRead = { found: true; api: Api } | { found: false };
+export type V2ApiRead = { found: true; api: GetApiResponse } | { found: false };
 
 export async function getV2Api(endpoint: string, id: string, signal: AbortSignal): Promise<V2ApiRead> {
   try {
@@ -39,7 +39,7 @@ export async function getV2Api(endpoint: string, id: string, signal: AbortSignal
   }
 }
 
-function toPage<T>(response: { Items?: T[]; NextToken?: string }): TokenPage<T> {
+function toPage<T>(response: { Items?: T[] | undefined; NextToken?: string | undefined }): TokenPage<T> {
   return { items: response.Items ?? [], ...(response.NextToken && { next: response.NextToken }) };
 }
 

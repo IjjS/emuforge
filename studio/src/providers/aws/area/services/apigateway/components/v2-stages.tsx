@@ -1,4 +1,4 @@
-import type { Api, Stage } from '@aws-sdk/client-apigatewayv2';
+import type { GetApiResponse, Stage } from '@aws-sdk/client-apigatewayv2';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
@@ -15,7 +15,7 @@ import { RequestReadFailure } from './request-read-failure';
 import { V2PartHeading } from './v2-details';
 
 interface V2StagesProps {
-  api: Api;
+  api: GetApiResponse;
   stages: AppendedPages<Stage>;
   connection: AreaConnection;
 }

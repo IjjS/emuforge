@@ -1,4 +1,4 @@
-import type { Api } from '@aws-sdk/client-apigatewayv2';
+import type { GetApiResponse } from '@aws-sdk/client-apigatewayv2';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
@@ -27,7 +27,7 @@ export function V2PartHeading({ part, children }: { part: string; children: stri
   );
 }
 
-export function V2Details({ api, id, onRefresh }: { api: Api; id: string; onRefresh: () => void }) {
+export function V2Details({ api, id, onRefresh }: { api: GetApiResponse; id: string; onRefresh: () => void }) {
   return (
     <Container
       header={

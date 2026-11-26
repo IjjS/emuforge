@@ -70,7 +70,7 @@ it.each([{ integrations: [] }, { integrations: [{ IntegrationId: 'other' }] }])(
 
     rerender(view(catalog(), [integration]));
     expect(screen.queryByRole('button', { name: 'Copy integration ID' })).not.toBeInTheDocument();
-    expect(screen.getByText('Lambda function')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /POST \/events/ })).toHaveTextContent('Lambda function');
     await user.click(screen.getByRole('button', { name: 'Copy target' }));
     expect(await navigator.clipboard.readText()).toBe(target);
   },
