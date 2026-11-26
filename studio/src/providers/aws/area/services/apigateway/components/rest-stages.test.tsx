@@ -105,6 +105,7 @@ it('shows stages, deployment IDs, last change and copyable invoke URLs as plain 
   await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
   const address = addressCell(1);
   assert(address);
+  expect(address.style.minWidth).toBe('28ch');
   expect(within(address).queryByRole('link')).not.toBeInTheDocument();
   await user.click(within(address).getByRole('button', { name: 'Copy Invoke URL' }));
   expect(await navigator.clipboard.readText()).toBe(invokeUrl('dev'));
