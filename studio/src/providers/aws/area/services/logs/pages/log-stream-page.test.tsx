@@ -88,7 +88,6 @@ function page(messages: string[]): EventPage {
   };
 }
 
-const streamHeader = () => aws().findSpaceBetween()?.findHeader();
 const streamBody = () => aws().findContainer()?.findContent();
 const messageBlocks = () =>
   streamBody()
@@ -117,9 +116,9 @@ it.each([
   },
 ])('uses decoded names, a group crumb and a log events notice at $path', async ({ path, group, stream, groupHref }) => {
   read.mockResolvedValueOnce(page(['event']));
-  const { resources, params } = renderPage(CONNECTED, path);
+  const { resources, params, container } = renderPage(CONNECTED, path);
   await waitForMessage('event');
-  const heading = streamHeader()?.findHeadingText().getElement();
+  const heading = createWrapper(container).findHeader()?.findHeadingText().getElement();
   expect(heading).toBeVisible();
   expect(heading?.textContent).toBe(stream);
   expect(resources).toHaveBeenCalledWith({ word: 'log events' });
@@ -141,9 +140,12 @@ it.each([
   ['%250D%250A', '\r\n'],
 ])('preserves the line break in the heading and sends the decoded name from %s', async (encoded, lineBreak) => {
   read.mockResolvedValueOnce(page([]));
-  renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
+  const { container } = renderPage(
+    CONNECTED,
+    `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`,
+  );
 
-  const heading = streamHeader()?.findHeadingText();
+  const heading = createWrapper(container).findHeader()?.findHeadingText();
   expect(heading?.getElement().closest('h1')).toHaveAccessibleName('multiline\nworker');
   const name = heading?.find('span[style]')?.getElement();
   expect(name?.textContent).toBe('multiline\nworker');
