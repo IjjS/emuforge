@@ -5,6 +5,7 @@ import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { reportedNotImplementedMessage } from '../../../../../../lib/aws/request';
 import { CopyValue } from '../../../components/copy-value';
@@ -75,9 +76,12 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
       ),
     };
     const result: FlashResult = warning === undefined ? [success] : [success, integrationWarning(routeKey, warning)];
-    flash.show(result);
-    setDeleting(undefined);
-    setSelectedId(undefined);
+    // Commit the visible result and dialog closure before the mutation hook refreshes.
+    flushSync(() => {
+      flash.show(result);
+      setDeleting(undefined);
+      setSelectedId(undefined);
+    });
   }
 
   return (

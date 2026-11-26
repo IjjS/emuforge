@@ -5,6 +5,7 @@ import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { CopyValue } from '../../../components/copy-value';
 import { creationDateText } from '../../../components/format-date';
@@ -46,17 +47,20 @@ export function V2Details({
   const flash = usePageFlash();
 
   function handleSaved(name: string) {
-    flash.show([
-      {
-        type: 'success',
-        content: (
-          <>
-            API <ValueText kind="name" value={name} /> updated.
-          </>
-        ),
-      },
-    ]);
-    setEditing(false);
+    // Commit the visible result and dialog closure before the mutation hook refreshes.
+    flushSync(() => {
+      flash.show([
+        {
+          type: 'success',
+          content: (
+            <>
+              API <ValueText kind="name" value={name} /> updated.
+            </>
+          ),
+        },
+      ]);
+      setEditing(false);
+    });
   }
 
   return (

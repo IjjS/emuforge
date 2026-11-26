@@ -1,7 +1,7 @@
 import type { Integration, Route } from '@aws-sdk/client-apigatewayv2';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -27,10 +27,32 @@ const stopped = { kind: 'emulator-unreachable', checkedAt: 1, emulator, reason: 
 const ui = createWrapper(document.body);
 const routesTable = () => ui.findAllTables()[0];
 const integrationsTable = () => ui.findAllTables()[1];
+const routeActions = () => {
+  const header = routesTable()?.findHeaderSlot();
+  const actions = header && createWrapper(header.getElement()).findHeader()?.findActions();
+  if (!actions) throw new Error('Missing Routes actions');
+  return createWrapper(actions.getElement()).findAllButtons();
+};
 const routeCell = (row: number, column: number) =>
   routesTable()
     ?.findBodyCell(row, column + 1)
     ?.getElement();
+const targetCopy = () => {
+  const cell = routeCell(1, 4);
+  return cell && createWrapper(cell).findCopyToClipboard()?.findCopyButton().getElement();
+};
+
+async function clickLoadMore(
+  user: ReturnType<typeof userEvent.setup>,
+  table: ReturnType<typeof routesTable>,
+  label: string,
+) {
+  const footer = table?.findFooterSlot();
+  const button = footer && createWrapper(footer.getElement()).findButton()?.getElement();
+  if (!button) throw new Error('Missing load more button');
+  expect(button).toHaveTextContent(label);
+  await user.click(button);
+}
 const route: Route = {
   RouteId: 'r-1',
   RouteKey: 'POST /events',
@@ -74,9 +96,7 @@ it('shows the route key, authorization, integration kind and copyable target, an
   for (const [column, text] of ['POST /events', 'AWS_IAM', 'Lambda function', target].entries()) {
     expect(routeCell(1, column + 1)).toHaveTextContent(text);
   }
-  const targetCell = routeCell(1, 4);
-  if (!targetCell) throw new Error('Missing route target cell');
-  expect(within(targetCell).getByRole('button', { name: 'Copy target' })).toBeInTheDocument();
+  expect(targetCopy()).toHaveAccessibleName('Copy target');
 
   rerender(view(catalog([])));
   expect(routesTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
@@ -87,27 +107,30 @@ it.each([{ integrations: [] }, { integrations: [{ IntegrationId: 'other' }] }])(
   async ({ integrations }) => {
     const user = userEvent.setup();
     const { rerender } = render(view(catalog(), integrations));
-    const copyId = screen.getByRole('button', { name: 'Copy integration ID' });
+    const copyId = targetCopy();
+    if (!copyId) throw new Error('Missing integration ID copy control');
+    expect(copyId).toHaveAccessibleName('Copy integration ID');
     await user.click(copyId);
     expect(routeCell(1, 4)).toHaveTextContent('i-1');
     expect(await navigator.clipboard.readText()).toBe('i-1');
 
     rerender(view(catalog(), [integration]));
-    expect(screen.queryByRole('button', { name: 'Copy integration ID' })).not.toBeInTheDocument();
     expect(routeCell(1, 3)).toHaveTextContent('Lambda function');
-    await user.click(screen.getByRole('button', { name: 'Copy target' }));
+    const copyTarget = targetCopy();
+    if (!copyTarget) throw new Error('Missing target copy control');
+    expect(copyTarget).toHaveAccessibleName('Copy target');
+    await user.click(copyTarget);
     expect(await navigator.clipboard.readText()).toBe(target);
   },
 );
 
 it('links to Create route for HTTP and omits the control for WebSocket', () => {
   const { rerender } = render(view(catalog()));
-  expect(screen.getByRole('link', { name: 'Create route' })).toHaveAttribute(
-    'href',
-    '/aws/apigateway/apis/v2/api-1/routes/create',
-  );
+  const create = routeActions()[2]?.getElement();
+  expect(create).toHaveTextContent('Create route');
+  expect(create).toHaveAttribute('href', '/aws/apigateway/apis/v2/api-1/routes/create');
   rerender(view(catalog(), [], false));
-  expect(screen.queryByRole('link', { name: 'Create route' })).not.toBeInTheDocument();
+  expect(routeActions()).toHaveLength(2);
 });
 
 vi.mock('../v2-api', { spy: true });
@@ -204,10 +227,18 @@ it.each<[RequestFailure, AreaConnection['result'], string, string, boolean]>([
   const empty = routesTable()?.findEmptySlot()?.getElement();
   if (!empty) throw new Error('Missing routes empty state');
   expect(empty).toHaveTextContent(reason);
-  const status = within(empty).queryByRole('link', { name: 'Connection status' });
-  if (recovery) expect(status).toHaveAttribute('href', '/');
-  else expect(status).not.toBeInTheDocument();
-  await userEvent.click(within(empty).getByRole('button', { name: 'Retry' }));
+  const state = createWrapper(empty);
+  const status = state.findLink()?.getElement();
+  if (recovery) {
+    expect(status).toHaveTextContent('Connection status');
+    expect(status).toHaveAttribute('href', '/');
+  } else {
+    expect(status).toBeUndefined();
+  }
+  const retry = state.findButton()?.getElement();
+  if (!retry) throw new Error('Missing Retry button');
+  expect(retry).toHaveTextContent('Retry');
+  await userEvent.click(retry);
   await waitFor(() => expect(routeCell(1, 1)).toHaveTextContent('POST /events'));
 });
 
@@ -230,7 +261,7 @@ it('keeps the first page after a further page fails and appends the recovered pa
   getRoutes
     .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }))
     .mockResolvedValueOnce({ items: [{ RouteId: 'r-2', RouteKey: 'GET /recovered' }] });
-  await user.click(screen.getByRole('button', { name: 'Load more routes' }));
+  await clickLoadMore(user, routesTable(), 'Load more routes');
 
   await waitFor(() =>
     expect(routesTable()?.findFooterSlot()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
@@ -239,7 +270,10 @@ it('keeps the first page after a further page fails and appends the recovered pa
   if (!footer) throw new Error('Missing routes table footer');
   expect(footer).toHaveTextContent('501 Not Implemented for GetRoutes');
   expect(routeCell(1, 1)).toHaveTextContent('POST /events');
-  await user.click(within(footer).getByRole('button', { name: 'Retry' }));
+  const retry = createWrapper(footer).findButton()?.getElement();
+  if (!retry) throw new Error('Missing Retry button');
+  expect(retry).toHaveTextContent('Retry');
+  await user.click(retry);
   await waitFor(() => expect(routeCell(2, 1)).toHaveTextContent('GET /recovered'));
   expect(routeCell(1, 1)).toHaveTextContent('POST /events');
 });
@@ -248,37 +282,49 @@ async function confirmDeletion(user: ReturnType<typeof userEvent.setup>) {
   const selection = routesTable()?.findRowSelectionArea(1)?.find('input');
   if (!selection) throw new Error('Missing route selector');
   await user.click(selection.getElement());
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  const button = routeActions()[1]?.getElement();
+  if (!button) throw new Error('Missing Delete button');
+  expect(button).toHaveTextContent('Delete');
+  await user.click(button);
   const modal = await waitFor(() => {
     const dialog = ui.findModal();
     if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
     return dialog;
   });
-  const footer = modal.findFooter()?.getElement();
-  if (!footer) throw new Error('Missing dialog footer');
+  const footer = modal.findFooter();
+  const confirm = footer && createWrapper(footer.getElement()).findAllButtons()[1]?.getElement();
+  if (!confirm) throw new Error('Missing Delete confirmation button');
+  expect(confirm).toHaveTextContent('Delete');
   expect(modal.findHeader().getElement()).toHaveTextContent('Delete route POST /events?');
   const field = createWrapper(modal.findContent().getElement()).findFormField();
   const input = field && createWrapper(field.getElement()).findInput();
   if (!input) throw new Error('Missing confirmation input');
   const confirmation = input.findNativeInput().getElement();
   await user.type(confirmation, 'delete');
-  const button = within(footer).getByRole('button', { name: 'Delete' });
-  await waitFor(() => expect(button).toBeEnabled());
-  await user.click(button);
+  await waitFor(() => expect(confirm).toBeEnabled());
+  await user.click(confirm);
 }
 
-function expectDeleted() {
+function expectDeletionShown() {
   expect(ui.findFlashbar()?.findItemsByType('success')[0]?.getElement()).toHaveTextContent(
     'Route POST /events deleted.',
   );
   expect(ui.findModal()).toBeNull();
+}
+
+function expectDeleted() {
+  expectDeletionShown();
   expect(routesTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
 }
 
 it.each([true, false])('shows successful deletion and refreshes both lists (HTTP: %s)', async (isHttp) => {
   const user = await renderRoutes(isHttp);
-  getRoutes.mockResolvedValueOnce({ items: [] });
-  getIntegrations.mockResolvedValueOnce({ items: [] });
+  const readAfterDeletion = async () => {
+    expectDeletionShown();
+    return { items: [] };
+  };
+  getRoutes.mockImplementationOnce(readAfterDeletion);
+  getIntegrations.mockImplementationOnce(readAfterDeletion);
   remove.mockResolvedValueOnce(undefined);
   await confirmDeletion(user);
   await waitFor(() => {
@@ -312,15 +358,28 @@ it.each([
       integrationId: 'i-1',
       failure: requestFailure('DeleteIntegration', answer),
     };
-    getRoutes.mockResolvedValueOnce({ items: [] });
-    getIntegrations.mockResolvedValueOnce({ items: [integration] });
+    const warningItem = () => ui.findFlashbar()?.findItemsByType('warning')[0]?.getElement();
+    const warningText = `Route POST /events deleted, but its integration i-1 was not: ${reason}`;
+    const readWithWarning = vi.fn(() => {
+      expectDeletionShown();
+      expect(warningItem()).toHaveTextContent(warningText);
+    });
+    getRoutes.mockImplementationOnce(async () => {
+      readWithWarning();
+      return { items: [] };
+    });
+    getIntegrations.mockImplementationOnce(async () => {
+      readWithWarning();
+      return { items: [integration] };
+    });
     remove.mockResolvedValueOnce(warning);
     await confirmDeletion(user);
-    await waitFor(expectDeleted);
-    expect(ui.findFlashbar()?.findItemsByType('warning')[0]?.getElement()).toHaveTextContent(
-      `Route POST /events deleted, but its integration i-1 was not: ${reason}`,
-    );
-    expect(integrationsTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('i-1');
+    await waitFor(() => {
+      expectDeleted();
+      expect(readWithWarning).toHaveReturnedTimes(2);
+      expect(warningItem()).toHaveTextContent(warningText);
+      expect(integrationsTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('i-1');
+    });
   },
 );
 
@@ -341,8 +400,8 @@ it.each(['routes', 'integrations'] as const)(
     getRoutes.mockReturnValueOnce(olderRoutes.promise).mockResolvedValueOnce({ items: [] });
     getIntegrations.mockReturnValueOnce(olderIntegrations.promise).mockResolvedValueOnce({ items: [] });
     remove.mockResolvedValueOnce(undefined);
-    await user.click(screen.getByRole('button', { name: 'Load more routes' }));
-    await user.click(screen.getByRole('button', { name: 'Load more integrations' }));
+    await clickLoadMore(user, routesTable(), 'Load more routes');
+    await clickLoadMore(user, integrationsTable(), 'Load more integrations');
     await waitFor(() => {
       expect(getRoutes).toHaveBeenCalledTimes(2);
       expect(getIntegrations).toHaveBeenCalledTimes(2);
