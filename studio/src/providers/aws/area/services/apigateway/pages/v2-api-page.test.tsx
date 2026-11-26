@@ -212,7 +212,7 @@ it.each<[RequestFailure, string, string, AreaConnection, boolean]>([
 it('keeps all parts and delivers a pending stage creation after a failed Details refresh', async () => {
   const user = userEvent.setup();
   const refresh = deferred<V2ApiRead>();
-  const create = deferred<void>();
+  const create = deferred<undefined>();
   vi.mocked(createV2Stage).mockReturnValueOnce(create.promise);
   vi.mocked(getV2Api).mockResolvedValueOnce({ found: true, api }).mockReturnValueOnce(refresh.promise);
   open();
