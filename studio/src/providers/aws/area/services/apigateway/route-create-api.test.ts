@@ -153,3 +153,31 @@ it('keeps the route and integration when permission is refused and returns its r
     ['POST', functionPolicy],
   ]);
 });
+
+it.each(['AddPermission', 'GetPolicy'])('keeps the route and preserves a 501 from %s', async (operation) => {
+  sent.mockReturnValueOnce(Response.json({ integrationId: 'int-new' }));
+  sent.mockReturnValueOnce(Response.json({ routeId: 'route-new' }));
+  if (operation === 'GetPolicy') {
+    sent.mockReturnValueOnce(refusal('ResourceConflictException', 'The statement already exists'));
+  }
+  sent.mockReturnValueOnce(Response.json({ message: 'Not Implemented' }, { status: 501 }));
+
+  const input: RouteInput = {
+    ...existing,
+    integration: { kind: 'lambda', function: { name: 'orders', arn }, payload: '2.0', allow: true },
+  };
+  await expect(createRoute(endpoint, api, input, signal)).resolves.toEqual({
+    kind: 'created',
+    permissionWarning: {
+      functionName: 'orders',
+      reason: `${operation}: 501 Not Implemented`,
+      failure: { kind: 'not-implemented', operation },
+    },
+  });
+  expect(calls()).toEqual([
+    ['POST', integrations],
+    ['POST', routes],
+    ['POST', functionPolicy],
+    ...(operation === 'GetPolicy' ? [['GET', functionPolicy]] : []),
+  ]);
+});

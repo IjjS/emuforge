@@ -16,7 +16,7 @@ const JSON_TYPE = 'application/json';
 export const PUT_METHOD = 'PutMethod';
 
 export type MethodOutcome =
-  | { kind: 'created'; permissionWarning?: { functionName: string; reason: string } }
+  | { kind: 'created'; permissionWarning?: { functionName: string; reason: string; failure?: RequestFailure } }
   | { kind: 'unchanged' | 'removed'; failure: RequestFailure }
   | { kind: 'left'; failure: RequestFailure; removalFailure: RequestFailure };
 
@@ -116,7 +116,11 @@ export async function createMethod(
     if (permission.kind === 'not-given') {
       return {
         kind: 'created',
-        permissionWarning: { functionName: integration.function.name, reason: permission.reason },
+        permissionWarning: {
+          functionName: integration.function.name,
+          reason: permission.reason,
+          ...(permission.failure && { failure: permission.failure }),
+        },
       };
     }
   }
