@@ -7,8 +7,6 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
-import { usePageFlash } from '../../../components/page-flash';
-import { ValueText } from '../../../components/value-text';
 import { V2_STAGE_NAME_RULE, v2StageNameError } from '../v2-stage-form';
 import { useCreateV2Stage } from '../v2-stage-queries';
 import { RestChangeFailure } from './delete-resource-dialog';
@@ -16,18 +14,19 @@ import { RestChangeFailure } from './delete-resource-dialog';
 export function CreateV2StageDialog({
   apiId,
   endpoint,
+  onCreated,
   onClose,
 }: {
   apiId: string;
   endpoint: string | undefined;
+  onCreated: (stageName: string) => void;
   onClose: () => void;
 }) {
   const [stageName, setStageName] = useState('');
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const nameRef = useRef<InputProps.Ref>(null);
-  const flash = usePageFlash();
-  const create = useCreateV2Stage(apiId, endpoint);
+  const create = useCreateV2Stage(apiId, endpoint, onCreated);
   const nameError = v2StageNameError(stageName);
 
   function handleClose() {
@@ -41,19 +40,7 @@ export function CreateV2StageDialog({
       nameRef.current?.focus();
       return;
     }
-    create.submit({ stageName, autoDeploy }, () => {
-      flash.show([
-        {
-          type: 'success',
-          content: (
-            <>
-              Stage <ValueText kind="name" value={stageName} /> created.
-            </>
-          ),
-        },
-      ]);
-      onClose();
-    });
+    create.submit({ stageName, autoDeploy });
   }
 
   return (
