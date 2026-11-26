@@ -110,8 +110,15 @@ test('studio.ecs-starter-registers-runs-and-logs', async ({ ctx, page }) => {
     timeout: STATE_BOUND_MS,
   });
   expect(await valueOf(main, 'Last status'), 'the last status after the log line').toBe('Running');
+  // A command that has ended gives its container an exit code from the first read that says "Running"; the
+  // starter's, which stays, gives none at any read (issue 657, requirement R1.1 and R1.2).
+  await expectCell(tableOf(main, 'Containers'), 'Name', 'app', 'Exit code', '-');
   const direct = await taskDirect(ctx, port, cluster, task);
-  expect([direct?.lastStatus, direct?.launchType], 'the task, directly').toEqual(['RUNNING', 'FARGATE']);
+  expect([direct?.lastStatus, direct?.launchType, direct?.exitCode], 'the task, directly').toEqual([
+    'RUNNING',
+    'FARGATE',
+    undefined,
+  ]);
 });
 
 test('studio.ecs-task-whose-command-ends-is-followed-to-stopped', async ({ ctx, page }) => {
@@ -123,7 +130,9 @@ test('studio.ecs-task-whose-command-ends-is-followed-to-stopped', async ({ ctx, 
   const w = await world(ctx, port);
   const cluster = await seeded.cluster(`${p}-c`);
   const definition = await seeded.definition(`${p}-td`, {
-    command: ['sh', '-c', 'echo start; sleep 20; echo done; exit 3'],
+    // The emulator waits a `sleep` inside a loop for its seconds, and one outside a loop not at all (issue 657,
+    // requirement R1.3): the 20 seconds are the state in between the line is about.
+    command: ['sh', '-c', 'echo start; for i in 1; do sleep 20; done; echo done; exit 3'],
     logGroup: `${p}-logs`,
   });
   const task = await seeded.task(cluster, definition, w);
