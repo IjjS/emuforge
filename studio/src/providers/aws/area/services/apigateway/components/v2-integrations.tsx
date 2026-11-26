@@ -53,6 +53,7 @@ export function V2Integrations({ integrations, routes, connection }: V2Integrati
         {
           id: 'id',
           header: 'ID',
+          minWidth: '24ch',
           isRowHeader: true,
           cell: (integration) => (
             <CopyValue kind="name" label="integration ID" value={integration.IntegrationId} none="-" />
@@ -66,6 +67,7 @@ export function V2Integrations({ integrations, routes, connection }: V2Integrati
         {
           id: 'target',
           header: 'Target',
+          minWidth: '28ch',
           cell: (integration) => <CopyValue label="target" value={integration.IntegrationUri} none="-" />,
         },
         {
