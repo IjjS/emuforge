@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|app-test|times-out-under-load
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/app/app.test.tsx studio-unit:src/test/case-bounds.test.ts
 Issue-Commit: 65023c608818da23603d640fbf257257e20fa338
 
 # Keep the app's unit cases from timing out at 5 seconds when the machine is busy

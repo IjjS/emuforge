@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUNDLED_CATALOGUES } from '../../i18n/bundled';
 import german from '../../i18n/messages/de.json';
+import { AWS_PROVIDER } from '../../providers/aws/provider';
+import { preloadArea } from '../../test/area-preload';
 import {
   advance,
   buildOnceToggle,
@@ -30,9 +32,9 @@ import {
 } from '../../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../../test/no-screen';
 
-/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
-const AREA_LOAD = { timeout: 10_000, interval: 20 };
-const AREA_TEST_MS = 20_000;
+await preloadArea(AWS_PROVIDER.loadArea);
+
+const AREA_WAIT = { timeout: 5000, interval: 20 };
 
 /** A message the engine sends: English, and never translated. */
 const MESSAGE = 'nothing answers on https://127.0.0.1:9297; the emulator for port 9297 is not running';
@@ -199,24 +201,18 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
     expect(unmarkedText()).toEqual([]);
   });
 
-  // Bound: waits up to AREA_LOAD (10 s) for the AWS area's first import, Cloudscape's modules (issue 17 s2, 2b9e409).
-  it(
-    'the frame on an AWS area page: every text of Studio outside the area is marked or kept as it is',
-    async () => {
-      renderApp(NO_SCREEN_SERVICE.path, languageStore(MARKED_TAG));
-      await vi.waitFor(async () => {
-        await advance();
-        expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
-      }, AREA_LOAD);
-      const studio = screen.getByRole('navigation', { name: `${MARK_OPEN}Studio${MARK_CLOSE}` });
-      expect(within(studio).getByRole('link', { name: 'AWS' })).toBeInTheDocument();
-      expect(document.title).toBe(`${NO_SCREEN_SERVICE.label} | EmuForge Studio`);
-      expect(unmarkedText()).toEqual([]);
-    },
-    AREA_TEST_MS,
-  );
+  it('the frame on an AWS area page: every text of Studio outside the area is marked or kept as it is', async () => {
+    renderApp(NO_SCREEN_SERVICE.path, languageStore(MARKED_TAG));
+    await vi.waitFor(async () => {
+      await advance();
+      expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
+    }, AREA_WAIT);
+    const studio = screen.getByRole('navigation', { name: `${MARK_OPEN}Studio${MARK_CLOSE}` });
+    expect(within(studio).getByRole('link', { name: 'AWS' })).toBeInTheDocument();
+    expect(document.title).toBe(`${NO_SCREEN_SERVICE.label} | EmuForge Studio`);
+    expect(unmarkedText()).toEqual([]);
+  });
 
-  // Bound: waits up to AREA_LOAD (10 s) for the AWS area's first import, on each path (issue 17 s4, d5949df).
   it.each(['/', '/does-not-exist', NO_SCREEN_SERVICE.path])(
     'the frame on %s with the language menu open: every text of Studio outside the area is marked or kept as it is',
     async (path) => {
@@ -224,7 +220,7 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
       await vi.waitFor(async () => {
         await advance();
         expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-      }, AREA_LOAD);
+      }, AREA_WAIT);
       const banner = screen.getByRole('banner');
       await click(
         within(banner).getByRole('button', {
@@ -236,7 +232,6 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
       expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(BUNDLED_CATALOGUES.byTag.size + 2);
       expect(unmarkedText()).toEqual([]);
     },
-    AREA_TEST_MS,
   );
 });
 

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|unit-tests|timeout-under-load
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/test/area-preload.test.ts studio-unit:src/test/case-bounds.test.ts studio-unit:src/app/app.test.tsx studio-unit:src/app/frame.test.tsx studio-unit:src/app/routes.test.tsx
 Issue-Commit: b84fd8556de9f25cfd44991f924a9b3051508f16
 
 # Keep Studio's unit tests from timing out when the machine is busy
