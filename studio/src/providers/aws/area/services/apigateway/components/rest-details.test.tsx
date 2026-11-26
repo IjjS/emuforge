@@ -23,8 +23,14 @@ it('shows the name, copyable ID, description, endpoint types and creation time',
   expect(screen.getByText(api.id)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Copy ID' })).toBeEnabled();
   expect(screen.getByText(api.description)).toBeInTheDocument();
-  expect(screen.getByText('Regional, Private')).toBeInTheDocument();
-  expect(screen.getByText(creationDateText(api.createdDate))).toBeInTheDocument();
+  for (const value of ['Regional, Private', creationDateText(api.createdDate)]) {
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.textContent === value && ![...element.children].some((child) => child.textContent === value),
+      ),
+    ).toBeInTheDocument();
+  }
 
   rerender(
     <RestDetails

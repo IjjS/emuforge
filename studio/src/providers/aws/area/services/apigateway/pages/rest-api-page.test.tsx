@@ -10,8 +10,8 @@ import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useAreaFlash } from '../../../components/use-area-flash';
 import type { TokenPage } from '../../../components/use-token-listing';
-import { matchingScreens } from '../../../screen-paths';
-import { collectScreens, registryFaults } from '../../../screens';
+import { registryFaults } from '../../../screens';
+import { areaPage } from '../../../area-page';
 import { readRestApi, readRestResources, readRestStages } from '../rest-api';
 import { SCREENS } from '../screens';
 
@@ -32,7 +32,6 @@ const apiReader = vi.mocked(readRestApi);
 const resourceReader = vi.mocked(readRestResources);
 const stageReader = vi.mocked(readRestStages);
 const folders = [{ folder: 'apigateway', screens: SCREENS }];
-const screens = collectScreens(folders);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -54,8 +53,8 @@ function deferred<T>() {
 
 function RegisteredPage() {
   const { pathname } = useLocation();
-  const [match] = matchingScreens(screens, pathname);
-  if (!match) throw new Error(`No matching screen for ${pathname}`);
+  const match = areaPage(pathname);
+  if (match.kind !== 'screen') throw new Error(`No matching screen for ${pathname}`);
   return <match.screen.Page connection={connection} params={match.params} />;
 }
 
@@ -148,7 +147,12 @@ it.each<[RequestFailure, string, string]>([
   apiReader.mockRejectedValueOnce(new RequestError(failure));
   const user = open();
   await screen.findByText(detail, { exact: false });
-  expect(screen.getAllByRole('status').some((state) => state.textContent === first)).toBe(true);
+  expect(
+    screen.getByText(
+      (_, element) =>
+        element?.textContent === first && ![...element.children].some((child) => child.textContent === first),
+    ),
+  ).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByRole('heading', { name: 'Orders', level: 1 })).toBeVisible();
 });

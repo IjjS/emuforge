@@ -94,7 +94,12 @@ it('shows resource paths and methods, and copies IDs, Lambda ARNs and HTTP addre
     'HTTP endpoint',
     'No methods',
   ]) {
-    expect(region.getByText(value)).toBeInTheDocument();
+    expect(
+      region.getByText(
+        (_, element) =>
+          element?.textContent === value && ![...element.children].some((child) => child.textContent === value),
+      ),
+    ).toBeInTheDocument();
   }
   const resourceCopies = region.getAllByRole('button', { name: 'Copy Resource ID' });
   const copies = [
@@ -188,9 +193,10 @@ it.each<[RequestFailure, string, string]>([
   const region = within(screen.getByRole('region', { name: 'Resources' }));
   await region.findByText(detail, { exact: false });
   expect(
-    region.getByText((_, element) => element?.textContent === first && element.children.length > 0, {
-      selector: 'span',
-    }),
+    region.getByText(
+      (_, element) =>
+        element?.textContent === first && ![...element.children].some((child) => child.textContent === first),
+    ),
   ).toBeInTheDocument();
   await user.click(region.getByRole('button', { name: 'Retry' }));
   expect(await region.findByRole('heading', { name: '/orders' })).toBeVisible();

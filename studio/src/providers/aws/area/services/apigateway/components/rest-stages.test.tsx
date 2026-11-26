@@ -62,7 +62,7 @@ it('shows stages, deployment IDs, last change and copyable invoke URLs as plain 
     ),
   ).toBeInTheDocument();
   expect(row('dev').getByText('deploy-dev')).toBeInTheDocument();
-  expect(row('dev').getByText(creationDateText(changed))).toBeInTheDocument();
+  expect(row('dev').getByRole('cell', { name: /November/ })).toHaveTextContent(creationDateText(changed));
   await user.click(row('dev').getByRole('button', { name: 'Copy Deployment ID' }));
   expect(await navigator.clipboard.readText()).toBe('deploy-dev');
 
@@ -102,7 +102,7 @@ it.each<[RequestFailure, string]>([
   const user = open();
   await screen.findByRole('rowheader', { name: 'dev' });
   await row('dev').findByText('GetExport');
-  expect(row('dev').getByRole('status')).toHaveTextContent(first);
+  expect(row('dev').getByRole('cell', { name: /GetExport/ })).toHaveTextContent(first);
   expect(row('dev').queryByRole('button', { name: 'Copy Invoke URL' })).not.toBeInTheDocument();
   expect(await row('prod').findByRole('button', { name: 'Copy Invoke URL' })).toBeEnabled();
   expect(row('prod').getByRole('cell', { name: /execute-api/ })).toHaveTextContent(invokeUrl('prod'));
