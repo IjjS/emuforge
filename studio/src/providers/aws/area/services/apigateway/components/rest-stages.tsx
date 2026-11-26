@@ -6,6 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -14,6 +15,8 @@ import { ValueText } from '../../../components/value-text';
 import { GET_STAGE_ADDRESS } from '../rest-api';
 import { refreshRestStages, useRestStages, useStageAddress } from '../rest-queries';
 import { useShowPart } from '../show-part';
+import { DeleteRestStageDialog } from './delete-rest-stage-dialog';
+import { DeployDialog } from './deploy-dialog';
 import { RequestReadFailure, requestReadFailureState } from './request-read-failure';
 
 function StageAddress({
@@ -45,20 +48,36 @@ function StageAddress({
 export function RestStages({ apiId, connection }: { apiId: string; connection: AreaConnection }) {
   const client = useQueryClient();
   const { data, failure, loading } = useRestStages(apiId, connection.engineOrigin);
+  const [selectedName, setSelectedName] = useState<string>();
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [deleting, setDeleting] = useState<string>();
+  const selected = data?.find((stage) => stage.stageName && stage.stageName === selectedName);
   const focusHeading = useShowPart('stages');
   const refresh = () => void refreshRestStages(client, apiId);
 
   return (
     <SpaceBetween size="s">
       <Table<Stage>
-        ariaLabels={{ tableLabel: 'Stages' }}
+        ariaLabels={{
+          tableLabel: 'Stages',
+          selectionGroupLabel: 'Stage selection',
+          itemSelectionLabel: (_, stage) => `Select stage ${stage.stageName ?? ''}`,
+        }}
         header={
           <Header
             variant="h2"
             actions={
-              <Button iconName="refresh" onClick={refresh}>
-                Refresh
-              </Button>
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button iconName="refresh" onClick={refresh}>
+                  Refresh
+                </Button>
+                <Button disabled={!selected?.stageName} onClick={() => setDeleting(selected?.stageName)}>
+                  Delete
+                </Button>
+                <Button variant="primary" onClick={() => setDeployOpen(true)}>
+                  Deploy API
+                </Button>
+              </SpaceBetween>
             }
             description="A stage serves the API as it was when last deployed. Deploy again after you change resources or methods."
           >
@@ -74,6 +93,9 @@ export function RestStages({ apiId, connection }: { apiId: string; connection: A
           </Header>
         }
         items={data ?? []}
+        selectionType="single"
+        selectedItems={selected ? [selected] : []}
+        onSelectionChange={({ detail }) => setSelectedName(detail.selectedItems[0]?.stageName)}
         trackBy={(stage) => stage.stageName ?? ''}
         wrapLines
         loading={data === undefined && loading}
@@ -122,6 +144,22 @@ export function RestStages({ apiId, connection }: { apiId: string; connection: A
       />
       {failure && data && data.length > 0 && (
         <RequestReadFailure failure={failure} connection={connection} thing="stages" onRetry={refresh} />
+      )}
+      {deployOpen && (
+        <DeployDialog
+          apiId={apiId}
+          connection={connection}
+          hasStages={data?.some((stage) => Boolean(stage.stageName)) ?? false}
+          onClose={() => setDeployOpen(false)}
+        />
+      )}
+      {deleting !== undefined && (
+        <DeleteRestStageDialog
+          apiId={apiId}
+          connection={connection}
+          stageName={deleting}
+          onClose={() => setDeleting(undefined)}
+        />
       )}
     </SpaceBetween>
   );
