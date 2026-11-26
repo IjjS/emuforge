@@ -120,7 +120,7 @@ it('shows all four read parts of the API', async () => {
 it('shows that the API was not found and links back to the list', async () => {
   vi.mocked(getV2Api).mockResolvedValue({ found: false });
   const { container } = open();
-  expect(await screen.findByText('API not found')).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'API not found', level: 1 })).toBeInTheDocument();
   expect(container).toHaveTextContent(`The emulator holds no HTTP or WebSocket API with the ID ${id}.`);
   expect(screen.getByRole('link', { name: 'View APIs' })).toHaveAttribute('href', apisPath);
 });

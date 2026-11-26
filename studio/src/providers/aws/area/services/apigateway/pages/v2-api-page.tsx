@@ -4,6 +4,7 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import type { ReactNode } from 'react';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -39,6 +40,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
   const handleFollow = useFollow();
   const api = reading.value?.found === true ? reading.value.api : undefined;
 
+  let heading: ReactNode = <ValueText kind="name" value={api?.Name ?? id} />;
   let content;
   if (reading.failure !== undefined) {
     content = (
@@ -58,11 +60,11 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
       </Container>
     );
   } else if (api === undefined) {
+    heading = 'API not found';
     content = (
       <Container>
         <Box textAlign="center">
           <SpaceBetween size="xxs">
-            <Box variant="strong">API not found</Box>
             <Box>
               The emulator holds no HTTP or WebSocket API with the ID <ValueText kind="name" value={id} />.
             </Box>
@@ -102,9 +104,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1">
-        <ValueText kind="name" value={api?.Name ?? id} />
-      </Header>
+      <Header variant="h1">{heading}</Header>
       {content}
     </SpaceBetween>
   );

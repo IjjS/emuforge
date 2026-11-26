@@ -1,13 +1,13 @@
 import type { Method, Resource } from '@aws-sdk/client-api-gateway';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -90,11 +90,12 @@ function ResourceMethod({
   method: Method;
   verb: string;
   testing: boolean;
-  onTest?: () => void;
+  onTest: ((restoreFocus: () => void) => void) | undefined;
   onDelete?: () => void;
 }) {
   const integration = restIntegration(method.methodIntegration);
   const reason = testUnavailableReason(method.methodIntegration);
+  const testTrigger = useRef<ButtonProps.Ref>(null);
   return (
     <SpaceBetween size="xs">
       <SpaceBetween direction="horizontal" size="xs">
@@ -102,10 +103,11 @@ function ResourceMethod({
           <ValueText kind="fixed" value={verb} />
         </Box>
         <Button
+          ref={testTrigger}
           ariaExpanded={testing}
           disabled={reason !== undefined || onTest === undefined}
           disabledReason={reason}
-          {...(onTest && { onClick: onTest })}
+          {...(onTest && { onClick: () => onTest(() => testTrigger.current?.focus()) })}
         >
           Test
         </Button>
@@ -140,7 +142,7 @@ interface ResourceTarget {
 }
 
 type DeleteTarget = ResourceTarget & ({ kind: 'resource' } | { kind: 'method'; method: string });
-type TestTarget = { resourceId: string; method: string };
+type TestTarget = { resourceId: string; method: string; restoreFocus: () => void };
 
 function ResourcePart({
   resource,
@@ -211,7 +213,11 @@ function ResourcePart({
                   method={method}
                   verb={name}
                   testing={testing?.resourceId === resource.id && testing?.method === verb}
-                  {...(target && { onTest: () => onTest({ resourceId: target.resourceId, method: verb }) })}
+                  onTest={
+                    target
+                      ? (restoreFocus) => onTest({ resourceId: target.resourceId, method: verb, restoreFocus })
+                      : undefined
+                  }
                   {...(target && { onDelete: () => onDelete({ ...target, kind: 'method', method: name }) })}
                 />
               );
@@ -237,14 +243,27 @@ export function RestResources({
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<DeleteTarget>();
   const [testing, setTesting] = useState<TestTarget>();
+  const focusAfterClose = useRef<(() => void) | undefined>(undefined);
   const rootId = list.items?.find(({ path }) => path === '/')?.id;
   const testResource = testing && list.items?.find(({ id }) => id === testing.resourceId);
   const testMethod = testing && testResource?.resourceMethods?.[testing.method];
+
+  useEffect(() => {
+    if (testing) return;
+    const restoreFocus = focusAfterClose.current;
+    focusAfterClose.current = undefined;
+    restoreFocus?.();
+  }, [testing]);
 
   function handleTest(target: TestTarget) {
     setTesting((current) =>
       current?.resourceId === target.resourceId && current.method === target.method ? undefined : target,
     );
+  }
+
+  function handleCloseTest() {
+    focusAfterClose.current = testing?.restoreFocus;
+    setTesting(undefined);
   }
 
   function handleCreated(path: string) {
@@ -336,6 +355,7 @@ export function RestResources({
             resourceId={testing.resourceId}
             method={testing.method}
             path={testResource.path}
+            onClose={handleCloseTest}
           />
         )}
       </SpaceBetween>
