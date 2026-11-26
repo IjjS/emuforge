@@ -49,16 +49,16 @@ function useV2Change<Fields, Result>(
   operation: string,
   change: (origin: string, fields: Fields, signal: AbortSignal) => Promise<Result>,
   onChanged: (result: Result) => void,
-  refresh: () => Promise<void>,
+  refresh: (result: Result, fields: Fields) => Promise<void>,
 ) {
   const pageSignal = usePageSignal();
   const { mutate, isPending, isError, error } = useMutation({
     mutationFn: ({ fields, signal }: { fields: Fields; signal: AbortSignal }) =>
       endpoint === undefined ? noEndpoint() : change(endpoint, fields, signal),
-    onSuccess: (result, { signal }) => {
+    onSuccess: (result, { fields, signal }) => {
       if (signal.aborted) return;
       onChanged(result);
-      void refresh();
+      void refresh(result, fields);
     },
   });
   const failure = isError ? failureOf(error, operation) : undefined;
@@ -102,6 +102,11 @@ export function useDeleteV2Route(
     DELETE_ROUTE,
     (origin, fields: RouteDeletion, signal) => deleteV2Route(origin, apiId, fields, signal),
     onDeleted,
-    () => refreshV2Routes(client, apiId),
+    (warning, { routeId, integrationId }) =>
+      refreshV2Routes(client, apiId, {
+        endpoint,
+        routeId,
+        ...(warning === undefined && integrationId !== undefined && { integrationId }),
+      }),
   );
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RequestError } from '../../../../../lib/aws/request';
 import { readRestApis, readV2Apis } from './apis-api';
 import { useApiLists } from './queries';
-import { getV2Api, readV2Integrations, readV2Routes } from './v2-api';
+import { GET_INTEGRATIONS, GET_ROUTES, getV2Api, readV2Integrations, readV2Routes } from './v2-api';
 import { useV2Api, useV2Integrations, useV2Routes } from './v2-queries';
 import { deleteV2Route, updateV2Api } from './v2-route-change-api';
 import { useDeleteV2Route, useUpdateV2Api } from './v2-route-change-queries';
@@ -65,10 +65,43 @@ it('refreshes the API and drops both API lists so the next opening reads the sav
   expect(v2Apis).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
 });
 
-it.each([{ routeId: 'r-1' }, { routeId: 'r-1', integrationId: 'i-1' }])(
-  'refreshes routes and integrations together after deleting %j',
-  async (target) => {
-    vi.mocked(deleteV2Route).mockResolvedValue(undefined);
+const integrationFailure = {
+  integrationId: 'i-1',
+  failure: { kind: 'not-implemented', operation: 'DeleteIntegration' },
+} as const;
+
+it.each([
+  { outcome: 'route only', target: { routeId: 'r-1' }, warning: undefined, integrationDeleted: false },
+  {
+    outcome: 'route and integration',
+    target: { routeId: 'r-1', integrationId: 'i-1' },
+    warning: undefined,
+    integrationDeleted: true,
+  },
+  {
+    outcome: 'route with an integration deletion warning',
+    target: { routeId: 'r-1', integrationId: 'i-1' },
+    warning: integrationFailure,
+    integrationDeleted: false,
+  },
+])(
+  'keeps confirmed deletions out of retained pages and retries page one after deleting $outcome',
+  async ({ target, warning, integrationDeleted }) => {
+    const deletedRoute = { RouteId: 'r-1', RouteKey: 'POST /events' };
+    const otherRoute = { RouteId: 'r-2', RouteKey: 'GET /events' };
+    const candidate = { IntegrationId: 'i-1' };
+    const otherIntegration = { IntegrationId: 'i-2' };
+    routes
+      .mockResolvedValueOnce({ items: [otherRoute], next: 'routes-page-2' })
+      .mockResolvedValueOnce({ items: [deletedRoute] })
+      .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: GET_ROUTES }))
+      .mockResolvedValueOnce({ items: [otherRoute], next: 'fresh-routes-page-2' });
+    integrations
+      .mockResolvedValueOnce({ items: [otherIntegration], next: 'integrations-page-2' })
+      .mockResolvedValueOnce({ items: [candidate] })
+      .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: GET_INTEGRATIONS }))
+      .mockResolvedValueOnce({ items: [otherIntegration], next: 'fresh-integrations-page-2' });
+    vi.mocked(deleteV2Route).mockResolvedValue(warning);
     const deleted = vi.fn();
     const { result } = renderHook(
       () => ({
@@ -79,15 +112,43 @@ it.each([{ routeId: 'r-1' }, { routeId: 'r-1', integrationId: 'i-1' }])(
       { wrapper },
     );
     await waitFor(() => {
-      expect(result.current.routes.items).toHaveLength(1);
-      expect(result.current.integrations.items).toHaveLength(1);
+      expect(result.current.routes.more).toBe(true);
+      expect(result.current.integrations.more).toBe(true);
+    });
+    act(() => {
+      result.current.routes.loadMore();
+      result.current.integrations.loadMore();
+    });
+    await waitFor(() => {
+      expect(result.current.routes.items).toEqual([otherRoute, deletedRoute]);
+      expect(result.current.integrations.items).toEqual([otherIntegration, candidate]);
     });
     act(() => result.current.remove.submit(target));
     await waitFor(() => {
-      expect(routes).toHaveBeenCalledTimes(2);
-      expect(integrations).toHaveBeenCalledTimes(2);
+      expect(result.current.routes.failure?.operation).toBe(GET_ROUTES);
+      expect(result.current.integrations.failure?.operation).toBe(GET_INTEGRATIONS);
     });
-    expect(deleted).toHaveBeenCalledOnce();
+    expect(deleted).toHaveBeenCalledExactlyOnceWith(warning);
+    expect(result.current.routes.items).toEqual([otherRoute]);
+    expect(result.current.integrations.items).toEqual(
+      integrationDeleted ? [otherIntegration] : [otherIntegration, candidate],
+    );
+
+    act(() => {
+      result.current.routes.retry();
+      result.current.integrations.retry();
+    });
+    await waitFor(() => {
+      expect(result.current.routes.more).toBe(true);
+      expect(result.current.integrations.more).toBe(true);
+    });
+    expect(result.current.routes.items).toEqual([otherRoute]);
+    expect(result.current.integrations.items).toEqual([otherIntegration]);
+    for (const read of [routes, integrations]) {
+      expect(read).toHaveBeenCalledTimes(4);
+      expect(read).toHaveBeenNthCalledWith(3, endpoint, id, undefined, expect.any(AbortSignal));
+      expect(read).toHaveBeenNthCalledWith(4, endpoint, id, undefined, expect.any(AbortSignal));
+    }
   },
 );
 
