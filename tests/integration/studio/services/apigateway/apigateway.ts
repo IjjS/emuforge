@@ -693,13 +693,21 @@ export const testPanel = (page: Page) => page.getByRole('region', { name: 'Test 
 
 /**
  * The open "Test method" panel shows, drawn, the emulator's execution log of an invocation of `verb` on
- * `resourcePath`: the line of the log that names both.
+ * `resourcePath`: the log's one line that names a method and a resource names these two, whole.
  */
 export async function expectExecutionLog(panel: Locator, verb: string, resourcePath: string): Promise<void> {
   await expect(panel.getByRole('heading', { name: 'Log', exact: true })).toBeVisible();
   const log = panel.locator('pre').nth(1);
   await expect(log).toBeVisible();
-  await expect(log).toContainText(`HTTP Method: ${verb}, Resource Path: ${resourcePath}`);
+  // One line of the log, after its time, is exactly the method and the whole resource path: the line ends where the
+  // path ends, so the log of `/hello` is not taken for the log of `/`.
+  const wanted = `: HTTP Method: ${verb}, Resource Path: ${resourcePath}`;
+  await expect
+    .poll(async () => {
+      const lines = ((await log.textContent()) ?? '').split('\n').map((line) => line.trimEnd());
+      return lines.filter((line) => /^\S+ : HTTP Method: /.test(line));
+    }, 'the lines of the shown log that name a method and a resource')
+    .toEqual([expect.stringMatching(new RegExp(`^\\S+ ${escapeText(wanted)}$`))]);
 }
 
 /** A Cloudscape alert below `scope`. */
