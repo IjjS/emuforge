@@ -1,10 +1,10 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -118,6 +118,24 @@ function expectApiNames(container: HTMLElement, names: string[]) {
   expect(apiNames(container)).toEqual(names);
 }
 
+function pageAction(container: HTMLElement, index: number, label: string) {
+  const action = createWrapper(container).findHeader()?.findActions()?.findAllButtons()[index]?.getElement();
+  assert(action);
+  expect(action).toHaveTextContent(label);
+  return action;
+}
+
+function loadMoreButtons(container: HTMLElement) {
+  return createWrapper(container).findTable()?.findFooterSlot()?.findAllButtons() ?? [];
+}
+
+function loadMoreButton(container: HTMLElement, kind: string) {
+  const button = loadMoreButtons(container)[0]?.getElement();
+  assert(button);
+  expect(button).toHaveTextContent(`Load more ${kind}`);
+  return button;
+}
+
 it('keeps room for ten-character IDs and their cell padding inside the API table', async () => {
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
@@ -165,15 +183,14 @@ it('shows loading until the lists answer, then offers Create API when both are e
   const wrapper = createWrapper(container);
   expect(wrapper.findTable()?.findLoadingText()?.getElement()).toHaveTextContent('Loading APIs…');
   const empty = await waitFor(() => {
-    const slot = wrapper.findTable()?.findEmptySlot()?.getElement();
-    if (slot === undefined) throw new Error('Missing empty table state');
-    expect(slot).toHaveTextContent('No APIs');
+    const slot = wrapper.findTable()?.findEmptySlot();
+    assert(slot);
+    expect(slot.getElement()).toHaveTextContent('No APIs');
     return slot;
   });
-  expect(within(empty).getByRole('link', { name: 'Create API' })).toHaveAttribute(
-    'href',
-    '/aws/apigateway/apis/create',
-  );
+  const create = empty.findButton()?.getElement();
+  expect(create).toHaveTextContent('Create API');
+  expect(create).toHaveAttribute('href', '/aws/apigateway/apis/create');
 });
 
 it.each([
@@ -186,13 +203,13 @@ it.each([
       .mockResolvedValueOnce({ items: [first], next: token })
       .mockResolvedValueOnce({ items: [further] });
     const { container } = open();
-    const button = await screen.findByRole('button', { name: `Load more ${kind}` });
-    expect(screen.getAllByRole('button', { name: /Load more/ })).toHaveLength(1);
+    const button = await waitFor(() => loadMoreButton(container, kind));
+    expect(loadMoreButtons(container)).toHaveLength(1);
     await userEvent.click(button);
     const otherApi = reader === readRestApis ? http : rest;
     const expectedNames = [first.name, further.name, otherApi.name].sort((a, b) => a.localeCompare(b));
     await waitFor(() => expectApiNames(container, expectedNames));
-    expect(screen.queryByRole('button', { name: /Load more/ })).not.toBeInTheDocument();
+    expect(loadMoreButtons(container)).toHaveLength(0);
     expect(reader).toHaveBeenLastCalledWith(engineOrigin, token, expect.any(AbortSignal));
     expect(other).toHaveBeenCalledOnce();
   },
@@ -209,13 +226,16 @@ it.each([
     );
     const { container } = open();
     const alert = await waitFor(() => {
-      const element = createWrapper(container).findAlert()?.getElement();
-      if (element === undefined) throw new Error('Missing list failure alert');
-      expect(element).toHaveTextContent(`${operation}: Refused: Full reason.`);
+      const element = createWrapper(container).findAlert();
+      assert(element);
+      expect(element.getElement()).toHaveTextContent(`${operation}: Refused: Full reason.`);
       expectApiNames(container, [visible.name]);
       return element;
     });
-    await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    const retry = alert.findActionSlot()?.findButton()?.getElement();
+    assert(retry);
+    expect(retry).toHaveTextContent('Retry');
+    await userEvent.click(retry);
     await waitFor(() => expectApiNames(container, [visible.name, retried.name].sort()));
     expect(reader).toHaveBeenCalledTimes(2);
     expect(other).toHaveBeenCalledOnce();
@@ -298,26 +318,37 @@ it.each([
   const wrapper = createWrapper(container);
   const restDetail = detail.replace('{operation}', 'GetRestApis');
   const v2Detail = detail.replace('{operation}', 'GetApis');
+  const retryButtons = () => {
+    const header = wrapper.findHeader()?.getElement();
+    return wrapper
+      .findAllButtons()
+      .map((button) => button.getElement())
+      .filter((button) => !header?.contains(button));
+  };
   await waitFor(() => {
     expect(wrapper.findTable()).toBeNull();
     expect(container).toHaveTextContent(heading);
     expect(container).toHaveTextContent(restDetail);
     expect(container).toHaveTextContent(v2Detail);
-    expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(2);
+    expect(retryButtons()).toHaveLength(2);
   });
-  const links = screen.queryAllByRole('link', { name: 'Connection status' });
+  const links = wrapper.findAllLinks('[href="/"]');
   expect(links).toHaveLength(recovery ? 2 : 0);
-  for (const link of links) expect(link).toHaveAttribute('href', '/');
+  for (const link of links) expect(link.getElement()).toHaveTextContent('Connection status');
 
-  const [retryRest] = screen.getAllByRole('button', { name: 'Retry' });
-  if (retryRest === undefined) throw new Error('Missing REST list retry button');
+  const [retryRest] = retryButtons();
+  assert(retryRest);
+  expect(retryRest).toHaveTextContent('Retry');
   await userEvent.click(retryRest);
   await waitFor(() => expectApiNames(container, [rest.name]));
-  const remaining = wrapper.findAlert()?.getElement();
-  if (remaining === undefined) throw new Error('Missing remaining list failure alert');
-  expect(remaining).toHaveTextContent(heading);
-  expect(remaining).toHaveTextContent(v2Detail);
-  await userEvent.click(within(remaining).getByRole('button', { name: 'Retry' }));
+  const remaining = wrapper.findAlert();
+  assert(remaining);
+  expect(remaining.getElement()).toHaveTextContent(heading);
+  expect(remaining.getElement()).toHaveTextContent(v2Detail);
+  const retryV2 = remaining.findActionSlot()?.findButton()?.getElement();
+  assert(retryV2);
+  expect(retryV2).toHaveTextContent('Retry');
+  await userEvent.click(retryV2);
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
   expect(wrapper.findAlert()).toBeNull();
 });
@@ -345,9 +376,9 @@ it('refreshes both lists from their first page after a further page was loaded',
     .mockResolvedValueOnce({ items: [http] })
     .mockResolvedValueOnce({ items: [webSocket] });
   const { container } = open();
-  await userEvent.click(await screen.findByRole('button', { name: 'Load more REST APIs' }));
+  await userEvent.click(await waitFor(() => loadMoreButton(container, 'REST APIs')));
   await waitFor(() => expectApiNames(container, [rest2.name, http.name, rest.name]));
-  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await userEvent.click(pageAction(container, 0, 'Refresh'));
   await waitFor(() => expectApiNames(container, [webSocket.name]));
   expect(readRestApis).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
   expect(readV2Apis).toHaveBeenNthCalledWith(2, engineOrigin, undefined, expect.any(AbortSignal));
@@ -361,7 +392,7 @@ it('copies the selected ID verbatim and reports both clipboard outcomes', async 
     .mockRejectedValueOnce(new Error('Blocked'));
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-  const copy = screen.getByRole('button', { name: 'Copy ID' });
+  const copy = pageAction(container, 1, 'Copy ID');
   expect(copy).toBeDisabled();
   await selectApi(container, 2, user);
   expect(copy).toBeEnabled();
@@ -380,7 +411,7 @@ async function selectApi(container: HTMLElement, rowIndex: number, user = userEv
 }
 
 async function confirmDelete(container: HTMLElement, api: ApiRow) {
-  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await userEvent.click(pageAction(container, 2, 'Delete'));
   const modal = await waitFor(() => {
     const found = createWrapper(container).findModal();
     if (found === null) throw new Error('Missing delete modal');
@@ -390,7 +421,10 @@ async function confirmDelete(container: HTMLElement, api: ApiRow) {
   const input = modal.findContent().findFormField()?.findControl()?.findInput()?.findNativeInput().getElement();
   if (input === undefined) throw new Error('Missing name confirmation input');
   fireEvent.change(input, { target: { value: api.name } });
-  await userEvent.click(within(modal.getElement()).getByRole('button', { name: 'Delete' }));
+  const confirm = modal.findFooter()?.findAllButtons()[1]?.getElement();
+  assert(confirm);
+  expect(confirm).toHaveTextContent('Delete');
+  await userEvent.click(confirm);
 }
 
 function expectDeleted(container: HTMLElement, api: ApiRow) {
@@ -403,23 +437,35 @@ function expectDeleted(container: HTMLElement, api: ApiRow) {
 
 it('enables Delete when a row is selected, then closes the dialog, shows the result and reads both lists', async () => {
   vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
-  vi.mocked(readRestApis)
-    .mockResolvedValueOnce({ items: [rest] })
-    .mockResolvedValueOnce({ items: [] });
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  const feedbackAtRead: { modalOpen: boolean; message: string | null | undefined }[] = [];
+  function recordFeedback(items: ApiRow[]) {
+    const wrapper = createWrapper(container);
+    feedbackAtRead.push({
+      modalOpen: wrapper.findModal() !== null,
+      message: wrapper.findFlashbar()?.findItemsByType('success')[0]?.getElement().textContent,
+    });
+    return Promise.resolve({ items });
+  }
+  vi.mocked(readRestApis).mockImplementationOnce(() => recordFeedback([]));
+  vi.mocked(readV2Apis).mockImplementationOnce(() => recordFeedback([http]));
+  expect(pageAction(container, 2, 'Delete')).toBeDisabled();
   await selectApi(container, 2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  expect(pageAction(container, 2, 'Delete')).toBeEnabled();
   await confirmDelete(container, rest);
   await waitFor(() => {
     expectDeleted(container, rest);
     expectApiNames(container, [http.name]);
   });
+  expect(feedbackAtRead).toEqual([
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+  ]);
   expect(deleteApi).toHaveBeenCalledExactlyOnceWith(engineOrigin, rest, expect.any(AbortSignal));
   expect(readRestApis).toHaveBeenCalledTimes(2);
   expect(readV2Apis).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  expect(pageAction(container, 2, 'Delete')).toBeDisabled();
 });
 
 function deferred<T>() {
@@ -447,7 +493,7 @@ describe.each([
       const { container } = open();
       await waitFor(() => expectApiNames(container, [http.name, rest.name]));
       await selectApi(container, rowIndex);
-      await userEvent.click(screen.getByRole('button', { name: `Load more ${label}` }));
+      await userEvent.click(loadMoreButton(container, label));
       expect(read).toHaveBeenNthCalledWith(2, engineOrigin, token, expect.any(AbortSignal));
 
       await confirmDelete(container, api);
