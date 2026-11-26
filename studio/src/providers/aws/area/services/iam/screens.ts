@@ -16,18 +16,6 @@ import { PolicyPage } from './pages/policy-page';
 import { RoleListPage, ROLES_TITLE } from './pages/role-list-page';
 import { ROLE_NAME_PARAM, RolePage } from './pages/role-page';
 
-/** The side navigation's sections (issue 82, R6.1; issue 535): "Access Management" with "Roles" and "Policies". */
-const NAVIGATION_ITEMS: ScreenNavigation['items'] = [
-  {
-    type: 'section',
-    text: 'Access Management',
-    items: [
-      { type: 'link', text: 'Roles', href: ROLES_PATH },
-      { type: 'link', text: 'Policies', href: POLICIES_PATH },
-    ],
-  },
-];
-
 const NAVIGATION_HEADER: ScreenNavigation['header'] = {
   text: 'Identity and Access Management (IAM)',
   href: IAM_PATH,
@@ -36,14 +24,12 @@ const NAVIGATION_HEADER: ScreenNavigation['header'] = {
 /** The side navigation of the role screens (S1 to S3): "Roles" current. */
 export const IAM_NAVIGATION: ScreenNavigation = {
   header: NAVIGATION_HEADER,
-  items: NAVIGATION_ITEMS,
   activeHref: ROLES_PATH,
 };
 
 /** The side navigation of the policy screens (S4 to S6, issue 535): "Policies" current. */
 export const IAM_POLICIES_NAVIGATION: ScreenNavigation = {
   header: NAVIGATION_HEADER,
-  items: NAVIGATION_ITEMS,
   activeHref: POLICIES_PATH,
 };
 

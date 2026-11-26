@@ -278,7 +278,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
   // which no screen matches, shows the "no screen yet" page for that part of the service.
-  it.each(['/aws/iam/users', '/aws/iam/roles/details/abc/tags'])(
+  it.each(['/aws/iam/no-such-part', '/aws/iam/roles/details/abc/tags'])(
     'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
       open(path);
@@ -363,7 +363,9 @@ describe('routes', () => {
       expect(crumbs).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'my-bucket']);
       const navigation = wrapper.findSideNavigation();
       expect(navigation?.findHeaderLink()?.getElement()).toHaveTextContent('Amazon S3');
-      expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
+      const buckets = navigation?.findLinkByHref('/aws/s3/buckets')?.getElement();
+      expect(buckets).toHaveTextContent('General purpose buckets');
+      expect(buckets).toHaveAttribute('aria-current', 'page');
       expect(router.state.location.pathname).toBe(path);
     },
   );
@@ -477,7 +479,9 @@ describe('routes', () => {
       expect(within(main()).getByRole('button', { name: 'About the local emulator' })).toBeInTheDocument();
       const navigation = createWrapper(document.body).findSideNavigation();
       expect(navigation?.findHeaderLink()?.getElement()).toHaveTextContent('Amazon S3');
-      expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
+      const buckets = navigation?.findLinkByHref('/aws/s3/buckets')?.getElement();
+      expect(buckets).toHaveTextContent('General purpose buckets');
+      expect(buckets).toHaveAttribute('aria-current', 'page');
     },
   );
 
@@ -549,11 +553,7 @@ describe('routes', () => {
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after (issue 480: `/metrics` in place of `/objects`, which is now the tab "Objects"). Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): the page for that part of
   // the service, and no request for an AWS operation.
-  it.each([
-    '/aws/s3/buckets/my-bucket/metrics',
-    '/aws/s3/bucket/my-bucket/property/tags/edit',
-    '/aws/s3/directory-buckets',
-  ])(
+  it.each(['/aws/s3/buckets/my-bucket/metrics', '/aws/s3/bucket/my-bucket/property/tags/edit', '/aws/s3/no-such-part'])(
     'opens %s as the "no screen yet" page for that part of Amazon Simple Storage Service, with no request for an AWS operation',
     async (path) => {
       const engine = new FakeEngine();
@@ -598,7 +598,7 @@ describe('routes', () => {
         ['my-bucket', '/aws/s3/buckets/my-bucket'],
       ],
     ],
-    ['/aws/s3/directory-buckets', []],
+    ['/aws/s3/no-such-part', []],
   ])(
     'opens %s as the "no screen yet" page with the crumbs EmuForge, AWS, S3, those of the screen above, then "No screen yet"',
     async (path, above) => {
@@ -620,8 +620,8 @@ describe('routes', () => {
     },
   );
 
-  it('opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load', async () => {
-    const router = createMemoryRouter(routes, { initialEntries: ['/aws/s3/directory-buckets'] });
+  it('opens /aws/s3/no-such-part, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load', async () => {
+    const router = createMemoryRouter(routes, { initialEntries: ['/aws/s3/no-such-part'] });
     render(
       <Providers>
         <RouterProvider router={router} />

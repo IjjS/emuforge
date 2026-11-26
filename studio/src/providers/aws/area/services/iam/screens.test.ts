@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ServiceScreen } from '../../screens';
-import { IAM_NAVIGATION, IAM_POLICIES_NAVIGATION, SCREENS } from './screens';
+import { findResourceEntry } from '../../entries';
+import { ENTRIES } from './entries';
+import { SCREENS } from './screens';
 
 // Test criteria, "Unit s5 — providers/aws/area/services/iam/screens.test.ts" (issue 535).
 
@@ -19,14 +21,6 @@ function crumbsOf(screen: ServiceScreen, query = '') {
   return typeof screen.crumbs === 'function' ? screen.crumbs({}, new URLSearchParams(query)) : screen.crumbs;
 }
 
-function linksOf(screen: ServiceScreen): { text: string; href: string }[] {
-  return screen.navigation.items.flatMap((item) =>
-    item.type === 'section'
-      ? item.items.flatMap((link) => (link.type === 'link' ? [{ text: link.text, href: link.href }] : []))
-      : [],
-  );
-}
-
 const ROLE_SCREENS = ['/aws/iam', '/aws/iam/roles', '/aws/iam/roles/create', '/aws/iam/roles/details/{name}'];
 const POLICY_SCREENS = ['/aws/iam/policies', '/aws/iam/policies/details', '/aws/iam/policies/create'];
 
@@ -42,13 +36,10 @@ describe("IAM's screens", () => {
     ]);
   });
 
-  it('gives every screen the navigation with "Roles" and "Policies"', () => {
-    for (const path of [...ROLE_SCREENS, ...POLICY_SCREENS]) {
-      expect(linksOf(screenAt(path)), path).toEqual([
-        { text: 'Roles', href: '/aws/iam/roles' },
-        { text: 'Policies', href: '/aws/iam/policies' },
-      ]);
-      expect(screenAt(path).navigation.header).toEqual({
+  it('gives every screen the IAM navigation header and leaves the items to the entry registry', () => {
+    for (const screen of SCREENS) {
+      expect(screen.navigation.items, screen.paths[0]).toBeUndefined();
+      expect(screen.navigation.header).toEqual({
         text: 'Identity and Access Management (IAM)',
         href: '/aws/iam',
       });
@@ -57,13 +48,15 @@ describe("IAM's screens", () => {
 
   it('shows "Roles" current on S1 to S3 and "Policies" current on S4 to S6', () => {
     for (const path of ROLE_SCREENS) {
-      expect(screenAt(path).navigation, path).toBe(IAM_NAVIGATION);
+      const { activeHref } = screenAt(path).navigation;
+      expect(activeHref, path).toBe('/aws/iam/roles');
+      expect(findResourceEntry(ENTRIES, activeHref)?.label, path).toBe('Roles');
     }
     for (const path of POLICY_SCREENS) {
-      expect(screenAt(path).navigation, path).toBe(IAM_POLICIES_NAVIGATION);
+      const { activeHref } = screenAt(path).navigation;
+      expect(activeHref, path).toBe('/aws/iam/policies');
+      expect(findResourceEntry(ENTRIES, activeHref)?.label, path).toBe('Policies');
     }
-    expect(IAM_NAVIGATION.activeHref).toBe('/aws/iam/roles');
-    expect(IAM_POLICIES_NAVIGATION.activeHref).toBe('/aws/iam/policies');
   });
 
   it('titles S5 and its last crumb with the name of the address\'s ARN, and "Policy" without one', () => {

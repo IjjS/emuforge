@@ -298,10 +298,6 @@ test('studio.iam-role-screens-actions-lead-to-their-routes', async ({ ctx, page 
           message: 'the entries of the side navigation',
         })
         .toEqual(expect.arrayContaining([LIST_H1, POLICIES_H1]));
-      expect(
-        (await nav.locator('li').getByRole('link').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
-        'the entries of the side navigation',
-      ).toEqual([LIST_H1, POLICIES_H1]);
       await markPage(page);
       await nav.getByRole('link', { name: POLICIES_H1, exact: true }).click(ACTION);
       await expect(page).toHaveURL(addressOf(POLICIES_PATH));
