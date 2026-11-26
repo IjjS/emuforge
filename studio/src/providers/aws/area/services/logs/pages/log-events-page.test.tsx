@@ -127,6 +127,103 @@ function enterRange() {
   enter('Time range End time', '12:35:57');
 }
 
+it('keeps the submitted group and filters beside the results while the draft changes', async () => {
+  groups.mockResolvedValueOnce({ items: [{ logGroupName: '/different' }] });
+  search.mockResolvedValueOnce(page('first result')).mockResolvedValueOnce(page('next result'));
+  open();
+  enter('Filter pattern', 'submitted pattern');
+  enterRange();
+  submit();
+
+  const results = () => screen.getByRole('region', { name: 'Search results' });
+  await within(results()).findByText('first result');
+  expect(results()).toHaveTextContent(`Log group: ${group}`);
+  expect(results()).toHaveTextContent(`Log stream: ${stream}`);
+  expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
+  expect(results()).toHaveTextContent(`Start: ${creationDateText(new Date(timestamp))}`);
+  expect(results()).toHaveTextContent(`End: ${creationDateText(new Date(2026, 10, 26, 12, 35, 57))}`);
+
+  choice(0).openDropdown();
+  await screen.findByText('/different');
+  choice(0).selectOptionByValue('/different');
+  enter('Filter pattern', 'edited pattern');
+  expect(results()).toHaveTextContent(`Log group: ${group}`);
+  expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
+  expect(results()).not.toHaveTextContent('/different');
+  expect(within(results()).getByText('first result')).toBeVisible();
+
+  submit();
+  await within(results()).findByText('next result');
+  expect(results()).toHaveTextContent('Log group: /different');
+  expect(results()).toHaveTextContent('Filter pattern: edited pattern');
+  expect(results()).not.toHaveTextContent(`Log stream: ${stream}`);
+});
+
+it('focuses and reveals the results on each submission, then announces the outcome', async () => {
+  search.mockResolvedValueOnce(page('a match')).mockResolvedValueOnce({ items: [] });
+  const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+  const reveal = vi.fn();
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: reveal });
+  try {
+    open();
+    const results = () => screen.getByRole('region', { name: 'Search results' });
+    const announcement = () => results().querySelector('[aria-live="polite"][aria-atomic="true"]');
+
+    submit();
+    expect(results()).toHaveFocus();
+    expect(reveal).toHaveBeenLastCalledWith({ block: 'start' });
+    expect(reveal.mock.contexts.at(-1)).toBe(results());
+    await waitFor(() => expect(announcement()).toHaveTextContent('Search complete. 1 log event on this page.'));
+
+    field('Filter pattern').focus();
+    enter('Filter pattern', 'no match');
+    expect(field('Filter pattern')).toHaveFocus();
+    submit();
+    expect(results()).toHaveFocus();
+    expect(reveal.mock.contexts.filter((target) => target === results())).toHaveLength(1);
+    field('Filter pattern').focus();
+    await waitFor(() => expect(announcement()).toHaveTextContent('Search complete. No log events match.'));
+    expect(field('Filter pattern')).toHaveFocus();
+  } finally {
+    if (descriptor === undefined) Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    else Object.defineProperty(Element.prototype, 'scrollIntoView', descriptor);
+  }
+});
+
+it('explains browser-local optional pairs and announces an incomplete pair before searching', () => {
+  open();
+  expect(screen.getByText(/Times are read in your browser’s time zone/)).toHaveTextContent(
+    'Each date and time pair is optional. Enter both fields for any pair you use.',
+  );
+  enter('Time range Start date', '2026-11-26');
+  submit();
+
+  const time = field('Time range Start time');
+  expect(time).toHaveAccessibleDescription(/Enter a valid start date and time/);
+  const announcement = time.closest('form')?.querySelector('[aria-live="polite"][aria-atomic="true"]');
+  expect(announcement).toHaveTextContent('Enter a valid start date and time.');
+  expect(search).not.toHaveBeenCalled();
+  enter('Time range Start time', '12:34:56');
+  expect(announcement).toBeEmptyDOMElement();
+});
+
+it('bounds long messages while preserving their text, whitespace, timestamp and stream link', async () => {
+  const message = `  first line\n\t${'x'.repeat(700)}  `;
+  search.mockResolvedValueOnce(page(message));
+  open();
+  submit();
+
+  const link = await screen.findByRole('link', { name: stream });
+  const row = link.closest('tr');
+  expect(row).toHaveTextContent(creationDateText(new Date(timestamp)));
+  expect(link).toHaveAttribute('href', logStreamPath(group, stream));
+  const pre = row?.querySelector('pre');
+  expect(pre?.textContent).toBe(message);
+  expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(pre?.parentElement).toHaveStyle({ maxInlineSize: 'min(35vw, 72ch)' });
+  expect(pre?.firstElementChild).toHaveClass('aws-area-value-text');
+});
+
 it('pages with the submitted pattern, times and stream even while the form holds edits', async () => {
   search.mockResolvedValueOnce(page('first page', 'page-token')).mockResolvedValueOnce(page('second page'));
   open();

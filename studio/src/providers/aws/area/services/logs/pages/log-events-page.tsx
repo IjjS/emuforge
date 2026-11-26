@@ -12,7 +12,7 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import TimeInput from '@cloudscape-design/components/time-input';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -44,6 +44,33 @@ function searchFailureState(failure: RequestFailure, connection: AreaConnection)
   return state;
 }
 
+function SubmittedFilters({ request }: { request: SearchRequest }) {
+  const stream = request.logStreamNames?.[0];
+  return (
+    <>
+      <span style={{ display: 'block' }}>
+        Log group: <ValueText kind="name" value={request.logGroupName} />
+      </span>
+      {stream !== undefined && (
+        <span style={{ display: 'block' }}>
+          Log stream: <ValueText kind="name" value={stream} />
+        </span>
+      )}
+      {request.filterPattern !== undefined && (
+        <span style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          Filter pattern: {request.filterPattern}
+        </span>
+      )}
+      {request.startTime !== undefined && (
+        <span style={{ display: 'block' }}>Start: {creationDateText(new Date(request.startTime))}</span>
+      )}
+      {request.endTime !== undefined && (
+        <span style={{ display: 'block' }}>End: {creationDateText(new Date(request.endTime))}</span>
+      )}
+    </>
+  );
+}
+
 function SearchResults({
   connection,
   request,
@@ -55,6 +82,8 @@ function SearchResults({
 }) {
   const follow = useFollow();
   const [announcement, announce] = useAnnouncer();
+  const headingId = useId();
+  const resultsRef = useRef<HTMLElement>(null);
   const listing = useTokenListing({
     key: ['logs', 'search', request, submission],
     endpoint: connection.engineOrigin,
@@ -63,16 +92,30 @@ function SearchResults({
   });
   const failure = listing.failure && searchFailureState(listing.failure, connection);
   const failureText = failure?.firstText;
+  const count = listing.items?.length;
   useEffect(() => {
-    announce(failureText ?? '');
-  }, [announce, failureText]);
+    const results = resultsRef.current;
+    results?.focus({ preventScroll: true });
+    results?.scrollIntoView?.({ block: 'start' });
+  }, []);
+  useEffect(() => {
+    if (failureText !== undefined) announce(failureText);
+    else if (count === undefined) announce('');
+    else if (count === 0) announce('Search complete. No log events match.');
+    else announce(`Search complete. ${String(count)} ${count === 1 ? 'log event' : 'log events'} on this page.`);
+  }, [announce, count, failureText]);
 
   return (
-    <>
+    <section ref={resultsRef} tabIndex={-1} aria-labelledby={headingId}>
       <Table<FilteredLogEvent>
-        header={<Header variant="h2">Search results</Header>}
+        header={
+          <Header variant="h2" description={<SubmittedFilters request={request} />}>
+            <span id={headingId}>Search results</span>
+          </Header>
+        }
         items={listing.items ?? []}
         wrapLines
+        cellVerticalAlign="top"
         loading={listing.loading}
         loadingText="Loading log events"
         columnDefinitions={[
@@ -98,7 +141,15 @@ function SearchResults({
                 </Link>
               ),
           },
-          { id: 'message', header: 'Message', cell: ({ message }) => <EventMessage message={message} /> },
+          {
+            id: 'message',
+            header: 'Message',
+            cell: ({ message }) => (
+              <div style={{ maxInlineSize: 'min(35vw, 72ch)' }}>
+                <EventMessage message={message} />
+              </div>
+            ),
+          },
         ]}
         pagination={
           <Pagination
@@ -125,7 +176,7 @@ function SearchResults({
         }
       />
       {announcement}
-    </>
+    </section>
   );
 }
 
@@ -175,9 +226,11 @@ function LogEventSearch({
   const [form, setForm] = useState<SearchForm>({ group, stream, pattern: '', start: emptyTime, end: emptyTime });
   const [submitted, setSubmitted] = useState<{ request: SearchRequest; number: number }>();
   const [error, setError] = useState<Extract<ReturnType<typeof searchRequest>, { error: string }>>();
+  const [validationAnnouncement, announceValidation] = useAnnouncer();
   const updateForm = (change: Partial<SearchForm>) => {
     setForm((current) => ({ ...current, ...change }));
     setError(undefined);
+    if (error !== undefined) announceValidation('');
   };
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -185,6 +238,7 @@ function LogEventSearch({
     const result = searchRequest(form);
     if ('error' in result) {
       setError(result);
+      announceValidation(result.error);
       return;
     }
     setError(undefined);
@@ -238,7 +292,19 @@ function LogEventSearch({
             >
               <Input value={form.pattern} onChange={({ detail }) => updateForm({ pattern: detail.value })} />
             </FormField>
-            <FormField label="Time range" stretch description="Events at the start and at the end time are included.">
+            <FormField
+              label="Time range"
+              stretch
+              description={
+                <>
+                  <span>Events at the start and at the end time are included.</span>{' '}
+                  <span>
+                    Times are read in your browser’s time zone. Each date and time pair is optional. Enter both fields
+                    for any pair you use.
+                  </span>
+                </>
+              }
+            >
               <ColumnLayout columns={2}>
                 <TimeFields
                   edge="Start"
@@ -256,6 +322,7 @@ function LogEventSearch({
             </FormField>
           </SpaceBetween>
         </Container>
+        {validationAnnouncement}
       </form>
       {submitted === undefined && form.group === undefined && <Box>Choose a log group.</Box>}
       {submitted !== undefined && (
