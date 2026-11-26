@@ -23,6 +23,10 @@ function dateCell(time: number | undefined) {
   return <ValueText kind="fixed" value={creationDateText(time === undefined ? undefined : new Date(time))} />;
 }
 
+function multilineStreamLabel(name: string) {
+  return /[\r\n]/.test(name) ? `${name.replace(/\r\n?|\n/g, ' ')} (contains a line break)` : undefined;
+}
+
 interface StreamSectionProps {
   connection: AreaConnection;
   group: string;
@@ -72,7 +76,10 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
           isItemDisabled: ({ logStreamName }) => logStreamName === undefined,
           ariaLabels: {
             selectionGroupLabel: 'Log stream selection',
-            itemSelectionLabel: (_, row) => row.logStreamName ?? 'Unnamed log stream',
+            itemSelectionLabel: (_, { logStreamName }) =>
+              logStreamName === undefined
+                ? 'Unnamed log stream'
+                : (multilineStreamLabel(logStreamName) ?? logStreamName),
           },
         })}
         wrapLines
@@ -105,14 +112,22 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
             header: 'Log stream name',
             isRowHeader: true,
             minWidth: '28ch',
-            cell: ({ logStreamName }) =>
-              logStreamName === undefined ? (
-                '-'
-              ) : (
-                <Link href={logStreamPath(group, logStreamName)} onFollow={follow}>
-                  <ValueText kind="name" value={logStreamName} />
+            cell: ({ logStreamName }) => {
+              if (logStreamName === undefined) return '-';
+              const label = multilineStreamLabel(logStreamName);
+              return (
+                <Link
+                  href={logStreamPath(group, logStreamName)}
+                  onFollow={follow}
+                  {...(label !== undefined && {
+                    ariaLabel: label,
+                    nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
+                  })}
+                >
+                  <ValueText kind="name" value={logStreamName.replace(/\r\n?/g, '\n')} />
                 </Link>
-              ),
+              );
+            },
           },
           {
             id: 'last-event',

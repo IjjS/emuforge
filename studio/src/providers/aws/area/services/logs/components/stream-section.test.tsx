@@ -67,11 +67,14 @@ const read = vi.mocked(listLogStreams);
 
 beforeEach(() => read.mockReset());
 
-function renderSection(result: AreaConnection['result'] = connected) {
+function renderSection(
+  result: AreaConnection['result'] = connected,
+  selection?: { name: string | undefined; onChange: (name: string | undefined) => void },
+) {
   return render(
     <MemoryRouter>
       <QueryClientProvider client={new QueryClient()}>
-        <StreamSection connection={{ engineOrigin, result }} group={group} />
+        <StreamSection connection={{ engineOrigin, result }} group={group} {...(selection && { selection })} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -124,6 +127,34 @@ it('shows loading and distinguishes an empty list from an empty prefix result', 
   enterPrefix('Absent');
   expect(await screen.findByText('No log streams match')).toBeVisible();
   expectRead('Absent');
+});
+
+it.each(['selectable', 'read-only'])('distinguishes line breaks from spaces in the %s listing', async (mode) => {
+  const name = 'multiline\nworker';
+  const spacedName = 'multiline worker';
+  read.mockResolvedValueOnce({ items: [{ logStreamName: name }, { logStreamName: spacedName }] });
+  const onChange = vi.fn();
+  renderSection(connected, mode === 'selectable' ? { name: undefined, onChange } : undefined);
+
+  const multilineLabel = 'multiline worker (contains a line break)';
+  const multilineLink = await screen.findByRole('link', { name: multilineLabel });
+  expect(multilineLink.textContent).toBe(name);
+  expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(multilineLink).toHaveAttribute(
+    'href',
+    '/aws/logs/log-groups/group/%2Fapp%23Group/stream/**multiline%250Aworker',
+  );
+  expect(screen.getByRole('link', { name: spacedName })).toHaveAttribute(
+    'href',
+    '/aws/logs/log-groups/group/%2Fapp%23Group/stream/multiline%20worker',
+  );
+
+  if (mode === 'selectable') {
+    fireEvent.click(screen.getByRole('radio', { name: spacedName }));
+    expect(onChange).toHaveBeenLastCalledWith(spacedName);
+    fireEvent.click(screen.getByRole('radio', { name: multilineLabel }));
+    expect(onChange).toHaveBeenLastCalledWith(name);
+  }
 });
 
 it('sends the typed prefix and explains that prefix matches are listed by name', async () => {

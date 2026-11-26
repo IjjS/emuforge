@@ -111,6 +111,27 @@ it.each([
   ]);
 });
 
+it.each([
+  ['%250A', '\n'],
+  ['%250D', '\r'],
+  ['%250D%250A', '\r\n'],
+])('preserves the line break in the heading and sends the decoded name from %s', async (encoded, lineBreak) => {
+  read.mockResolvedValueOnce(page([]));
+  renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
+
+  const heading = screen.getByRole('heading', { level: 1, name: 'multiline\nworker' });
+  const name = within(heading).getByText('multiline\nworker', { normalizer: (text) => text });
+  expect(name.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(await screen.findByText('No log events')).toBeVisible();
+  expect(read).toHaveBeenCalledWith(
+    ENGINE,
+    group,
+    `multiline${lineBreak}worker`,
+    { kind: 'newest' },
+    expect.any(AbortSignal),
+  );
+});
+
 it('shows loading and renders each timestamp and message in chronological order', async () => {
   const answer = page(['first', 'second']);
   read.mockResolvedValueOnce(answer);

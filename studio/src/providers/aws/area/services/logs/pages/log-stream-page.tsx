@@ -176,7 +176,13 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
           </Button>
         }
       >
-        <ValueText kind="name" value={stream} />
+        {/[\r\n]/.test(stream) ? (
+          <span style={{ whiteSpace: 'pre-wrap' }}>
+            <ValueText kind="name" value={stream.replace(/\r\n?/g, '\n')} />
+          </span>
+        ) : (
+          <ValueText kind="name" value={stream} />
+        )}
       </Header>
       <Container header={<Header variant="h2">Log events</Header>}>{body}</Container>
       {showPut && (
