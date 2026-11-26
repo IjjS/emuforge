@@ -14,7 +14,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
 import Tiles from '@cloudscape-design/components/tiles';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -148,6 +148,7 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
   const follow = useFollow();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const submitId = useId();
   const target = restApiPath(apiId, 'resources');
   const linked = useLinkedMethodResource(apiId, resourceId, endpoint);
   const baseline = toResource(linked.data);
@@ -200,7 +201,9 @@ function MethodEditor({ apiId, resourceId, connection, endpoint }: MethodEditorP
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || unavailable) return;
+    // A Retry inside a choice can also submit the containing form.
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    if ((submitter && submitter.id !== submitId) || busy.current || unavailable) return;
     setTried(true);
     setFailure(undefined);
     if ('errors' in validation) {

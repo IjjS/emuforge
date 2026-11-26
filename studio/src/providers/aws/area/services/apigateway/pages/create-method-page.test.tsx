@@ -7,6 +7,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext } from '../../../components/page-flash';
 import { registryFaults } from '../../../screens';
@@ -61,11 +62,16 @@ function RegisteredPage({ connection }: { connection: AreaConnection }) {
 function open(path = address, connection = connected) {
   const handOver = vi.fn();
   const user = userEvent.setup();
+  const root = { current: null as HTMLDivElement | null };
   const { container } = render(
     <MemoryRouter initialEntries={[path]}>
       <QueryClientProvider client={new QueryClient()}>
         <PageFlashContext.Provider value={{ handOver, show: vi.fn() }}>
-          <RegisteredPage connection={connection} />
+          <AreaRootContext.Provider value={root}>
+            <div ref={root}>
+              <RegisteredPage connection={connection} />
+            </div>
+          </AreaRootContext.Provider>
         </PageFlashContext.Provider>
       </QueryClientProvider>
     </MemoryRouter>,
