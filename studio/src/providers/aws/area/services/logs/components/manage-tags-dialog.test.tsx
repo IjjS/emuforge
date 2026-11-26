@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -95,6 +96,29 @@ function renderGroup() {
   );
 }
 
+function tagRows() {
+  const table = createWrapper(document.body)
+    .findAllTables()
+    .find(
+      (candidate) => candidate.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags',
+    );
+  return table
+    ?.findRows()
+    .map((_, index) => [
+      table.findBodyCell(index + 1, 1)?.getElement().textContent,
+      table.findBodyCell(index + 1, 2)?.getElement().textContent,
+    ]);
+}
+
+async function waitForInitialTags() {
+  await waitFor(() =>
+    expect(tagRows()).toEqual([
+      ['a', 'one'],
+      ['b', 'two'],
+    ]),
+  );
+}
+
 async function open() {
   const action = screen.getByRole('button', { name: 'Manage tags' });
   await waitFor(() => expect(action).toBeEnabled());
@@ -131,7 +155,7 @@ function expectDraftKept(dialog: BoundFunctions<typeof queries>) {
 it('opens with current tags, closes without requests for an unchanged save, and validates edits before sending', async () => {
   const sent = writes();
   renderGroup();
-  await screen.findByText('one');
+  await waitForInitialTags();
   const unchanged = await open();
   expect(unchanged.dialog.getByDisplayValue('one')).toBeVisible();
   expect(unchanged.dialog.getByDisplayValue('two')).toBeVisible();
@@ -148,7 +172,7 @@ it('opens with current tags, closes without requests for an unchanged save, and 
 it('keeps the draft and stops before the tag call when untag is refused', async () => {
   const sent = writes([400]);
   renderGroup();
-  await screen.findByText('one');
+  await waitForInitialTags();
   const { dialog, save } = await open();
   replaceA(dialog);
   fireEvent.click(save);
@@ -169,7 +193,7 @@ it('blocks save after a partial write until a retry reads fresh tags, then saves
     .mockReturnValueOnce(retry.promise)
     .mockResolvedValue({ b: 'two', c: 'fixed' });
   renderGroup();
-  await screen.findByText('one');
+  await waitForInitialTags();
   const { dialog, save } = await open();
   replaceA(dialog);
   fireEvent.click(save);
@@ -203,17 +227,19 @@ it('blocks save after a partial write until a retry reads fresh tags, then saves
   await act(async () => retry.resolve({ b: 'two' }));
   await waitFor(() => expect(save).toBeEnabled());
   expectDraftKept(dialog);
-  const table = document.querySelector('table');
-  expect(table).toHaveTextContent('two');
-  expect(table).not.toHaveTextContent('one');
-  expect(table).not.toHaveTextContent('refused');
+  expect(tagRows()).toEqual([['b', 'two']]);
 
   fireEvent.change(dialog.getByDisplayValue('refused'), { target: { value: 'fixed' } });
   fireEvent.click(save);
   const notifications = await screen.findByRole('list', { name: 'Notifications' });
   expect(notifications).toHaveTextContent(`Tags of ${name} saved.`);
   expect(screen.queryByRole('dialog', { name: 'Manage tags' })).not.toBeInTheDocument();
-  expect(await screen.findByText('fixed')).toBeVisible();
+  await waitFor(() =>
+    expect(tagRows()).toEqual([
+      ['b', 'two'],
+      ['c', 'fixed'],
+    ]),
+  );
   expect(sent).toEqual([
     { operation: 'UntagLogGroup', tags: ['a'] },
     { operation: 'TagLogGroup', tags: { c: 'refused' } },
@@ -230,7 +256,7 @@ it.each([
     const sent = writes([...statuses]);
     listTags.mockResolvedValueOnce(initial).mockResolvedValue(after);
     renderGroup();
-    await screen.findByText('one');
+    await waitForInitialTags();
     const first = await open();
     replaceA(first.dialog);
     fireEvent.click(first.save);
@@ -241,8 +267,7 @@ it.each([
     expect(sent).toHaveLength(statuses.length);
     if (operation === 'TagLogGroup') {
       expect(first.dialog.getByText('The tags removed in this save are already removed.')).toBeVisible();
-      await waitFor(() => expect(document.querySelector('table')).toHaveTextContent('two'));
-      expect(document.querySelector('table')).not.toHaveTextContent('one');
+      await waitFor(() => expect(tagRows()).toEqual([['b', 'two']]));
     }
     fireEvent.click(first.dialog.getByRole('button', { name: 'Cancel' }));
 
