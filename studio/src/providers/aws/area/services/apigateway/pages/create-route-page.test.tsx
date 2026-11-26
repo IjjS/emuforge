@@ -90,9 +90,13 @@ function open(currentConnection = connection) {
     if (!control) throw new Error(`Missing input ${label}`);
     return control.findNativeInput().getElement();
   };
-  const openSelect = async (label: string) => {
+  const select = (label: string) => {
     const control = createWrapper(field(label).getElement()).findSelect();
     if (!control) throw new Error(`Missing select ${label}`);
+    return control;
+  };
+  const openSelect = async (label: string) => {
+    const control = select(label);
     await user.click(control.findTrigger().getElement());
     return control;
   };
@@ -133,6 +137,7 @@ function open(currentConnection = connection) {
     wrapper,
     field,
     input,
+    select,
     openSelect,
     choose,
     chooseKind,
@@ -166,6 +171,27 @@ it('shows the API name directly below the Create route heading', async () => {
   const description = header?.findDescription()?.getElement();
   expect(description).toBeVisible();
   expect(description).toHaveTextContent(`API: ${apiName}`);
+});
+
+it('names each route select with its field label and current choice', async () => {
+  const form = open();
+  await form.shown();
+
+  const trigger = (label: string) => form.select(label).findTrigger().getElement();
+  expect(trigger('Route')).toHaveAccessibleName('Route Method and path');
+  expect(trigger('HTTP method')).toHaveAccessibleName('HTTP method GET');
+  expect(trigger('Authorization')).toHaveAccessibleName('Authorization NONE');
+  expect(trigger('Integration')).toHaveAccessibleName('Integration Use an existing integration');
+  expect(trigger('Existing integration')).toHaveAccessibleName('Existing integration Choose an integration');
+  await form.choose('Existing integration', 'int-existing');
+  expect(trigger('Existing integration')).toHaveAccessibleName('Existing integration int-existing');
+
+  await form.choose('Integration', 'new');
+  expect(trigger('Integration')).toHaveAccessibleName('Integration Create an integration');
+  expect(trigger('Payload format')).toHaveAccessibleName('Payload format 2.0');
+
+  await form.chooseKind('http');
+  expect(trigger('Integration HTTP method')).toHaveAccessibleName('Integration HTTP method GET');
 });
 
 it('describes every route and integration choice and reads existing integrations only when opened', async () => {

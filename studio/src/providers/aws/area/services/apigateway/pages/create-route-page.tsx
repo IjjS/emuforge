@@ -92,7 +92,6 @@ function RouteSelect<T extends string>({
   return (
     <FormField label={label}>
       <Select
-        ariaLabel={label}
         options={options}
         selectedOption={options.find((option) => option.value === value) ?? null}
         onChange={({ detail }) => {
@@ -359,7 +358,6 @@ function RouteEditor({ apiId, endpoint, connection }: { apiId: string; endpoint:
                       errorText={errors.existing}
                     >
                       <PagedChoice
-                        ariaLabel="Existing integration"
                         source={source}
                         connection={connection}
                         things="integrations"
