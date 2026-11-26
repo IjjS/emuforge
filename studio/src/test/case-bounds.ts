@@ -82,7 +82,11 @@ function timeoutOption(argument: ts.Expression | undefined): ts.Expression | und
     return undefined;
   }
   for (const property of argument.properties) {
-    if (ts.isPropertyAssignment(property) && property.name.getText() === 'timeout') {
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === 'timeout'
+    ) {
       return property.initializer;
     }
     if (ts.isShorthandPropertyAssignment(property) && property.name.text === 'timeout') {
@@ -186,14 +190,20 @@ export function scanCaseBounds(source: string, name: string): Finding[] {
 }
 
 /** The argument that can give this wait its timeout options. */
-function waitOptions(call: ts.CallExpression): ts.Expression | undefined {
+function waitOptions(call: ts.CallExpression, checker: ts.TypeChecker): ts.Expression | undefined {
   const callee = call.expression;
   const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : calledName(callee);
   if (name === 'waitFor' || name === 'waitForElementToBeRemoved') {
     return call.arguments[1];
   }
   if (name !== undefined && /^find(?:All)?By/.test(name)) {
-    return call.arguments.length >= 2 ? call.arguments.at(-1) : undefined;
+    // A bound query takes (matcher, query options, wait options). Imported queries also take a container first.
+    const method = ts.isPropertyAccessExpression(callee);
+    const receiver = method ? callee.expression : callee;
+    const imported = checker
+      .getSymbolAtLocation(receiver)
+      ?.declarations?.some(method ? ts.isNamespaceImport : ts.isImportSpecifier);
+    return call.arguments[imported ? 3 : 2];
   }
   return undefined;
 }
@@ -201,20 +211,25 @@ function waitOptions(call: ts.CallExpression): ts.Expression | undefined {
 /** Waits given more than 5000 ms in one of the AWS area suites. */
 export function scanWaitBounds(source: string, name: string): Finding[] {
   const file = parse(source);
-  const initializers = new Map<string, ts.Expression>();
-  const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
-      initializers.set(node.name.text, node.initializer);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
+  // Bind names in this source alone. Imports and library types are unnecessary for local declarations.
+  const options = { noLib: true, noResolve: true };
+  const host = ts.createCompilerHost(options);
+  host.getSourceFile = (path) => (path === file.fileName ? file : undefined);
+  const checker = ts.createProgram([file.fileName], options, host).getTypeChecker();
 
-  const resolve = (value: ts.Expression): ts.Expression =>
-    ts.isIdentifier(value) ? (initializers.get(value.text) ?? value) : value;
+  const resolve = (value: ts.Expression): ts.Expression => {
+    if (!ts.isIdentifier(value)) return value;
+    const binding = ts.isShorthandPropertyAssignment(value.parent)
+      ? checker.getShorthandAssignmentValueSymbol(value.parent)
+      : checker.getSymbolAtLocation(value);
+    const declaration = binding?.valueDeclaration;
+    return declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? (declaration.initializer ?? value)
+      : value;
+  };
   const findings: Finding[] = [];
   for (const call of calls(file)) {
-    const argument = waitOptions(call);
+    const argument = waitOptions(call, checker);
     if (argument === undefined) continue;
     const options = resolve(argument);
     const callee = call.expression;

@@ -119,10 +119,13 @@ describe('a wait above the default case bound', () => {
     ['a findBy call in a case', waits.FIND_BY, 'await screen.findByRole'],
     ['a named options object', waits.NAMED_OPTIONS, 'await vi.waitFor'],
     ['a named timeout in options', waits.NAMED_TIMEOUT, 'await screen.findByRole'],
+    ['a timeout name shadowed in another case', waits.SHADOWED_TIMEOUT, 'await vi.waitFor'],
     ['a wait in a helper', waits.HELPER, 'return screen.findByRole'],
     ['a wait in a hook', waits.HOOK, 'await screen.findByRole'],
     ['a waitFor call', waits.WAIT_FOR, 'await waitFor('],
+    ['a quoted timeout property', waits.QUOTED_TIMEOUT, 'await waitFor('],
     ['a findAllBy call', waits.FIND_ALL_BY, 'await screen.findAllByRole'],
+    ['an unbound findBy call', waits.UNBOUND_QUERY, 'await findByRole'],
     ['a waitForElementToBeRemoved call', waits.WAIT_FOR_REMOVAL, 'await waitForElementToBeRemoved'],
   ])('names the call for %s', (_label, source, start) => {
     expect(scanWaitBounds(source, FILE)).toEqual([
@@ -141,6 +144,10 @@ describe('a wait above the default case bound', () => {
 
   it('ignores timeouts that are not wait options', () => {
     expect(scanWaitBounds(waits.OTHER_TIMEOUTS, FILE)).toEqual([]);
+  });
+
+  it('ignores the query options of bound and unbound findBy and findAllBy calls', () => {
+    expect(scanWaitBounds(waits.QUERY_OPTIONS, FILE)).toEqual([]);
   });
 });
 
