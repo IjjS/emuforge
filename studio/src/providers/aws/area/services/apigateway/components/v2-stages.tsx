@@ -137,7 +137,7 @@ export function V2Stages({ api, stages, connection }: V2StagesProps) {
                     <Button
                       disabled={!canDeploy && !deploy.isPending}
                       loading={deploy.isPending}
-                      ariaDescribedby={deployReason ? deployReasonId : undefined}
+                      {...(deployReason && { ariaDescribedby: deployReasonId })}
                       onClick={handleDeploy}
                     >
                       Deploy
