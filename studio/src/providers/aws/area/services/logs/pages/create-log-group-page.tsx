@@ -12,6 +12,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
+import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { DiscardDialog } from '../../../components/discard-dialog';
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashResult } from '../../../components/page-flash';
@@ -40,6 +41,21 @@ const CLASS_OPTIONS = (
     { value: 'DELIVERY', description: LIMITED_CLASS_DESCRIPTION },
   ] as const
 ).map(({ value, description }) => ({ value, label: logGroupClassText(value), description }));
+
+function groupWriteFailure(failure: RequestFailure, engineOrigin: string | undefined) {
+  const item = actionFailureItem(failure, failure.operation, engineOrigin);
+  if (failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') {
+    return {
+      ...item,
+      content: (
+        <>
+          {failure.operation} failed. {item.content}
+        </>
+      ),
+    };
+  }
+  return item;
+}
 
 export function CreateLogGroupPage({ connection }: ScreenPageProps) {
   useShowsResources('log groups');
@@ -86,9 +102,7 @@ export function CreateLogGroupPage({ connection }: ScreenPageProps) {
 
     const { createLogGroup: createOperation, putRetentionPolicy: retentionOperation } = GROUP_CREATE_OPERATIONS;
     if (engineOrigin === undefined) {
-      flash.show([
-        actionFailureItem({ kind: 'engine-did-not-answer', operation: createOperation }, createOperation, engineOrigin),
-      ]);
+      flash.show([groupWriteFailure({ kind: 'engine-did-not-answer', operation: createOperation }, engineOrigin)]);
       return;
     }
 
@@ -103,7 +117,7 @@ export function CreateLogGroupPage({ connection }: ScreenPageProps) {
       setUnavailable(failure.kind === 'not-implemented');
       setPending(false);
       busy.current = false;
-      flash.show([actionFailureItem(failure, createOperation, engineOrigin)]);
+      flash.show([groupWriteFailure(failure, engineOrigin)]);
       return;
     }
     if (signal.aborted) return;
@@ -116,7 +130,7 @@ export function CreateLogGroupPage({ connection }: ScreenPageProps) {
         if (signal.aborted) return;
         result = [
           { type: 'warning', content: `Log group ${name} created, but its retention was not set.` },
-          actionFailureItem(failureOf(error, retentionOperation), retentionOperation, engineOrigin),
+          groupWriteFailure(failureOf(error, retentionOperation), engineOrigin),
         ];
       }
     }
