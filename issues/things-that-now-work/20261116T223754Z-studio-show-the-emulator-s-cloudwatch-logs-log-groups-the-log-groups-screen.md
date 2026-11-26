@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|logs|log-groups-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.logs-create-and-delete-stream studio.logs-create-group-existing-name-is-refused studio.logs-create-group-with-settings studio.logs-delete-group-from-its-page studio.logs-delete-group-from-the-list studio.logs-delete-protected-group-is-refused studio.logs-entries-lead-to-a-screen-or-no-screen-yet studio.logs-group-list-pages studio.logs-group-settings-change studio.logs-groups-made-outside-are-listed studio.logs-missing-group-and-stream-are-not-found studio.logs-other-class-refuses-reading-and-takes-puts studio.logs-put-events-are-shown-first studio.logs-read-a-stream-older-and-newer studio.logs-search-events-by-pattern-stream-and-time studio.logs-stream-names-open-by-their-address studio.logs-streams-entry-lists-a-chosen-group
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's CloudWatch Logs log groups: the Log groups screen
