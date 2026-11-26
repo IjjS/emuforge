@@ -28,6 +28,14 @@ beforeEach(() => {
   invoke.mockReset();
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 it('shows the registered method as text and fills in the resource path', () => {
   const { container } = renderPanel();
   expect(screen.getByText('ANY')).toBeVisible();
@@ -117,8 +125,8 @@ it('validates headers before sending and submits the edited request', async () =
 });
 
 it('keeps the third answer on screen after the second test finishes', async () => {
-  const second = Promise.withResolvers<TestInvokeMethodCommandOutput>();
-  const third = Promise.withResolvers<TestInvokeMethodCommandOutput>();
+  const second = deferred<TestInvokeMethodCommandOutput>();
+  const third = deferred<TestInvokeMethodCommandOutput>();
   invoke
     .mockResolvedValueOnce({ $metadata: {}, body: 'First answer' })
     .mockReturnValueOnce(second.promise)

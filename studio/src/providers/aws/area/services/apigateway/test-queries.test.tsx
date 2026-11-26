@@ -9,9 +9,17 @@ import { useTestMethod } from './test-queries';
 
 vi.mock('./test-api', { spy: true });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 it('gives the latest test answer when the first test answers last', async () => {
-  const first = Promise.withResolvers<TestInvokeMethodCommandOutput>();
-  const second = Promise.withResolvers<TestInvokeMethodCommandOutput>();
+  const first = deferred<TestInvokeMethodCommandOutput>();
+  const second = deferred<TestInvokeMethodCommandOutput>();
   const invoke = vi.mocked(testInvokeMethod);
   invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   const client = new QueryClient();
