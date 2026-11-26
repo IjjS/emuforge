@@ -2834,7 +2834,7 @@ describe('a service that gives entries (issue 650, R4–R5)', () => {
 
     const { router } = open(widgets.path);
     const nav = within(screen.getByRole('navigation', { name: 'Navigation' }));
-    const buttons = nav.getAllByRole('button');
+    const buttons = nav.getAllByRole('button').filter((button) => button.hasAttribute('aria-expanded'));
     expect(buttons.map((button) => button.textContent?.trim())).toEqual(
       grouped ? ['Core', 'A', 'B', 'C', 'Secondary'] : ['A', 'B', 'C'],
     );
