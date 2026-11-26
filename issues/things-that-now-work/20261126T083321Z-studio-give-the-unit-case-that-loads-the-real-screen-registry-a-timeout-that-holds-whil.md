@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|aws-area-real-registry-unit-case|load-timeout
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/test/area-preload.test.ts studio-unit:src/providers/aws/area/area-layout.test.tsx
 Issue-Commit: d1b6ac21c6a387ae5986f355eee1a4971a1c228d
 
 # Give the unit case that loads the real screen registry a timeout that holds while three unit suites run
