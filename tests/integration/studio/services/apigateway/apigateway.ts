@@ -122,6 +122,9 @@ export async function fixture(ctx: Ctx) {
           path: pathname,
           method: options.method ?? 'GET',
           ca,
+          // The certificate names `localhost` and the loopback addresses; without this Node would look for the
+          // `Host` header's name in it.
+          servername: 'localhost',
           headers: options.host === undefined ? {} : { Host: options.host },
         },
         (response) => {
