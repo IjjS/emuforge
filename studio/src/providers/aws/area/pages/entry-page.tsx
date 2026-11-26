@@ -65,9 +65,9 @@ export function EntryPage({ page }: { page: EntryAreaPage }) {
         </Container>
         {'subService' in match && (
           <Container header={<Header variant="h2">Resource kinds</Header>}>
-            <Box variant="ul">
+            <Box tagOverride="ul">
               {match.links.map(({ href, text, info }) => (
-                <Box variant="li" key={href}>
+                <Box tagOverride="li" key={href}>
                   <Link href={href} onFollow={follow}>
                     {text}
                   </Link>

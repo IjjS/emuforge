@@ -2814,7 +2814,7 @@ describe('a service that gives entries (issue 650, R4–R5)', () => {
     ]);
     const target = screen.getByRole('region', { name: things.label });
     expect(within(target).getByRole('heading', { name: things.label, level: 1 })).toBeInTheDocument();
-    expect(within(target).getByText('Checking')).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
     expect(within(target).queryByText(/are in your local emulator/)).not.toBeInTheDocument();
     expect(within(target).queryByRole('button', { name: 'About the local emulator' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open help panel' })).not.toBeInTheDocument();

@@ -18,7 +18,7 @@ export interface ScreenNavigation {
   /** The navigation's header: the service's name and the address it leads to. */
   header: { text: string; href: string };
   /** Navigation items for a service without an entries.ts. */
-  items?: readonly SideNavigationProps.Item[] | undefined;
+  items?: readonly SideNavigationProps.Item[];
   /** The link shown current on every path of the screen. */
   activeHref: string;
 }
