@@ -1,5 +1,5 @@
 export const PARAMETER_STORE_PATH = '/aws/ssm';
-const PARAMETERS_PATH = `${PARAMETER_STORE_PATH}/parameters`;
+export const PARAMETERS_PATH = `${PARAMETER_STORE_PATH}/parameters`;
 export const PARAMETER_CREATE_PATH = `${PARAMETERS_PATH}/create`;
 export const PARAMETER_DETAIL_PATH = `${PARAMETERS_PATH}/detail`;
 export const PARAMETER_EDIT_PATH = `${PARAMETERS_PATH}/edit`;

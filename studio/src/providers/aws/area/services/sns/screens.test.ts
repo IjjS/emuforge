@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { findResourceEntry } from '../../entries';
+import { ENTRIES } from './entries';
 import { SCREENS } from './screens';
 
 const ARN = 'arn:aws:sns:us-east-1:000000000000:orders';
@@ -54,7 +56,9 @@ describe("SNS's screens", () => {
 
     for (const screen of SCREENS) {
       expect(screen.navigation.header).toEqual({ text: 'SNS', href: '/aws/sns' });
-      expect(screen.navigation.items).toEqual([{ type: 'link', text: 'Topics', href: '/aws/sns/topics' }]);
+      expect(screen.navigation.activeHref).toBe('/aws/sns/topics');
+      expect(findResourceEntry(ENTRIES, screen.navigation.activeHref)?.label).toBe('Topics');
+      expect(screen.navigation).not.toHaveProperty('items');
     }
   });
 });

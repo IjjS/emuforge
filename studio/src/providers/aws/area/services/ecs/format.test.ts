@@ -90,13 +90,10 @@ describe('the status words', () => {
 });
 
 describe('the side navigation', () => {
-  it('"Clusters" and "Task definitions" with their addresses, under the header "ECS"', () => {
+  it('marks the appropriate entry current under the header "ECS"', () => {
     for (const navigation of [CLUSTERS_NAVIGATION, TASK_DEFINITIONS_NAVIGATION]) {
       expect(navigation.header).toEqual({ text: 'ECS', href: '/aws/ecs' });
-      expect(navigation.items).toEqual([
-        { type: 'link', text: 'Clusters', href: '/aws/ecs/clusters' },
-        { type: 'link', text: 'Task definitions', href: '/aws/ecs/task-definitions' },
-      ]);
+      expect(navigation).not.toHaveProperty('items');
     }
     expect(CLUSTERS_NAVIGATION.activeHref).toBe('/aws/ecs/clusters');
     expect(TASK_DEFINITIONS_NAVIGATION.activeHref).toBe('/aws/ecs/task-definitions');
