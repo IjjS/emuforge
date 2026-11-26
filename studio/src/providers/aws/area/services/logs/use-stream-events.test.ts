@@ -135,3 +135,81 @@ it.each([
   expect(result.current[failed].failure).toBeUndefined();
   expect(result.current[other].token).toBe(other === 'older' ? 'backward-2' : 'forward-2');
 });
+
+const submittedTime = 123;
+const fromTime = { kind: 'from-time', time: submittedTime };
+const beforeTime = { kind: 'before-time', time: submittedTime };
+
+function requests() {
+  return read.mock.calls.map(([, , , request]) => request);
+}
+
+it('starts at the put time and pages independently on both sides without sending either opposite token', async () => {
+  const { result } = await open();
+  read
+    .mockResolvedValueOnce(page(['put', 'ahead'], 'wrong-older', 'after-1'))
+    .mockResolvedValueOnce(page(['later'], 'wrong-older', 'after-2'))
+    .mockResolvedValueOnce(page(['before'], 'before-1', 'wrong-newer'))
+    .mockResolvedValueOnce(page(['earliest'], 'before-2', 'wrong-newer'))
+    .mockResolvedValueOnce(page(['latest'], 'wrong-older', 'after-3'));
+
+  await act(async () => result.current.readFrom(submittedTime));
+  expect(result.current.events?.map(({ message }) => message)).toEqual(['put', 'ahead']);
+  for (const direction of ['newer', 'older', 'older', 'newer'] as const) {
+    await act(async () => result.current.load(direction));
+  }
+  expect(requests()).toEqual([
+    { kind: 'newest' },
+    fromTime,
+    { kind: 'continue', token: 'after-1' },
+    beforeTime,
+    { kind: 'continue', token: 'before-1' },
+    { kind: 'continue', token: 'after-2' },
+  ]);
+  expect(result.current.events?.map(({ message }) => message)).toEqual([
+    'earliest',
+    'before',
+    'put',
+    'ahead',
+    'later',
+    'latest',
+  ]);
+});
+
+it('aborts a read started before a put and ignores its late answer', async () => {
+  const { result } = await open();
+  const old = pendingPage();
+  read.mockReturnValueOnce(old.promise).mockResolvedValueOnce(page(['put'], 'wrong-older', 'after-1'));
+  act(() => result.current.load('older'));
+  const oldSignal = read.mock.lastCall?.[4];
+  await act(async () => result.current.readFrom(submittedTime));
+  await act(async () => old.resolve(page(['stale'], 'stale-older', 'stale-newer')));
+  expect(oldSignal?.aborted).toBe(true);
+  expect(result.current.events).toEqual([{ message: 'put' }]);
+});
+
+it('retries the first older read with its time bound and leaves the newer end alone', async () => {
+  const { result } = await open();
+  const failure = { kind: 'other', code: 'InvalidParameterException', operation: 'GetLogEvents' } as const;
+  read.mockResolvedValueOnce(page(['put'], 'wrong-older', 'after-1')).mockRejectedValueOnce(new RequestError(failure));
+  await act(async () => result.current.readFrom(submittedTime));
+  await act(async () => result.current.load('older'));
+  expect(result.current.events).toEqual([{ message: 'put' }]);
+  expect(result.current.newer).toEqual({ token: 'after-1' });
+  expect(result.current.older).toMatchObject({ beforeTime: submittedTime, failure });
+
+  read
+    .mockResolvedValueOnce(page(['before'], 'before-1', 'wrong-newer'))
+    .mockResolvedValueOnce(page(['earliest'], 'before-2', 'wrong-newer'));
+  await act(async () => result.current.load('older'));
+  await act(async () => result.current.load('older'));
+  expect(requests()).toEqual([
+    { kind: 'newest' },
+    fromTime,
+    beforeTime,
+    beforeTime,
+    { kind: 'continue', token: 'before-1' },
+  ]);
+  expect(result.current.events?.map(({ message }) => message)).toEqual(['earliest', 'before', 'put']);
+  expect(result.current.newer).toEqual({ token: 'after-1' });
+});
