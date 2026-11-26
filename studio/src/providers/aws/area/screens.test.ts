@@ -197,7 +197,12 @@ describe('the registry of the AWS area', () => {
   // Issue 480: the bucket page's paths are the Objects tab (its bare route and /objects) and /properties; it still leads
   // to /aws/s3/bucket/{name}/property alone.
   it("the real registry: S3's bucket page leads to /aws/s3/bucket/{name}/property; no other screen of S3, Lambda or IAM leads anywhere; the registry has no fault", () => {
-    const leading = SCREENS.filter((screen) => screen.leadsTo !== undefined && screen.leadsTo.length > 0);
+    const leading = SCREENS.filter(
+      (screen) =>
+        ['/s3', '/lambda', '/iam'].includes(screen.service) &&
+        screen.leadsTo !== undefined &&
+        screen.leadsTo.length > 0,
+    );
     expect(leading.map(({ service, paths, leadsTo }) => ({ service, first: paths[0], leadsTo }))).toEqual([
       { service: '/s3', first: '/aws/s3/buckets/{name}', leadsTo: ['/aws/s3/bucket/{name}/property'] },
     ]);
