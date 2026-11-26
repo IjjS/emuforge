@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ import { EntryPage } from './entry-page';
 const service: Service = { route: '/example', label: 'Amazon Example', crumb: 'Example', hasScreen: true };
 const route = '/aws/example';
 const accounts = { label: 'Accounts', path: `${route}/accounts`, listedBy: 'ListAccounts' };
+const reports = { label: 'Reports', path: `${route}/reports`, listedBy: 'ListReports' };
 const rules = { label: 'Rules', path: `${route}/rules`, listedBy: 'ListRules' };
 const subService = { name: 'Sub-service', path: `${route}/sub-service` };
 const navigation = { header: { text: service.label, href: route }, activeHref: accounts.path };
@@ -26,7 +28,7 @@ const accountsScreen: AreaScreen = {
 const first = { screen: accountsScreen, address: route, title: accounts.label };
 
 function page(resource: ResourceEntry, multipleGroups = false): EntryAreaPage {
-  const group = { name: service.label, entries: [accounts, resource] };
+  const group = { name: service.label, entries: [accounts, reports, resource] };
   return {
     kind: 'entry',
     label: resource.label,
@@ -51,16 +53,24 @@ function open(page: EntryAreaPage) {
   return router;
 }
 
+function metadata() {
+  return createWrapper(document.body)
+    .findKeyValuePairs()
+    ?.findItems()
+    .map((item) => [item.findLabel()?.getElement().textContent, item.findValue()?.getElement().textContent]);
+}
+
 describe('the page of an entry without a screen (issue 650, R5)', () => {
   it('describes a kind listed for the account and offers the service’s first screen and Home', () => {
     open(page(rules, true));
 
     expect(screen.getByRole('heading', { level: 1, name: rules.label })).toBeInTheDocument();
     expect(screen.getByText('Studio has no screen for this yet.')).toBeInTheDocument();
-    expect(screen.getByText('Resource kind')).toBeInTheDocument();
-    expect(screen.getByText('Part of')).toBeInTheDocument();
-    expect(screen.getByText(service.label)).toBeInTheDocument();
-    expect(screen.getByText('Listed by')).toBeInTheDocument();
+    expect(metadata()).toEqual([
+      ['Resource kind', rules.label],
+      ['Part of', service.label],
+      ['Listed by', rules.listedBy],
+    ]);
     expect(screen.getByText(rules.listedBy).closest('code')).toHaveTextContent(rules.listedBy);
     expect(screen.getByText('Opening this page changed nothing in your local emulator.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Go to Accounts' })).toHaveAttribute('href', route);
@@ -69,15 +79,17 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
 
   it('omits the group name for a kind in a single group', () => {
     open(page(rules));
-    expect(screen.queryByText('Part of')).not.toBeInTheDocument();
+    expect(metadata()).toEqual([
+      ['Resource kind', rules.label],
+      ['Listed by', rules.listedBy],
+    ]);
   });
 
   it('names and links to the parent of a scoped kind without promising a view there', () => {
     open(page({ ...rules, listedInside: accounts.path }));
 
     expect(screen.getByText('Studio has no screen for this yet.')).toBeInTheDocument();
-    expect(screen.getByText('Listed inside')).toBeInTheDocument();
-    expect(screen.getByText(accounts.label)).toBeInTheDocument();
+    expect(metadata()).toContainEqual(['Listed inside', accounts.label]);
     expect(screen.queryByText(/^It shows them in/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Go to Accounts' })).toHaveAttribute('href', accounts.path);
   });
@@ -87,14 +99,18 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
       page({
         ...rules,
         ...(scoped ? { listedInside: accounts.path } : {}),
-        shownIn: { entry: accounts.path, place: 'the "Rules" section of an account' },
+        shownIn: { entry: reports.path, place: 'the "Rules" section of a report' },
       }),
     );
 
     expect(screen.getByText('Studio has no screen that lists these across Example yet.')).toBeInTheDocument();
-    expect(screen.getByText('It shows them in the "Rules" section of an account.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Accounts' })).toHaveAttribute('href', accounts.path);
-    expect(screen.queryByText('Listed inside') !== null).toBe(scoped);
+    expect(screen.getByText('It shows them in the "Rules" section of a report.')).toBeInTheDocument();
+    expect(metadata()).toEqual([
+      ['Resource kind', rules.label],
+      ['Listed by', rules.listedBy],
+      ...(scoped ? [['Listed inside', accounts.label]] : []),
+    ]);
+    expect(screen.getByRole('link', { name: `Go to ${reports.label}` })).toHaveAttribute('href', reports.path);
   });
 
   it('lists a sub-service’s resource kinds and marks links without screens', () => {
@@ -106,9 +122,10 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
     });
 
     expect(screen.getByRole('heading', { level: 1, name: subService.name })).toBeInTheDocument();
-    expect(screen.getAllByText('Sub-service').some((element) => element.closest('dt') !== null)).toBe(true);
-    expect(screen.getByText('Part of')).toBeInTheDocument();
-    expect(screen.getByText(service.crumb)).toBeInTheDocument();
+    expect(metadata()).toEqual([
+      ['Sub-service', subService.name],
+      ['Part of', service.crumb],
+    ]);
     expect(screen.getByRole('heading', { level: 2, name: 'Resource kinds' })).toBeInTheDocument();
 
     const built = screen.getByRole('link', { name: accounts.label });

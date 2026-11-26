@@ -58,9 +58,12 @@ emulator's answers and the API models, independently of the AWS console's naviga
    Show group names when there is more than one group.
 2. A resource kind has a list read whose output model contains a list and a making operation in the same model.
    An account list is a `Describe*` or `List*` read from the probe table that answers 2xx without an argument of its
-   own. A scoped list is a `List*` or plural `Describe*` outside the table with one required member naming a parent
-   kind of the same model, or a read from the table refused without its parent and with a member that identifies
-   that parent. Probe scoped reads with an existing parent and require a 2xx answer. A 501 gives no entry. Reads of
+   own. For a scoped list outside the table, use a `List*` or plural `Describe*` with exactly one required input
+   member. That member must identify one parent kind in the same model. For a table read refused for want of its
+   parent, use the optional input member that identifies the parent. If several optional members identify the
+   parent, choose the one that identifies it on its own, such as `Arn` for the registered type in `cloudformation`
+   `ListTypeVersions`. Identify the member and its parent kind from the API's semantics. Probe scoped reads with
+   an existing parent and require a 2xx answer. A 501 gives no entry. Reads of
    one item at a time and reads requiring more than one argument are reached from their parent's screens. When
    both `List` and `Describe` give the same kind, use `List`.
 3. Pair the list read with an operation that makes the kind. Start with the singular or plural noun after a
@@ -75,8 +78,10 @@ emulator's answers and the API models, independently of the AWS console's naviga
 5. Keep existing navigation labels and addresses and the existing links, tabs and buttons between resource
    screens. When a built list has only the service's route, register a second path for its entry
    (`/aws/kms/keys`, `/aws/ssm/parameters`) and continue to open the list at the service's route.
-6. Label a new kind with the read's noun in words, capitalising the first word and retaining API acronyms. Its
-   path is `/aws/<service>/<noun-in-kebab-case>`, including for kinds listed inside a parent. For a path shared
+6. Label a new kind with the read's noun in words, capitalising the first word and retaining API acronyms. When
+   the operation name does not follow `Describe` or `List` followed by the kind's noun, record the operation and
+   the kind it lists as an explicit pair, for example `ListVersionsByFunction` → Versions. The kind's path is
+   `/aws/<service>/<noun-in-kebab-case>`, including for kinds listed inside a parent. For a path shared
    by two groups, prefix the later model's kind with that model's words. Labels and paths are unique within a
    service. The service's route belongs to its navigation header.
 7. Inside a group, show entries with screens first, in the order written, followed by other entries by label. A

@@ -2832,24 +2832,45 @@ describe('a service that gives entries (issue 650, R4–R5)', () => {
       : [core];
     registry.entries.splice(0, 1, { service, groups });
 
-    const { router } = open(widgets.path);
-    const nav = within(screen.getByRole('navigation', { name: 'Navigation' }));
-    const buttons = nav.getAllByRole('button').filter((button) => button.hasAttribute('aria-expanded'));
-    expect(buttons.map((button) => button.textContent?.trim())).toEqual(
-      grouped ? ['Core', 'A', 'B', 'C', 'Secondary'] : ['A', 'B', 'C'],
-    );
-    expect(nav.getByRole('link', { name: widgets.label })).toHaveAttribute('aria-current', 'page');
+    const { router, wrapper } = open(widgets.path);
+    const navigation = () => wrapper.findSideNavigation();
+    const rangeSection = (index: number) => {
+      const nav = navigation();
+      if (!grouped) return nav?.findItemByIndex(index)?.findSection();
+      const core = nav?.findItemByIndex(1);
+      const children = core
+        ?.findItems()
+        .filter((item) => item.getElement().parentElement?.closest('li') === core.getElement());
+      return children?.[index - 1]?.findSection();
+    };
+    if (grouped) {
+      expect(navigation()?.findItemByIndex(1)?.findSectionTitle()?.getElement()).toHaveTextContent('Core');
+      expect(navigation()?.findItemByIndex(2)?.findSectionTitle()?.getElement()).toHaveTextContent('Secondary');
+    }
+    const ranges = [2, 3, 4].map((index) => rangeSection(index)?.findExpandButton().getElement());
+    expect(ranges.map((button) => button?.textContent?.trim())).toEqual(['A', 'B', 'C']);
+    for (const button of ranges) expect(button).toHaveAttribute('aria-expanded', 'false');
+    const built = navigation()?.findLinkByHref(widgets.path)?.getElement();
+    expect(built).toHaveAccessibleName(widgets.label);
+    expect(built).toHaveAttribute('aria-current', 'page');
 
-    const adapters = nav.getByRole('button', { name: 'A' });
-    expect(adapters).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(adapters);
+    const [adapters] = ranges;
+    fireEvent.click(adapters as HTMLElement);
     expect(adapters).toHaveAttribute('aria-expanded', 'true');
-    expect(nav.getByRole('link', { name: 'Adapters 0' })).toHaveAccessibleDescription('No screen yet');
+    const adapter = navigation()?.findLinkByHref(`${route}/adapters-0`)?.getElement();
+    expect(adapter).toHaveAccessibleName('Adapters 0');
+    expect(adapter).toHaveAccessibleDescription('No screen yet');
 
     await act(() => router.navigate(`${route}/cables-9`));
-    if (grouped) expect(nav.getByRole('button', { name: 'Core' })).toHaveAttribute('aria-expanded', 'true');
-    expect(nav.getByRole('button', { name: 'C' })).toHaveAttribute('aria-expanded', 'true');
-    expect(nav.getByRole('link', { name: 'Cables 9' })).toHaveAttribute('aria-current', 'page');
+    if (grouped) {
+      const core = navigation()?.findItemByIndex(1)?.findSection()?.findExpandButton().getElement();
+      expect(core).toHaveAttribute('aria-expanded', 'true');
+    }
+    expect(rangeSection(4)?.findExpandButton().getElement()).toHaveAttribute('aria-expanded', 'true');
+    const cable = navigation()?.findLinkByHref(`${route}/cables-9`)?.getElement();
+    expect(cable).toHaveAccessibleName('Cables 9');
+    expect(cable).toHaveAttribute('aria-current', 'page');
+    expect(navigation()?.findActiveLink()?.getElement()).toBe(cable);
   });
 
   it('uses the entry’s title and crumbs, with the emulator line and without the notice or help controls', () => {
