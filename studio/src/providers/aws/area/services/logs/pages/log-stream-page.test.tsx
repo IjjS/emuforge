@@ -146,19 +146,39 @@ it('closes the older end on an empty page and keeps the newer control available'
   expect(messages()).toEqual(['event']);
 });
 
-it.each(['group', 'stream'])('identifies a missing log %s', async (kind) => {
-  read.mockRejectedValueOnce(
-    new RequestError({
-      kind: 'other',
-      operation,
-      code: 'ResourceNotFoundException',
-      message: `The specified log ${kind} does not exist.`,
-    }),
-  );
-  renderPage();
-  expect(await screen.findByText(`Log ${kind} not found`)).toBeVisible();
-  expect(screen.queryByText('No log events')).not.toBeInTheDocument();
-});
+it.each([
+  { kind: 'group', link: 'Back to Log groups', href: '/aws/logs/log-groups' },
+  { kind: 'stream', link: 'Back to log group', href: '/aws/logs/log-groups/group/%2Fapp%23group' },
+])(
+  'identifies a missing log $kind, disables Put log events and offers a recovery link',
+  async ({ kind, link, href }) => {
+    read
+      .mockRejectedValueOnce(
+        new RequestError({
+          kind: 'other',
+          operation,
+          code: 'ResourceNotFoundException',
+          message: `The specified log ${kind} does not exist.`,
+        }),
+      )
+      .mockResolvedValueOnce(page(['after retry']));
+    renderPage();
+    expect(await screen.findByText(`Log ${kind} not found`)).toBeVisible();
+    expect(screen.queryByText('No log events')).not.toBeInTheDocument();
+
+    const putButton = screen.getByRole('button', { name: 'Put log events' });
+    expect(putButton).toHaveAttribute('aria-disabled', 'true');
+    expect(putButton).toHaveAccessibleDescription(`The log ${kind} must exist to put events.`);
+    fireEvent.click(putButton);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: link })).toHaveAttribute('href', href);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('after retry')).toBeVisible();
+    expect(putButton).not.toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('link', { name: link })).not.toBeInTheDocument();
+  },
+);
 
 it('explains the Standard class restriction and shows the emulator reason', async () => {
   const reason = 'This operation is only supported on the Standard log class.';
