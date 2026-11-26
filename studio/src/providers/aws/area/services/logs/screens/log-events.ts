@@ -1,5 +1,5 @@
 import type { ServiceScreen } from '../../../screens';
-import { LOG_EVENTS_PATH } from '../format';
+import { LOG_EVENTS_PATH, LOG_GROUPS_PATH } from '../format';
 import { logsNavigation } from '../navigation';
 import { LogEventsPage } from '../pages/log-events-page';
 
@@ -10,7 +10,7 @@ export const SCREENS: readonly ServiceScreen[] = [
     paths: [LOG_EVENTS_PATH],
     title,
     crumbs: [{ text: title }],
-    navigation: logsNavigation(LOG_EVENTS_PATH),
+    navigation: logsNavigation(LOG_GROUPS_PATH),
     Page: LogEventsPage,
   },
 ];
