@@ -1,5 +1,6 @@
 import type { LogGroup } from '@aws-sdk/client-cloudwatch-logs';
 import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
@@ -19,9 +20,27 @@ interface GroupDetailsProps {
   connection: AreaConnection;
   group: LogGroup;
   tags: ReturnType<typeof useLogGroupTags>;
+  groupLoading: boolean;
+  protectionPending: boolean;
+  protectionUnavailable: boolean;
+  onEditRetention: () => void;
+  onSwitchProtection: () => void;
+  onManageTags: () => void;
 }
 
-export function GroupDetails({ connection, group, tags }: GroupDetailsProps) {
+export function GroupDetails({
+  connection,
+  group,
+  tags,
+  groupLoading,
+  protectionPending,
+  protectionUnavailable,
+  onEditRetention,
+  onSwitchProtection,
+  onManageTags,
+}: GroupDetailsProps) {
+  const protectionOn = group.deletionProtectionEnabled === true;
+  const settingsDisabled = groupLoading || protectionPending || connection.engineOrigin === undefined;
   const [announcement, announce] = useAnnouncer();
   const failure = tags.failure && readFailureState(tags.failure, connection, 'log group tags');
   const message = failure?.firstText;
@@ -32,7 +51,34 @@ export function GroupDetails({ connection, group, tags }: GroupDetailsProps) {
 
   return (
     <SpaceBetween size="m">
-      <Container header={<Header variant="h2">Details</Header>}>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  disabled={settingsDisabled}
+                  disabledReason={groupLoading ? 'Loading log group.' : undefined}
+                  onClick={onEditRetention}
+                >
+                  Edit retention
+                </Button>
+                <Button
+                  disabled={settingsDisabled || protectionUnavailable}
+                  loading={protectionPending}
+                  disabledReason={groupLoading && !protectionUnavailable ? 'Loading log group.' : undefined}
+                  onClick={onSwitchProtection}
+                >
+                  {protectionOn ? 'Turn off deletion protection' : 'Turn on deletion protection'}
+                </Button>
+              </SpaceBetween>
+            }
+          >
+            Details
+          </Header>
+        }
+      >
         <SpaceBetween size="m">
           <KeyValuePairs
             items={[{ label: 'ARN', value: <CopyValue label="ARN" value={group.logGroupArn ?? group.arn} none="-" /> }]}
@@ -62,7 +108,22 @@ export function GroupDetails({ connection, group, tags }: GroupDetailsProps) {
         </SpaceBetween>
       </Container>
       <Table
-        header={<Header variant="h2">Tags</Header>}
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <Button
+                disabled={settingsDisabled || tags.value === undefined}
+                disabledReason={tags.loading ? 'Loading tags.' : undefined}
+                onClick={onManageTags}
+              >
+                Manage tags
+              </Button>
+            }
+          >
+            Tags
+          </Header>
+        }
         items={Object.entries(tags.value ?? {}).map(([key, value]) => ({ key, value }))}
         trackBy="key"
         columnDefinitions={[
