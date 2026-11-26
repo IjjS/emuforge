@@ -1,18 +1,27 @@
 import type { Resource } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
+import { PageFlashContext } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
+import type { TokenPage } from '../../../components/use-token-listing';
+import { createResource, deleteMethod, deleteResource } from '../rest-change-api';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readRestResources } from '../rest-api';
 import { useRestResources } from '../rest-queries';
+import { testInvokeMethod } from '../test-api';
 import { RestResources } from './rest-resources';
 
 vi.mock('../rest-api', { spy: true });
+vi.mock('../rest-change-api', { spy: true });
+vi.mock('../test-api', { spy: true });
 
 const apiId = 'api-1';
 const engineOrigin = 'http://127.0.0.1:9681';
@@ -57,21 +66,32 @@ const root = { id: 'root', path: '/' };
 const reader = vi.mocked(readRestResources);
 
 beforeEach(() => {
-  reader.mockReset();
+  vi.resetAllMocks();
   reader.mockResolvedValue({ items: [orders, root] });
 });
 
 function Content() {
   const list = useRestResources(apiId, engineOrigin);
-  return <RestResources apiId={apiId} connection={connection} list={list} />;
+  const { shown, pageFlash, dismiss, announce } = useAreaFlash('/rest/api-1', 0, true);
+  return (
+    <PageFlashContext value={pageFlash}>
+      {shown && <AreaFlash result={shown} onDismiss={dismiss} onAnnounce={announce} />}
+      <RestResources apiId={apiId} connection={connection} list={list} />
+    </PageFlashContext>
+  );
 }
 
 function open() {
   const user = userEvent.setup();
+  const root = { current: null };
   const result = render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <Content />
+        <AreaRootContext value={root}>
+          <div ref={root}>
+            <Content />
+          </div>
+        </AreaRootContext>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -201,3 +221,136 @@ it.each<[RequestFailure, string, string]>([
   await user.click(region.getByRole('button', { name: 'Retry' }));
   expect(await region.findByRole('heading', { name: '/orders' })).toBeVisible();
 });
+
+const newResource = { id: 'new', path: '/new' };
+
+it('opens Test for an eligible method and explains why a VPC link method cannot be tested', async () => {
+  reader.mockResolvedValueOnce({
+    items: [
+      { ...root, resourceMethods: { ANY: {} } },
+      { ...orders, resourceMethods: { POST: { methodIntegration: { type: 'MOCK', connectionType: 'VPC_LINK' } } } },
+    ],
+  });
+  const { user } = open();
+  const [eligible, unavailable] = await screen.findAllByRole('button', { name: 'Test' });
+  if (!eligible || !unavailable) throw new Error('Expected both Test controls');
+  expect(unavailable).toHaveAttribute('aria-disabled', 'true');
+  expect(unavailable).toHaveAccessibleDescription(
+    'Test is not offered for an integration through a VPC link: where the emulator sends it has not been verified.',
+  );
+  await user.click(unavailable);
+  expect(screen.queryByRole('region', { name: 'Test method' })).not.toBeInTheDocument();
+  expect(testInvokeMethod).not.toHaveBeenCalled();
+
+  await user.click(eligible);
+  const panel = within(screen.getByRole('region', { name: 'Test method' }));
+  expect(panel.getByText('ANY')).toBeVisible();
+  expect(panel.getByRole('textbox', { name: 'Path with query' })).toHaveValue('/');
+});
+
+async function openChange(kind: 'create' | 'resource' | 'method', user = open().user) {
+  await screen.findByRole('heading', { name: '/orders' });
+  if (kind === 'create') {
+    await user.click(screen.getByRole('button', { name: 'Create resource' }));
+  } else {
+    const buttons = screen.getAllByRole('button', { name: 'Delete' });
+    const button = buttons[kind === 'resource' ? 1 : 2];
+    if (!button) throw new Error('Missing delete button');
+    await user.click(button);
+  }
+  const title = {
+    create: 'Create resource',
+    resource: 'Delete resource /orders?',
+    method: 'Delete method GET /orders?',
+  }[kind];
+  const dialog = within(await screen.findByRole('dialog', { name: title }));
+  await user.type(dialog.getByRole('textbox'), { create: 'new', resource: '/orders', method: 'delete' }[kind]);
+  return {
+    user,
+    submit: () => user.click(dialog.getByRole('button', { name: kind === 'create' ? 'Create resource' : 'Delete' })),
+  };
+}
+
+function expectFlash(message: string) {
+  const status = screen.getByText(
+    (_, node) => node?.textContent === message && ![...node.children].some((child) => child.textContent === message),
+  );
+  expect(status).toBeVisible();
+}
+
+it.each([
+  { kind: 'create', answer: [root, orders, newResource], message: 'Resource /new created.' },
+  { kind: 'resource', answer: [root], message: 'Resource /orders deleted.' },
+  {
+    kind: 'method',
+    answer: [root, { ...orders, resourceMethods: { POST: orders.resourceMethods?.POST ?? {} } }],
+    message: 'Method GET /orders deleted.',
+  },
+] as const)(
+  'closes the $kind dialog, reports the result, and re-reads the resources',
+  async ({ kind, answer, message }) => {
+    vi.mocked(createResource).mockResolvedValueOnce({ ...newResource, $metadata: {} });
+    vi.mocked(deleteResource).mockResolvedValueOnce({ $metadata: {} });
+    vi.mocked(deleteMethod).mockResolvedValueOnce({ $metadata: {} });
+    const { submit } = await openChange(kind);
+    reader.mockResolvedValueOnce({ items: [...answer] });
+    await submit();
+    await waitFor(() => {
+      expectFlash(message);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      if (kind === 'create') expect(screen.getByRole('heading', { name: '/new' })).toBeVisible();
+      if (kind === 'resource') expect(screen.queryByRole('heading', { name: '/orders' })).not.toBeInTheDocument();
+      if (kind === 'method') expect(screen.queryByRole('heading', { name: 'GET' })).not.toBeInTheDocument();
+    });
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(reader).toHaveBeenLastCalledWith(engineOrigin, apiId, undefined, expect.any(AbortSignal));
+  },
+);
+
+it('leaves the root Delete unavailable and explains the reason', async () => {
+  const { user } = open();
+  await screen.findByRole('heading', { name: '/' });
+  const button = screen.getAllByRole('button', { name: 'Delete' })[0];
+  if (!button) throw new Error('Missing root Delete');
+  expect(button).toHaveAttribute('aria-disabled', 'true');
+  expect(button).toHaveAccessibleDescription('The root resource cannot be deleted.');
+  await user.hover(button);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('The root resource cannot be deleted.');
+  await user.click(button);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it.each([
+  ['create', [root, orders, newResource], '/new', 'Resource /new created.'],
+  ['resource', [root], '/orders', 'Resource /orders deleted.'],
+] as const)(
+  'keeps the refreshed rows and result after an earlier page answers last (%s)',
+  async (kind, items, path, flash) => {
+    reader.mockResolvedValueOnce({ items: [root, orders], next: 'next' });
+    vi.mocked(createResource).mockResolvedValueOnce({ ...newResource, $metadata: {} });
+    vi.mocked(deleteResource).mockResolvedValueOnce({ $metadata: {} });
+    let answerEarlier!: (value: TokenPage<Resource>) => void;
+    const earlier = new Promise<TokenPage<Resource>>((resolve) => {
+      answerEarlier = resolve;
+    });
+
+    reader.mockReturnValueOnce(earlier).mockResolvedValueOnce({ items: [...items] });
+    const { user } = open();
+    await user.click(await screen.findByRole('button', { name: 'Load more resources' }));
+    await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+    const { submit } = await openChange(kind, user);
+    await submit();
+    const expectLatest = () => {
+      expectFlash(flash);
+      const changed = screen.queryByRole('heading', { name: path, level: 3 });
+      if (kind === 'create') expect(changed).toBeVisible();
+      else expect(changed).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
+    };
+    await waitFor(expectLatest);
+    expect(reader).toHaveBeenCalledTimes(3);
+    expect(reader.mock.calls[1]?.[3].aborted).toBe(true);
+    await act(async () => answerEarlier({ items: [{ id: 'old', path: '/stale' }] }));
+    expectLatest();
+  },
+);
