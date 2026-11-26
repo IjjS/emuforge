@@ -96,6 +96,7 @@ it.each([false, true])('checks the second page before deleting (shared: %s)', as
     items: [{ routeId: route.RouteId, routeKey: route.RouteKey, target: route.Target }],
     nextToken: 'next',
   };
+  const others = shared ? [{ routeId: 'r-2', routeKey: 'GET /elsewhere', target: route.Target }] : [];
   request
     .mockReturnValueOnce(Response.json(first))
     .mockReturnValueOnce(Response.json(first))
