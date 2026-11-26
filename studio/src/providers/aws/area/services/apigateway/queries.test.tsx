@@ -10,6 +10,7 @@ import {
   apiQueryKey,
   dropApi,
   dropApiLists,
+  refreshApiLists,
   useApiLists,
   useAppendedPages,
   type AppendedPagesOptions,
@@ -176,6 +177,74 @@ it('drops every part of the named API, including a pending read, and keeps other
   expect(client.getQueryData(otherId)).toBe('two');
   expect(client.getQueryData(otherModel)).toBe('v2');
 });
+
+it.each(['rest', 'v2'] as const)(
+  'keeps both lists visible while post-delete first pages are pending, with an older %s page in flight',
+  async (model) => {
+    const rest = api('rest', 'REST');
+    const extraRest = api('rest-page-2', 'REST');
+    const v2 = api('http', 'HTTP');
+    const extraV2 = api('ws-page-2', 'WebSocket');
+    const oldPage = deferred<TokenPage<ApiRow>>();
+    const newRest = deferred<TokenPage<ApiRow>>();
+    const newV2 = deferred<TokenPage<ApiRow>>();
+    vi.mocked(readRestApis)
+      .mockResolvedValueOnce({ items: [rest], next: 'rest-2' })
+      .mockResolvedValueOnce({ items: [extraRest], next: 'rest-3' });
+    vi.mocked(readV2Apis)
+      .mockResolvedValueOnce({ items: [v2], next: 'v2-2' })
+      .mockResolvedValueOnce({ items: [extraV2], next: 'v2-3' });
+    const reader = model === 'rest' ? readRestApis : readV2Apis;
+    vi.mocked(reader).mockReturnValueOnce(oldPage.promise);
+    vi.mocked(readRestApis).mockReturnValueOnce(newRest.promise);
+    vi.mocked(readV2Apis).mockReturnValueOnce(newV2.promise);
+
+    const { result } = renderHook(() => useApiLists(endpoint), { wrapper });
+    await waitFor(() => {
+      expect(result.current.rest.more).toBe(true);
+      expect(result.current.v2.more).toBe(true);
+    });
+    act(() => {
+      result.current.rest.loadMore();
+      result.current.v2.loadMore();
+    });
+    await waitFor(() => {
+      expect(result.current.rest.items).toEqual([rest, extraRest]);
+      expect(result.current.v2.items).toEqual([v2, extraV2]);
+    });
+    act(() => result.current[model].loadMore());
+    expect(reader).toHaveBeenNthCalledWith(3, endpoint, `${model}-3`, expect.any(AbortSignal));
+
+    act(() => {
+      void refreshApiLists(client);
+    });
+    await waitFor(() => {
+      expect(result.current.rest.loading).toBe(true);
+      expect(result.current.v2.loading).toBe(true);
+      expect(result.current.rest.items).toEqual([rest, extraRest]);
+      expect(result.current.v2.items).toEqual([v2, extraV2]);
+    });
+    expect(vi.mocked(reader).mock.calls[2]?.[2].aborted).toBe(true);
+    expect(readRestApis).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
+    expect(readV2Apis).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
+
+    const refreshedRest = model === 'rest' ? [] : [rest];
+    const refreshedV2 = model === 'v2' ? [] : [v2];
+    await act(async () => {
+      newRest.resolve({ items: refreshedRest, next: 'new-rest-token' });
+      newV2.resolve({ items: refreshedV2, next: 'new-v2-token' });
+    });
+    await waitFor(() => {
+      expect(result.current.rest.items).toEqual(refreshedRest);
+      expect(result.current.v2.items).toEqual(refreshedV2);
+    });
+    await act(async () => oldPage.resolve({ items: [api('stale', 'REST')] }));
+    expect(result.current.rest.items).toEqual(refreshedRest);
+    expect(result.current.v2.items).toEqual(refreshedV2);
+    expect(readRestApis).toHaveBeenCalledTimes(model === 'rest' ? 4 : 3);
+    expect(readV2Apis).toHaveBeenCalledTimes(model === 'v2' ? 4 : 3);
+  },
+);
 
 it('reads both lists from their first pages on every mount without showing the preceding visit', async () => {
   const rest = api('old-rest', 'REST');

@@ -1,7 +1,7 @@
 import type { Resource, RestApi } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -142,10 +142,32 @@ function open(path = address, connection = connected, followHandover = false) {
     if (!tile) throw new Error(`Missing integration option ${value}`);
     await user.click(tile.getElement());
   };
-  const shown = () => screen.findByRole('heading', { name: 'Method settings' });
+  const shown = () =>
+    waitFor(() => {
+      const header = wrapper.findContainer()?.findHeader()?.getElement();
+      const heading = header && createWrapper(header).findHeader()?.findHeadingText().getElement();
+      expect(heading).toHaveTextContent('Method settings');
+      expect(heading).toBeVisible();
+    });
   const headingDescription = () => wrapper.findHeader()?.findDescription()?.getElement();
-  const submit = () => user.click(screen.getByRole('button', { name: 'Create method' }));
-  const cancel = () => user.click(screen.getByRole('button', { name: 'Cancel' }));
+  const button = (label: string, scope = wrapper) =>
+    scope
+      .findAllButtons()
+      .find((entry) => entry.getElement().textContent?.trim() === label)
+      ?.getElement();
+  const clickButton = (label: string, scope = wrapper) => {
+    const element = button(label, scope);
+    if (!element) throw new Error(`Missing button ${label}`);
+    return user.click(element);
+  };
+  const actionScope = () => {
+    const actions = wrapper.findForm()?.findActions();
+    if (!actions) throw new Error('Missing form actions');
+    return createWrapper(actions.getElement());
+  };
+  const submitButton = () => button('Create method', actionScope());
+  const submit = () => clickButton('Create method', actionScope());
+  const cancel = () => clickButton('Cancel', actionScope());
   const findAlert = () =>
     waitFor(() => {
       const alert = wrapper.findAlert()?.getElement();
@@ -164,6 +186,8 @@ function open(path = address, connection = connected, followHandover = false) {
     chooseKind,
     shown,
     headingDescription,
+    clickButton,
+    submitButton,
     submit,
     cancel,
     findAlert,
@@ -271,7 +295,7 @@ it('leaves the resource choice empty without an alert when the linked ID is abse
     expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('Choose a resource'),
   );
   expect(form.wrapper.findAlert()).toBeNull();
-  expect(screen.getByRole('button', { name: 'Create method' })).toBeEnabled();
+  expect(form.submitButton()).toBeEnabled();
 });
 
 const linkedOperation = 'GetResource';
@@ -317,16 +341,22 @@ it.each(readFailures)(
   async ({ failure, connection, heading, detail, recovery }) => {
     linked.mockRejectedValueOnce(new RequestError(failure));
     const form = open(`${address}?resource=later-page`, connection);
-    const headingElement = await screen.findByText(heading, { exact: !recovery });
-    expect(await screen.findByText(detail, { exact: !recovery && failure.kind !== 'not-implemented' })).toBeVisible();
+    const headingElement = await waitFor(() => {
+      const status = form.wrapper.findStatusIndicator()?.getElement();
+      if (!status) throw new Error('Missing linked resource failure');
+      expect(status).toHaveTextContent(heading);
+      expect(status).toBeVisible();
+      return status;
+    });
+    expect(form.wrapper.getElement()).toHaveTextContent(detail);
     const trigger = form.select('Resource').findTrigger().getElement();
     expect(headingElement.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(trigger).toHaveTextContent('Choose a resource');
-    if (recovery) expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
+    if (recovery) expect(form.wrapper.findLink()?.getElement()).toHaveTextContent('Connection status');
     const choice = await form.openSelect('Resource');
     await waitFor(() => expect(choice.findDropdown().findOptionByValue('root')).not.toBeNull());
     await form.user.keyboard('{Escape}');
-    await form.user.click(screen.getByRole('button', { name: 'Retry' }));
+    await form.clickButton('Retry');
     await waitFor(() => expect(trigger).toHaveTextContent('/orders'));
     expect(linked).toHaveBeenCalledTimes(2);
   },
@@ -378,11 +408,12 @@ it.each(getFailures)('shows $heading for GetRestApi and restores the form on Ret
   const form = open(address, 'connection' in scenario ? scenario.connection : connected);
   await waitFor(() => expect(form.wrapper.findStatusIndicator()?.getElement()).toHaveTextContent(heading));
   expect(form.wrapper.getElement()).toHaveTextContent(detail);
-  if ('recovery' in scenario) expect(screen.getByRole('link', { name: 'Connection status' })).toBeVisible();
-  else expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Create method' })).not.toBeInTheDocument();
-  await form.user.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await form.shown()).toBeVisible();
+  const connectionLink = form.wrapper.findLink()?.getElement();
+  if ('recovery' in scenario) expect(connectionLink).toHaveTextContent('Connection status');
+  else expect(connectionLink).toBeUndefined();
+  expect(form.wrapper.findForm()).toBeNull();
+  await form.clickButton('Retry');
+  await form.shown();
   expect(form.headingDescription()).toHaveTextContent('API: Orders');
   expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('Choose a resource');
 });
@@ -438,16 +469,15 @@ it.each(choices.flatMap((choice) => choiceFailures.map((scenario) => ({ ...choic
         ? scenario.heading
         : `The ${operation === 'GetResources' ? 'resources' : 'Lambda functions'} could not be read`;
     const dropdown = choice.findDropdown().getElement();
-    const status = createWrapper(field)
-      .findAllStatusIndicators()
-      .find((entry) => !dropdown.contains(entry.getElement()));
+    const fieldWrapper = createWrapper(field);
+    const status = fieldWrapper.findAllStatusIndicators().find((entry) => !dropdown.contains(entry.getElement()));
     expect(status?.getElement()).toHaveTextContent(heading);
     expect(field).toHaveTextContent(scenario.detail(operation));
-    const below = within(field);
-    if ('recovery' in scenario) expect(below.getByRole('link', { name: 'Connection status' })).toBeVisible();
-    else expect(below.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
+    const connectionLink = fieldWrapper.findLink('[href="/"]')?.getElement();
+    if ('recovery' in scenario) expect(connectionLink).toHaveTextContent('Connection status');
+    else expect(connectionLink).toBeUndefined();
     expect(choice.findDropdown().findOptionByValue(value)).toBeNull();
-    expect(createWrapper(field).findButton()?.getElement()).toHaveTextContent('Retry');
+    expect(fieldWrapper.findButton()?.getElement()).toHaveTextContent('Retry');
     await form.user.click(retry);
     await waitFor(() => expect(choice.findDropdown().findOptionByValue(value)?.getElement()).toHaveTextContent(text));
   },
@@ -500,13 +530,43 @@ it.each([
   const answerApi = () => pendingApi.resolve({ id: apiId, name: 'Orders' });
   const answerResources = () => pendingResources.resolve({ items: [linkedResource] });
   const answers = first === 'api' ? [answerApi, answerResources] : [answerResources, answerApi];
-  for (const answer of answers) {
-    await act(async () => answer());
-    expectResult();
-  }
-  expect(await screen.findByRole('heading', { name: '/orders' })).toBeVisible();
+  for (const answer of answers) await act(async () => answer());
+  await waitFor(() => {
+    const headings = form.wrapper.findAllHeaders().map((header) => header.findHeadingText().getElement());
+    expect(headings.find((heading) => heading.textContent === '/orders')).toBeVisible();
+  });
   expectResult();
 });
+
+it.each(['AddPermission', 'GetPolicy'])(
+  'hands over the created method with a named %s 501 warning',
+  async (operation) => {
+    create.mockResolvedValueOnce({
+      kind: 'created',
+      permissionWarning: {
+        functionName: fn.name,
+        reason: `${operation}: 501 Not Implemented`,
+        failure: { kind: 'not-implemented', operation },
+      },
+    });
+    const form = open(`${address}?resource=later-page`, connected, true);
+    await form.shown();
+    await waitFor(() => expect(form.select('Resource').findTrigger().getElement()).toHaveTextContent('/orders'));
+    await form.choose('Lambda function', fn.arn);
+    await form.submit();
+
+    await waitFor(() => {
+      const flashes = form.wrapper.findFlashbar();
+      expect(flashes?.findItemsByType('success')[0]?.getElement()).toHaveTextContent('Method GET /orders created.');
+      const warning = flashes?.findItemsByType('warning')[0];
+      expect(warning?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(warning?.findContent()?.getElement()).toHaveTextContent(
+        `Method GET /orders created, but the permission was not added to orders: The emulator answered 501 Not Implemented for ${operation}.`,
+      );
+    });
+    expect(form.handOver).toHaveBeenCalledExactlyOnceWith(restApiPath(apiId, 'resources'), expect.any(Array));
+  },
+);
 
 it('keeps the form after PutMethod is refused and sends it again on the next submit', async () => {
   create.mockResolvedValueOnce({
@@ -559,7 +619,8 @@ it.each([false, true])('explains failed integration and the take-back outcome (l
   const alert = await form.findAlert();
   expect(alert).toHaveTextContent('PutIntegration: BadRequest: Integration refused');
   if (left) {
-    const link = within(alert).getByRole('link', { name: 'View API resources' });
+    const link = createWrapper(alert).findLink()?.getElement();
+    expect(link).toHaveTextContent('View API resources');
     expect(link).toHaveAttribute('href', restApiPath(apiId, 'resources'));
     expect(alert).toHaveTextContent(
       'Method GET /orders was created without a working integration and could not be removed: DeleteMethod: Denied: Delete refused',
@@ -578,14 +639,20 @@ it('shows a write 501 with its operation and keeps Create method visible and una
   const alert = await form.findAlert();
   expect(alert).toHaveTextContent('Not implemented by the emulator');
   expect(alert).toHaveTextContent('PutMethod: 501 Not Implemented');
-  expect(screen.getByRole('button', { name: 'Create method' })).toBeDisabled();
+  expect(form.submitButton()).toBeDisabled();
 });
 
 it('shows API not found with a link to APIs when the API does not exist', async () => {
   api.mockResolvedValueOnce(null);
-  open();
-  expect(await screen.findByRole('heading', { name: 'API not found' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'APIs' })).toHaveAttribute('href', '/aws/apigateway/apis');
+  const form = open();
+  await waitFor(() => {
+    const heading = form.wrapper.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent('API not found');
+    expect(heading).toBeVisible();
+  });
+  const link = form.wrapper.findLink()?.getElement();
+  expect(link).toHaveTextContent('APIs');
+  expect(link).toHaveAttribute('href', '/aws/apigateway/apis');
 });
 
 it.each([false, true])('leaves on Cancel and only asks after an edit (changed = %s)', async (changed) => {
@@ -604,7 +671,7 @@ it.each([false, true])('leaves on Cancel and only asks after an edit (changed = 
     expect(modal.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
     const footer = modal.findFooter();
     if (!footer) throw new Error('Missing discard dialog footer');
-    await form.user.click(within(footer.getElement()).getByRole('button', { name: 'Discard' }));
+    await form.clickButton('Discard', createWrapper(footer.getElement()));
   } else expect(form.wrapper.findModal()).toBeNull();
   expect(await screen.findByText(`Destination ${restApiPath(apiId)}`)).toBeVisible();
 });

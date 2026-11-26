@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -56,18 +56,19 @@ async function confirmWord(user: ReturnType<typeof userEvent.setup>) {
     if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
     return dialog;
   });
-  const footer = modal.findFooter()?.getElement();
-  if (!footer) throw new Error('Missing dialog footer');
+  const footer = modal.findFooter();
+  const confirm = footer && createWrapper(footer.getElement()).findAllButtons()[1]?.getElement();
+  if (!confirm) throw new Error('Missing Delete confirmation button');
+  expect(confirm).toHaveTextContent('Delete');
   expect(modal.findHeader().getElement()).toHaveTextContent('Delete route GET /events?');
   const content = modal.findContent().getElement();
-  const remove = within(footer).getByRole('button', { name: 'Delete' });
   const field = createWrapper(modal.findContent().getElement()).findFormField();
   expect(field?.findLabel()?.getElement()).toHaveTextContent('To confirm, type “delete” in the field.');
   const input = field && createWrapper(field.getElement()).findInput();
   if (!input) throw new Error('Missing confirmation input');
   const confirmation = input.findNativeInput().getElement();
   await user.type(confirmation, 'delete');
-  return { modal, content, remove, confirmation };
+  return { modal, content, remove: confirm, confirmation };
 }
 
 async function open(target = route, result: AreaConnection['result'] = undefined) {
@@ -128,12 +129,20 @@ it.each([false, true])('checks the second page before deleting (shared: %s)', as
   );
   const user = userEvent.setup();
   renderInArea(<RoutesWithFirstPage />);
-  expect(await screen.findByRole('button', { name: 'Load more routes' })).toBeVisible();
+  await waitFor(() => {
+    const footer = ui.findTable()?.findFooterSlot();
+    const loadMore = footer && createWrapper(footer.getElement()).findButton()?.getElement();
+    expect(loadMore).toHaveTextContent('Load more routes');
+  });
   expect(request).toHaveBeenCalledOnce();
   const selection = ui.findTable()?.findRowSelectionArea(1)?.find('input');
   if (!selection) throw new Error('Missing route selector');
   await user.click(selection.getElement());
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  const actions = ui.findHeader()?.findActions();
+  const button = actions && createWrapper(actions.getElement()).findAllButtons()[1]?.getElement();
+  if (!button) throw new Error('Missing Delete button');
+  expect(button).toHaveTextContent('Delete');
+  await user.click(button);
   const { content, remove } = await confirmWord(user);
   await waitFor(() => expect(remove).toBeEnabled());
 
@@ -207,12 +216,19 @@ it.each<[RequestFailure, AreaConnection['result'], string, string, boolean]>([
   const { content, remove, user, onDeleted } = await open(route, result);
   await waitFor(() => expect(content).toHaveTextContent(heading));
   expect(content).toHaveTextContent(reason);
-  const dialog = within(content);
-  const status = dialog.queryByRole('link', { name: 'Connection status' });
-  if (recovery) expect(status).toHaveAttribute('href', '/');
-  else expect(status).not.toBeInTheDocument();
+  const dialog = createWrapper(content);
+  const status = dialog.findLink()?.getElement();
+  if (recovery) {
+    expect(status).toHaveTextContent('Connection status');
+    expect(status).toHaveAttribute('href', '/');
+  } else {
+    expect(status).toBeUndefined();
+  }
   expect(remove).toBeDisabled();
-  await user.click(dialog.getByRole('button', { name: 'Retry' }));
+  const retry = dialog.findButton()?.getElement();
+  if (!retry) throw new Error('Missing Retry button');
+  expect(retry).toHaveTextContent('Retry');
+  await user.click(retry);
   await waitFor(() => {
     expect(remove).toBeEnabled();
     expect(content).toHaveTextContent('Its integration i-1 is used by no other route and is deleted with it.');

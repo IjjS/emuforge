@@ -1,7 +1,7 @@
 import type { ProtocolType } from '@aws-sdk/client-apigatewayv2';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
@@ -17,6 +17,11 @@ import { updateV2Api } from '../v2-route-change-api';
 import { V2Details } from './v2-details';
 
 const ui = createWrapper(document.body);
+const detailsActions = () => {
+  const actions = ui.findHeader()?.findActions();
+  if (!actions) throw new Error('Missing Details actions');
+  return createWrapper(actions.getElement()).findAllButtons();
+};
 
 it.each([
   ['HTTP', 'HTTP'],
@@ -37,7 +42,7 @@ it.each([
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
+    expect(ui.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Details');
     const values = ui
       .findKeyValuePairs()
       ?.findItems()
@@ -52,12 +57,23 @@ it.each([
     ].entries()) {
       expect(values?.[index]).toHaveTextContent(text);
     }
-    expect(screen.queryByRole('link')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Copy API ID' }));
-    expect(await navigator.clipboard.readText()).toBe('api-1');
-    await user.click(screen.getByRole('button', { name: 'Copy API endpoint' }));
-    expect(await navigator.clipboard.readText()).toBe(ApiEndpoint);
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    for (const [index, label, value] of [
+      [1, 'Copy API ID', 'api-1'],
+      [4, 'Copy API endpoint', ApiEndpoint],
+    ] as const) {
+      const field = values?.[index];
+      if (!field) throw new Error('Missing copyable detail');
+      expect(field.querySelector('a')).toBeNull();
+      const copy = createWrapper(field).findCopyToClipboard()?.findCopyButton().getElement();
+      if (!copy) throw new Error('Missing copy control');
+      expect(copy).toHaveAccessibleName(label);
+      await user.click(copy);
+      expect(await navigator.clipboard.readText()).toBe(value);
+    }
+    const refresh = detailsActions()[0]?.getElement();
+    if (!refresh) throw new Error('Missing Refresh button');
+    expect(refresh).toHaveTextContent('Refresh');
+    await user.click(refresh);
     expect(onRefresh).toHaveBeenCalledOnce();
   },
 );
@@ -103,7 +119,12 @@ async function openEdit(ProtocolType: ProtocolType, beforeOpen?: () => Promise<v
       </AreaRootContext>
     </QueryClientProvider>,
   );
-  const edit = await screen.findByRole('button', { name: 'Edit' });
+  const edit = await waitFor(() => {
+    const button = detailsActions()[1]?.getElement();
+    if (!button) throw new Error('Missing Edit button');
+    expect(button).toHaveTextContent('Edit');
+    return button;
+  });
   await beforeOpen?.();
   await user.click(edit);
   const modal = await waitFor(() => {
@@ -111,8 +132,10 @@ async function openEdit(ProtocolType: ProtocolType, beforeOpen?: () => Promise<v
     if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
     return dialog;
   });
-  const footer = modal.findFooter()?.getElement();
-  if (!footer) throw new Error('Missing dialog footer');
+  const footer = modal.findFooter();
+  const save = footer && createWrapper(footer.getElement()).findAllButtons()[1]?.getElement();
+  if (!save) throw new Error('Missing Save button');
+  expect(save).toHaveTextContent('Save');
   expect(modal.findHeader().getElement()).toHaveTextContent('Edit API');
   const [name, description] = createWrapper(modal.findContent().getElement()).findAllFormFields();
   for (const [input, value] of [
@@ -129,7 +152,7 @@ async function openEdit(ProtocolType: ProtocolType, beforeOpen?: () => Promise<v
   return {
     earlier,
     saved,
-    save: () => user.click(within(footer).getByRole('button', { name: 'Save' })),
+    save: () => user.click(save),
   };
 }
 
@@ -149,7 +172,11 @@ it.each(['HTTP', 'WEBSOCKET'] as const)(
   'shows the saved name and description after reading the %s API again',
   async (protocol) => {
     const { save, saved } = await openEdit(protocol);
-    reader.mockResolvedValueOnce(saved);
+    reader.mockImplementationOnce(async () => {
+      expectUpdateFlash();
+      expect(ui.findModal()).toBeNull();
+      return saved;
+    });
     await save();
     await waitFor(expectSaved);
     expect(reader).toHaveBeenCalledTimes(2);
@@ -171,21 +198,19 @@ it.each(['earlier', 'saved'] as const)(
     const savedRead = deferredRead();
     const { save, earlier, saved } = await openEdit('HTTP', async () => {
       reader.mockReturnValueOnce(earlierRead.promise).mockReturnValueOnce(savedRead.promise);
-      await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      const refresh = detailsActions()[0]?.getElement();
+      if (!refresh) throw new Error('Missing Refresh button');
+      await userEvent.click(refresh);
       await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
     });
     await save();
-    await waitFor(() => {
-      expectUpdateFlash();
-      expect(reader).toHaveBeenCalledTimes(3);
-    });
+    await waitFor(() => expect(reader).toHaveBeenCalledTimes(3));
     expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
     const replies = {
       earlier: () => earlierRead.resolve(earlier),
       saved: () => savedRead.resolve(saved),
     };
     await act(async () => replies[first]());
-    expectUpdateFlash();
     await act(async () => replies[first === 'earlier' ? 'saved' : 'earlier']());
     await waitFor(expectSaved);
   },

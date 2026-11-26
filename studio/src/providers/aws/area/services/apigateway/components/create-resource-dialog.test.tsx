@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { assert, beforeEach, expect, it, vi } from 'vitest';
@@ -73,7 +73,9 @@ async function open(connection = connected) {
   const select = parentField?.findControl()?.findSelect();
   const input = pathField?.findControl()?.findInput()?.findNativeInput();
   const footer = modal.findFooter();
-  assert(select && input && footer);
+  const submit = footer?.findAllButtons().at(-1)?.getElement();
+  expect(submit).toHaveTextContent('Create resource');
+  assert(select && input && submit);
   return {
     user,
     onCreated,
@@ -81,7 +83,7 @@ async function open(connection = connected) {
     pathField,
     select,
     input: input.getElement(),
-    submit: within(footer.getElement()).getByRole('button', { name: 'Create resource' }),
+    submit: submit,
   };
 }
 
@@ -104,7 +106,13 @@ it('loads another page and creates under the parent from that page', async () =>
   const { user, select, input, submit, onCreated } = await open();
   await user.click(select.findTrigger().getElement());
   const dropdown = select.findDropdown();
-  await user.click(await within(dropdown.getElement()).findByRole('button', { name: 'Load more' }));
+  const loadMore = await waitFor(() => {
+    const button = select.findDropdownFooter()?.findButton()?.getElement();
+    assert(button);
+    expect(button).toHaveTextContent('Load more');
+    return button;
+  });
+  await user.click(loadMore);
   const option = await waitFor(() => {
     const option = dropdown.findOptionByValue('orders');
     if (!option) throw new Error('Missing parent from the second page');
@@ -165,17 +173,18 @@ it.each<[RequestFailure, AreaConnection, string, string, string]>([
       expect(select.findErrorRecoveryButton()?.getElement()).toHaveTextContent('Retry');
       expect(failureStatus()?.getElement()).toHaveTextContent(heading);
       expect(content.getElement()).toHaveTextContent(message);
-      const retry = within(content.getElement())
-        .getAllByRole('button', { name: 'Retry' })
-        .find((button) => !dropdown.getElement().contains(button));
+      const retry = content.findAllButtons().at(-1)?.getElement();
       assert(retry);
+      expect(dropdown.getElement()).not.toContainElement(retry);
+      expect(retry).toHaveTextContent('Retry');
       return retry;
     });
-    const connectionLink = within(content.getElement()).queryByRole('link', { name: 'Connection status' });
+    const connectionLink = content.findLink('[href="/"]')?.getElement();
     if (failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') {
       expect(connectionLink).toBeVisible();
+      expect(connectionLink).toHaveTextContent('Connection status');
     } else {
-      expect(connectionLink).not.toBeInTheDocument();
+      expect(connectionLink).toBeUndefined();
     }
     await user.click(retry);
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));

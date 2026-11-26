@@ -150,8 +150,14 @@ it.each(
   },
 );
 
-it('keeps the method and integration when the permission cannot be added', async () => {
-  permission.mockResolvedValueOnce({ kind: 'not-given', reason: 'Permission refused' });
+it.each([
+  { reason: 'Permission refused' },
+  ...['AddPermission', 'GetPolicy'].map((operation) => ({
+    reason: `${operation}: 501 Not Implemented`,
+    failure: { kind: 'not-implemented' as const, operation },
+  })),
+])('keeps the method and integration after a permission failure ($reason)', async (warning) => {
+  permission.mockResolvedValueOnce({ kind: 'not-given', ...warning });
   await expect(
     createMethod(
       endpoint,
@@ -164,7 +170,7 @@ it('keeps the method and integration when the permission cannot be added', async
     ),
   ).resolves.toEqual({
     kind: 'created',
-    permissionWarning: { functionName: 'orders', reason: 'Permission refused' },
+    permissionWarning: { functionName: 'orders', ...warning },
   });
   expect(paths()).toEqual([
     ['PUT', base],
