@@ -111,6 +111,27 @@ test('studio.logs-read-a-stream-older-and-newer', async ({ ctx, page }) => {
         ],
         'the streams, the one written last first, each with its last event time',
       );
+
+      // That order is also the order of the names. An event put outside into `old` makes it the stream written
+      // last: the list, read again, turns round.
+      const before = live.lastEventTimestamp ?? 0;
+      await seeded.events(group, 'old', [{ timestamp: Math.max(Date.now(), before + 1), message: 'just now' }]);
+      const later = await eventually(
+        5_000,
+        () => streamDirect(ctx, port, group, 'old'),
+        (stream) => (stream.lastEventTimestamp ?? 0) > before,
+      );
+      expect(later.lastEventTimestamp, 'the last event time of `old` after the put, directly').toBeGreaterThan(before);
+      await open(page, groupPath(group), group);
+      await expectRows(
+        groupScreen(page).streamTable,
+        (r) => ({ name: r['Log stream name'], last: r['Last event time'] }),
+        [
+          { name: 'old', last: dateText(later.lastEventTimestamp) },
+          { name: 'live', last: dateText(live.lastEventTimestamp) },
+        ],
+        '`old` first once it is the one written last, each with its last event time',
+      );
     },
   );
 
@@ -269,6 +290,18 @@ test('studio.logs-streams-entry-lists-a-chosen-group', async ({ ctx, page }) => 
       await expect(page.getByRole('button', { name: CREATE_LOG_STREAM, exact: true }), '"Create log stream"').toHaveCount(0);
       await expect(page.getByRole('button', { name: DELETE_LOG_STREAM, exact: true }), '"Delete log stream"').toHaveCount(0);
 
+      // That order is also the order of the names. An event put outside into `b-early` makes it the stream written
+      // last: the list, read again, turns round, and stays so for the next line.
+      await seeded.events(group, 'b-early', [{ timestamp: Math.max(Date.now(), now + 1), message: 'just now' }]);
+      const later = await eventually(
+        5_000,
+        () => streamDirect(ctx, port, group, 'b-early'),
+        (stream) => (stream.lastEventTimestamp ?? 0) > now,
+      );
+      expect(later.lastEventTimestamp, 'the last event time of `b-early` after the put, directly').toBeGreaterThan(now);
+      await open(page, withGroup(LOG_STREAMS_PATH, group), LOG_STREAMS);
+      await expectStreams(table, ['b-early', 'a-late']);
+
       await rowsIn(table).getByRole('link', { name: 'a-late', exact: true }).click(ACTION);
       await expect(page, "the stream's page").toHaveURL(addressOf(streamPath(group, 'a-late')));
       await expect(heading(page, 'a-late'), 'the h1 "a-late"').toBeVisible();
@@ -279,7 +312,7 @@ test('studio.logs-streams-entry-lists-a-chosen-group', async ({ ctx, page }) => 
     'Filter the streams by the prefix `b` → only `b-early`, and the screen says streams are listed by name; filter by the prefix `z` → "No log streams match"',
     async () => {
       await open(page, withGroup(LOG_STREAMS_PATH, group), LOG_STREAMS);
-      await expectStreams(table, ['a-late', 'b-early']);
+      await expectStreams(table, ['b-early', 'a-late']);
       await filterStreams(page, table, 'b');
       await expectStreams(table, ['b-early']);
       await expect(main.getByText(LISTED_BY_NAME, { exact: true }), 'the screen says how a prefix lists').toBeVisible();

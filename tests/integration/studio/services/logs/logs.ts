@@ -488,30 +488,35 @@ export function rowsIn(table: Locator): Locator {
   return table.locator(TABLE_ROWS);
 }
 
+/** The cell of data row `row` under heading `column` (each 1 the first) of a table, below its root. */
+function bodyCell(row: number, column: number): string {
+  return inside(wrapper.findTable().findBodyCell(row, column));
+}
+
 /**
  * The data rows of the table `table` as shown, each a record of its column headings' texts to its cells' texts (the
- * selection column has no heading and is left out). The headings and the rows are found with Cloudscape's selectors;
- * a row's cells are its own children, one under each heading. A table that is loading, empty or failed has no data
- * row.
+ * selection column has no heading and is left out). Headings, rows and cells are found with Cloudscape's selectors:
+ * the cell under the heading `c` of the row `r` is `findBodyCell(r, c)`. No row is left out: a cell that is not there
+ * under a named heading leaves its row without that heading, which no expectation of a text equals. A table that is
+ * loading, empty or failed has no data row.
  */
 export async function rowsOf(table: Locator): Promise<Record<string, string>[]> {
-  const norm = (texts: (string | null)[]) => texts.map((text) => (text ?? '').replace(/\s+/g, ' ').trim());
-  const headers = norm(await table.locator(TABLE_HEADERS).allTextContents());
-  const cells = await rowsIn(table).evaluateAll((rows) =>
-    rows.map((row) => [...row.children].map((cell) => cell.textContent)),
+  const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const headers = (await table.locator(TABLE_HEADERS).allTextContents()).map(norm);
+  const count = await rowsIn(table).count();
+  return Promise.all(
+    Array.from({ length: count }, async (_, r) => {
+      const row: Record<string, string> = {};
+      await Promise.all(
+        headers.map(async (header, c) => {
+          if (header === '') return;
+          const [text] = await table.locator(bodyCell(r + 1, c + 1)).allTextContents();
+          if (text !== undefined) row[header] = norm(text);
+        }),
+      );
+      return row;
+    }),
   );
-  const rows: Record<string, string>[] = [];
-  for (const each of cells) {
-    const texts = norm(each);
-    if (texts.length !== headers.length) continue;
-    const row: Record<string, string> = {};
-    texts.forEach((text, i) => {
-      const header = headers[i] ?? '';
-      if (header !== '') row[header] = text;
-    });
-    rows.push(row);
-  }
-  return rows;
 }
 
 /** Waits until the rows of `table`, mapped by `pick`, equal `want`. */
