@@ -1,16 +1,13 @@
 import type { ServiceScreen } from '../../../screens';
-import { ENTRIES } from '../entries';
-import { apisPath, servicePath } from '../format';
-import { apiGatewayNavigation } from '../navigation';
+import { apisPath, restApisPath, servicePath } from '../format';
 import { ApiListPage } from '../pages/api-list-page';
 
 export const SCREENS: readonly ServiceScreen[] = [
   {
-    paths: [apisPath, servicePath],
-    leadsTo: ENTRIES.filter((entry) => !entry.built).map((entry) => entry.path),
+    paths: [apisPath, servicePath, restApisPath],
     title: 'APIs',
     crumbs: [{ text: 'APIs' }],
-    navigation: apiGatewayNavigation(),
+    navigation: { header: { text: 'API Gateway', href: servicePath }, activeHref: apisPath },
     Page: ApiListPage,
   },
 ];

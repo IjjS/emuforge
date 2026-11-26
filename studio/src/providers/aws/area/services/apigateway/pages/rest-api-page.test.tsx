@@ -6,12 +6,12 @@ import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { areaPage } from '../../../area-page';
 import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useAreaFlash } from '../../../components/use-area-flash';
 import type { TokenPage } from '../../../components/use-token-listing';
 import { registryFaults } from '../../../screens';
-import { areaPage } from '../../../area-page';
 import { readRestApi, readRestResources, readRestStages } from '../rest-api';
 import { SCREENS } from '../screens';
 
@@ -197,7 +197,9 @@ it.each([
   ['Gateway responses', 'gateway-responses'],
   ['Documentation parts', 'documentation-parts'],
   ['Documentation versions', 'documentation-versions'],
-])('links %s to the part below the API’s address', async (title, route) => {
+])('links %s to its area entry', async (title, route) => {
   open();
-  expect(await screen.findByRole('link', { name: title })).toHaveAttribute('href', `${path}/${route}`);
+  const entryPath = `/aws/apigateway/${route}`;
+  expect(await screen.findByRole('link', { name: title })).toHaveAttribute('href', entryPath);
+  expect(areaPage(entryPath)).toMatchObject({ kind: 'entry', label: title });
 });

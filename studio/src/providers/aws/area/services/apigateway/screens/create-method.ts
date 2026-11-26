@@ -1,6 +1,5 @@
 import type { ServiceScreen } from '../../../screens';
-import { apisPath, restApiPath } from '../format';
-import { apiGatewayNavigation } from '../navigation';
+import { apisPath, restApiPath, restApisPath, servicePath } from '../format';
 import { CreateMethodPage } from '../pages/create-method-page';
 
 export const SCREENS: readonly ServiceScreen[] = [
@@ -12,7 +11,7 @@ export const SCREENS: readonly ServiceScreen[] = [
       { text: api_id ?? 'REST API', href: restApiPath(api_id ?? '') },
       { text: 'Create method' },
     ],
-    navigation: apiGatewayNavigation(),
+    navigation: { header: { text: 'API Gateway', href: servicePath }, activeHref: restApisPath },
     Page: CreateMethodPage,
   },
 ];

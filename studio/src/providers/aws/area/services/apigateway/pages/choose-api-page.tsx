@@ -17,8 +17,10 @@ import { apiChoices } from '../api-choices';
 import type { ApiRow } from '../apis-api';
 import { PagedChoice } from '../components/paged-choice';
 import { RequestReadFailure } from '../components/request-read-failure';
-import type { ApiChoiceDestination } from '../entries';
 import { createApiPath, restApiPath, v2ApiPath } from '../format';
+
+export type ApiChoiceDestination =
+  { model: 'rest'; part: 'resources' | 'stages' } | { model: 'v2'; part: 'routes' | 'integrations' | 'stages' };
 
 interface ChooseApiPageProps extends ScreenPageProps {
   name: string;
