@@ -18,6 +18,7 @@ function useV2StageChange<T>(
   operation: string,
   change: (endpoint: string, apiId: string, input: T, signal: AbortSignal) => Promise<void>,
   onSuccess: (input: T) => void,
+  deletedStageName?: (input: T) => string,
 ) {
   const client = useQueryClient();
   const pageSignal = usePageSignal();
@@ -30,7 +31,8 @@ function useV2StageChange<T>(
     onSuccess: (_, { input, signal }) => {
       if (apiId === undefined || signal.aborted) return;
       onSuccess(input);
-      void refreshV2Stages(client, apiId);
+      const stageName = deletedStageName?.(input);
+      void refreshV2Stages(client, apiId, stageName === undefined ? undefined : { endpoint, stageName });
     },
   });
   const failure = isError ? failureOf(error, operation) : undefined;
@@ -68,5 +70,5 @@ export function useDeployV2Stage(
 }
 
 export function useDeleteV2Stage(apiId: string, endpoint: string | undefined, onDeleted: (stageName: string) => void) {
-  return useV2StageChange(endpoint, apiId, DELETE_STAGE, deleteV2Stage, onDeleted);
+  return useV2StageChange(endpoint, apiId, DELETE_STAGE, deleteV2Stage, onDeleted, (stageName) => stageName);
 }
