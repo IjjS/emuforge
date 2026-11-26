@@ -389,7 +389,7 @@ async function openChange(kind: 'create' | 'resource' | 'method', user = open().
 }
 
 function successMessage() {
-  return createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent().getElement();
+  return createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
 }
 
 function expectFlash(message: string) {
