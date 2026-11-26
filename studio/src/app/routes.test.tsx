@@ -6,12 +6,16 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AWS_PROVIDER } from '../providers/aws/provider';
+import { SERVICES as AWS_SERVICES } from '../providers/aws/services';
+import { preloadArea } from '../test/area-preload';
 import { FakeEngine } from '../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
-import { SERVICES as AWS_SERVICES } from '../providers/aws/services';
 import { serviceLinks, SERVICES_DIR } from '../test/service-files';
 import { Providers } from './providers';
 import { routes } from './routes';
+
+await preloadArea(AWS_PROVIDER.loadArea);
 
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
@@ -37,15 +41,6 @@ const WITH_SCREEN: readonly string[] = AWS_SERVICES.filter((service) => service.
 
 /** Every other service. */
 const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label));
-
-/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
-const AREA_LOAD_MS = 10_000;
-
-/**
- * The test timeout of a case that waits for the "no screen yet" page for a part of a service: above `AREA_LOAD_MS`, so
- * that the page's find reports what is missing before the test is ended.
- */
-const NO_SCREEN_PART_TEST_MS = AREA_LOAD_MS + 5_000;
 
 let fetchSpy: ReturnType<typeof vi.fn>;
 
@@ -90,9 +85,9 @@ function cloudscapeElements(): Element[] {
   );
 }
 
-/** The page's `h1`, once the page (the AWS area loads on first opening) is there. */
+/** The page's `h1`, once the page is shown. */
 async function heading(name: string): Promise<HTMLElement> {
-  return screen.findByRole('heading', { level: 1, name }, { timeout: AREA_LOAD_MS });
+  return screen.findByRole('heading', { level: 1, name }, { timeout: 5000 });
 }
 
 function main(): HTMLElement {
@@ -283,7 +278,6 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
   // which no screen matches, shows the "no screen yet" page for that part of the service.
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/iam/users', '/aws/iam/roles/details/abc/tags'])(
     'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
@@ -291,7 +285,6 @@ describe('routes', () => {
 
       await expectNoScreenPart('AWS Identity and Access Management', path);
     },
-    NO_SCREEN_PART_TEST_MS,
   );
 
   it('opens /aws/iam/roles/details/create as the page of a role named create, not the wizard', async () => {
@@ -544,7 +537,6 @@ describe('routes', () => {
   });
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten).
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/code-signing-configurations'])(
     'opens %s as the "no screen yet" page for that part of AWS Lambda',
     async (path) => {
@@ -552,13 +544,11 @@ describe('routes', () => {
 
       await expectNoScreenPart('AWS Lambda', path);
     },
-    NO_SCREEN_PART_TEST_MS,
   );
 
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after (issue 480: `/metrics` in place of `/objects`, which is now the tab "Objects"). Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): the page for that part of
   // the service, and no request for an AWS operation.
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each([
     '/aws/s3/buckets/my-bucket/metrics',
     '/aws/s3/bucket/my-bucket/property/tags/edit',
@@ -589,12 +579,10 @@ describe('routes', () => {
         .map((request) => request.url);
       expect(awsRequests).toEqual([]);
     },
-    NO_SCREEN_PART_TEST_MS,
   );
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", New): the crumbs of the screen above the path, and the
   // first action.
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
   it.each<[string, [string, string | null][]]>([
     [
       '/aws/s3/buckets/my-bucket/metrics',
@@ -630,32 +618,26 @@ describe('routes', () => {
         ['No screen yet', null],
       ]);
     },
-    NO_SCREEN_PART_TEST_MS,
   );
 
-  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
-  it(
-    'opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load',
-    async () => {
-      const router = createMemoryRouter(routes, { initialEntries: ['/aws/s3/directory-buckets'] });
-      render(
-        <Providers>
-          <RouterProvider router={router} />
-        </Providers>,
-      );
-      await heading('No screen yet');
+  it('opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load', async () => {
+    const router = createMemoryRouter(routes, { initialEntries: ['/aws/s3/directory-buckets'] });
+    render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+    await heading('No screen yet');
 
-      let followed = true;
-      act(() => {
-        followed = fireEvent.click(within(main()).getByRole('link', { name: 'Go to Buckets' }));
-      });
+    let followed = true;
+    act(() => {
+      followed = fireEvent.click(within(main()).getByRole('link', { name: 'Go to Buckets' }));
+    });
 
-      expect(followed).toBe(false);
-      expect(router.state.location.pathname).toBe('/aws/s3');
-      expect(inCloudscape(await heading('Buckets'))).toBe(true);
-    },
-    NO_SCREEN_PART_TEST_MS,
-  );
+    expect(followed).toBe(false);
+    expect(router.state.location.pathname).toBe('/aws/s3');
+    expect(inCloudscape(await heading('Buckets'))).toBe(true);
+  });
 
   it('opens /aws/kinesis: the document title "Amazon Kinesis | EmuForge Studio" and the sentence that Studio has no screen for it, as before', async () => {
     open('/aws/kinesis');

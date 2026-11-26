@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: studio|aws-area-first-load-unit-cases|cold-load-timeout
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/test/area-preload.test.ts studio-unit:src/test/case-bounds.test.ts studio-unit:src/app/frame.test.tsx studio-unit:src/app/routes.test.tsx studio-unit:src/providers/aws/area/area-layout.test.tsx
 Issue-Commit: 6d4d6f14dabf6035320fc8697b923daab83c754a
 
 # Give the unit cases that load the AWS area first a timeout that holds on a loaded machine
