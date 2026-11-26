@@ -287,8 +287,10 @@ it('leaves the root Delete unavailable and explains the reason', async () => {
   const button = screen.getAllByRole('button', { name: 'Delete' })[0];
   if (!button) throw new Error('Missing root Delete');
   expect(button).toHaveAttribute('aria-disabled', 'true');
+  expect(button).toHaveAccessibleDescription('The root resource cannot be deleted.');
+  await user.hover(button);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('The root resource cannot be deleted.');
   await user.click(button);
-  expect(await screen.findByText('The root resource cannot be deleted.')).toBeVisible();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 

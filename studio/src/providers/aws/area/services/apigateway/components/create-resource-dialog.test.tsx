@@ -23,7 +23,13 @@ const connected: AreaConnection = {
 };
 const disconnected: AreaConnection = {
   engineOrigin,
-  result: { kind: 'emulator-unreachable', checkedAt: 1, reason: 'not_started', emulator: { port: 9682, endpoint } },
+  result: {
+    kind: 'emulator-unreachable',
+    checkedAt: 1,
+    reason: 'not_started',
+    message: 'Emulator is stopped.',
+    emulator: { port: 9682, endpoint },
+  },
 };
 const rootResource = { id: 'root', path: '/' };
 const orders = { id: 'orders', path: '/orders' };
@@ -90,8 +96,12 @@ it('loads another page and creates under the parent from that page', async () =>
   await user.click(select.findTrigger().getElement());
   const dropdown = select.findDropdown();
   await user.click(await within(dropdown.getElement()).findByRole('button', { name: 'Load more' }));
-  await waitFor(() => expect(dropdown.findOptionByValue('orders')).not.toBeNull());
-  await user.click(dropdown.findOptionByValue('orders')!.getElement());
+  const option = await waitFor(() => {
+    const option = dropdown.findOptionByValue('orders');
+    if (!option) throw new Error('Missing parent from the second page');
+    return option;
+  });
+  await user.click(option.getElement());
   expect(read).toHaveBeenNthCalledWith(2, engineOrigin, 'api-1', 'position-2', expect.any(AbortSignal));
   await user.type(input, 'child');
   await user.click(submit);
@@ -100,7 +110,11 @@ it('loads another page and creates under the parent from that page', async () =>
 });
 
 it.each<[RequestFailure, AreaConnection, string]>([
-  [{ kind: 'not-implemented', operation: 'GetResources' }, connected, '501 Not Implemented for GetResources'],
+  [
+    { kind: 'not-implemented', operation: 'GetResources' },
+    connected,
+    'The emulator answered 501 Not Implemented for GetResources, so Studio cannot show the resources.',
+  ],
   [
     { kind: 'other', operation: 'GetResources', code: 'Refused', message: 'The read was refused.' },
     disconnected,

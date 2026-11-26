@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../area-root';
@@ -84,7 +85,9 @@ async function openEdit() {
     <QueryClientProvider client={client}>
       <AreaRootContext value={root}>
         <div ref={root}>
-          <DetailsWithRead />
+          <MemoryRouter>
+            <DetailsWithRead />
+          </MemoryRouter>
         </div>
       </AreaRootContext>
     </QueryClientProvider>,
@@ -104,12 +107,9 @@ async function openEdit() {
 
 function expectSaved() {
   expect(screen.queryByRole('dialog', { name: 'Edit API' })).not.toBeInTheDocument();
-  expect(screen.getByText(saved.name)).toBeVisible();
+  expect(screen.getAllByText(saved.name)).toHaveLength(2);
   expect(screen.getByText(saved.description)).toBeVisible();
-  expect(
-    screen.getByText('updated.', { exact: false }).closest('[role="status"]') ??
-      screen.getByText('updated.', { exact: false }),
-  ).toBeVisible();
+  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent(`API ${saved.name} updated.`);
 }
 
 it('closes the edit and shows the flash and new fields from the refreshed API', async () => {

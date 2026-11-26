@@ -33,9 +33,10 @@ it.each([
   sent.mockReturnValue(Response.json(fields));
   await updateRestApi(endpoint, 'api-1', { name: 'Old', description: 'Old description' }, fields, signal);
   const request = sent.mock.calls[0]?.[0];
-  expect(request?.method).toBe('PATCH');
-  expect(new URL(request!.url).pathname).toBe(apiPath);
-  await expect(request?.json()).resolves.toEqual({ patchOperations });
+  if (!request) throw new Error('No request was sent');
+  expect(request.method).toBe('PATCH');
+  expect(new URL(request.url).pathname).toBe(apiPath);
+  await expect(request.json()).resolves.toEqual({ patchOperations });
 });
 
 it('creates a resource with its parent ID and path part', async () => {
@@ -44,9 +45,10 @@ it('creates a resource with its parent ID and path part', async () => {
     path: '/orders/{id}',
   });
   const request = sent.mock.calls[0]?.[0];
-  expect(request?.method).toBe('POST');
-  expect(new URL(request!.url).pathname).toBe(`${apiPath}/resources/parent-1`);
-  await expect(request?.json()).resolves.toEqual({ pathPart: '{id}' });
+  if (!request) throw new Error('No request was sent');
+  expect(request.method).toBe('POST');
+  expect(new URL(request.url).pathname).toBe(`${apiPath}/resources/parent-1`);
+  await expect(request.json()).resolves.toEqual({ pathPart: '{id}' });
 });
 
 it('deletes a resource and method by their IDs', async () => {
