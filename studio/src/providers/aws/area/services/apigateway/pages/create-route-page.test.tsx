@@ -242,6 +242,7 @@ const removalFailure = {
   code: 'BadRequestException',
   message: 'Removal refused.',
 } as const;
+const cleanupUnavailable = { kind: 'not-implemented', operation: 'DeleteIntegration' } as const;
 
 async function fillNewHttp(form: ReturnType<typeof open>) {
   await form.shown();
@@ -251,7 +252,7 @@ async function fillNewHttp(form: ReturnType<typeof open>) {
   await form.user.type(form.input('HTTP address'), `${endpoint}/orders`);
 }
 
-it.each([removalFailure, { kind: 'not-implemented', operation: 'DeleteIntegration' }] as const)(
+it.each([removalFailure, cleanupUnavailable])(
   'keeps the integration left by a $kind cleanup available as an existing integration',
   async (cleanup) => {
     create
@@ -305,6 +306,33 @@ it.each([removalFailure, { kind: 'not-implemented', operation: 'DeleteIntegratio
     expect(form.handOver).not.toHaveBeenCalled();
   },
 );
+
+it('shows that neither integration mode can create a route when route creation and cleanup return 501', async () => {
+  create.mockResolvedValueOnce({
+    kind: 'left',
+    failure: { kind: 'not-implemented', operation: 'CreateRoute' },
+    integrationId: 'int-new',
+    removalFailure: cleanupUnavailable,
+  });
+  const form = open();
+  await fillNewHttp(form);
+  await form.submit();
+
+  const error = await form.findAlert();
+  expect(error).toHaveTextContent('CreateRoute');
+  expect(error).toHaveTextContent('Integration int-new was created without a route and could not be removed:');
+  expect(error).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteIntegration.');
+  expect(error).toHaveTextContent('Route creation is unavailable for both new and existing integrations.');
+  expect(error).not.toHaveTextContent('Switch to “Use an existing integration”');
+  const submit = screen.getByRole('button', { name: 'Create route' });
+  expect(submit).toBeDisabled();
+
+  await form.choose('Integration', 'existing');
+  await form.choose('Existing integration', 'int-existing');
+  expect(error).toBeVisible();
+  expect(submit).toBeDisabled();
+  expect(create).toHaveBeenCalledOnce();
+});
 
 it('states that no route was created when taking back the integration succeeds', async () => {
   create.mockResolvedValueOnce({ kind: 'removed', failure: routeRefusal });
