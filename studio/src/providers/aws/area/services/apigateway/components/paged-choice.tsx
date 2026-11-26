@@ -1,5 +1,6 @@
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import { useEffect, useRef } from 'react';
 
 import { optional, useChoiceField, type ChoiceSelectProps } from '../../../components/choice-select';
 import { RequestReadFailure } from './request-read-failure';
@@ -21,8 +22,32 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
     things,
   } = props;
   const fixedOption = fixed === undefined ? undefined : { value: '', label: fixed };
-  const { choices, items, options, props: field } = useChoiceField(props, fixedOption);
+  const { readAgainOnOpen } = source;
+  const {
+    choices,
+    items,
+    options,
+    props: field,
+  } = useChoiceField({ ...props, source: { ...source, readAgainOnOpen: false } }, fixedOption);
+  const select = useRef<HTMLDivElement>(null);
+  const { restart } = choices;
   const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
+
+  useEffect(() => {
+    if (readAgainOnOpen !== true) return;
+    const trigger = select.current?.querySelector('button[aria-haspopup="dialog"]');
+    if (!trigger) return;
+
+    // Select requests its first page on the initial opening. Its trigger exposes later openings.
+    let opened = false;
+    const observer = new MutationObserver(() => {
+      if (trigger.getAttribute('aria-expanded') !== 'true') return;
+      if (opened) restart();
+      opened = true;
+    });
+    observer.observe(trigger, { attributes: true, attributeFilter: ['aria-expanded'] });
+    return () => observer.disconnect();
+  }, [readAgainOnOpen, restart]);
 
   const handleChange = ({ detail }: { detail: SelectProps.ChangeDetail }) => {
     if (detail.selectedOption.value === fixedOption?.value && fixedOption !== undefined) {
@@ -35,15 +60,17 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
 
   return (
     <SpaceBetween size="xs">
-      <Select
-        ref={selectRef}
-        {...field}
-        {...optional({ placeholder, invalid, ariaLabel, triggerVariant })}
-        options={options}
-        selectedOption={selected}
-        dropdownRole="dialog"
-        onChange={handleChange}
-      />
+      <div ref={select}>
+        <Select
+          ref={selectRef}
+          {...field}
+          {...optional({ placeholder, invalid, ariaLabel, triggerVariant })}
+          options={options}
+          selectedOption={selected}
+          dropdownRole="dialog"
+          onChange={handleChange}
+        />
+      </div>
       {choices.failure !== undefined && (
         <RequestReadFailure failure={choices.failure} connection={connection} thing={things} onRetry={choices.retry} />
       )}

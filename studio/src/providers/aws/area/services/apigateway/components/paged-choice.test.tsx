@@ -26,13 +26,18 @@ const second = { value: 'int-2', label: 'HTTP endpoint', description: 'The secon
 const firstPage = { items: [first], next: 'more-integrations' };
 const lastPage = { items: [second] };
 
-async function open(read: ChoiceSource<typeof first>['read'], result: AreaConnection['result'] = connected) {
+async function open(
+  read: ChoiceSource<typeof first>['read'],
+  result: AreaConnection['result'] = connected,
+  readAgainOnOpen = false,
+) {
   const onChange = vi.fn();
   const source: ChoiceSource<typeof first> = {
     key: ['integrations'],
     endpoint,
     operation,
     read,
+    readAgainOnOpen,
     optionOf: (item) => item,
   };
   const test = render(
@@ -54,6 +59,30 @@ async function open(read: ChoiceSource<typeof first>['read'], result: AreaConnec
   await userEvent.click(select.findTrigger().getElement());
   return { ...test, onChange, dropdown: select.findDropdown(), select };
 }
+
+it('reads the current options on reopening while focus stays on the trigger', async () => {
+  const read = vi.fn<ChoiceSource<typeof first>['read']>().mockResolvedValue(firstPage);
+  const { select, dropdown } = await open(read, connected, true);
+  const trigger = select.findTrigger().getElement();
+  await waitFor(() => {
+    expect(dropdown.findOptionByValue(first.value)?.getElement()).toHaveTextContent(first.label);
+  });
+
+  const user = userEvent.setup();
+  await user.click(trigger);
+  expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  expect(trigger).toHaveFocus();
+  expect(read).toHaveBeenCalledTimes(1);
+
+  read.mockResolvedValue(lastPage);
+  await user.click(trigger);
+  await waitFor(() => {
+    expect(select.findDropdown().findOptionByValue(second.value)?.getElement()).toHaveTextContent(second.label);
+  });
+  expect(select.findDropdown().findOptionByValue(first.value)).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenLastCalledWith(endpoint, '', undefined, expect.any(AbortSignal));
+});
 
 it('shows options by value with label and description, and loads a further page by its token', async () => {
   const read = vi

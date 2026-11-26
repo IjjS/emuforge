@@ -216,13 +216,14 @@ it.each(['rest', 'v2'] as const)(
     expect(reader).toHaveBeenNthCalledWith(3, endpoint, `${model}-3`, expect.any(AbortSignal));
 
     act(() => {
-      void refreshApiLists(client);
+      const deleted = model === 'rest' ? rest : v2;
+      void refreshApiLists(client, { endpoint, model, id: deleted.id });
     });
     await waitFor(() => {
       expect(result.current.rest.loading).toBe(true);
       expect(result.current.v2.loading).toBe(true);
-      expect(result.current.rest.items).toEqual([rest, extraRest]);
-      expect(result.current.v2.items).toEqual([v2, extraV2]);
+      expect(result.current.rest.items).toEqual(model === 'rest' ? [extraRest] : [rest, extraRest]);
+      expect(result.current.v2.items).toEqual(model === 'v2' ? [extraV2] : [v2, extraV2]);
     });
     expect(vi.mocked(reader).mock.calls[2]?.[2].aborted).toBe(true);
     expect(readRestApis).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
@@ -243,6 +244,52 @@ it.each(['rest', 'v2'] as const)(
     expect(result.current.v2.items).toEqual(refreshedV2);
     expect(readRestApis).toHaveBeenCalledTimes(model === 'rest' ? 4 : 3);
     expect(readV2Apis).toHaveBeenCalledTimes(model === 'v2' ? 4 : 3);
+  },
+);
+
+it.each(['rest', 'v2'] as const)(
+  'keeps surviving %s rows while retrying only page one after a failed post-delete read',
+  async (model) => {
+    const deleted = api('deleted', model === 'rest' ? 'REST' : 'HTTP');
+    const otherModel = api(deleted.id, model === 'rest' ? 'WebSocket' : 'REST');
+    const firstSurvivor = api('first-survivor', deleted.kind);
+    const laterSurvivor = api('later-survivor', deleted.kind);
+    const retry = deferred<TokenPage<ApiRow>>();
+    const readList = vi.mocked(model === 'rest' ? readRestApis : readV2Apis);
+    const readOther = vi.mocked(model === 'rest' ? readV2Apis : readRestApis);
+    readList
+      .mockResolvedValueOnce({ items: [firstSurvivor], next: 'old-page-2' })
+      .mockResolvedValueOnce({ items: [deleted, laterSurvivor], next: 'old-page-3' })
+      .mockRejectedValueOnce(new RequestError(failure))
+      .mockReturnValueOnce(retry.promise)
+      .mockResolvedValueOnce({ items: [laterSurvivor] });
+    readOther.mockResolvedValue({ items: [otherModel] });
+
+    const { result } = renderHook(() => useApiLists(endpoint), { wrapper });
+    await waitFor(() => expect(result.current[model].more).toBe(true));
+    act(() => result.current[model].loadMore());
+    await waitFor(() => expect(result.current[model].items).toEqual([firstSurvivor, deleted, laterSurvivor]));
+
+    await act(async () => refreshApiLists(client, { endpoint, model, id: deleted.id }));
+    await waitFor(() => expect(result.current[model].failure).toEqual(failure));
+    expect(result.current[model].items).toEqual([firstSurvivor, laterSurvivor]);
+    expect(result.current[model === 'rest' ? 'v2' : 'rest'].items).toEqual([otherModel]);
+    expect(result.current[model].more).toBe(false);
+    expect(readList).toHaveBeenNthCalledWith(3, endpoint, undefined, expect.any(AbortSignal));
+
+    act(() => result.current[model].retry());
+    await waitFor(() => expect(result.current[model].loading).toBe(true));
+    expect(result.current[model].items).toEqual([firstSurvivor, laterSurvivor]);
+    await act(async () => retry.resolve({ items: [firstSurvivor], next: 'new-page-2' }));
+    await waitFor(() => expect(result.current[model].items).toEqual([firstSurvivor]));
+    expect(result.current[model].failure).toBeUndefined();
+    expect(readList).toHaveBeenCalledTimes(4);
+    expect(readList).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
+
+    expect(result.current[model].more).toBe(true);
+    act(() => result.current[model].loadMore());
+    await waitFor(() => expect(result.current[model].items).toEqual([firstSurvivor, laterSurvivor]));
+    expect(readList).toHaveBeenLastCalledWith(endpoint, 'new-page-2', expect.any(AbortSignal));
   },
 );
 
