@@ -433,7 +433,16 @@ export function CreateRoutePage({ connection, params }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1">
+      <Header
+        variant="h1"
+        description={
+          api?.ProtocolType === 'HTTP' && api.Name ? (
+            <>
+              Target API <ValueText kind="name" value={api.Name} />
+            </>
+          ) : undefined
+        }
+      >
         {notFound ? 'API not found' : webSocket ? 'Routes are created here for HTTP APIs only' : title}
       </Header>
       {reading.failure && (

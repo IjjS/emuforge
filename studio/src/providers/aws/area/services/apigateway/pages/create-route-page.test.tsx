@@ -111,6 +111,21 @@ const methods = {
   OPTIONS: 'Ask what is allowed.',
 };
 
+it('shows the API name directly below the Create route heading', async () => {
+  const apiName = 'orders-public-http-api';
+  api.mockResolvedValue({ found: true, api: { ProtocolType: 'HTTP', ApiId: apiId, Name: apiName } });
+  const form = open();
+  await form.shown();
+
+  const heading = screen.getByRole('heading', { level: 1, name: 'Create route' });
+  const header = createWrapper()
+    .findAllHeaders()
+    .find((entry) => entry.getElement().contains(heading));
+  const description = header?.findDescription()?.getElement();
+  expect(description).toBeVisible();
+  expect(description).toHaveTextContent(`Target API ${apiName}`);
+});
+
 it('describes every route and integration choice and reads existing integrations only when opened', async () => {
   const form = open();
   await form.shown();
