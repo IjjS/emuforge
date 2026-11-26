@@ -5,9 +5,9 @@ import type { AreaScreen, ScreenNavigation } from './screens';
 
 export const NO_SCREEN_ENTRY_STATUS = 'No screen yet';
 
-/** The resource-kind links, shared by the navigation and the sub-service page. */
-export function resourceLinks(
-  entries: readonly ResourceEntry[],
+/** Links with screens in written order, followed by links without screens in label order. */
+export function entryLinks(
+  entries: readonly Pick<ResourceEntry, 'label' | 'path'>[],
   screens: readonly AreaScreen[],
   service: string,
 ): SideNavigationProps.Link[] {
@@ -34,12 +34,10 @@ export function entryNavigation(
   if (groups === undefined) return navigation;
 
   const sections = groups.map((group) => {
-    const links = resourceLinks(group.entries, screens, service);
-    if (group.subService !== undefined) {
-      const { name, path } = group.subService;
-      const link: SideNavigationProps.Link = { type: 'link', text: name, href: path };
-      links.unshift(entryHasScreen(screens, service, path) ? link : { ...link, info: NO_SCREEN_ENTRY_STATUS });
-    }
+    const { subService, entries } = group;
+    const groupEntries =
+      subService === undefined ? entries : [{ label: subService.name, path: subService.path }, ...entries];
+    const links = entryLinks(groupEntries, screens, service);
     return { name: group.name, links, current: links.some((link) => link.href === navigation.activeHref) };
   });
 

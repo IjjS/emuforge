@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Service } from '../../services';
 import type { EntryAreaPage } from '../area-page';
 import type { EntryGroup, ResourceEntry } from '../entries';
-import { resourceLinks } from '../entry-navigation';
+import { entryLinks } from '../entry-navigation';
 import type { AreaScreen } from '../screens';
 import { EntryPage } from './entry-page';
 
@@ -102,7 +102,7 @@ describe('the page of an entry without a screen (issue 650, R5)', () => {
     open({
       ...page(rules, true),
       label: subService.name,
-      match: { subService, group, links: resourceLinks(group.entries, [accountsScreen], service.route) },
+      match: { subService, group, links: entryLinks(group.entries, [accountsScreen], service.route) },
     });
 
     expect(screen.getByRole('heading', { level: 1, name: subService.name })).toBeInTheDocument();

@@ -64,8 +64,8 @@ describe('navigation from service entries (issue 650, D2)', () => {
         type: 'section',
         text: 'Second',
         items: [
-          { type: 'link', text: subService.name, href: subService.path, info: 'No screen yet' },
           { type: 'link', text: bins.label, href: bins.path },
+          { type: 'link', text: subService.name, href: subService.path, info: 'No screen yet' },
         ],
       }),
       expect.objectContaining({ type: 'section', text: 'Third' }),

@@ -79,7 +79,7 @@ emulator's answers and the API models, independently of the AWS console's naviga
    path is `/aws/<service>/<noun-in-kebab-case>`, including for kinds listed inside a parent. For a path shared
    by two groups, prefix the later model's kind with that model's words. Labels and paths are unique within a
    service. The service's route belongs to its navigation header.
-7. Inside a group, show kinds with screens first, in the order written, followed by other kinds by label. A
+7. Inside a group, show entries with screens first, in the order written, followed by other entries by label. A
    screen is available when a registered screen matches the entry's path. Adding that screen needs no entry edit.
 8. For a scoped kind record the parent entry's path as `listedInside`. If Studio already lists a kind inside
    another entry's screen, record `shownIn` with that entry's path and the place in words, even for a kind listed

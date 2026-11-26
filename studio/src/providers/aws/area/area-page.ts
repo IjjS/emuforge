@@ -3,7 +3,7 @@ import type { SideNavigationProps } from '@cloudscape-design/components/side-nav
 import { AWS_NAME, AWS_PATH, servicePath } from '../identity';
 import { SERVICES, type Service } from '../services';
 import { ENTRIES, type EntryGroup, type ResourceEntry, type SubServiceEntry } from './entries';
-import { entryNavigation, resourceLinks } from './entry-navigation';
+import { entryNavigation, entryLinks } from './entry-navigation';
 import {
   comparePatterns,
   firstScreen,
@@ -38,7 +38,7 @@ export type AreaPage =
 
 type EntryMatch =
   | { resource: ResourceEntry; group: EntryGroup }
-  | { subService: SubServiceEntry; group: EntryGroup; links: ReturnType<typeof resourceLinks> };
+  | { subService: SubServiceEntry; group: EntryGroup; links: ReturnType<typeof entryLinks> };
 
 export interface EntryAreaPage {
   kind: 'entry';
@@ -126,7 +126,7 @@ export function areaPage(pathname: string): AreaPage {
       let match: EntryMatch;
       let label: string;
       if (subService?.path === pathname) {
-        match = { subService, group, links: resourceLinks(group.entries, screens, service.route) };
+        match = { subService, group, links: entryLinks(group.entries, screens, service.route) };
         label = subService.name;
       } else if (resource !== undefined) {
         match = { resource, group };
