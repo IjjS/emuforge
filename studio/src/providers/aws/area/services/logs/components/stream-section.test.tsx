@@ -1,5 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
+
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -166,4 +168,43 @@ it.each(failures)('shows %s in the table and retries the stream read', async (_l
   expect(await screen.findByRole('link', { name: 'retried' })).toBeVisible();
   expectRead('');
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it('puts the supplied actions in the header and allows selecting only one row', async () => {
+  read.mockResolvedValueOnce({ items: [{ logStreamName: 'first' }, { logStreamName: 'second' }] });
+  function Selectable() {
+    const [name, setName] = useState<string>();
+    return (
+      <StreamSection
+        connection={{ engineOrigin, result: connected }}
+        group={group}
+        selection={{ name, onChange: setName }}
+        actions={() => <button type="button">Change stream</button>}
+      />
+    );
+  }
+  const { container } = render(
+    <MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>
+        <Selectable />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  const tableHeader = createWrapper(container).findHeader()?.getElement();
+  expect(tableHeader).toContainElement(screen.getByRole('button', { name: 'Change stream' }));
+  const first = await screen.findByRole('radio', { name: 'first' });
+  const second = screen.getByRole('radio', { name: 'second' });
+  fireEvent.click(first);
+  expect(first).toBeChecked();
+  fireEvent.click(second);
+  expect(second).toBeChecked();
+  expect(first).not.toBeChecked();
+});
+
+it('omits the supplied actions and selection controls in the read-only listing', async () => {
+  read.mockResolvedValueOnce({ items: [{ logStreamName: 'first' }] });
+  renderSection();
+  expect(await screen.findByRole('link', { name: 'first' })).toBeVisible();
+  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Change stream' })).not.toBeInTheDocument();
 });
