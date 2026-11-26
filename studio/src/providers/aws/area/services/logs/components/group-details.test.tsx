@@ -142,6 +142,15 @@ function renderDetails(result: AreaConnection['result'] = connected) {
   );
 }
 
+function firstTagValue() {
+  const table = createWrapper(document.body)
+    .findAllTables()
+    .find(
+      (candidate) => candidate.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags',
+    );
+  return table?.findBodyCell(1, 2)?.getElement();
+}
+
 it('shows the group values, the copy control, and tag keys and values as text', async () => {
   const value = '<a href="/aws">example</a>';
   read.mockResolvedValueOnce({ team: value });
@@ -154,8 +163,9 @@ it('shows the group values, the copy control, and tag keys and values as text', 
   expect(screen.getByText('days')).toBeVisible();
   expect(screen.getByText('On')).toBeVisible();
   expect(container).toHaveTextContent(creationDateText(new Date(group.creationTime)));
-  expect(await screen.findByText('team')).toBeVisible();
-  expect(screen.getByText(value)).toBeVisible();
+  const table = createWrapper(container).findTable();
+  await waitFor(() => expect(table?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('team'));
+  expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(value);
   expect(screen.queryByRole('link', { name: 'example' })).not.toBeInTheDocument();
   expect(read).toHaveBeenCalledWith(engineOrigin, group.logGroupName, expect.any(AbortSignal));
 });
@@ -170,7 +180,7 @@ it.each(failures)(
     if (failure.kind === 'not-implemented') expect(tags).toHaveTextContent('Not implemented by the emulator');
     expect(screen.getByRole('button', { name: 'Copy ARN' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('tag-value')).toBeVisible();
+    await waitFor(() => expect(firstTagValue()).toHaveTextContent('tag-value'));
     expect(read).toHaveBeenCalledTimes(2);
     expect(read).toHaveBeenLastCalledWith(engineOrigin, group.logGroupName, expect.any(AbortSignal));
   },
@@ -213,7 +223,7 @@ it.each([
 ] as const)('shows the %s save result in the flash and reads group and tags again', async (setting, result) => {
   read.mockResolvedValueOnce({ team: 'old-tag' }).mockResolvedValue({ team: 'new-tag' });
   renderGroup();
-  await screen.findByText('old-tag');
+  await waitFor(() => expect(firstTagValue()).toHaveTextContent('old-tag'));
   if (setting === 'protection') {
     fireEvent.click(screen.getByRole('button', { name: 'Turn off deletion protection' }));
     await waitFor(() =>
@@ -228,7 +238,7 @@ it.each([
   }
   expect(await screen.findByRole('list', { name: 'Notifications' })).toHaveTextContent(result);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(await screen.findByText('new-tag')).toBeVisible();
+  await waitFor(() => expect(firstTagValue()).toHaveTextContent('new-tag'));
   expect(getGroup).toHaveBeenCalledTimes(2);
   expect(read).toHaveBeenCalledTimes(2);
 });
@@ -256,7 +266,7 @@ it.each(['refused', '501'])('keeps the details when a protection switch is %s', 
     expect(action).toBeEnabled();
   }
   expect(screen.getByText('On')).toBeVisible();
-  expect(await screen.findByText('unchanged-tag')).toBeVisible();
+  await waitFor(() => expect(firstTagValue()).toHaveTextContent('unchanged-tag'));
   expect(getGroup).toHaveBeenCalledTimes(1);
   expect(read).toHaveBeenCalledTimes(1);
 });
