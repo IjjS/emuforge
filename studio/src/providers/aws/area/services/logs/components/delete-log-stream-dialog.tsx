@@ -6,7 +6,7 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { LINE_BREAK, normalizeLineBreaks } from '../format';
+import { LINE_BREAK, normalizeLineBreaks, streamNameLabel } from '../format';
 import { DELETE_LOG_STREAM, deleteLogStream } from '../stream-change-api';
 import { ConfirmNameDialog } from './confirm-name-dialog';
 
@@ -77,7 +77,9 @@ export function DeleteLogStreamDialog({
         <>
           Delete log stream{' '}
           {hasLineBreaks ? (
-            <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{confirmationName}</span>
+            <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+              {confirmationName} <ValueText kind="name" value={`(${streamNameLabel(name)})`} />
+            </span>
           ) : (
             <ValueText kind="name" value={name} />
           )}

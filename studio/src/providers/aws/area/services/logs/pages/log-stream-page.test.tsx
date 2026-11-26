@@ -135,30 +135,35 @@ it.each([
 });
 
 it.each([
-  ['%250A', '\n'],
-  ['%250D', '\r'],
-  ['%250D%250A', '\r\n'],
-])('preserves the line break in the heading and sends the decoded name from %s', async (encoded, lineBreak) => {
-  read.mockResolvedValueOnce(page([]));
-  const { container } = renderPage(
-    CONNECTED,
-    `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`,
-  );
+  ['%250A', '\n', '\\n'],
+  ['%250D', '\r', '\\r'],
+  ['%250D%250A', '\r\n', '\\r\\n'],
+  ['%25E2%2580%25A8', '\u2028', '\\u2028'],
+  ['%25E2%2580%25A9', '\u2029', '\\u2029'],
+])(
+  'shows the multiline heading with escaped identity and sends the decoded name from %s',
+  async (encoded, lineBreak, escaped) => {
+    read.mockResolvedValueOnce(page([]));
+    const { container } = renderPage(
+      CONNECTED,
+      `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`,
+    );
 
-  const heading = createWrapper(container).findHeader()?.findHeadingText();
-  expect(heading?.getElement().closest('h1')).toHaveAccessibleName('multiline\nworker');
-  const name = heading?.find('span[style]')?.getElement();
-  expect(name?.textContent).toBe('multiline\nworker');
-  expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  await waitFor(() => expect(emptyStream()).toBeVisible());
-  expect(read).toHaveBeenCalledWith(
-    ENGINE,
-    group,
-    `multiline${lineBreak}worker`,
-    { kind: 'newest' },
-    expect.any(AbortSignal),
-  );
-});
+    const heading = createWrapper(container).findHeader()?.findHeadingText();
+    expect(heading?.getElement().closest('h1')).toHaveAccessibleName(`multiline worker (multiline${escaped}worker)`);
+    const name = heading?.find('span[style]')?.getElement();
+    expect(name?.textContent).toBe(`multiline\nworker (multiline${escaped}worker)`);
+    expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
+    await waitFor(() => expect(emptyStream()).toBeVisible());
+    expect(read).toHaveBeenCalledWith(
+      ENGINE,
+      group,
+      `multiline${lineBreak}worker`,
+      { kind: 'newest' },
+      expect.any(AbortSignal),
+    );
+  },
+);
 
 it('shows loading and renders each timestamp and message in chronological order', async () => {
   const answer = page(['first', 'second']);
