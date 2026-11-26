@@ -2836,8 +2836,12 @@ describe('a service that gives entries (issue 650, R4–R5)', () => {
     const navigation = () => wrapper.findSideNavigation();
     const rangeSection = (index: number) => {
       const nav = navigation();
-      const item = grouped ? nav?.findItemByIndex(1)?.findItemByIndex(index) : nav?.findItemByIndex(index);
-      return item?.findSection();
+      if (!grouped) return nav?.findItemByIndex(index)?.findSection();
+      const core = nav?.findItemByIndex(1);
+      const children = core
+        ?.findItems()
+        .filter((item) => item.getElement().parentElement?.closest('li') === core.getElement());
+      return children?.[index - 1]?.findSection();
     };
     if (grouped) {
       expect(navigation()?.findItemByIndex(1)?.findSectionTitle()?.getElement()).toHaveTextContent('Core');
