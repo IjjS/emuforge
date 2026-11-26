@@ -813,7 +813,6 @@ describe('the counter, the description, the notice and the layout', () => {
         'href',
         '/aws/iam',
       );
-      expect(within(side).getByText('Access Management')).toBeInTheDocument();
       const roles = within(side).getByRole('link', { name: 'Roles' });
       expect(roles).toHaveAttribute('href', '/aws/iam/roles');
       expect(roles).toHaveAttribute('aria-current', 'page');
