@@ -87,24 +87,24 @@ it('shows one sorted table with the model-specific links and metadata', async ()
   const table = screen.getByRole('table', { name: 'APIs' });
   const rows = within(table).getAllByRole('row').slice(1);
   expect(rows.map((row) => within(row).getByRole('rowheader').textContent)).toEqual(['Events', 'Payroll', 'Updates']);
-  expect(within(rows[0]!).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/v2/api-shared');
-  expect(within(rows[1]!).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/rest/api-shared');
-  expect(within(rows[2]!).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/v2/ws-1');
-  expect(
-    within(rows[0]!)
+  const [httpRow, restRow, webSocketRow] = rows;
+  if (httpRow === undefined || restRow === undefined || webSocketRow === undefined) {
+    throw new Error('Missing API rows');
+  }
+  const cells = (row: HTMLElement) =>
+    within(row)
       .getAllByRole('cell')
-      .map((cell) => cell.textContent),
-  ).toEqual(expect.arrayContaining([http.id, 'HTTP', http.description, creationDateText(createdDate), '-']));
-  expect(
-    within(rows[1]!)
-      .getAllByRole('cell')
-      .map((cell) => cell.textContent),
-  ).toEqual(expect.arrayContaining([rest.id, 'REST', rest.description, creationDateText(createdDate), 'Private']));
-  expect(
-    within(rows[2]!)
-      .getAllByRole('cell')
-      .map((cell) => cell.textContent),
-  ).toContain('WebSocket');
+      .map((cell) => cell.textContent);
+  expect(within(httpRow).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/v2/api-shared');
+  expect(within(restRow).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/rest/api-shared');
+  expect(within(webSocketRow).getByRole('link')).toHaveAttribute('href', '/aws/apigateway/apis/v2/ws-1');
+  expect(cells(httpRow)).toEqual(
+    expect.arrayContaining([http.id, 'HTTP', http.description, creationDateText(createdDate), '-']),
+  );
+  expect(cells(restRow)).toEqual(
+    expect.arrayContaining([rest.id, 'REST', rest.description, creationDateText(createdDate), 'Private']),
+  );
+  expect(cells(webSocketRow)).toContain('WebSocket');
 });
 
 it('shows loading until the lists answer, then offers Create API when both are empty', async () => {
@@ -149,11 +149,13 @@ it.each([
     vi.mocked(reader).mockRejectedValueOnce(
       new RequestError({ kind: 'other', operation, code: 'Refused', message: 'Full reason.' }),
     );
-    open();
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(`${operation}: Refused: Full reason.`);
-    expect(screen.getByRole('link', { name: visible.name })).toBeInTheDocument();
-    await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    const { container } = open();
+    await screen.findByText(`${operation}: Refused: Full reason.`);
+    const alert = createWrapper(container).findAlert();
+    if (alert === null) throw new Error('Missing list failure alert');
+    expect(alert.getElement()).toHaveTextContent(`${operation}: Refused: Full reason.`);
+    expect(await screen.findByRole('link', { name: visible.name })).toBeInTheDocument();
+    await userEvent.click(within(alert.getElement()).getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('link', { name: retried.name })).toBeInTheDocument();
     expect(reader).toHaveBeenCalledTimes(2);
     expect(other).toHaveBeenCalledOnce();

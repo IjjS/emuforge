@@ -25,7 +25,7 @@ afterEach(() => {
 
 it('reads 25 REST APIs by position and returns their endpoint types and the next position', async () => {
   bodies.set('/restapis', {
-    items: [
+    item: [
       {
         id: 'rest-1',
         name: 'Local REST',
