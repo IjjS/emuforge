@@ -59,7 +59,7 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
       {api.data === undefined && api.loading && <StatusIndicator type="loading">Loading API…</StatusIndicator>}
       {api.data && (
         <>
-          <RestDetails api={api.data} apiId={apiId} onRefresh={refresh} />
+          <RestDetails api={api.data} apiId={apiId} endpoint={connection.engineOrigin} onRefresh={refresh} />
           <RestResources apiId={apiId} connection={connection} list={resources} />
           <RestStages apiId={apiId} connection={connection} />
           <Container header={<Header variant="h2">Related API settings</Header>}>
