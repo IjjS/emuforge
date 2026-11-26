@@ -7,12 +7,16 @@ import { dropApi, refreshApiLists } from './queries';
 export function useDeleteApi(endpoint: string | undefined, onDeleted: (api: DeleteApiTarget) => void) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ api, signal }: { api: DeleteApiTarget; signal: AbortSignal }) =>
-      endpoint === undefined ? noEndpoint() : deleteApi(endpoint, api, signal),
-    onSuccess: (_, { api, signal }) => {
-      dropApi(client, deleteApiModel(api.kind), api.id);
+    mutationFn: async ({ api, signal }: { api: DeleteApiTarget; signal: AbortSignal }) => {
+      if (endpoint === undefined) return noEndpoint();
+      await deleteApi(endpoint, api, signal);
+      return endpoint;
+    },
+    onSuccess: (origin, { api, signal }) => {
+      const model = deleteApiModel(api.kind);
+      dropApi(client, model, api.id);
       if (!signal.aborted) onDeleted(api);
-      return refreshApiLists(client);
+      return refreshApiLists(client, { endpoint: origin, model, id: api.id });
     },
   });
 }
