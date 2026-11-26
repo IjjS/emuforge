@@ -9,6 +9,7 @@ import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
+import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { PageFlashContext } from '../../../components/page-flash';
 import { useAreaFlash } from '../../../components/use-area-flash';
@@ -74,20 +75,28 @@ function renderView(ui: React.ReactElement) {
   });
 }
 
-function row(name: string) {
-  const element = screen.getByRole('rowheader', { name }).closest('tr');
-  assert(element);
-  return element;
+const page = createWrapper(document.body);
+
+function table() {
+  const wrapper = page.findTable();
+  assert(wrapper);
+  return wrapper;
+}
+
+function flash() {
+  return page.findFlashbar()?.findItems()[0]?.getElement();
 }
 
 it('shows HTTP stage metadata, the two kinds of invoke address and the guidance when empty', async () => {
   const user = userEvent.setup();
   const { rerender } = renderView(view(catalog([defaultStage, devStage])));
-  const first = row('$default');
+  const first = table().findRows()[0]?.getElement();
+  assert(first);
   for (const text of ['$default', 'On', 'd-1', creationDateText(date), endpoint]) {
     expect(first).toHaveTextContent(text);
   }
-  const dev = row('dev');
+  const dev = table().findRows()[1]?.getElement();
+  assert(dev);
   expect(dev).toHaveTextContent('Off');
   expect(dev).toHaveTextContent(`${endpoint}/dev`);
   expect(within(first).getByRole('button', { name: 'Copy deployment ID' })).toBeInTheDocument();
@@ -95,40 +104,110 @@ it('shows HTTP stage metadata, the two kinds of invoke address and the guidance 
   expect(await navigator.clipboard.readText()).toBe(`${endpoint}/dev`);
 
   rerender(view(catalog([])));
-  expect(screen.getByText('No stages')).toBeInTheDocument();
-  expect(screen.getByText('Create a stage to get an invoke URL.')).toBeInTheDocument();
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No stages');
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent('Create a stage to get an invoke URL.');
 });
 
 it('copies the WebSocket deployment ID and shows no invoke-address column or empty-state suggestion', async () => {
   const user = userEvent.setup();
   const { rerender } = renderView(view(catalog([defaultStage]), 'WEBSOCKET'));
-  const first = row('$default');
+  const first = table().findRows()[0]?.getElement();
+  assert(first);
   for (const text of ['$default', 'On', 'd-1', creationDateText(date)]) {
     expect(first).toHaveTextContent(text);
   }
-  expect(screen.queryByRole('columnheader', { name: 'Invoke address' })).not.toBeInTheDocument();
+  expect(
+    table()
+      .findColumnHeaders()
+      .map((column) => column.getElement().textContent?.trim()),
+  ).not.toContain('Invoke address');
   await user.click(within(first).getByRole('button', { name: 'Copy deployment ID' }));
   expect(await navigator.clipboard.readText()).toBe('d-1');
 
   rerender(view(catalog([]), 'WEBSOCKET'));
-  expect(screen.getByText('No stages')).toBeInTheDocument();
-  expect(screen.queryByText('Create a stage to get an invoke URL.')).not.toBeInTheDocument();
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No stages');
+  expect(table().findEmptySlot()?.getElement()).not.toHaveTextContent('Create a stage to get an invoke URL.');
 });
 
-it('shows the operation and retry when GetStages fails', async () => {
+const emulator = { port: 9682, endpoint: 'https://127.0.0.1:9682' };
+const stopped = { kind: 'emulator-unreachable', checkedAt: 1, emulator, reason: 'not_started', message: '' } as const;
+const connected = { kind: 'connected', checkedAt: 1, emulator } as const;
+const operation = 'GetStages';
+
+it.each<{
+  failure: RequestFailure;
+  first: string;
+  detail: string;
+  health?: AreaConnection['result'];
+  recovery?: boolean;
+}>([
+  {
+    failure: { kind: 'not-implemented', operation },
+    first: 'Not implemented by the emulator',
+    detail: 'The emulator answered 501 Not Implemented for GetStages, so Studio cannot show the stages.',
+  },
+  {
+    failure: { kind: 'access-denied', operation, message: 'The policy denies this API.' },
+    first: 'Access denied',
+    detail: 'GetStages was refused: The policy denies this API.',
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: 'Connection refused.' },
+    health: stopped,
+    first: 'Not started on port 9682',
+    detail: 'GetStages got no answer from the emulator. Connection refused.',
+    recovery: true,
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: 'Timed out.' },
+    health: connected,
+    first: 'Not answering at https://127.0.0.1:9682',
+    detail: 'GetStages got no answer from the emulator. Timed out.',
+    recovery: true,
+  },
+  {
+    failure: { kind: 'engine-did-not-answer', operation },
+    first: 'The EmuForge engine at http://127.0.0.1:9681 is not answering',
+    detail: 'GetStages got no answer.',
+    recovery: true,
+  },
+  {
+    failure: { kind: 'other', operation, code: 'Oops', message: 'Unrecognized API.' },
+    first: 'The stages could not be read',
+    detail: 'GetStages: Oops: Unrecognized API.',
+  },
+])('shows "$first" and restores stages after Retry', async ({ failure, first, detail, health, recovery }) => {
   const user = userEvent.setup();
-  const stages = {
-    ...catalog(),
-    failure: { kind: 'other', operation: 'GetStages', code: 'Oops', message: 'Unrecognized API.' },
-  } as const;
-  renderView(view(stages));
-  expect(screen.getByText('The stages could not be read')).toBeInTheDocument();
-  expect(screen.getByText('GetStages: Oops: Unrecognized API.')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(stages.retry).toHaveBeenCalledOnce();
+  read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ items: [devStage] });
+  renderView(
+    <MemoryRouter>
+      <StagesWithFlash protocol="HTTP" health={health} />
+    </MemoryRouter>,
+  );
+  await waitFor(() => {
+    const empty = table().findEmptySlot()?.getElement();
+    expect(empty).toHaveTextContent(first);
+    expect(empty).toHaveTextContent(detail);
+  });
+  const empty = table().findEmptySlot()?.getElement();
+  assert(empty);
+  const status = within(empty).queryByRole('link', { name: 'Connection status' });
+  if (recovery) expect(status).toHaveAttribute('href', '/');
+  else expect(status).not.toBeInTheDocument();
+
+  await user.click(within(empty).getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(table().findRows()[0]?.getElement()).toHaveTextContent('dev'));
+  expect(table().findRows()[0]?.getElement()).toHaveTextContent(`${endpoint}/dev`);
+  expect(table().findEmptySlot()).toBeNull();
 });
 
-function StagesWithFlash({ protocol }: { protocol: GetApiResponse['ProtocolType'] }) {
+function StagesWithFlash({
+  protocol,
+  health,
+}: {
+  protocol: GetApiResponse['ProtocolType'];
+  health?: AreaConnection['result'];
+}) {
   const { shown, pageFlash, dismiss, announce } = useAreaFlash('/aws/apigateway/apis/v2/api-1', 0, true);
   const stages = useV2Stages(connection.engineOrigin, apiId);
   return (
@@ -137,7 +216,7 @@ function StagesWithFlash({ protocol }: { protocol: GetApiResponse['ProtocolType'
       <V2Stages
         api={{ ApiId: apiId, ApiEndpoint: endpoint, ProtocolType: protocol }}
         stages={stages}
-        connection={connection}
+        connection={{ ...connection, result: health }}
       />
     </PageFlashContext.Provider>
   );
@@ -155,7 +234,7 @@ async function open(protocol: GetApiResponse['ProtocolType'] = 'HTTP') {
       </AreaRootContext.Provider>
     </MemoryRouter>,
   );
-  await screen.findByRole('rowheader', { name: 'dev' });
+  await waitFor(() => expect(table().findRows()[1]?.getElement()).toHaveTextContent('dev'));
   return user;
 }
 
@@ -163,7 +242,7 @@ type User = ReturnType<typeof userEvent.setup>;
 type Action = 'create' | 'deploy' | 'delete';
 
 async function selectStage(user: User, index: number) {
-  const radio = createWrapper(document.body).findTable()?.findRowSelectionArea(index)?.find('input');
+  const radio = table().findRowSelectionArea(index)?.find('input');
   assert(radio);
   await user.click(radio.getElement());
 }
@@ -174,38 +253,43 @@ async function submit(user: User, action: Action) {
   await user.click(screen.getByRole('button', { name: button }));
   if (action === 'deploy') return;
   const dialogName = action === 'create' ? 'Create stage' : 'Delete stage dev?';
-  const dialog = within(await screen.findByRole('dialog', { name: dialogName }));
-  const input = createWrapper(document.body).findModal()?.findContent().findInput()?.findNativeInput();
-  assert(input);
+  const modal = await waitFor(() => {
+    const dialog = page.findModal();
+    assert(dialog && dialog.isVisible());
+    return dialog;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent(dialogName);
+  const input = modal.findContent().findFormField()?.findControl()?.findInput()?.findNativeInput();
+  const confirm = modal.findFooter()?.findAllButtons()[1];
+  assert(input && confirm);
   await user.type(input.getElement(), action === 'create' ? 'sandbox' : 'dev');
-  await user.click(dialog.getByRole('button', { name: button }));
+  await user.click(confirm.getElement());
 }
 
 const changes = [
   {
     action: 'create',
-    request: create,
     updated: [defaultStage, devStage, { StageName: 'sandbox', AutoDeploy: true }],
     message: 'Stage sandbox created.',
   },
   {
     action: 'deploy',
-    request: deploy,
     updated: [defaultStage, { ...devStage, DeploymentId: 'd-2' }],
     message: 'API deployed to stage dev.',
   },
   {
     action: 'delete',
-    request: remove,
     updated: [defaultStage],
     message: 'Stage dev deleted.',
   },
 ] as const;
 
 function expectUpdatedStages(action: Action) {
-  if (action === 'create') expect(screen.getByRole('rowheader', { name: 'sandbox' })).toBeVisible();
-  if (action === 'deploy') expect(row('dev')).toHaveTextContent('d-2');
-  if (action === 'delete') expect(screen.queryByRole('rowheader', { name: 'dev' })).not.toBeInTheDocument();
+  const rows = table().findRows();
+  expect(rows).toHaveLength({ create: 3, deploy: 2, delete: 1 }[action]);
+  expect(rows[0]?.getElement()).toHaveTextContent('$default');
+  if (action === 'create') expect(rows[2]?.getElement()).toHaveTextContent('sandbox');
+  if (action === 'deploy') expect(table().findBodyCell(2, 4)?.getElement()).toHaveTextContent('d-2');
 }
 
 it('offers the HTTP actions and explains why an auto-deploy stage cannot be deployed manually', async () => {
@@ -237,25 +321,27 @@ it('offers stage deletion on WebSocket APIs without create or deploy actions', a
     read.mockResolvedValueOnce({ items: [defaultStage] });
   });
   await submit(user, 'delete');
-  expect(await screen.findByRole('list', { name: 'Notifications' })).toHaveTextContent('Stage dev deleted.');
+  await waitFor(() => expect(flash()).toHaveTextContent('Stage dev deleted.'));
   expect(remove).toHaveBeenCalledWith(connection.engineOrigin, apiId, 'dev', expect.any(AbortSignal));
   await waitFor(() => expectUpdatedStages('delete'));
 });
 
 it.each(changes)(
-  'shows the $action result and refreshes the stage table',
-  async ({ action, request, updated, message }) => {
+  'shows the $action result and closes any dialog before refreshing the stage table',
+  async ({ action, updated, message }) => {
     const user = await open();
-    request.mockImplementationOnce(async () => {
-      read.mockResolvedValueOnce({ items: [...updated] });
+    const refreshStarted = vi.fn();
+    read.mockImplementationOnce(async () => {
+      refreshStarted(flash()?.textContent, page.findModal()?.isVisible() ?? false);
+      return { items: [...updated] };
     });
 
     await submit(user, action);
 
-    expect(await screen.findByRole('list', { name: 'Notifications' })).toHaveTextContent(message);
     await waitFor(() => expectUpdatedStages(action));
+    expect(refreshStarted).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(message), false);
+    expect(flash()).toHaveTextContent(message);
     expect(read).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     if (action === 'deploy')
       expect(deploy).toHaveBeenCalledWith(connection.engineOrigin, apiId, 'dev', expect.any(AbortSignal));
   },
@@ -274,44 +360,55 @@ it.each<[RequestFailure, string, boolean]>([
 
   await submit(user, 'deploy');
 
-  const notification = await screen.findByRole('list', { name: 'Notifications' });
-  expect(notification).toHaveTextContent('CreateDeployment');
-  expect(notification).toHaveTextContent(reason);
+  await waitFor(() => {
+    expect(flash()).toHaveTextContent('CreateDeployment');
+    expect(flash()).toHaveTextContent(reason);
+  });
   const button = screen.getByRole('button', { name: 'Deploy' });
   if (unavailable) expect(button).toBeDisabled();
   else expect(button).toBeEnabled();
   expect(read).toHaveBeenCalledOnce();
 });
 
-it.each(changes)(
-  'keeps the later stages and result when an older read answers after $action',
-  async ({ action, request, updated, message }) => {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+const arrivalOrders = ['older first', 'later first'] as const;
+
+it.each(changes.flatMap((change) => arrivalOrders.map((first) => ({ ...change, first }))))(
+  'keeps the later stages and $action result when reads answer $first',
+  async ({ action, first, updated, message }) => {
     read.mockResolvedValueOnce({ items: [defaultStage, devStage], next: 'older-page' });
     const user = await open();
-    let replyToOldRead!: (page: TokenPage<Stage>) => void;
-    read.mockReturnValueOnce(
-      new Promise((resolve) => {
-        replyToOldRead = resolve;
-      }),
-    );
+    const older = deferred<TokenPage<Stage>>();
+    const later = deferred<TokenPage<Stage>>();
+    read.mockReturnValueOnce(older.promise).mockReturnValueOnce(later.promise);
     await user.click(screen.getByRole('button', { name: 'Load more stages' }));
     await waitFor(() =>
       expect(read).toHaveBeenLastCalledWith(connection.engineOrigin, apiId, 'older-page', expect.any(AbortSignal)),
     );
     const oldSignal = read.mock.calls[1]?.[3];
-    request.mockImplementationOnce(async () => {
-      read.mockResolvedValueOnce({ items: [...updated] });
-    });
 
     await submit(user, action);
 
-    const notification = await screen.findByRole('list', { name: 'Notifications' });
-    await waitFor(() => expectUpdatedStages(action));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(flash()).toHaveTextContent(message);
     expect(oldSignal?.aborted).toBe(true);
-    expect(read).toHaveBeenCalledTimes(3);
-    await act(async () => replyToOldRead({ items: [defaultStage, devStage, { StageName: 'stale' }] }));
-    expect(screen.queryByRole('rowheader', { name: 'stale' })).not.toBeInTheDocument();
-    expectUpdatedStages(action);
-    expect(notification).toHaveTextContent(message);
+    const answers = {
+      'older first': () => older.resolve({ items: [{ StageName: 'stale' }] }),
+      'later first': () => later.resolve({ items: [...updated] }),
+    };
+    const second = first === 'older first' ? 'later first' : 'older first';
+    await act(async () => answers[first]());
+    if (first === 'later first') await waitFor(() => expectUpdatedStages(action));
+    expect(flash()).toHaveTextContent(message);
+    await act(async () => answers[second]());
+    await waitFor(() => expectUpdatedStages(action));
+    expect(flash()).toHaveTextContent(message);
   },
 );

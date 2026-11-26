@@ -131,6 +131,9 @@ function failureItem(outcome: Exclude<RouteOutcome, { kind: 'created' }>, endpoi
   const { failure } = outcome;
   const base = actionFailureItem(failure, title, endpoint);
   if (outcome.kind === 'left') {
+    const { removalFailure } = outcome;
+    const cleanup =
+      removalFailure.kind === 'not-implemented' ? actionFailureItem(removalFailure, title, endpoint) : undefined;
     return {
       ...base,
       content: (
@@ -138,8 +141,9 @@ function failureItem(outcome: Exclude<RouteOutcome, { kind: 'created' }>, endpoi
           <Box>{requestReason(failure)}</Box>
           <Box>
             Integration <CopyValue label="integration ID" kind="fixed" value={outcome.integrationId} /> was created
-            without a route and could not be removed: {requestReason(outcome.removalFailure)}
+            without a route and could not be removed: {cleanup?.content ?? requestReason(removalFailure)}
           </Box>
+          {cleanup && <StatusIndicator type="info">{cleanup.header}</StatusIndicator>}
         </SpaceBetween>
       ),
     };
@@ -164,6 +168,7 @@ function RouteEditor({ apiId, endpoint, connection }: { apiId: string; endpoint:
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [unavailableOperation, setUnavailableOperation] = useState<string>();
+  const [cleanupUnavailable, setCleanupUnavailable] = useState(false);
   const [asking, setAsking] = useState(false);
   const [kept, setKept] = useState(0);
   const busy = useRef(false);
@@ -209,7 +214,8 @@ function RouteEditor({ apiId, endpoint, connection }: { apiId: string; endpoint:
   const errors = tried && 'errors' in validation ? validation.errors : {};
   const set = (change: Partial<RouteForm>) => setForm((previous) => ({ ...previous, ...change }));
   const unavailable =
-    unavailableOperation === CREATE_ROUTE || (unavailableOperation === CREATE_INTEGRATION && form.source === 'new');
+    unavailableOperation === CREATE_ROUTE ||
+    (form.source === 'new' && (unavailableOperation === CREATE_INTEGRATION || cleanupUnavailable));
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -238,6 +244,7 @@ function RouteEditor({ apiId, endpoint, connection }: { apiId: string; endpoint:
       } else {
         setFailure(failureItem(outcome, endpoint));
         if (outcome.failure.kind === 'not-implemented') setUnavailableOperation(outcome.failure.operation);
+        if (outcome.kind === 'left' && outcome.removalFailure.kind === 'not-implemented') setCleanupUnavailable(true);
       }
     } catch (error) {
       if (!signal.aborted) {
