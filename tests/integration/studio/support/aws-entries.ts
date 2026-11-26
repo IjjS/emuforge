@@ -167,13 +167,22 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
         return false;
       };
       const drawn = (el: Element | null): boolean => el !== null && el.getClientRects().length > 0 && !hidden(el);
-      // The drawn text of an element: its text nodes whose own element is drawn.
+      // A text is drawn when it has a box of its own and nothing around it hides it; its own element may have none
+      // (`display: contents`, as the title of a navigation's section).
+      const textDrawn = (node: Node): boolean => {
+        const parent = node.parentElement;
+        if (parent === null || hidden(parent)) return false;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getClientRects().length > 0;
+      };
+      // The drawn text of an element: its text nodes that are drawn.
       const drawnText = (el: Element | null | undefined): string => {
         if (el == null) return '';
         const parts: string[] = [];
         const texts = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
-          if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+          if (textDrawn(node)) parts.push(node.textContent ?? '');
         }
         return clean(parts.join(''));
       };
@@ -199,7 +208,7 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
               if (text === '' || parent === null || link.contains(node)) continue;
               const list = parent.closest('ul, ol');
               if (list !== null && item.contains(list)) continue;
-              if (!drawn(parent)) continue;
+              if (!textDrawn(node)) continue;
               beside.push(text);
             }
           }
@@ -381,13 +390,22 @@ export async function pagePairs(page: Page): Promise<PagePairs> {
         return false;
       };
       const drawn = (el: Element | null): boolean => el !== null && el.getClientRects().length > 0 && !hidden(el);
-      // The drawn text of an element: its text nodes whose own element is drawn.
+      // A text is drawn when it has a box of its own and nothing around it hides it; its own element may have none
+      // (`display: contents`, as the title of a navigation's section).
+      const textDrawn = (node: Node): boolean => {
+        const parent = node.parentElement;
+        if (parent === null || hidden(parent)) return false;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getClientRects().length > 0;
+      };
+      // The drawn text of an element: its text nodes that are drawn.
       const drawnText = (el: Element | null): string => {
         if (el === null) return '';
         const parts: string[] = [];
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-          if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+          if (textDrawn(node)) parts.push(node.textContent ?? '');
         }
         return clean(parts.join(''));
       };
@@ -481,12 +499,21 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
         };
         const drawn = (target: Element | null): boolean =>
           target !== null && target.getClientRects().length > 0 && !hidden(target);
-        // The link's label as drawn: its text nodes whose own element is drawn; empty for a link that is not drawn.
+        // A text is drawn when it has a box of its own and nothing around it hides it; its own element may have none
+        // (`display: contents`, as the title of a navigation's section).
+        const textDrawn = (node: Node): boolean => {
+          const parent = node.parentElement;
+          if (parent === null || hidden(parent)) return false;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return range.getClientRects().length > 0;
+        };
+        // The link's label as drawn: its text nodes that are drawn; empty for a link that is not drawn.
         const drawnLabel = (link: Element): string => {
           const parts: string[] = [];
           const texts = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
           for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
-            if (drawn(node.parentElement)) parts.push(node.textContent ?? '');
+            if (textDrawn(node)) parts.push(node.textContent ?? '');
           }
           return clean(parts.join(''));
         };
@@ -498,7 +525,7 @@ export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]>
           for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
             const parent = node.parentElement;
             const text = clean(node.textContent);
-            if (text === '' || parent === null || el.contains(node) || !drawn(parent)) continue;
+            if (text === '' || parent === null || el.contains(node) || !textDrawn(node)) continue;
             beside.push(text);
           }
         }
