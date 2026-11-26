@@ -3,6 +3,7 @@ import Button from '@cloudscape-design/components/button';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
+import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useState } from 'react';
@@ -13,11 +14,12 @@ import { ReadFailure, readFailureState } from '../../../components/failure-state
 import { creationDateText } from '../../../components/format-date';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { EventMessage } from '../components/event-message';
 import { PutEventsForm } from '../components/put-events-form';
-import { nameFromSegment } from '../format';
+import { LOG_GROUPS_PATH, logGroupPath, nameFromSegment } from '../format';
 import { useStreamEvents } from '../use-stream-events';
 
 const STANDARD_CLASS = 'The emulator reads and searches log events only in log groups of the Standard class.';
@@ -25,22 +27,18 @@ const STANDARD_REASON = 'This operation is only supported on the Standard log cl
 
 function initialFailureState(failure: RequestFailure, connection: AreaConnection) {
   const state = readFailureState(failure, connection, 'log events');
-  if (failure.kind !== 'other') return state;
-
-  let first: string;
-  if (failure.code === 'ResourceNotFoundException' && failure.message === 'The specified log group does not exist.') {
-    first = 'Log group not found';
-  } else if (
-    failure.code === 'ResourceNotFoundException' &&
-    failure.message === 'The specified log stream does not exist.'
-  ) {
-    first = 'Log stream not found';
-  } else if (failure.code === 'ValidationException' && failure.message === STANDARD_REASON) {
-    first = STANDARD_CLASS;
-  } else {
-    return state;
+  if (failure.kind === 'other' && failure.code === 'ResourceNotFoundException') {
+    for (const resource of ['group', 'stream'] as const) {
+      if (failure.message === `The specified log ${resource} does not exist.`) {
+        const first = `Log ${resource} not found`;
+        return { state: { ...state, first, firstText: first, detail: failure.message }, missing: resource };
+      }
+    }
   }
-  return { ...state, first, firstText: first, detail: failure.message };
+  if (failure.kind === 'other' && failure.code === 'ValidationException' && failure.message === STANDARD_REASON) {
+    return { state: { ...state, first: STANDARD_CLASS, firstText: STANDARD_CLASS, detail: failure.message } };
+  }
+  return { state };
 }
 
 function continuationFailureState(failure: RequestFailure, connection: AreaConnection, direction: 'older' | 'newer') {
@@ -95,8 +93,11 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
   const streamEvents = useStreamEvents(connection.engineOrigin, group, stream);
   const { events, initialFailure, prepended, load, readFrom } = streamEvents;
   const flash = usePageFlash();
+  const handleFollow = useFollow();
   const [showPut, setShowPut] = useState(false);
   const [putUnavailable, setPutUnavailable] = useState(false);
+  const failure = initialFailure === undefined ? undefined : initialFailureState(initialFailure, connection);
+  const missing = failure?.missing;
 
   function handlePut(time: number, { stored, rejected }: { stored: number; rejected: number }) {
     const success: FlashItem = {
@@ -113,8 +114,19 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
   }
 
   let body;
-  if (initialFailure !== undefined) {
-    body = <ReadFailure state={initialFailureState(initialFailure, connection)} onRetry={() => load('initial')} />;
+  if (failure !== undefined) {
+    body = (
+      <SpaceBetween size="s">
+        <ReadFailure state={failure.state} onRetry={() => load('initial')} />
+        {missing !== undefined && (
+          <Box textAlign="center">
+            <Link href={missing === 'group' ? LOG_GROUPS_PATH : logGroupPath(group)} onFollow={handleFollow}>
+              {missing === 'group' ? 'Back to Log groups' : 'Back to log group'}
+            </Link>
+          </Box>
+        )}
+      </SpaceBetween>
+    );
   } else if (events === undefined) {
     body = <StatusIndicator type="loading">Loading log events</StatusIndicator>;
   } else {
@@ -152,7 +164,18 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1" actions={<Button onClick={() => setShowPut(true)}>Put log events</Button>}>
+      <Header
+        variant="h1"
+        actions={
+          <Button
+            disabled={missing !== undefined}
+            disabledReason={missing === undefined ? undefined : `The log ${missing} must exist to put events.`}
+            onClick={() => setShowPut(true)}
+          >
+            Put log events
+          </Button>
+        }
+      >
         <ValueText kind="name" value={stream} />
       </Header>
       <Container header={<Header variant="h2">Log events</Header>}>{body}</Container>
