@@ -40,6 +40,7 @@ export function PutEventsForm({
   const errors = validate ? validateMessages(messages) : undefined;
   const reason = unavailable ? ({ kind: 'not-implemented', operation: PUT_LOG_EVENTS } as const) : failure;
   const alert = reason && actionFailureItem(reason, PUT_LOG_EVENTS, endpoint);
+  const connectionFailure = reason?.kind === 'engine-did-not-answer' || reason?.kind === 'emulator-did-not-answer';
 
   const dismiss = () => {
     if (!pending) onDismiss();
@@ -122,6 +123,7 @@ export function PutEventsForm({
         {errors?.batchError !== undefined && <Alert type="error">{errors.batchError}</Alert>}
         {alert && (
           <Alert type={alert.type === 'info' ? 'info' : 'error'} header={alert.header}>
+            {connectionFailure && <Box variant="p">{PUT_LOG_EVENTS} failed.</Box>}
             {alert.content}
           </Alert>
         )}

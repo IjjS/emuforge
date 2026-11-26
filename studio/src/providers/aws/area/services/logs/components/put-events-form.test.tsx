@@ -62,7 +62,9 @@ it('opens with one empty message and the batch rule, and adds and removes rows',
   expect(modal.findContent().getElement()).toHaveTextContent('UTF-8 bytes plus 26 bytes');
   expect(modal.findContent().getElement()).toHaveTextContent('1,048,576 bytes');
   expect(editor.findRows()).toHaveLength(1);
-  expect(editor.findTextarea()?.findNativeTextarea().getElement()).toHaveValue('');
+  expect(editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.findNativeTextarea().getElement()).toHaveValue(
+    '',
+  );
   editor.findAddButton().click();
   expect(await screen.findAllByRole('textbox')).toHaveLength(2);
   editor.findRow(2)?.findRemoveButton()?.click();
@@ -75,11 +77,13 @@ it('keeps the message and shows the operation and reason on refusal', async () =
   );
   render(<Harness />);
   const { editor, submit } = await openForm();
-  editor.findTextarea()?.setTextareaValue('keep me');
+  editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.setTextareaValue('keep me');
   submit.click();
   expect(await screen.findByText('PutLogEvents failed')).toBeVisible();
   expect(screen.getByText('refused batch', { exact: false })).toBeVisible();
-  expect(editor.findTextarea()?.findNativeTextarea().getElement()).toHaveValue('keep me');
+  expect(editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.findNativeTextarea().getElement()).toHaveValue(
+    'keep me',
+  );
   expect(onPut).not.toHaveBeenCalled();
 });
 
@@ -87,12 +91,14 @@ it('remembers a 501 across dismissing and reopening the form', async () => {
   put.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
   render(<Harness />);
   const { modal, editor, submit, cancel } = await openForm();
-  editor.findTextarea()?.setTextareaValue('keep me');
+  editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.setTextareaValue('keep me');
   submit.click();
 
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
   expect(modal.findContent().getElement()).toHaveTextContent('501 Not Implemented for PutLogEvents');
-  expect(editor.findTextarea()?.findNativeTextarea().getElement()).toHaveValue('keep me');
+  expect(editor.findRow(1)?.findField(1)?.findControl()?.findTextarea()?.findNativeTextarea().getElement()).toHaveValue(
+    'keep me',
+  );
   expect(submit.getElement()).toBeDisabled();
   cancel.click();
   const reopened = await openForm();

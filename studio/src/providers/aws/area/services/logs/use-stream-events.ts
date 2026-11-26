@@ -34,7 +34,7 @@ interface ReadSession {
   source: StreamSource;
   controller: AbortController;
   state: StreamState;
-  fromTime?: number;
+  fromTime: number | undefined;
   inFlight: Set<Direction>;
 }
 

@@ -275,7 +275,11 @@ async function submitMessages(values: string[]) {
   const { editor, submit } = await openPutForm();
   values.forEach((message, index) => {
     if (index > 0) editor.findAddButton().click();
-    const field = editor.findRow(index + 1)?.findTextarea();
+    const field = editor
+      .findRow(index + 1)
+      ?.findField(1)
+      ?.findControl()
+      ?.findTextarea();
     if (!field) throw new Error('Put message field missing');
     field.setTextareaValue(message);
   });
