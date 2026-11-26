@@ -79,6 +79,7 @@ export function DeleteLogStreamDialog({
       name={name}
       action="Delete"
       pending={pending}
+      multiline
       unavailable={unavailable ? feedback : undefined}
       feedback={unavailable ? undefined : feedback}
       onConfirm={() => void handleConfirm()}

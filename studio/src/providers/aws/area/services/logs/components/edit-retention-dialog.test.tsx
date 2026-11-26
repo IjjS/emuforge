@@ -70,9 +70,10 @@ it('starts on the current retention and describes every option', async () => {
   const { select } = await open();
   expect(select.findTrigger().getElement()).toHaveTextContent('7 days');
   act(() => select.openDropdown());
-  const options = select.findDropdown().findOptions();
+  const dropdown = select.findDropdown();
+  const options = dropdown.findOptions();
   expect(options).toHaveLength(23);
-  expect(options[0]?.findLabel().getElement()).toHaveTextContent('Never expire');
+  expect(dropdown.findOptionByValue('')?.findLabel().getElement()).toHaveTextContent('Never expire');
   for (const option of options) expect(option.findDescription()?.getElement()).not.toBeEmptyDOMElement();
 });
 

@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -59,6 +59,16 @@ function choice(index: number) {
   return select;
 }
 
+const option = (index: number, value: string) => choice(index).findDropdown().findOptionByValue(value)?.getElement();
+const resultsTable = () => createWrapper(document.body).findTable();
+const resultMessage = () => resultsTable()?.findBodyCell(1, 3)?.getElement();
+
+function expectResult(message: string) {
+  const cell = resultMessage();
+  expect(cell).toBeVisible();
+  expect(cell?.textContent).toBe(message);
+}
+
 const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 const field = (name: string) => screen.getByRole('textbox', { name });
 
@@ -94,16 +104,18 @@ it('shows the submitted events with local time, a stream link and the message un
   enter('Filter pattern', 'error');
   submit();
 
-  const row = (await screen.findByText('error one')).closest('tr');
-  expect(row).toHaveTextContent(creationDateText(new Date(timestamp)));
-  if (row === null) throw new Error('Missing event row');
-  expect(within(row).getByRole('link', { name: stream })).toHaveAttribute('href', logStreamPath(group, stream));
+  await waitFor(() => expectResult('error one'));
+  const row = resultsTable()?.findRows()[0];
+  expect(row?.getElement()).toHaveTextContent(creationDateText(new Date(timestamp)));
+  const link = row?.findLink()?.getElement();
+  expect(link).toHaveAccessibleName(stream);
+  expect(link).toHaveAttribute('href', logStreamPath(group, stream));
 
   enter('Filter pattern', 'ok');
-  expect(screen.getByText('error one')).toBeVisible();
+  expectResult('error one');
   expect(search).toHaveBeenCalledTimes(1);
   submit();
-  expect(await screen.findByText('ok two')).toBeVisible();
+  await waitFor(() => expectResult('ok two'));
   expect(search.mock.calls.map(([, request]) => request.filterPattern)).toEqual(['error', 'ok']);
 });
 
@@ -112,11 +124,11 @@ it('clears the stream when the group is changed and opens only the new group’s
   streams.mockResolvedValueOnce({ items: [{ logStreamName: 'new-stream' }] });
   open();
   choice(0).openDropdown();
-  await screen.findByText('/different');
+  await waitFor(() => expect(option(0, '/different')).toBeVisible());
   choice(0).selectOptionByValue('/different');
   expect(choice(1).findTrigger().getElement()).toHaveTextContent('All log streams');
   choice(1).openDropdown();
-  expect(await screen.findByText('new-stream')).toBeVisible();
+  await waitFor(() => expect(option(1, 'new-stream')).toBeVisible());
   expect(streams).toHaveBeenCalledWith(engineOrigin, '/different', '', undefined, expect.any(AbortSignal));
 });
 
@@ -136,7 +148,7 @@ it('keeps the submitted group and filters beside the results while the draft cha
   submit();
 
   const results = () => screen.getByRole('region', { name: 'Search results' });
-  await within(results()).findByText('first result');
+  await waitFor(() => expectResult('first result'));
   expect(results()).toHaveTextContent(`Log group: ${group}`);
   expect(results()).toHaveTextContent(`Log stream: ${stream}`);
   expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
@@ -144,16 +156,16 @@ it('keeps the submitted group and filters beside the results while the draft cha
   expect(results()).toHaveTextContent(`End: ${creationDateText(new Date(2026, 10, 26, 12, 35, 57))}`);
 
   choice(0).openDropdown();
-  await screen.findByText('/different');
+  await waitFor(() => expect(option(0, '/different')).toBeVisible());
   choice(0).selectOptionByValue('/different');
   enter('Filter pattern', 'edited pattern');
   expect(results()).toHaveTextContent(`Log group: ${group}`);
   expect(results()).toHaveTextContent('Filter pattern: submitted pattern');
   expect(results()).not.toHaveTextContent('/different');
-  expect(within(results()).getByText('first result')).toBeVisible();
+  expectResult('first result');
 
   submit();
-  await within(results()).findByText('next result');
+  await waitFor(() => expectResult('next result'));
   expect(results()).toHaveTextContent('Log group: /different');
   expect(results()).toHaveTextContent('Filter pattern: edited pattern');
   expect(results()).not.toHaveTextContent(`Log stream: ${stream}`);
@@ -216,11 +228,13 @@ it('bounds long messages while preserving their text, whitespace, timestamp and 
   open();
   submit();
 
-  const link = await screen.findByRole('link', { name: stream });
-  const row = link.closest('tr');
-  expect(row).toHaveTextContent(creationDateText(new Date(timestamp)));
+  await waitFor(() => expect(resultMessage()).toBeVisible());
+  const row = resultsTable()?.findRows()[0];
+  const link = row?.findLink()?.getElement();
+  expect(row?.getElement()).toHaveTextContent(creationDateText(new Date(timestamp)));
+  expect(link).toHaveAccessibleName(stream);
   expect(link).toHaveAttribute('href', logStreamPath(group, stream));
-  const pre = row?.querySelector('pre');
+  const pre = resultMessage()?.querySelector('pre');
   expect(pre?.textContent).toBe(message);
   expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap' });
   const width = document.createElement('div').style;
@@ -235,12 +249,12 @@ it('pages with the submitted pattern, times and stream even while the form holds
   enter('Filter pattern', 'submitted');
   enterRange();
   submit();
-  expect(await screen.findByText('first page')).toBeVisible();
+  await waitFor(() => expectResult('first page'));
 
   enter('Filter pattern', 'edited');
   enter('Time range End time', '12:36:00');
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-  expect(await screen.findByText('second page')).toBeVisible();
+  await waitFor(() => expectResult('second page'));
   expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
   const request = {
     logGroupName: group,
@@ -262,11 +276,11 @@ it('submits the unchanged form from page 2 as a new first-page request', async (
     .mockResolvedValueOnce(page('fresh first'));
   open();
   submit();
-  await screen.findByText('original');
+  await waitFor(() => expectResult('original'));
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-  await screen.findByText('second');
+  await waitFor(() => expectResult('second'));
   submit();
-  expect(await screen.findByText('fresh first')).toBeVisible();
+  await waitFor(() => expectResult('fresh first'));
   expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
   expect(search.mock.calls.map(([, request, token]) => [request, token])).toEqual([
     [{ logGroupName: group, logStreamNames: [stream] }, undefined],
@@ -409,7 +423,7 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
     const dropdown = choice(index).findDropdown().getElement();
     expect(dropdown).toHaveTextContent(`The ${word} could not be loaded: ${example.choiceMessage(operation)}`);
     fireEvent.click(retry);
-    expect(await within(dropdown).findByText('after-retry')).toBeVisible();
+    await waitFor(() => expect(option(index, 'after-retry')).toBeVisible());
     expect(mock).toHaveBeenCalledTimes(2);
     expect(mock).toHaveBeenLastCalledWith(...args(undefined));
   });
@@ -421,16 +435,15 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
       .mockResolvedValueOnce(answer('second-option'));
     open();
     choice(index).openDropdown();
-    await screen.findByText('first-option');
+    await waitFor(() => expect(option(index, 'first-option')).toBeVisible());
     fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
     const retry = await screen.findByRole('button', { name: 'Retry' });
-    const dropdown = choice(index).findDropdown().getElement();
-    const first = within(dropdown).getByText('first-option');
+    const first = option(index, 'first-option');
     expect(first).toBeVisible();
-    expect(first.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((first?.compareDocumentPosition(retry) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(retry);
-    expect(await within(dropdown).findByText('second-option')).toBeVisible();
-    expect(within(dropdown).getByText('first-option')).toBeVisible();
+    await waitFor(() => expect(option(index, 'second-option')).toBeVisible());
+    expect(option(index, 'first-option')).toBeVisible();
     expect(mock).toHaveBeenCalledTimes(3);
     expect(mock).toHaveBeenNthCalledWith(2, ...args('next-choice'));
     expect(mock).toHaveBeenNthCalledWith(3, ...args('next-choice'));
@@ -446,7 +459,7 @@ it.each(failures)('shows $name in place of search results and retries the submit
   expect(screen.getByRole('table')).toHaveTextContent(example.resultMessage(FILTER_LOG_EVENTS));
   enter('Filter pattern', 'edited');
   fireEvent.click(retry);
-  await waitFor(() => expect(screen.getByText('retried')).toBeVisible());
+  await waitFor(() => expectResult('retried'));
   expect(search.mock.calls.map(([, request, token]) => [request.filterPattern, token])).toEqual([
     ['submitted', undefined],
     ['submitted', undefined],
