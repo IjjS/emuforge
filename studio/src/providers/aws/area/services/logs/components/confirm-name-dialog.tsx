@@ -7,6 +7,7 @@ import Textarea from '@cloudscape-design/components/textarea';
 import { useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
+import { normalizeLineBreaks } from '../format';
 
 interface ConfirmNameDialogProps {
   visible: boolean;
@@ -39,7 +40,7 @@ function Dialog({
   onDismiss,
 }: Omit<ConfirmNameDialogProps, 'visible'>) {
   const [typed, setTyped] = useState('');
-  const enteredName = multiline ? typed.replace(/\r\n?/g, '\n') : typed;
+  const enteredName = multiline ? normalizeLineBreaks(typed) : typed;
   const canConfirm = enteredName === name && !pending && unavailable === undefined;
   const handleConfirm = () => {
     if (canConfirm) onConfirm();

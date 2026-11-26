@@ -68,17 +68,20 @@ it.each(['a:b', 'a*b', '', 'a'.repeat(513)])('shows the rule and rejects an inva
   expect(create).not.toHaveBeenCalled();
 });
 
-it.each(['\r', '\n', '\r\n'])('rejects a name containing a line break %# at the name field', async (lineBreak) => {
-  const { name, action, created } = await renderDialog();
-  fireEvent.change(name, { target: { value: 'first' + lineBreak + 'second' } });
-  fireEvent.click(action);
-  expect(name).toHaveAccessibleDescription(
-    expect.stringContaining('Remove line breaks. The browser can change them in the name field.'),
-  );
-  expect(name).toHaveAttribute('aria-invalid', 'true');
-  expect(create).not.toHaveBeenCalled();
-  expect(created).not.toHaveBeenCalled();
-});
+it.each(['\r', '\n', '\r\n', '\u2028', '\u2029'])(
+  'rejects a name containing a line break %# at the name field',
+  async (lineBreak) => {
+    const { name, action, created } = await renderDialog();
+    fireEvent.change(name, { target: { value: 'first' + lineBreak + 'second' } });
+    fireEvent.click(action);
+    expect(name).toHaveAccessibleDescription(
+      expect.stringContaining('Remove line breaks. The browser can change them in the name field.'),
+    );
+    expect(name).toHaveAttribute('aria-invalid', 'true');
+    expect(create).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
+  },
+);
 
 it('keeps the name and shows the operation and reason in the dialog when refused', async () => {
   create.mockRejectedValueOnce(
