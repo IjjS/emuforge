@@ -165,7 +165,7 @@ export function CreateApiPage({ connection: { engineOrigin } }: ScreenPageProps)
           header={<Header variant="h1">Create API</Header>}
           actions={
             <SpaceBetween size="xs" direction="horizontal">
-              <Button variant="link" disabled={isPending} onClick={handleCancel}>
+              <Button variant="link" formAction="none" disabled={isPending} onClick={handleCancel}>
                 Cancel
               </Button>
               <Button

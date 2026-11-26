@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -37,7 +37,7 @@ function FormArea() {
     <div ref={root}>
       <AreaRootContext.Provider value={root}>
         <PageFlashContext.Provider value={{ handOver, show: vi.fn() }}>
-          {Page ? <Page connection={{ engineOrigin: endpoint }} params={{}} /> : <p>{pathname}</p>}
+          {Page ? <Page connection={{ result: undefined, engineOrigin: endpoint }} params={{}} /> : <p>{pathname}</p>}
         </PageFlashContext.Provider>
       </AreaRootContext.Provider>
     </div>
@@ -71,6 +71,17 @@ function enterName(form: FormWrapper, name: string) {
 
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: 'Create API' }));
+}
+
+async function findAlert(form: FormWrapper) {
+  return waitFor(
+    () => {
+      const alert = form.findAlert()?.getElement();
+      expect(alert).toBeVisible();
+      return alert;
+    },
+    { mutationObserverOptions: { childList: true, subtree: true, characterData: true } },
+  );
 }
 
 function flashedText() {
@@ -169,7 +180,7 @@ function describeCreateFailures(kind: 'REST' | 'HTTP', command: string, operatio
     chooseKind(form, kind);
     enterName(form, 'Local');
     submit();
-    const alert = await screen.findByRole('alert');
+    const alert = await findAlert(form);
     expect(alert).toHaveTextContent(title);
     expect(alert).toHaveTextContent(operation);
     if (status !== 501) expect(alert).toHaveTextContent(message);
@@ -184,7 +195,7 @@ function describeCreateFailures(kind: 'REST' | 'HTTP', command: string, operatio
     chooseKind(form, kind);
     enterName(form, 'Local');
     submit();
-    const alert = await screen.findByRole('alert');
+    const alert = await findAlert(form);
     expect(alert).toHaveTextContent(`The EmuForge engine at ${endpoint} did not answer`);
     expect(alert).toHaveTextContent(operation);
     expect(form.findInput()?.getInputValue()).toBe('Local');
@@ -203,13 +214,14 @@ it('confirms Cancel on a changed form and keeps entries until Discard', async ()
   chooseKind(form, 'REST');
   enterName(form, 'Local');
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(await screen.findByRole('dialog', { name: 'Discard what you entered?' })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(dialog).toHaveTextContent('Discard what you entered?');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(form.findInput()?.getInputValue()).toBe('Local');
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  await screen.findByRole('dialog');
-  fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-  expect(screen.getByText(apisPath)).toBeVisible();
+  fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
+  expect(await screen.findByText(apisPath)).toBeVisible();
   expect(sent).not.toHaveBeenCalled();
 });
 
