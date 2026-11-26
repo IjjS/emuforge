@@ -1,12 +1,15 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
   flash,
   aws,
+  buttonIn,
+  requiredElement,
+  tableByHeading,
   modal as openModal,
   modalButton,
   modalAlert,
@@ -123,7 +126,9 @@ async function waitForInitialTags() {
 }
 
 async function open() {
-  const action = screen.getByRole('button', { name: 'Manage tags' });
+  const action = await waitFor(() =>
+    requiredElement(buttonIn(tableByHeading('Tags')?.findHeaderSlot(), 'Manage tags')),
+  );
   await waitFor(() => expect(action).toBeEnabled());
   fireEvent.click(action);
   const dialog = await openModal('Manage tags');

@@ -9,6 +9,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   aws,
   boxText,
+  buttonIn,
+  requiredElement,
   detailValue,
   flash,
   modal as openModal,
@@ -108,6 +110,7 @@ const failures: [string, RequestFailure, AreaConnection['result'], string][] = [
 const group = '/app#Group';
 const path = '/aws/logs/log-groups/group/%2Fapp%23Group';
 const streamTable = () => tableByHeading('Log streams');
+const groupReadBody = () => aws().findContentLayout()?.findContainer()?.findContent();
 const read = vi.mocked(getLogGroup);
 const tags = vi.mocked(listLogGroupTags);
 const streams = vi.mocked(listLogStreams);
@@ -203,11 +206,12 @@ it('shows a not-found state in place of the details and streams when the group i
 
 it.each(failures)('shows %s in the page and retries the group read', async (_label, failure, result, text) => {
   read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce(found);
-  const { container } = renderPage(result);
-  await waitFor(() => expect(container).toHaveTextContent(text));
-  if (failure.kind === 'not-implemented') expect(container).toHaveTextContent('Not implemented by the emulator');
+  renderPage(result);
+  await waitFor(() => expect(groupReadBody()?.getElement()).toHaveTextContent(text));
+  if (failure.kind === 'not-implemented')
+    expect(groupReadBody()?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator');
   expect(aws().findTable()?.getElement() ?? null).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  fireEvent.click(requiredElement(buttonIn(groupReadBody(), 'Retry')));
   expect(await waitForLink(streamTable, 'some-stream')).toBeVisible();
   expect(read).toHaveBeenCalledTimes(2);
   expect(read).toHaveBeenLastCalledWith(engineOrigin, group, expect.any(AbortSignal));
@@ -224,7 +228,7 @@ it('links Search log events to the events page with the group chosen', async () 
   const search = createWrapper(container)
     .findContentLayout()
     ?.findHeader()
-    ?.findLink('a[href^="/aws/logs/log-events?"]')
+    ?.findButton('a[href^="/aws/logs/log-events?"]')
     ?.getElement();
   expect(search).toHaveAccessibleName('Search log events');
   expect(search).toHaveAttribute('href', '/aws/logs/log-events?group=%2Fapp%23Group');
@@ -234,10 +238,15 @@ it('jumps from the header to the log streams table on keyboard activation', asyn
   read.mockResolvedValueOnce(found);
   const user = userEvent.setup();
   const { container } = renderPage();
-  const jump = await screen.findByRole('link', { name: 'Jump to log streams' });
-  const header = createWrapper(container).findContentLayout()?.findHeader()?.getElement();
-  expect(header).toContainElement(jump);
-  expect(header).toContainElement(screen.getByRole('link', { name: 'Search log events' }));
+  const header = createWrapper(container).findContentLayout()?.findHeader();
+  const jump = await waitFor(() => {
+    const link = requiredElement(header?.findButton('a[href^="#"]')?.getElement());
+    expect(link).toBeVisible();
+    expect(link).toHaveAccessibleName('Jump to log streams');
+    return link;
+  });
+  const search = header?.findButton('a[href^="/aws/logs/log-events?"]')?.getElement();
+  expect(search).toHaveAccessibleName('Search log events');
   const section = screen.getByRole('region', { name: 'Log streams' });
   expect(jump).toHaveAttribute('href', `#${section.id}`);
   await waitFor(() => expect(createWrapper(section).findTable()?.getElement()).toBeVisible());
@@ -256,7 +265,9 @@ it('omits the jump when there is no streams section', async () => {
   renderPage();
   await waitFor(() => expect(boxText(aws(), 'Log group not found', 'strong')).toBeVisible());
 
-  expect(screen.queryByRole('link', { name: 'Jump to log streams' })).not.toBeInTheDocument();
+  expect(
+    aws().findContentLayout()?.findHeader()?.findButton('a[href^="#"]')?.getElement() ?? null,
+  ).not.toBeInTheDocument();
 });
 
 const connection = { engineOrigin, result: connected };
@@ -474,7 +485,11 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
 
     const name = 'Log group name';
     openLayout(CREATE_LOG_GROUP_PATH);
-    fireEvent.change(screen.getByRole('textbox', { name }), { target: { value: group } });
+    const nameField = aws()
+      .findAllFormFields()
+      .find((field) => field.findLabel()?.getElement().textContent === name);
+    const input = requiredElement(nameField?.findControl()?.findInput()?.findNativeInput().getElement());
+    fireEvent.change(input, { target: { value: group } });
     if (partial) {
       const control = createWrapper(document.body)
         .findAllFormFields()
@@ -487,12 +502,15 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
     fireEvent.click(screen.getByRole('button', { name: 'Create log group' }));
 
     expect(await screen.findByRole('heading', { level: 1, name: group })).toBeVisible();
-    const loading = aws().findStatusIndicator()?.getElement();
+    const loading = groupReadBody()?.findStatusIndicator()?.getElement();
     expect(loading).toBeVisible();
     expect(loading).toHaveTextContent('Loading log group');
     const notification = flash()?.getElement();
     expect(notification).toHaveTextContent(result);
-    if (partial) expect(notification).toHaveTextContent('Retention refused.');
+    if (partial) {
+      const error = aws().findFlashbar()?.findItemsByType('error')[0]?.findContent()?.getElement();
+      expect(error).toHaveTextContent('Retention refused.');
+    }
 
     if (order === 'group fails') {
       await act(async () =>

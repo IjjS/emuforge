@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, boxText } from '../../../../../../test/logs-test-utils';
+import { aws, boxText, buttonIn, requiredElement } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
@@ -76,7 +76,8 @@ function expectResult(message: string) {
   expect(cell?.textContent).toBe(message);
 }
 
-const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+const searchButton = () => requiredElement(buttonIn(aws().findContainer()?.findFooter(), 'Search'));
+const submit = () => fireEvent.click(searchButton());
 const timeRange = () =>
   createWrapper(document.body)
     .findAllFormFields()
@@ -91,7 +92,7 @@ function field(name: string) {
     ?.findNativeInput()
     ?.getElement();
   expect(input).toHaveAccessibleName(name);
-  return input!;
+  return requiredElement(input);
 }
 
 function enter(name: string, value: string) {
@@ -108,7 +109,7 @@ function page(message: string, next?: string) {
 it('asks for a group on the bare route and opens a linked group and stream already selected', () => {
   const bare = open(LOG_EVENTS_PATH);
   expect(boxText(aws(), 'Choose a log group.')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
+  expect(searchButton()).toBeDisabled();
   expect(search).not.toHaveBeenCalled();
   bare.unmount();
 
@@ -454,7 +455,7 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
     await waitFor(() => expect(retry()).toBeVisible());
     const dropdownStatus = choice(index).findStatusIndicator()?.getElement();
     expect(dropdownStatus).toHaveTextContent(`The ${word} could not be loaded: ${example.choiceMessage(operation)}`);
-    fireEvent.click(retry()!);
+    fireEvent.click(requiredElement(retry()));
     await waitFor(() => expect(option(index, 'after-retry')).toBeVisible());
     expect(mock).toHaveBeenCalledTimes(2);
     expect(mock).toHaveBeenLastCalledWith(...args(undefined));
@@ -468,13 +469,15 @@ for (const { index, word, operation, mock, answer, args } of choiceFields) {
     open();
     choice(index).openDropdown();
     await waitFor(() => expect(option(index, 'first-option')).toBeVisible());
-    choice(index).findDropdownFooter()?.findButton()?.click();
+    fireEvent.click(requiredElement(buttonIn(choice(index).findDropdownFooter(), 'Load more')));
     const retry = () => choice(index).findErrorRecoveryButton()?.getElement();
     await waitFor(() => expect(retry()).toBeVisible());
     const first = option(index, 'first-option');
     expect(first).toBeVisible();
-    expect((first?.compareDocumentPosition(retry()!) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(retry()!);
+    expect(
+      (first?.compareDocumentPosition(requiredElement(retry())) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(requiredElement(retry()));
     await waitFor(() => expect(option(index, 'second-option')).toBeVisible());
     expect(option(index, 'first-option')).toBeVisible();
     expect(mock).toHaveBeenCalledTimes(3);
@@ -492,7 +495,7 @@ it.each(failures)('shows $name in place of search results and retries the submit
     expect(resultRetry()).toBeVisible();
     expect(resultRetry()).toHaveAccessibleName('Retry');
   });
-  const retry = resultRetry()!;
+  const retry = requiredElement(resultRetry());
   expect(resultEmpty()?.getElement()).toHaveTextContent(example.resultMessage(FILTER_LOG_EVENTS));
   enter('Filter pattern', 'edited');
   fireEvent.click(retry);

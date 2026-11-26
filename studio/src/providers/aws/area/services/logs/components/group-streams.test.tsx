@@ -1,7 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import type { LogStream } from '@aws-sdk/client-cloudwatch-logs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ import {
   rowLink,
   rowRadio,
   waitForLink,
+  requiredElement,
 } from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -93,7 +94,9 @@ function deferred<T>() {
 }
 
 function opener(action: 'create' | 'delete') {
-  return screen.getByRole('button', { name: action === 'create' ? 'Create log stream' : 'Delete log stream' });
+  return requiredElement(
+    buttonIn(streamTable()?.findHeaderSlot(), action === 'create' ? 'Create log stream' : 'Delete log stream'),
+  );
 }
 
 async function open(action: 'create' | 'delete', name: string) {
@@ -126,7 +129,7 @@ it('offers both actions, and after create and delete rereads the shown page', as
   expect(opener('delete')).toHaveAttribute('aria-disabled', 'true');
   expect(await waitForLink(streamTable, 'first stream')).toBeVisible();
 
-  fireEvent.click(streamTable()?.findPagination()?.findNextPageButton().getElement()!);
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findNextPageButton().getElement()));
   await waitForLink(streamTable, 'second stream');
   fireEvent.click((await open('create', 'new stream')).submit);
   await expectResult('Log stream new stream created.');

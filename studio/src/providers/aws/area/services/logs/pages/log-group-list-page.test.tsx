@@ -20,6 +20,7 @@ import {
   rowRadio,
   type Modal,
   waitForLink,
+  requiredElement,
 } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -102,15 +103,18 @@ function deferred<T>() {
 }
 
 function changeFilter(value: string) {
-  fireEvent.change(groupTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()!, {
-    target: { value },
-  });
+  fireEvent.change(
+    requiredElement(groupTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()),
+    {
+      target: { value },
+    },
+  );
 }
 
-const nextPage = () => groupTable()?.findPagination()?.findNextPageButton().getElement()!;
+const nextPage = () => requiredElement(groupTable()?.findPagination()?.findNextPageButton().getElement());
 
 function refresh() {
-  fireEvent.click(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh')!);
+  fireEvent.click(requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh')));
 }
 
 function expectRead(pattern: string, token?: string) {
@@ -202,7 +206,10 @@ async function endFilteredList() {
   await act(async () => resolveEnd({ items: [] }));
   await waitFor(() => expectRead('Keep', 'second'));
   await waitFor(() =>
-    expect(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh')!).not.toHaveAttribute('aria-disabled', 'true'),
+    expect(requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Refresh'))).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    ),
   );
 }
 
@@ -212,7 +219,7 @@ function expectEnd() {
     'aria-current',
     'true',
   );
-  expect(groupTable()?.findPagination()?.findPageNumberByIndex(3)?.getElement() ?? null).not.toBeInTheDocument();
+  expect(groupTable()?.findPagination()?.findPageNumbers()[2]?.getElement() ?? null).not.toBeInTheDocument();
   expect(nextPage()).toHaveAttribute('aria-disabled', 'true');
   expect(boxText(createWrapper(screen.getByRole('main')), 'No more log groups.')).toBeVisible();
 }
@@ -256,7 +263,7 @@ describe('after the end of a filtered list', () => {
     read
       .mockResolvedValueOnce({ ...group('Keep 1'), next: 'second' })
       .mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
-    fireEvent.click(groupTable()?.findPagination()?.findPreviousPageButton().getElement()!);
+    fireEvent.click(requiredElement(groupTable()?.findPagination()?.findPreviousPageButton().getElement()));
     expect(await waitForLink(groupTable, 'Keep 1')).toBeVisible();
     expectRead('Keep');
     expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
@@ -311,7 +318,7 @@ it.each(failures)('shows %s in the table and lets Retry read again', async (_nam
   if (failure.kind === 'not-implemented') {
     expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('Not implemented by the emulator');
   }
-  fireEvent.click(buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry')!);
+  fireEvent.click(requiredElement(buttonIn(groupTable()?.findEmptySlot() ?? null, 'Retry')));
   expect(await waitForLink(groupTable, 'retried')).toBeVisible();
   expectRead('');
 });
@@ -320,8 +327,10 @@ it('links to the create form and disables Delete until a row is selected', async
   read.mockResolvedValueOnce(group('selectable'));
   renderPage();
   await waitForLink(groupTable, 'selectable');
-  expect(screen.getByRole('link', { name: 'Create log group' })).toHaveAttribute('href', '/aws/logs/log-groups/create');
-  const remove = buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete')!;
+  const create = groupTable()?.findHeaderSlot()?.findButton('a[href="/aws/logs/log-groups/create"]')?.getElement();
+  expect(create).toHaveAccessibleName('Create log group');
+  expect(create).toHaveAttribute('href', '/aws/logs/log-groups/create');
+  const remove = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
   expect(remove).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(rowRadio(groupTable(), 'selectable'));
   expect(remove).toBeEnabled();
@@ -342,7 +351,7 @@ describe('deleting a log group', () => {
   async function openDelete() {
     await waitForLink(groupTable, name);
     fireEvent.click(rowRadio(groupTable(), name));
-    const opener = buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete')!;
+    const opener = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
     opener.focus();
     fireEvent.click(opener);
     const dialog = await openModal(`Delete log group ${name}?`);
@@ -402,7 +411,9 @@ describe('deleting a log group', () => {
     const dialog = await openDelete();
 
     // Refresh has started independently of the open confirmation. The dialog still owns the group it opened for.
-    fireEvent.click(buttonIn(createWrapper(container).findTable()?.findHeaderSlot() ?? null, 'Refresh')!);
+    fireEvent.click(
+      requiredElement(buttonIn(createWrapper(container).findTable()?.findHeaderSlot() ?? null, 'Refresh')),
+    );
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     confirm(dialog);
     await act(async () => deletion.resolve(undefined));
@@ -440,7 +451,7 @@ describe('deleting a log group', () => {
     await waitFor(() => expect(retry()).toBeVisible());
     expect(groupTable()?.findEmptySlot()?.getElement()).toHaveTextContent('List read refused.');
     expectSuccess(container);
-    fireEvent.click(retry()!);
+    fireEvent.click(requiredElement(retry()));
     expect(await waitForLink(groupTable, 'remaining')).toBeVisible();
     expectSuccess(container);
   });
@@ -457,7 +468,7 @@ describe('deleting a log group', () => {
     expect(modalButton(dialog, 'Delete')).toBeDisabled();
     fireEvent.click(modalButton(dialog, 'Cancel'));
     expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
-    const opener = buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete')!;
+    const opener = requiredElement(buttonIn(groupTable()?.findHeaderSlot() ?? null, 'Delete'));
     await waitFor(() => expect(opener).toHaveFocus());
     fireEvent.click(opener);
 

@@ -11,6 +11,7 @@ import {
   expectModalAlert,
   modal as openModal,
   modalAlert,
+  requiredElement,
 } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -88,7 +89,10 @@ function page(messages: string[]): EventPage {
 }
 
 const streamBody = () => aws().findContainer()?.findContent();
-const messageBlocks = () => streamBody()?.findAllBoxes('pre') ?? [];
+const messageBlocks = () =>
+  streamBody()
+    ?.findAllBoxes()
+    .filter((box) => box.getElement().localName === 'pre') ?? [];
 const messages = () => messageBlocks().map((block) => block.getElement().textContent);
 const messageBlock = (text: string) =>
   messageBlocks()
@@ -100,7 +104,7 @@ const initialRetry = () => buttonIn(streamBody(), 'Retry');
 const emptyStream = () => boxText(streamBody(), 'No log events');
 const control = (direction: 'older' | 'newer') => screen.getByRole('group', { name: `Load ${direction} events` });
 const button = (direction: 'older' | 'newer') =>
-  buttonIn(createWrapper(control(direction)), `Load ${direction} events`)!;
+  requiredElement(buttonIn(createWrapper(control(direction)), `Load ${direction} events`));
 
 it.each([
   { path: address, group, stream, groupHref: '/aws/logs/log-groups/group/%2Fapp%23group' },
@@ -136,10 +140,10 @@ it.each([
   read.mockResolvedValueOnce(page([]));
   renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
 
-  expect(aws().findHeader()?.findHeadingText().getElement()).toHaveAccessibleName('multiline\nworker');
+  expect(aws().findHeader()?.find('h1')?.getElement()).toHaveAccessibleName('multiline\nworker');
   const name = aws().findHeader()?.findHeadingText().find('span[style]')?.getElement();
   expect(name?.textContent).toBe('multiline\nworker');
-  expect(name.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
   await waitFor(() => expect(emptyStream()).toBeVisible());
   expect(read).toHaveBeenCalledWith(
     ENGINE,
@@ -216,7 +220,7 @@ it.each([
     expect(back).toHaveAccessibleName(link);
     expect(back).toHaveAttribute('href', href);
 
-    fireEvent.click(initialRetry()!);
+    fireEvent.click(requiredElement(initialRetry()));
     await waitForMessage('after retry');
     expect(putButton).not.toHaveAttribute('aria-disabled', 'true');
     expect(streamBody()?.findLink()?.getElement() ?? null).not.toBeInTheDocument();
@@ -282,7 +286,7 @@ it.each(failures)(
     read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce(page(['after retry']));
     renderPage(connection);
     await waitFor(() => expect(initialRetry()).toBeVisible());
-    const retry = initialRetry()!;
+    const retry = requiredElement(initialRetry());
     expect(streamBody()?.getElement()).toHaveTextContent(text);
     expect(screen.queryByRole('log')).not.toBeInTheDocument();
     fireEvent.click(retry);
@@ -303,7 +307,7 @@ it.each(['older', 'newer'] as const)('keeps events and retries alongside the %s 
   fireEvent.click(button(direction));
   const retryButton = () => buttonIn(createWrapper(control(direction)), 'Retry');
   await waitFor(() => expect(retryButton()).toBeVisible());
-  const retry = retryButton()!;
+  const retry = requiredElement(retryButton());
   expect(control(direction)).toHaveTextContent('GetLogEvents');
   expect(control(direction)).toHaveTextContent('InvalidParameterException: page failed');
   expect(buttonIn(createWrapper(control(direction === 'older' ? 'newer' : 'older')), 'Retry') ?? null).toBeNull();
@@ -448,7 +452,7 @@ it('shows the put result when the read from the put time fails and retries that 
   await waitForMessage('initial');
   await submitMessages(['my message']);
   await waitFor(() => expect(initialRetry()).toBeVisible());
-  const retry = initialRetry()!;
+  const retry = requiredElement(initialRetry());
   expect(streamBody()?.getElement()).toHaveTextContent('InvalidParameterException: read failed');
   expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]);
   fireEvent.click(retry);

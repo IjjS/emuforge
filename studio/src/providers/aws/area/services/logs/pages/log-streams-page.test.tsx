@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, boxText, buttonIn, waitForLink } from '../../../../../../test/logs-test-utils';
+import { aws, boxText, buttonIn, waitForLink, requiredElement } from '../../../../../../test/logs-test-utils';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -131,8 +131,8 @@ it('selects the group from a direct address and lists its streams without mutati
     'href',
     '/aws/logs/log-groups/group/%2Fapp%23Group/stream/some%20stream',
   );
-  expect(screen.queryByRole('button', { name: 'Create log stream' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Delete log stream' })).not.toBeInTheDocument();
+  expect(buttonIn(streamTable()?.findHeaderSlot(), 'Create log stream') ?? null).not.toBeInTheDocument();
+  expect(buttonIn(streamTable()?.findHeaderSlot(), 'Delete log stream') ?? null).not.toBeInTheDocument();
   expect(streamTable()?.findRowSelectionArea(1)?.getElement() ?? null).not.toBeInTheDocument();
 });
 
@@ -169,14 +169,14 @@ it('keeps earlier choices when the second page fails and retries that same token
   select.openDropdown();
   const dropdown = select.findDropdown();
   await waitFor(() => expect(dropdown.findOptionByValue(group)?.getElement()).toBeVisible());
-  fireEvent.click(buttonIn(select.findDropdownFooter(), 'Load more')!);
+  fireEvent.click(requiredElement(buttonIn(select.findDropdownFooter(), 'Load more')));
   const retry = () => select.findErrorRecoveryButton()?.getElement();
   await waitFor(() => expect(retry()).toBeVisible());
   expect(dropdown.findOptionByValue(group)?.getElement()).toBeVisible();
   expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(
     `The log groups could not be loaded: Read failed`,
   );
-  fireEvent.click(retry()!);
+  fireEvent.click(requiredElement(retry()));
   await waitFor(() => expect(dropdown.findOptionByValue('second group')?.getElement()).toBeVisible());
   const labels = dropdown.findOptions()?.map((option) => option.findLabel().getElement().textContent);
   expect(labels).toEqual([group, 'second group']);

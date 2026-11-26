@@ -1,3 +1,4 @@
+// eslint-disable-next-line studio/boundaries -- Shared unit-test support is excluded from the app build.
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { waitFor } from '@testing-library/react';
 import { expect } from 'vitest';
@@ -27,8 +28,12 @@ export function modalInput(dialog: Modal, name?: string) {
 export function buttonIn(scope: ReturnType<typeof aws> | null | undefined, name: string) {
   return scope
     ?.findAllButtons()
-    .map((button) => button.getElement())
-    .find((button) => (button.getAttribute('aria-label') ?? button.textContent?.trim()) === name);
+    .find(
+      (button) =>
+        (button.getElement().getAttribute('aria-label') ??
+          button.findTextRegion()?.getElement().textContent?.trim()) === name,
+    )
+    ?.getElement();
 }
 
 export function modalButton(dialog: Modal, name: string) {
@@ -114,8 +119,11 @@ export function modalInputByValue(dialog: Modal, value: string) {
 
 export function boxText(scope: ReturnType<typeof aws> | null | undefined, text: string, selector?: string) {
   return scope
-    ?.findAllBoxes(selector)
-    .find((box) => box.getElement().textContent === text)
+    ?.findAllBoxes()
+    .find((box) => {
+      const element = box.getElement();
+      return (selector === undefined || element.localName === selector) && element.textContent === text;
+    })
     ?.getElement();
 }
 
@@ -134,4 +142,9 @@ export function detailValue(label: string) {
     .find((item) => item.findLabel()?.getElement().textContent === label)
     ?.findValue()
     ?.getElement();
+}
+
+export function requiredElement<T>(element: T | null | undefined): T {
+  if (element == null) throw new Error('Expected a Cloudscape test wrapper or element');
+  return element;
 }

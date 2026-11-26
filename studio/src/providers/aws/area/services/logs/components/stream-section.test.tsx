@@ -2,7 +2,15 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { aws, buttonIn, expectEmpty, rowLink, rowRadio, waitForLink } from '../../../../../../test/logs-test-utils';
+import {
+  aws,
+  buttonIn,
+  expectEmpty,
+  rowLink,
+  rowRadio,
+  waitForLink,
+  requiredElement,
+} from '../../../../../../test/logs-test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -83,9 +91,12 @@ function renderSection(
 }
 
 function enterPrefix(value: string) {
-  fireEvent.change(streamTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()!, {
-    target: { value },
-  });
+  fireEvent.change(
+    requiredElement(streamTable()?.findFilterSlot()?.findTextFilter()?.findInput().findNativeInput().getElement()),
+    {
+      target: { value },
+    },
+  );
 }
 
 function expectRead(prefix: string, token?: string) {
@@ -184,14 +195,14 @@ it('uses the returned token for the next page and rereads the first page when go
     .mockResolvedValueOnce({ items: [{ logStreamName: 'first again' }], next: 'second-token' });
   renderSection();
   await waitForLink(streamTable, 'first');
-  fireEvent.click(streamTable()?.findPagination()?.findNextPageButton().getElement()!);
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findNextPageButton().getElement()));
   expect(await waitForLink(streamTable, 'second')).toBeVisible();
   expect(streamTable()?.findPagination()?.findPageNumberByIndex(2)?.getElement()).toHaveAttribute(
     'aria-current',
     'true',
   );
   expectRead('', 'second-token');
-  fireEvent.click(streamTable()?.findPagination()?.findPreviousPageButton().getElement()!);
+  fireEvent.click(requiredElement(streamTable()?.findPagination()?.findPreviousPageButton().getElement()));
   expect(await waitForLink(streamTable, 'first again')).toBeVisible();
   expect(streamTable()?.findPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute(
     'aria-current',
@@ -206,10 +217,11 @@ it.each(failures)('shows %s in the table and retries the stream read', async (_l
     .mockRejectedValueOnce(new RequestError(failure))
     .mockResolvedValueOnce({ items: [{ logStreamName: 'retried' }] });
   const { container } = renderSection(result);
-  const table = createWrapper(container).findTable()?.findEmptySlot()?.getElement();
-  await waitFor(() => expect(table).toHaveTextContent(text));
-  if (failure.kind === 'not-implemented') expect(table).toHaveTextContent('Not implemented by the emulator');
-  fireEvent.click(buttonIn(streamTable()?.findEmptySlot() ?? null, 'Retry')!);
+  const table = createWrapper(container).findTable();
+  await waitFor(() => expect(table?.findEmptySlot()?.getElement()).toHaveTextContent(text));
+  if (failure.kind === 'not-implemented')
+    expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+  fireEvent.click(requiredElement(buttonIn(streamTable()?.findEmptySlot() ?? null, 'Retry')));
   expect(await waitForLink(streamTable, 'retried')).toBeVisible();
   expectRead('');
   expect(read).toHaveBeenCalledTimes(2);

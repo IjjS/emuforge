@@ -6,7 +6,10 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
+  aws,
   boxText,
+  buttonIn,
+  requiredElement,
   detailValue,
   flash,
   modal as openModal,
@@ -165,15 +168,17 @@ it('shows the group values, the copy control, and tag keys and values as text', 
   const value = '<a href="/aws">example</a>';
   read.mockResolvedValueOnce({ team: value });
   const { container } = renderDetails();
-  expect(screen.getByRole('button', { name: 'Copy ARN' })).toBeVisible();
-  expect(container).toHaveTextContent(group.logGroupArn);
+  const copy = aws().findCopyToClipboard()?.findCopyButton().getElement();
+  expect(copy).toBeVisible();
+  expect(copy).toHaveAccessibleName('Copy ARN');
+  expect(detailValue('ARN')).toHaveTextContent(group.logGroupArn);
   expect(detailValue('Class')).toBeVisible();
   expect(detailValue('Class')).toHaveTextContent('Infrequent Access');
   expect(detailValue('Retention')).toBeVisible();
   expect(detailValue('Retention')).toHaveTextContent('7 days');
   expect(detailValue('Deletion protection')).toBeVisible();
   expect(detailValue('Deletion protection')).toHaveTextContent('On');
-  expect(container).toHaveTextContent(creationDateText(new Date(group.creationTime)));
+  expect(detailValue('Creation time')).toHaveTextContent(creationDateText(new Date(group.creationTime)));
   const table = createWrapper(container).findTable();
   await waitFor(() => expect(table?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('team'));
   expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(value);
@@ -186,11 +191,14 @@ it.each(failures)(
   async (_label, failure, result, text) => {
     read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ retried: 'tag-value' });
     const { container } = renderDetails(result);
-    const tags = createWrapper(container).findTable()?.getElement();
-    await waitFor(() => expect(tags).toHaveTextContent(text));
-    if (failure.kind === 'not-implemented') expect(tags).toHaveTextContent('Not implemented by the emulator');
-    expect(screen.getByRole('button', { name: 'Copy ARN' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const tags = createWrapper(container).findTable()?.findEmptySlot();
+    await waitFor(() => expect(tags?.getElement()).toHaveTextContent(text));
+    if (failure.kind === 'not-implemented')
+      expect(tags?.getElement()).toHaveTextContent('Not implemented by the emulator');
+    const copy = aws().findCopyToClipboard()?.findCopyButton().getElement();
+    expect(copy).toBeVisible();
+    expect(copy).toHaveAccessibleName('Copy ARN');
+    fireEvent.click(requiredElement(buttonIn(tags, 'Retry')));
     await waitFor(() => expect(firstTagValue()).toHaveTextContent('tag-value'));
     expect(read).toHaveBeenCalledTimes(2);
     expect(read).toHaveBeenLastCalledWith(engineOrigin, group.logGroupName, expect.any(AbortSignal));

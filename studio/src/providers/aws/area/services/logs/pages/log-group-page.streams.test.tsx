@@ -8,6 +8,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import {
   aws,
   boxText,
+  buttonIn,
+  requiredElement,
   expectEmpty,
   expectModalAlert,
   flash,
@@ -105,6 +107,7 @@ function renderGroupPage() {
 }
 
 const streamTable = () => tableByHeading('Log streams');
+const streamAction = (name: string) => buttonIn(streamTable()?.findHeaderSlot(), name);
 
 it('creates and deletes the exact stream name through the registered log group page', async () => {
   const stream = 'a b/[$LATEST] second';
@@ -121,8 +124,8 @@ it('creates and deletes the exact stream name through the registered log group p
 
   renderGroupPage();
   await expectEmpty(streamTable, 'No log streams');
-  const create = screen.getByRole('button', { name: 'Create log stream' });
-  const remove = screen.getByRole('button', { name: 'Delete log stream' });
+  const create = requiredElement(streamAction('Create log stream'));
+  const remove = requiredElement(streamAction('Delete log stream'));
   expect(remove).toBeVisible();
   fireEvent.click(create);
   const creating = await openModal('Create log stream');
@@ -172,7 +175,10 @@ it.each([
 
   const openStreamDialog = async () => {
     if (!creating) fireEvent.click(await waitFor(() => rowRadio(streamTable(), stream)));
-    fireEvent.click(await screen.findByRole('button', { name: creating ? 'Create log stream' : 'Delete log stream' }));
+    const opener = await waitFor(() =>
+      requiredElement(streamAction(creating ? 'Create log stream' : 'Delete log stream')),
+    );
+    fireEvent.click(opener);
     return await openModal(creating ? 'Create log stream' : `Delete log stream ${stream}?`);
   };
   if (creating) await expectEmpty(streamTable, 'No log streams');
@@ -225,7 +231,7 @@ it.each([
   }
   expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  fireEvent.click(requiredElement(buttonIn(aws().findContentLayout()?.findContainer()?.findContent(), 'Retry')));
   if (unavailable) {
     const reopened = await openStreamDialog();
     expect(modalAlert(reopened)?.findContent().getElement()).toHaveTextContent(`501 Not Implemented for ${operation}`);

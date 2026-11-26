@@ -5,7 +5,7 @@ import { useRef } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, modal as openModal, modalButton } from '../../../../../../test/logs-test-utils';
+import { aws, buttonIn, modal as openModal, modalButton } from '../../../../../../test/logs-test-utils';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
@@ -83,7 +83,7 @@ function nativeInput(control: Element) {
 
 const nameInput = () => nativeInput(field('Log group name').getElement());
 const select = (label: string) => required(createWrapper(field(label).getElement()).findSelect(), label);
-const submitButton = () => screen.getByRole('button', { name: 'Create log group' });
+const submitButton = () => required(buttonIn(page.findForm()?.findActions(), 'Create log group'), 'Create log group');
 
 function nameGroup(name: string) {
   fireEvent.change(nameInput(), { target: { value: name } });
@@ -133,7 +133,7 @@ function deferred<T>() {
 }
 
 const submit = () => fireEvent.click(submitButton());
-const cancel = () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+const cancel = () => fireEvent.click(required(buttonIn(page.findForm()?.findActions(), 'Cancel'), 'Cancel'));
 const expectSuccess = () =>
   expect(handOver).toHaveBeenCalledWith(GROUP_PATH, [{ type: 'success', content: `Log group ${NAME} created.` }]);
 
