@@ -78,7 +78,10 @@ const SERVICE_BELOW: PageOf = { path: NO_SCREEN_SERVICE.below, h1: SERVICE, firs
 // Issue 496: `/aws/dynamodb` is DynamoDB's table list, whose `h1` is "Tables" and whose first content stop is the
 // local-emulator notice's (i) control.
 const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Tables', firstStop: 'About the local emulator', counted: true };
-const API_GATEWAY: PageOf = { path: '/aws/apigateway', h1: 'Amazon API Gateway', firstStop: GO_HOME };
+// Issue 69: `/aws/apigateway` is API Gateway's APIs list, whose `h1` is "APIs" and whose first content stop is the
+// local-emulator notice's (i) control, as on DynamoDB's list; the index's link to it keeps the service's name.
+const API_GATEWAY_LINK = 'Amazon API Gateway';
+const API_GATEWAY: PageOf = { path: '/aws/apigateway', h1: 'APIs', firstStop: 'About the local emulator' };
 const AREA_NOT_FOUND: PageOf = { path: '/aws/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 const STUDIO_NOT_FOUND: PageOf = { path: '/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 
@@ -433,10 +436,10 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws`, focus "Amazon API Gateway" in "Services", Enter → the address is `/aws/apigateway`, focus is on the content target named "Amazon API Gateway", and the next Tab reaches "Go to Home"',
+    '(changed, issue 69) Fresh load of `/aws`, focus "Amazon API Gateway" in "Services", Enter → the address is `/aws/apigateway`, focus is on the content target named "APIs", and the next Tab reaches "About the local emulator"',
     async () => {
       await openFresh(page, INDEX);
-      await follow(page, servicesLink(page, API_GATEWAY.h1));
+      await follow(page, servicesLink(page, API_GATEWAY_LINK));
       expectArrived(await arrive('/aws → "Amazon API Gateway" in "Services"', API_GATEWAY), true);
     },
   );

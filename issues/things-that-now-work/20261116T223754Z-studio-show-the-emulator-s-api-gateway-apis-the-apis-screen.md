@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|apigateway|apis-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.apigateway-api-list-reads-further-pages studio.apigateway-apis-made-outside-are-listed studio.apigateway-build-a-rest-api-with-a-mock-and-call-it studio.apigateway-build-an-http-api-with-a-lambda-route studio.apigateway-create-method-refusals-leave-nothing-half-made studio.apigateway-create-method-with-a-lambda-gives-the-permission studio.apigateway-create-rest-and-http-apis studio.apigateway-create-route-existing-key-takes-back-its-integration studio.apigateway-create-route-http-address-and-existing-integration studio.apigateway-delete-apis-from-the-list studio.apigateway-deploy-without-methods-is-refused studio.apigateway-entries-lead-to-a-screen-or-no-screen-yet studio.apigateway-lambda-permission-conflict-is-verified studio.apigateway-rest-api-changes-and-cleanup studio.apigateway-rest-api-page-shows-what-it-serves studio.apigateway-test-a-method-shows-answer-and-log studio.apigateway-v2-api-changes-and-cleanup studio.apigateway-v2-api-page-shows-routes-integrations-stages
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's API Gateway APIs: the APIs screen
