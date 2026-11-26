@@ -81,16 +81,39 @@ it.each([
 ])('explains a policy that could not be read or parsed', async (error, reason) => {
   conflict();
   policy.mockRejectedValueOnce(error);
-  await expect(allowApiInvocation(endpoint, api, arn, signal)).resolves.toEqual({ kind: 'not-given', reason });
+  await expect(allowApiInvocation(endpoint, api, arn, signal)).resolves.toStrictEqual({
+    kind: 'not-given',
+    reason,
+    ...(error instanceof RequestError ? { failure: error.failure } : {}),
+  });
 });
 
 it('reports any other AddPermission refusal without reading the policy', async () => {
-  add.mockRejectedValueOnce(
-    new RequestError({ kind: 'other', operation: 'AddPermission', code: 'BadRequest', message: 'Permission refused.' }),
-  );
+  const failure = {
+    kind: 'other',
+    operation: 'AddPermission',
+    code: 'BadRequest',
+    message: 'Permission refused.',
+  } as const;
+  add.mockRejectedValueOnce(new RequestError(failure));
   await expect(allowApiInvocation(endpoint, api, arn, signal)).resolves.toEqual({
     kind: 'not-given',
     reason: 'AddPermission: BadRequest: Permission refused.',
+    failure,
   });
   expect(policy).not.toHaveBeenCalled();
+});
+
+it.each(['AddPermission', 'GetPolicy'])('preserves the unsupported failure from %s', async (operation) => {
+  const failure = { kind: 'not-implemented', operation } as const;
+  if (operation === 'GetPolicy') conflict();
+  const call = operation === 'AddPermission' ? add : policy;
+  call.mockRejectedValueOnce(new RequestError(failure));
+
+  await expect(allowApiInvocation(endpoint, api, arn, signal)).resolves.toEqual({
+    kind: 'not-given',
+    reason: `${operation}: 501 Not Implemented`,
+    failure,
+  });
+  if (operation === 'AddPermission') expect(policy).not.toHaveBeenCalled();
 });
