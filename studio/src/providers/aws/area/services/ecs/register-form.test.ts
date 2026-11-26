@@ -5,8 +5,8 @@ import { documentOf, NOT_AN_OBJECT, parseDefinition, registerMembersOf, STARTER 
 
 // Test criteria, "Unit s7 — services/ecs/register-form.test.ts" (issue 575).
 
-/** Requirement R4, S10: the starter as written there, its indent of four spaces in the requirement taken off. */
-const R4_STARTER = [
+/** Issue 657, requirement R3: the starter as written there. */
+const R3_STARTER = [
   '{',
   '  "family": "studio-task",',
   '  "networkMode": "awsvpc",',
@@ -19,7 +19,7 @@ const R4_STARTER = [
   '      "name": "app",',
   '      "image": "busybox",',
   '      "essential": true,',
-  '      "command": ["sh", "-c", "echo hello from EmuForge Studio; sleep 3600"],',
+  '      "command": ["sh", "-c", "echo hello from EmuForge Studio; sleep infinity"],',
   '      "logConfiguration": {',
   '        "logDriver": "awslogs",',
   '        "options": {',
@@ -64,8 +64,8 @@ const ANSWER: TaskDefinition = {
 };
 
 describe('the register form', () => {
-  it('the starter → the document of R4, character for character, indented by two spaces', () => {
-    expect(STARTER).toBe(R4_STARTER);
+  it('the starter → the document of issue 657 R3, character for character, indented by two spaces', () => {
+    expect(STARTER).toBe(R3_STARTER);
     // It is one JSON object, and two spaces are its indent.
     expect(parseDefinition(STARTER).ok).toBe(true);
     expect(STARTER.split('\n')[1]).toBe('  "family": "studio-task",');
