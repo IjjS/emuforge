@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router';
 
 import { refusalMessage, reportedNotImplementedMessage, type RequestFailure } from '../../../../../../lib/aws/request';
 import { DiscardDialog } from '../../../components/discard-dialog';
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
 import { usePageFlash, type FlashResult } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
@@ -85,10 +85,15 @@ function createResult({ name, stageFailure }: CreatedApi, engineOrigin: string |
   if (!stageFailure) return [success];
 
   const item = actionFailureItem(stageFailure, stageFailure.operation, engineOrigin);
-  const reason =
-    reportedNotImplementedMessage(stageFailure) ||
-    refusalMessage(stageFailure) ||
-    (stageFailure.kind === 'other' ? stageFailure.code : item.header);
+  const connectionFailure =
+    stageFailure.kind === 'engine-did-not-answer' || stageFailure.kind === 'emulator-did-not-answer';
+  const detail =
+    stageFailure.kind === 'other' ? (
+      <CodeAndMessage code={stageFailure.code} message={refusalMessage(stageFailure)} />
+    ) : (
+      item.content
+    );
+  const reportedMessage = reportedNotImplementedMessage(stageFailure);
   return [
     success,
     {
@@ -96,7 +101,10 @@ function createResult({ name, stageFailure }: CreatedApi, engineOrigin: string |
       content: (
         <>
           API <ValueText kind="name" value={name} /> created, but stage $default was not:{' '}
-          <ValueText kind="text" value={typeof reason === 'string' ? reason : undefined} none={reason} />
+          {connectionFailure && <>{stageFailure.operation} failed. </>}
+          {item.header}
+          {detail && <>. {detail}</>}
+          {reportedMessage && <> {reportedMessage}</>}
         </>
       ),
     },

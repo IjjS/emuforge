@@ -1,11 +1,12 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
 import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
 import { apisPath, createApiPath, restApiPath, v2ApiPath } from '../format';
 import { SCREENS } from '../screens/create-api';
@@ -84,15 +85,22 @@ async function findAlert(form: FormWrapper) {
   );
 }
 
-function flashedText() {
-  const result = handOver.mock.calls[0]?.[1] ?? [];
-  return render(
-    <>
-      {result.map((item) => (
-        <div key={item.type}>{item.content}</div>
-      ))}
-    </>,
+function findFlashes() {
+  const call = handOver.mock.calls[0];
+  if (!call) return null;
+  const [path, result] = call;
+  const { container } = render(
+    <AreaFlash
+      result={{ id: 1, visit: 1, path, items: result.map((item, index) => ({ key: String(index), item })) }}
+      onDismiss={vi.fn()}
+      onAnnounce={vi.fn()}
+    />,
   );
+  return createWrapper(container).findFlashbar();
+}
+
+function formField(form: FormWrapper, label: string) {
+  return form.findAllFormFields().find((field) => field.findLabel()?.getElement().textContent === label);
 }
 
 it('asks for the kind first, shows described choices and omits the stage when No stage is chosen', async () => {
@@ -100,23 +108,34 @@ it('asks for the kind first, shows described choices and omits the stage when No
   const form = openForm();
   expect(form.findInput()).toBeNull();
   expect(form.findRadioGroup()).toBeNull();
-  expect(screen.getByText(/Resources and methods, with a Lambda function/)).toBeVisible();
-  expect(screen.getByText(/Routes with a Lambda function or an HTTP endpoint/)).toBeVisible();
+  expect(formField(form, 'Kind of API')?.findLabel()?.getElement()).toHaveTextContent('Kind of API');
+  const kinds = form.findTiles();
+  expect(kinds?.findItemByValue('REST')?.getElement()).toHaveTextContent(
+    'Resources and methods, with a Lambda function',
+  );
+  expect(kinds?.findItemByValue('HTTP')?.getElement()).toHaveTextContent(
+    'Routes with a Lambda function or an HTTP endpoint',
+  );
 
   chooseKind(form, 'REST');
-  expect(screen.getByText('1 to 512 characters.')).toBeVisible();
-  expect(screen.getByText("The API's own default when none is given.")).toBeVisible();
-  expect(screen.getByText('Meant for callers in the same Region.')).toBeVisible();
-  expect(screen.getByText('Meant to be reached from inside a VPC.')).toBeVisible();
+  expect(formField(form, 'Name')?.findConstraint()?.getElement()).toHaveTextContent('1 to 512 characters.');
+  expect(formField(form, 'Endpoint type')?.findLabel()?.getElement()).toHaveTextContent('Endpoint type');
+  const endpointTypes = form.findRadioGroup()?.findButtons();
+  expect(endpointTypes?.map((option) => option.findDescription()?.getElement().textContent)).toEqual([
+    "The API's own default when none is given.",
+    'Meant for callers in the same Region.',
+    'Meant to be reached from inside a VPC.',
+  ]);
 
   chooseKind(form, 'HTTP');
-  expect(screen.getByText('1 to 128 characters.')).toBeVisible();
-  expect(screen.getByText('$default stage')).toBeVisible();
-  expect(screen.getByText('Create the $default stage')).toBeVisible();
-  expect(screen.getByText(/with auto-deploy on/)).toBeVisible();
-  expect(screen.getByText('No stage')).toBeVisible();
-  expect(screen.getByText(/No stage is created/)).toBeVisible();
+  expect(formField(form, 'Name')?.findConstraint()?.getElement()).toHaveTextContent('1 to 128 characters.');
+  expect(formField(form, '$default stage')?.findLabel()?.getElement()).toHaveTextContent('$default stage');
   const stageChoice = form.findRadioGroup();
+  const [createStage, skipStage] = stageChoice?.findButtons() ?? [];
+  expect(createStage?.findLabel().getElement()).toHaveTextContent('Create the $default stage');
+  expect(createStage?.findDescription()?.getElement()).toHaveTextContent('with auto-deploy on');
+  expect(skipStage?.findLabel().getElement()).toHaveTextContent('No stage');
+  expect(skipStage?.findDescription()?.getElement()).toHaveTextContent('No stage is created');
   expect(stageChoice?.findInputByValue('create')?.getElement()).toBeChecked();
   act(() => stageChoice?.findInputByValue('skip')?.click());
   expect(stageChoice?.findInputByValue('skip')?.getElement()).toBeChecked();
@@ -138,21 +157,39 @@ it.each([
   submit();
   await waitFor(() => expect(handOver).toHaveBeenCalledTimes(1));
   expect(handOver.mock.calls[0]?.[0]).toBe(path);
-  expect(flashedText().container).toHaveTextContent('API Local created.');
+  expect(findFlashes()?.findItemsByType('success')[0]?.findContent()?.getElement()).toHaveTextContent(
+    'API Local created.',
+  );
 });
 
-it('hands over the created HTTP API with the reason its stage was refused', async () => {
+it.each([
+  {
+    status: 400,
+    code: 'BadRequestException',
+    reason: 'CreateStage failed. BadRequestException: Stage refused',
+  },
+  {
+    status: 501,
+    code: 'NotImplementedException',
+    reason: 'Not implemented by the emulator. The emulator answered 501 Not Implemented for CreateStage. Stage refused',
+  },
+])('hands over the created HTTP API with the reason for a $status stage refusal', async ({ status, code, reason }) => {
   answers.set('/v2/apis', () => Response.json({ apiId: 'http-id', name: 'Local' }));
-  answers.set('/v2/apis/http-id/stages', () => Response.json({ message: 'Stage refused' }, { status: 400 }));
+  answers.set('/v2/apis/http-id/stages', () =>
+    Response.json({ message: 'Stage refused' }, { status, headers: { 'x-amzn-errortype': code } }),
+  );
   const form = openForm();
   chooseKind(form, 'HTTP');
   enterName(form, 'Local');
   submit();
   await waitFor(() => expect(handOver).toHaveBeenCalledTimes(1));
   expect(handOver.mock.calls[0]?.[0]).toBe(v2ApiPath('http-id'));
-  expect(handOver.mock.calls[0]?.[1].map(({ type }) => type)).toEqual(['success', 'warning']);
-  expect(flashedText().container).toHaveTextContent('API Local created.');
-  expect(flashedText().container).toHaveTextContent('API Local created, but stage $default was not: Stage refused');
+  const flashes = findFlashes();
+  expect(flashes?.findItems()).toHaveLength(2);
+  expect(flashes?.findItemsByType('success')[0]?.findContent()?.getElement()).toHaveTextContent('API Local created.');
+  expect(flashes?.findItemsByType('warning')[0]?.findContent()?.getElement()).toHaveTextContent(
+    `API Local created, but stage $default was not: ${reason}`,
+  );
 });
 
 describeCreateFailures('REST', '/restapis', 'CreateRestApi');
@@ -214,13 +251,19 @@ it('confirms Cancel on a changed form and keeps entries until Discard', async ()
   chooseKind(form, 'REST');
   enterName(form, 'Local');
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  const dialog = await screen.findByRole('dialog');
-  expect(dialog).toHaveTextContent('Discard what you entered?');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() =>
+    expect(form.findModal()?.findHeader().getElement()).toHaveTextContent('Discard what you entered?'),
+  );
+  const keep = form.findModal()?.findFooter()?.findAllButtons()[0];
+  expect(keep?.getElement()).toHaveTextContent('Keep editing');
+  act(() => keep?.click());
+  await waitFor(() => expect(form.findModal()).toBeNull());
   expect(form.findInput()?.getInputValue()).toBe('Local');
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
+  await waitFor(() => expect(form.findModal()).not.toBeNull());
+  const discard = form.findModal()?.findFooter()?.findAllButtons()[1];
+  expect(discard?.getElement()).toHaveTextContent('Discard');
+  act(() => discard?.click());
   expect(await screen.findByText(apisPath)).toBeVisible();
   expect(sent).not.toHaveBeenCalled();
 });

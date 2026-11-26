@@ -1,23 +1,36 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { expect, it, vi } from 'vitest';
+import { assert, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
+import { creationDateText } from '../../../components/format-date';
 import { PageFlashContext } from '../../../components/page-flash';
 import { useAreaFlash } from '../../../components/use-area-flash';
 import { readRestApi } from '../rest-api';
 import { updateRestApi } from '../rest-change-api';
 import { refreshRestApi, useRestApi } from '../rest-queries';
-import { creationDateText } from '../../../components/format-date';
 import { RestDetails } from './rest-details';
 
 vi.mock('../rest-api', { spy: true });
 vi.mock('../rest-change-api', { spy: true });
 
 const endpoint = 'http://127.0.0.1:9681';
+
+const page = createWrapper(document.body);
+
+function detail(label: string) {
+  const item = page
+    .findKeyValuePairs()
+    ?.findItems()
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  const value = item?.findValue()?.getElement();
+  assert(value);
+  return value;
+}
 
 it('shows the name, copyable ID, description, endpoint types and creation time', () => {
   const api = {
@@ -35,18 +48,12 @@ it('shows the name, copyable ID, description, endpoint types and creation time',
       onRefresh={vi.fn()}
     />,
   );
-  expect(screen.getByText(api.name)).toBeInTheDocument();
-  expect(screen.getByText(api.id)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Copy ID' })).toBeEnabled();
-  expect(screen.getByText(api.description)).toBeInTheDocument();
-  for (const value of ['Regional, Private', creationDateText(api.createdDate)]) {
-    expect(
-      screen.getByText(
-        (_, element) =>
-          element?.textContent === value && ![...element.children].some((child) => child.textContent === value),
-      ),
-    ).toBeInTheDocument();
-  }
+  expect(detail('Name')).toHaveTextContent(api.name);
+  expect(detail('ID')).toHaveTextContent(api.id);
+  expect(within(detail('ID')).getByRole('button', { name: 'Copy ID' })).toBeEnabled();
+  expect(detail('Description')).toHaveTextContent(api.description);
+  expect(detail('Endpoint type')).toHaveTextContent('Regional, Private');
+  expect(detail('Creation time')).toHaveTextContent(creationDateText(api.createdDate));
 
   rerender(
     <RestDetails
@@ -56,8 +63,7 @@ it('shows the name, copyable ID, description, endpoint types and creation time',
       onRefresh={vi.fn()}
     />,
   );
-  expect(screen.queryByText(api.description)).not.toBeInTheDocument();
-  expect(screen.getByText('-')).toBeInTheDocument();
+  expect(detail('Description')).toHaveTextContent(/^-$/);
 });
 
 const beforeEdit = { name: 'Orders', description: 'Original orders' };
@@ -93,23 +99,37 @@ async function openEdit() {
     </QueryClientProvider>,
   );
   await user.click(await screen.findByRole('button', { name: 'Edit' }));
-  const edit = within(await screen.findByRole('dialog', { name: 'Edit API' }));
-  for (const [field, text] of [
-    ['Name', saved.name],
-    ['Description', saved.description],
+  const modal = await waitFor(() => {
+    const modal = page.findModal();
+    assert(modal);
+    return modal;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent('Edit API');
+  const [nameField, descriptionField] = modal.findContent().findAllFormFields();
+  const name = nameField?.findControl()?.findInput()?.findNativeInput();
+  const description = descriptionField?.findControl()?.findTextarea()?.findNativeTextarea();
+  const footer = modal.findFooter();
+  assert(name && description && footer);
+  for (const [input, text] of [
+    [name.getElement(), saved.name],
+    [description.getElement(), saved.description],
   ] as const) {
-    const input = edit.getByRole('textbox', { name: field });
     await user.clear(input);
     await user.type(input, text);
   }
-  return { save: () => user.click(edit.getByRole('button', { name: 'Save' })), client };
+  return { save: () => user.click(within(footer.getElement()).getByRole('button', { name: 'Save' })), client };
+}
+
+function expectSaveResult() {
+  expect(page.findModal()).toBeNull();
+  const flash = page.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+  expect(flash).toHaveTextContent(`API ${saved.name} updated.`);
 }
 
 function expectSaved() {
-  expect(screen.queryByRole('dialog', { name: 'Edit API' })).not.toBeInTheDocument();
-  expect(screen.getAllByText(saved.name)).toHaveLength(2);
-  expect(screen.getByText(saved.description)).toBeVisible();
-  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent(`API ${saved.name} updated.`);
+  expectSaveResult();
+  expect(detail('Name')).toHaveTextContent(saved.name);
+  expect(detail('Description')).toHaveTextContent(saved.description);
 }
 
 it('closes the edit and shows the flash and new fields from the refreshed API', async () => {
@@ -120,22 +140,40 @@ it('closes the edit and shows the flash and new fields from the refreshed API', 
   expect(reader).toHaveBeenCalledTimes(2);
 });
 
-it('keeps the new fields and flash when a read started before the save answers last', async () => {
-  const { client, save } = await openEdit();
-  let answerEarlier!: (value: typeof beforeEdit) => void;
-  const earlier = new Promise<typeof beforeEdit>((resolve) => {
-    answerEarlier = resolve;
+function deferred() {
+  let answer!: (value: typeof beforeEdit) => void;
+  const promise = new Promise<typeof beforeEdit>((resolve) => {
+    answer = resolve;
   });
-  reader.mockReturnValueOnce(earlier).mockResolvedValueOnce(saved);
+  return { promise, answer };
+}
+
+it.each(['earlier read first', 'save read first'])('keeps the new fields and flash when %s answers', async (order) => {
+  const { client, save } = await openEdit();
+  const earlier = deferred();
+  const afterSave = deferred();
+  reader.mockReturnValueOnce(earlier.promise).mockReturnValueOnce(afterSave.promise);
   act(() => {
     void refreshRestApi(client, 'api-1');
   });
   await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+
   await save();
-  await waitFor(expectSaved);
-  expect(reader).toHaveBeenCalledTimes(3);
+  await waitFor(() => {
+    expectSaveResult();
+    expect(reader).toHaveBeenCalledTimes(3);
+  });
   expect(reader.mock.calls[1]?.[2].aborted).toBe(true);
-  await act(async () => answerEarlier(beforeEdit));
-  expectSaved();
-  expect(screen.queryByText(beforeEdit.name)).not.toBeInTheDocument();
+
+  if (order === 'earlier read first') {
+    await act(async () => earlier.answer(beforeEdit));
+    expectSaveResult();
+    await act(async () => afterSave.answer(saved));
+    await waitFor(expectSaved);
+  } else {
+    await act(async () => afterSave.answer(saved));
+    await waitFor(expectSaved);
+    await act(async () => earlier.answer(beforeEdit));
+    expectSaved();
+  }
 });

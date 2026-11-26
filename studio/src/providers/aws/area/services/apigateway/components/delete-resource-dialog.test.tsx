@@ -1,7 +1,8 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { assert, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -33,21 +34,30 @@ async function open() {
       </div>
     </AreaRootContext>,
   );
-  const dialog = await screen.findByRole('dialog', { name: 'Delete resource /orders?' });
+  const modal = await waitFor(() => {
+    const modal = createWrapper(document.body).findModal();
+    assert(modal);
+    return modal;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent('Delete resource /orders?');
+  const content = modal.findContent();
+  const input = content.findFormField()?.findControl()?.findInput()?.findNativeInput();
+  const footer = modal.findFooter();
+  assert(input && footer);
   return {
     user,
     onDeleted,
-    dialog,
-    input: within(dialog).getByRole('textbox'),
-    submit: within(dialog).getByRole('button', { name: 'Delete' }),
+    content,
+    input: input.getElement(),
+    submit: within(footer.getElement()).getByRole('button', { name: 'Delete' }),
   };
 }
 
 it('explains the deletion and enables it only on an exact confirmation', async () => {
-  const { dialog, input, submit, user } = await open();
-  expect(
-    within(dialog).getByText('This also removes the resources and methods below it. It cannot be undone.'),
-  ).toBeVisible();
+  const { content, input, submit, user } = await open();
+  expect(content.getElement()).toHaveTextContent(
+    'This also removes the resources and methods below it. It cannot be undone.',
+  );
   expect(submit).toBeDisabled();
   await user.type(input, '/ORDERS');
   expect(submit).toBeDisabled();
@@ -64,11 +74,14 @@ it.each<[RequestFailure, string]>([
   [{ operation, kind: 'engine-did-not-answer' }, 'did not answer'],
 ])('keeps the dialog and the confirmation on a failed delete (%j)', async (failure, message) => {
   vi.mocked(deleteResource).mockRejectedValueOnce(new RequestError(failure));
-  const { dialog, input, submit, user, onDeleted } = await open();
+  const { content, input, submit, user, onDeleted } = await open();
   await user.type(input, '/orders');
   await user.click(submit);
-  expect(await within(dialog).findByRole('alert')).toHaveTextContent(message);
-  expect(within(dialog).getByRole('alert')).toHaveTextContent(operation);
+  await waitFor(() => {
+    const alert = content.findAlert()?.getElement();
+    expect(alert).toHaveTextContent(message);
+    expect(alert).toHaveTextContent(operation);
+  });
   expect(input).toHaveValue('/orders');
   expect(onDeleted).not.toHaveBeenCalled();
   if (failure.kind === 'not-implemented') expect(submit).toBeDisabled();
