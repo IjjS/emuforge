@@ -2,8 +2,8 @@ import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
-import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import Textarea from '@cloudscape-design/components/textarea';
 import { useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -108,15 +108,14 @@ export function CreateLogStreamDialog({
           </div>
         )}
         <FormField label="Log stream name" constraintText={NAME_RULE} {...(nameError && { errorText: nameError })}>
-          <Input
+          <Textarea
+            rows={2}
+            resize="vertical"
             value={name}
             readOnly={pending}
             autoComplete={false}
             spellcheck={false}
             onChange={({ detail }) => setName(detail.value)}
-            onKeyDown={({ detail }) => {
-              if (detail.key === 'Enter' && !detail.isComposing) void handleCreate();
-            }}
           />
         </FormField>
       </SpaceBetween>

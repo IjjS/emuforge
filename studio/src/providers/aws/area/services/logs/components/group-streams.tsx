@@ -1,6 +1,6 @@
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useRef, useState } from 'react';
+import { useRef, useState, type Ref } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
@@ -11,7 +11,14 @@ import { StreamSection } from './stream-section';
 
 type Dialog = { kind: 'create' } | { kind: 'delete'; name: string };
 
-export function GroupStreams({ connection, group }: { connection: AreaConnection; group: string }) {
+interface GroupStreamsProps {
+  connection: AreaConnection;
+  group: string;
+  showListing?: boolean;
+  sectionRef?: Ref<HTMLElement>;
+}
+
+export function GroupStreams({ connection, group, showListing = true, sectionRef }: GroupStreamsProps) {
   const flash = usePageFlash();
   const refresh = useRef<() => void>(null);
   const [selectedName, setSelectedName] = useState<string>();
@@ -39,28 +46,36 @@ export function GroupStreams({ connection, group }: { connection: AreaConnection
 
   return (
     <>
-      <StreamSection
-        connection={connection}
-        group={group}
-        selection={{ name: selectedName, onChange: setSelectedName }}
-        refreshRef={refresh}
-        actions={(selected) => (
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button
-              disabled={endpoint === undefined || selected === undefined}
-              disabledReason={endpoint === undefined ? 'Waiting for the engine address.' : 'Select a log stream.'}
-              onClick={() => {
-                if (selected !== undefined) setDialog({ kind: 'delete', name: selected });
-              }}
-            >
-              Delete log stream
-            </Button>
-            <Button variant="primary" disabled={endpoint === undefined} onClick={() => setDialog({ kind: 'create' })}>
-              Create log stream
-            </Button>
-          </SpaceBetween>
-        )}
-      />
+      {showListing && (
+        <section ref={sectionRef} id="log-streams" tabIndex={-1} aria-label="Log streams">
+          <StreamSection
+            connection={connection}
+            group={group}
+            selection={{ name: selectedName, onChange: setSelectedName }}
+            refreshRef={refresh}
+            actions={(selected) => (
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  disabled={endpoint === undefined || selected === undefined}
+                  disabledReason={endpoint === undefined ? 'Waiting for the engine address.' : 'Select a log stream.'}
+                  onClick={() => {
+                    if (selected !== undefined) setDialog({ kind: 'delete', name: selected });
+                  }}
+                >
+                  Delete log stream
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={endpoint === undefined}
+                  onClick={() => setDialog({ kind: 'create' })}
+                >
+                  Create log stream
+                </Button>
+              </SpaceBetween>
+            )}
+          />
+        </section>
+      )}
       {endpoint !== undefined && dialog?.kind === 'create' && (
         <CreateLogStreamDialog
           endpoint={endpoint}
