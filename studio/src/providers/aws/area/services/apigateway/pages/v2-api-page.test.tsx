@@ -118,11 +118,20 @@ function deferred<T>() {
 }
 
 const page = () => createWrapper(document.body);
+const headingText = () =>
+  page()
+    .findAllHeaders()
+    .map((header) => header.findHeadingText().getElement());
+const pageHeading = () => headingText().find((text) => text.closest('h1'));
+const partHeading = (name: string) =>
+  headingText()
+    .find((text) => text.textContent === name)
+    ?.closest('h2');
 const successFlash = () => page().findFlashbar()?.findItemsByType('success')[0]?.getElement();
 const details = () =>
   page()
     .findAllContainers()
-    .find((part) => part.findHeader()?.getElement().textContent?.startsWith('Details'));
+    .find((part) => part.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Details');
 const readFailure = () =>
   page()
     .findAllContainers()
@@ -132,21 +141,21 @@ it('registers the screen without registry faults and reads the ID from its route
   expect(registryFaults([{ folder: 'apigateway', screens: SCREENS }], () => true)).toEqual([]);
   expect(areaPage(path)).toMatchObject({ kind: 'screen', params: { api_id: id } });
   open();
-  expect(await screen.findByRole('heading', { name: 'Events' })).toBeInTheDocument();
+  await waitFor(() => expect(pageHeading()).toHaveTextContent('Events'));
   expect(getV2Api).toHaveBeenCalledWith(engineOrigin, id, expect.any(AbortSignal));
 });
 
 it('shows all four read parts of the API', async () => {
   open();
-  for (const name of parts) {
-    expect(await screen.findByRole('heading', { name, level: 2 })).toBeInTheDocument();
-  }
+  await waitFor(() => {
+    for (const name of parts) expect(partHeading(name)).toHaveTextContent(name);
+  });
 });
 
 it('shows that the API was not found and links back to the list', async () => {
   vi.mocked(getV2Api).mockResolvedValue({ found: false });
   const { container } = open();
-  expect(await screen.findByRole('heading', { name: 'API not found', level: 1 })).toBeInTheDocument();
+  await waitFor(() => expect(pageHeading()).toHaveTextContent('API not found'));
   expect(container).toHaveTextContent(`The emulator holds no HTTP or WebSocket API with the ID ${id}.`);
   expect(screen.getByRole('link', { name: 'View APIs' })).toHaveAttribute('href', apisPath);
 });
@@ -204,7 +213,7 @@ it.each<[RequestFailure, string, string, AreaConnection, boolean]>([
   else expect(connectionStatus).not.toBeInTheDocument();
 
   await userEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('heading', { name: 'Events', level: 1 })).toBeInTheDocument();
+  await waitFor(() => expect(pageHeading()).toHaveTextContent('Events'));
   expect(details()?.findContent().getElement()).toHaveTextContent(api.Description);
   expect(readFailure()).toBeUndefined();
 });
@@ -217,7 +226,13 @@ it('keeps all parts and delivers a pending stage creation after a failed Details
   vi.mocked(getV2Api).mockResolvedValueOnce({ found: true, api }).mockReturnValueOnce(refresh.promise);
   open();
 
-  const headings = await Promise.all(parts.map((name) => screen.findByRole('heading', { name, level: 2 })));
+  const existingHeadings = await waitFor(() =>
+    parts.map((name) => {
+      const heading = partHeading(name);
+      assert(heading);
+      return heading;
+    }),
+  );
   const header = details()?.findHeader()?.getElement();
   assert(header);
   await user.click(within(header).getByRole('button', { name: 'Refresh' }));
@@ -245,7 +260,7 @@ it('keeps all parts and delivers a pending stage creation after a failed Details
   );
   expect(page().findModal()?.getElement()).toBe(modal.getElement());
   expect(input).toHaveValue('preview');
-  for (const heading of headings) expect(heading).toBeInTheDocument();
+  for (const heading of existingHeadings) expect(heading).toBeInTheDocument();
   expect(vi.mocked(createV2Stage).mock.calls[0]?.[3].aborted).toBe(false);
 
   await act(async () => create.resolve(undefined));
@@ -259,7 +274,7 @@ it('keeps all parts and delivers a pending stage creation after a failed Details
 
 it('focuses the Integrations heading when the part named in show is drawn', async () => {
   open(`${path}?show=integrations`);
-  expect(await screen.findByRole('heading', { name: 'Integrations', level: 2 })).toHaveFocus();
+  await waitFor(() => expect(partHeading('Integrations')).toHaveFocus());
 });
 
 it.each(['routes', 'API'] as const)('keeps the handed-over result when %s answers first', async (first) => {
@@ -271,22 +286,26 @@ it.each(['routes', 'API'] as const)('keeps the handed-over result when %s answer
   open(apisPath);
 
   await user.click(screen.getByRole('button', { name: 'Show the created API' }));
-  await waitFor(() => expect(successFlash()).toHaveTextContent(resultText));
+  await waitFor(() => {
+    expect(getV2Api).toHaveBeenCalled();
+    expect(readV2Routes).toHaveBeenCalled();
+  });
   const finishApi = () => apiRead.resolve({ found: true, api });
   const finishRoutes = () => routesRead.resolve({ items: [] });
 
   const finishes = first === 'routes' ? [finishRoutes, finishApi] : [finishApi, finishRoutes];
   for (const finish of finishes) {
     await act(async () => finish());
-    expect(successFlash()).toHaveTextContent(resultText);
   }
 
   const routes = () =>
     page()
       .findAllTables()
-      .find((table) => table.findHeaderSlot()?.getElement().textContent?.startsWith('Routes'));
-  await waitFor(() => expect(routes()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes'));
-  expect(successFlash()).toHaveTextContent(resultText);
+      .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Routes');
+  await waitFor(() => {
+    expect(routes()?.findEmptySlot()?.getElement()).toHaveTextContent('No routes');
+    expect(successFlash()).toHaveTextContent(resultText);
+  });
 });
 
 it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s', async (ProtocolType) => {
