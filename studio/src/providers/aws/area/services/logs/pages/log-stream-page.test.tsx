@@ -150,7 +150,7 @@ it.each([
     );
 
     const heading = createWrapper(container).findHeader()?.findHeadingText();
-    expect(heading?.getElement().closest('h1')).toHaveAccessibleName(`multiline worker (multiline${escaped}worker)`);
+    expect(heading?.getElement().closest('h1')).toHaveAccessibleName(`multiline\nworker (multiline${escaped}worker)`);
     const name = heading?.find('span[style]')?.getElement();
     expect(name?.textContent).toBe(`multiline\nworker (multiline${escaped}worker)`);
     expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
