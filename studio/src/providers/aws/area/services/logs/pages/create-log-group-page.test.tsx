@@ -140,6 +140,19 @@ function refusal(operation: 'CreateLogGroup' | 'PutRetentionPolicy', message: st
   return new RequestError({ kind: 'other', code: 'InvalidParameterException', operation, message });
 }
 
+const connectionFailures = [
+  {
+    failure: { kind: 'engine-did-not-answer' },
+    header: `The EmuForge engine at ${ENGINE} did not answer`,
+    detail: '',
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', message: 'The emulator request timed out.' },
+    header: 'The emulator did not answer',
+    detail: ' The emulator request timed out.',
+  },
+] as const;
+
 it('opens with the name constraint, the three described classes, Never expire and protection off', () => {
   open();
   expect(resources).toHaveBeenCalledWith({ word: 'log groups' });
@@ -255,6 +268,59 @@ it('hands over the partial result and the retention refusal after creating the g
   const { getByText } = render(<>{item?.content}</>);
   expect(getByText(/Retention could not be stored\./)).toBeVisible();
 });
+
+it.each(connectionFailures)(
+  'keeps the form when CreateLogGroup fails with $failure.kind',
+  async ({ failure, header, detail }) => {
+    create.mockRejectedValueOnce(new RequestError({ ...failure, operation: 'CreateLogGroup' }));
+    open();
+    fill();
+    submit();
+
+    await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const item = show.mock.lastCall?.[0][0];
+    expect(item?.type).toBe('error');
+    const { container } = render(
+      <>
+        <div>{item?.header}</div>
+        <div>{item?.content}</div>
+      </>,
+    );
+    expect(container).toHaveTextContent(header);
+    expect(container).toHaveTextContent(`CreateLogGroup failed.${detail}`);
+    expectFormKept();
+    expect(submitButton()).toBeEnabled();
+    expect(put).not.toHaveBeenCalled();
+    expect(handOver).not.toHaveBeenCalled();
+  },
+);
+
+it.each(connectionFailures)(
+  'hands over the partial create when PutRetentionPolicy fails with $failure.kind',
+  async ({ failure, header, detail }) => {
+    put.mockRejectedValueOnce(new RequestError({ ...failure, operation: 'PutRetentionPolicy' }));
+    open();
+    fill();
+    submit();
+
+    await waitFor(() =>
+      expect(handOver).toHaveBeenCalledExactlyOnceWith(GROUP_PATH, [
+        { type: 'warning', content: `Log group ${NAME} created, but its retention was not set.` },
+        expect.objectContaining({ type: 'error' }),
+      ]),
+    );
+    const item = handOver.mock.lastCall?.[1][1];
+    const { container } = render(
+      <>
+        <div>{item?.header}</div>
+        <div>{item?.content}</div>
+      </>,
+    );
+    expect(container).toHaveTextContent(header);
+    expect(container).toHaveTextContent(`PutRetentionPolicy failed.${detail}`);
+    expect(show).not.toHaveBeenCalled();
+  },
+);
 
 it('keeps the filled form and disables the action if CreateLogGroup answers 501', async () => {
   create.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'CreateLogGroup' }));
