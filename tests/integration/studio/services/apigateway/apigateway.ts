@@ -9,6 +9,7 @@ import { IAM } from '@aws-sdk/client-iam';
 import { Lambda, waitUntilFunctionActiveV2 } from '@aws-sdk/client-lambda';
 import createWrapper, { type ElementWrapper } from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
@@ -53,7 +54,9 @@ export async function fixture(ctx: Ctx) {
   const v2 = new ApiGatewayV2(config);
   const lambda = new Lambda(config);
   const iam = new IAM(config);
-  const prefix = checkPrefix(ctx, ctx.id.slice('studio.apigateway-'.length));
+  // The tag is short and of one length for every check: a name made of `<p>` and a suffix stays inside the 64
+  // characters a role's or a function's name may have, and no check's prefix starts another's.
+  const prefix = checkPrefix(ctx, `ag${createHash('sha1').update(ctx.id).digest('hex').slice(0, 8)}`);
   const functions: string[] = [];
   const roles: string[] = [];
 
@@ -660,4 +663,26 @@ export async function exportedAddress(rest: APIGateway, apiId: string, stageName
   const server = document.servers?.[0];
   if (!server?.url) throw new Error(`the export of stage ${stageName} names no server`);
   return server.url.replace(/\{(\w+)\}/g, (_, name: string) => server.variables?.[name]?.default ?? '');
+}
+
+// -- Create method and Create route --------------------------------------------------------------------------------------
+
+/** The statement ID Studio gives the permission it adds to a function for the API `apiId`. */
+export const studioStatementId = (apiId: string) => `emuforge-apigateway-${apiId}`;
+
+/** What the one Cloudscape select below `scope` shows as chosen. */
+export const chosenIn = (scope: Page | Locator) => scope.locator(sel(select.findTrigger()));
+
+/** The checkbox "Allow API Gateway to invoke this function". */
+export const allowCheckbox = (page: Page) =>
+  page.getByRole('checkbox', { name: 'Allow API Gateway to invoke this function', exact: true });
+
+/** The message of the refusal a direct call ends with; the check fails when the emulator accepts the call. */
+export function refusalOf(call: Promise<unknown>, accepted: string): Promise<string> {
+  return call.then(
+    () => {
+      throw new Error(accepted);
+    },
+    (e: Error) => e.message,
+  );
 }
