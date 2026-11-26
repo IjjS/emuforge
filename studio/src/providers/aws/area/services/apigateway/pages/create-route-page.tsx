@@ -438,7 +438,7 @@ export function CreateRoutePage({ connection, params }: ScreenPageProps) {
         description={
           api?.ProtocolType === 'HTTP' && api.Name ? (
             <>
-              Target API <ValueText kind="name" value={api.Name} />
+              API: <ValueText kind="name" value={api.Name} />
             </>
           ) : undefined
         }

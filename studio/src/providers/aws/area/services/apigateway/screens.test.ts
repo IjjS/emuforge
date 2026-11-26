@@ -4,8 +4,8 @@ import { areaPage } from '../../area-page';
 import { entryHasScreen } from '../../entries';
 import { registryFaults, SCREENS as areaScreens, type ScreensFile } from '../../screens';
 import { ENTRIES } from './entries';
+import { ApiListPage } from './pages/api-list-page';
 import { SCREENS } from './screens';
-import { SCREENS as apiListScreens } from './screens/apis';
 
 it('collects the service screens without custom navigation items or leadsTo paths', () => {
   const files = Object.values(import.meta.glob<ScreensFile>('./screens/*.ts', { eager: true }));
@@ -18,12 +18,15 @@ it('collects the service screens without custom navigation items or leadsTo path
   }
 });
 
-it.each(['apis', '', 'rest-apis'])('opens the combined APIs list at the path suffix "%s"', (suffix) => {
-  const path = suffix ? `/aws/apigateway/${suffix}` : '/aws/apigateway';
+it.each([
+  ['/aws/apigateway/apis', '/aws/apigateway/apis'],
+  ['/aws/apigateway', '/aws/apigateway/apis'],
+  ['/aws/apigateway/rest-apis', '/aws/apigateway/rest-apis'],
+])('opens the combined APIs list at %s with %s current', (path, activeHref) => {
   expect(areaPage(path)).toMatchObject({
     kind: 'screen',
-    screen: { Page: apiListScreens[0]?.Page },
-    navigation: { activeHref: '/aws/apigateway/apis' },
+    screen: { Page: ApiListPage },
+    navigation: { activeHref },
   });
 });
 
