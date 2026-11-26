@@ -32,7 +32,7 @@ beforeEach(() => {
   restApis.mockResolvedValue({ items: [] });
   v2Apis.mockResolvedValue({ items: [{ ...apiRow, name: 'Old', description: '' }] });
   detail.mockResolvedValue({ found: true, api: { Name: 'Old' } });
-  routes.mockResolvedValue({ items: [{ RouteId: 'r-1' }] });
+  routes.mockResolvedValue({ items: [{ RouteId: 'r-1', RouteKey: 'POST /events' }] });
   integrations.mockResolvedValue({ items: [{ IntegrationId: 'i-1' }] });
 });
 

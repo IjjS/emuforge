@@ -7,10 +7,10 @@ import Table from '@cloudscape-design/components/table';
 import { useState } from 'react';
 
 import { refusalMessage } from '../../../../../../lib/aws/request';
-
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { usePageFlash, type FlashResult } from '../../../components/page-flash';
+import { actionFailureItem } from '../../../components/failure-states';
+import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { createRoutePath, integrationTypeText } from '../format';
@@ -40,38 +40,32 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
       <RequestReadFailure failure={routes.failure} connection={connection} thing="routes" onRetry={routes.retry} />
     );
 
+  function integrationWarning(routeKey: string, { integrationId, failure }: IntegrationDeletionWarning): FlashItem {
+    const message = refusalMessage(failure);
+    const item = actionFailureItem(failure, failure.operation, connection.engineOrigin);
+    return {
+      type: 'warning',
+      content: (
+        <>
+          Route <ValueText kind="name" value={routeKey} /> deleted, but its integration{' '}
+          <CopyValue kind="name" label="integration ID" value={integrationId} /> was not:{' '}
+          {message ? <ValueText kind="text" value={message} /> : item.content || item.header}
+        </>
+      ),
+    };
+  }
+
   function handleDeleted(route: Route & { RouteId: string }, warning: IntegrationDeletionWarning | undefined) {
     const routeKey = route.RouteKey ?? route.RouteId;
-    const result: FlashResult = [
-      {
-        type: 'success',
-        content: (
-          <>
-            Route <ValueText kind="name" value={routeKey} /> deleted.
-          </>
-        ),
-      },
-      ...(warning === undefined
-        ? []
-        : [
-            {
-              type: 'warning' as const,
-              content: (
-                <>
-                  Route <ValueText kind="name" value={routeKey} /> deleted, but its integration{' '}
-                  <CopyValue kind="name" label="integration ID" value={warning.integrationId} /> was not:{' '}
-                  <ValueText
-                    kind="text"
-                    value={
-                      refusalMessage(warning.failure) ||
-                      (warning.failure.kind === 'other' ? warning.failure.code : warning.failure.kind)
-                    }
-                  />
-                </>
-              ),
-            },
-          ]),
-    ];
+    const success: FlashItem = {
+      type: 'success',
+      content: (
+        <>
+          Route <ValueText kind="name" value={routeKey} /> deleted.
+        </>
+      ),
+    };
+    const result: FlashResult = warning === undefined ? [success] : [success, integrationWarning(routeKey, warning)];
     flash.show(result);
     setDeleting(undefined);
     setSelectedId(undefined);
@@ -83,7 +77,7 @@ export function V2Routes({ id, isHttp, routes, integrations, connection }: V2Rou
         ariaLabels={{
           tableLabel: 'Routes',
           selectionGroupLabel: 'Route selection',
-          itemSelectionLabel: (_, route) => route.RouteKey ?? route.RouteId ?? 'Route',
+          itemSelectionLabel: (_, route) => `Select ${route.RouteKey ?? route.RouteId ?? 'route'}`,
         }}
         header={
           <Header
