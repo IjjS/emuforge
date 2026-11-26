@@ -428,6 +428,8 @@ const SELECT = rel(wrapper.findSelect());
 const SELECT_TRIGGER = inside(wrapper.findSelect().findTrigger());
 const SELECT_OPEN = inside(wrapper.findSelect().findDropdown().findOpenDropdown());
 const SELECT_FILTER = inside(wrapper.findSelect().findFilteringInput().findNativeInput());
+const DATE_INPUT = rel(wrapper.findDateInput().findNativeInput());
+const TIME_INPUT = rel(wrapper.findTimeInput().findNativeInput());
 const EDITOR_ROWS = rel(wrapper.findAttributeEditor().findRows());
 /** An option of a select by its value. */
 function optionByValue(value: string): string {
@@ -743,10 +745,10 @@ export function searchScreen(page: Page) {
     group: field(main, 'Log group'),
     stream: field(main, 'Log stream'),
     pattern: main.getByRole('textbox', { name: 'Filter pattern', exact: true }),
-    startDate: main.getByRole('textbox', { name: 'Start date', exact: true }),
-    startTime: main.getByRole('textbox', { name: 'Start time', exact: true }),
-    endDate: main.getByRole('textbox', { name: 'End date', exact: true }),
-    endTime: main.getByRole('textbox', { name: 'End time', exact: true }),
+    startDate: field(main, 'Start date').locator(DATE_INPUT),
+    startTime: field(main, 'Start time').locator(TIME_INPUT),
+    endDate: field(main, 'End date').locator(DATE_INPUT),
+    endTime: field(main, 'End time').locator(TIME_INPUT),
     search: main.getByRole('button', { name: SEARCH, exact: true }),
     results,
     empty: results.locator(TABLE_EMPTY),
