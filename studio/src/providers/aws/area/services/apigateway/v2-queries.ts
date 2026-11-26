@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { failureOf, noEndpoint, type TokenPage } from '../../components/use-token-listing';
-import { apiQueryKey, useAppendedPages } from './queries';
+import { apiQueryKey, refreshAppendedFirstPage, useAppendedPages } from './queries';
 import {
   GET_API,
   GET_INTEGRATIONS,
@@ -82,7 +82,13 @@ function refreshDetail(client: QueryClient, filters: Parameters<QueryClient['can
   return client.refetchQueries({ ...filters, type: 'active' });
 }
 
-function refreshList<T>(client: QueryClient, id: string, part: V2List, read: PageRead<T>) {
+function refreshList<T>(
+  client: QueryClient,
+  id: string,
+  part: V2List,
+  read: PageRead<T>,
+  deletion?: { endpoint: string | undefined; matches: (item: T) => boolean },
+) {
   return client
     .getQueryCache()
     .findAll(partFilters(id, part))
@@ -93,20 +99,11 @@ function refreshList<T>(client: QueryClient, id: string, part: V2List, read: Pag
         return client.resetQueries({ queryKey, exact: true });
       }
 
-      // Read only page one, leaving the displayed pages in place until it answers.
-      void client.cancelQueries({ queryKey, exact: true });
-      return client
-        .infiniteQuery({
-          queryKey,
-          queryFn: ({ signal, pageParam }) => read(endpoint, id, pageParam, signal),
-          initialPageParam: undefined as string | undefined,
-          getNextPageParam: (page) => page.next,
-          pages: 1,
-          staleTime: 0,
-          gcTime: 0,
-          retry: false,
-        })
-        .catch(() => undefined);
+      return refreshAppendedFirstPage(
+        client,
+        { key: queryKey, endpoint, read: (origin, token, signal) => read(origin, id, token, signal) },
+        deletion?.endpoint === endpoint ? deletion.matches : undefined,
+      );
     });
 }
 
@@ -114,13 +111,44 @@ export function refreshV2Api(client: QueryClient, id: string) {
   return refreshDetail(client, partFilters(id, 'detail'));
 }
 
-export async function refreshV2Routes(client: QueryClient, id: string) {
+export async function refreshV2Routes(
+  client: QueryClient,
+  id: string,
+  deleted?: { endpoint: string | undefined; routeId: string; integrationId?: string },
+) {
+  const integrationId = deleted?.integrationId;
   await Promise.all([
-    ...refreshList(client, id, 'routes', readV2Routes),
-    ...refreshList(client, id, 'integrations', readV2Integrations),
+    ...refreshList(
+      client,
+      id,
+      'routes',
+      readV2Routes,
+      deleted && { endpoint: deleted.endpoint, matches: (route) => route.RouteId === deleted.routeId },
+    ),
+    ...refreshList(
+      client,
+      id,
+      'integrations',
+      readV2Integrations,
+      deleted && integrationId !== undefined
+        ? { endpoint: deleted.endpoint, matches: (integration) => integration.IntegrationId === integrationId }
+        : undefined,
+    ),
   ]);
 }
 
-export async function refreshV2Stages(client: QueryClient, id: string) {
-  await Promise.all(refreshList(client, id, 'stages', readV2Stages));
+export async function refreshV2Stages(
+  client: QueryClient,
+  id: string,
+  deleted?: { endpoint: string | undefined; stageName: string },
+) {
+  await Promise.all(
+    refreshList(
+      client,
+      id,
+      'stages',
+      readV2Stages,
+      deleted && { endpoint: deleted.endpoint, matches: (stage) => stage.StageName === deleted.stageName },
+    ),
+  );
 }
