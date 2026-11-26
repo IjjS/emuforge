@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { findResourceEntry } from '../../entries';
 import { patternFault, samePatterns } from '../../screen-paths';
+import { ENTRIES } from './entries';
 import { SCREENS } from './screens';
 
 const NO_QUERY = new URLSearchParams();
@@ -53,9 +55,18 @@ describe("EC2's screens", () => {
         expect(crumbs(path, sample).length).toBeGreaterThan(0);
       }
       expect(screen.navigation.header.text).toBe('EC2');
-      expect(screen.navigation.items).toContainEqual({ type: 'link', text: 'Volumes', href: '/aws/ec2/volumes' });
-      const linkTargets = screen.navigation.items?.flatMap((item) => (item.type === 'link' ? [item.href] : []));
-      expect([...new Set(linkTargets)]).toEqual(linkTargets);
+    }
+  });
+
+  it('marks a service entry current on every screen', () => {
+    for (const screen of SCREENS) {
+      expect(findResourceEntry(ENTRIES, screen.navigation.activeHref), screen.paths[0]).toBeDefined();
+    }
+  });
+
+  it('leaves navigation items to the service entries on every screen', () => {
+    for (const screen of SCREENS) {
+      expect(screen.navigation.items, screen.paths[0]).toBeUndefined();
     }
   });
 });

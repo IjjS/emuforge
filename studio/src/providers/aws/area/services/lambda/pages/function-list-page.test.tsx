@@ -568,7 +568,6 @@ describe('the function list, loaded', () => {
     expect(links).toHaveTextContent('Event Functions');
     expect(navigation?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/lambda/functions');
     expect(navigation?.findLinkByHref('/aws/lambda/layers')?.getElement()).toHaveAccessibleName('Layers');
-    expect(navigation?.getElement().querySelectorAll('a[href]')).toHaveLength(3);
   });
 
   it('the notice "These functions are in your local emulator"; the description is the filter\'s rule with no endpoint, connected, not started and before the first answer (issue 467, R3)', async () => {

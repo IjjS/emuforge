@@ -7,7 +7,6 @@ import { QueuePage } from './pages/queue-page';
 /** SQS's side navigation on its screens (issue 481, requirement "Screens, routes, layer"): "SQS" and "Queues". */
 const NAVIGATION: ScreenNavigation = {
   header: { text: 'SQS', href: SQS_PATH },
-  items: [{ type: 'link', text: QUEUES_TITLE, href: QUEUES_PATH }],
   activeHref: QUEUES_PATH,
 };
 

@@ -8,7 +8,6 @@ import { TopicPage } from './pages/topic-page';
 /** SNS's side navigation on its screens (issue 536, requirement "Screens, routes, layer"): "SNS" and "Topics". */
 export const NAVIGATION: ScreenNavigation = {
   header: { text: 'SNS', href: SNS_PATH },
-  items: [{ type: 'link', text: TOPICS_TITLE, href: TOPICS_PATH }],
   activeHref: TOPICS_PATH,
 };
 
