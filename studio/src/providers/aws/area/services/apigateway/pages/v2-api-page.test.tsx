@@ -201,8 +201,8 @@ it.each(['HTTP', 'WEBSOCKET'] as const)('links to the API-specific parts for %s'
     });
   }
   if (ProtocolType === 'HTTP') {
-    for (const [, segment] of webSocket) {
-      expect(document.querySelector(`a[href="/aws/apigateway/${segment}"]`)).toBeNull();
+    for (const [name] of webSocket) {
+      expect(content.queryByRole('link', { name })).not.toBeInTheDocument();
     }
   }
 });
