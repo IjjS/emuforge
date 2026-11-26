@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor, within } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 
@@ -34,8 +34,10 @@ async function open() {
     if (!dialog?.isVisible()) throw new Error('Dialog is not visible');
     return dialog;
   });
-  const footer = modal.findFooter()?.getElement();
-  if (!footer) throw new Error('Missing dialog footer');
+  const footer = modal.findFooter();
+  const save = footer && createWrapper(footer.getElement()).findAllButtons()[1]?.getElement();
+  if (!save) throw new Error('Missing Save button');
+  expect(save).toHaveTextContent('Save');
   expect(modal.findHeader().getElement()).toHaveTextContent('Edit API');
   const [nameField, descriptionField] = createWrapper(modal.findContent().getElement()).findAllFormFields();
   if (!nameField || !descriptionField) throw new Error('Missing API edit fields');
@@ -49,7 +51,7 @@ async function open() {
     nameField,
     name: name.findNativeInput().getElement(),
     description: description.findNativeTextarea().getElement(),
-    save: within(footer).getByRole('button', { name: 'Save' }),
+    save,
   };
 }
 
