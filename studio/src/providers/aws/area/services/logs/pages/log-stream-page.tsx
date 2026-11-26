@@ -5,15 +5,18 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import { useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { EventMessage } from '../components/event-message';
+import { PutEventsForm } from '../components/put-events-form';
 import { nameFromSegment } from '../format';
 import { useStreamEvents } from '../use-stream-events';
 
@@ -64,14 +67,18 @@ function Continuation({
   connection: AreaConnection;
   streamEvents: StreamEvents;
 }) {
-  const { token, reading, empty, failure } = streamEvents[direction];
+  const { token, beforeTime, reading, empty, failure } = streamEvents[direction];
   const load = () => streamEvents.load(direction);
   const label = `Load ${direction} events`;
   const failureState = failure && continuationFailureState(failure, connection, direction);
   return (
     <div role="group" aria-label={label}>
       <SpaceBetween size="xs">
-        <Button onClick={load} loading={reading === true} disabled={token === undefined || failure !== undefined}>
+        <Button
+          onClick={load}
+          loading={reading === true}
+          disabled={(token === undefined && beforeTime === undefined) || failure !== undefined}
+        >
           {label}
         </Button>
         {empty && <div role="status">{`No ${direction} events.`}</div>}
@@ -86,7 +93,24 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
   const group = nameFromSegment(params.group ?? '');
   const stream = nameFromSegment(params.stream ?? '');
   const streamEvents = useStreamEvents(connection.engineOrigin, group, stream);
-  const { events, initialFailure, prepended, load } = streamEvents;
+  const { events, initialFailure, prepended, load, readFrom } = streamEvents;
+  const flash = usePageFlash();
+  const [showPut, setShowPut] = useState(false);
+  const [putUnavailable, setPutUnavailable] = useState(false);
+
+  function handlePut(time: number, { stored, rejected }: { stored: number; rejected: number }) {
+    const success: FlashItem = {
+      type: 'success',
+      content: `${String(stored)} log ${stored === 1 ? 'event' : 'events'} put to ${stream}.`,
+    };
+    const warning: FlashItem = {
+      type: 'warning',
+      content: `${String(rejected)} log ${rejected === 1 ? 'event was' : 'events were'} not stored: older than 14 days or more than 2 hours ahead.`,
+    };
+    flash.show(stored === 0 ? [warning] : rejected === 0 ? [success] : [success, warning]);
+    setShowPut(false);
+    if (stored > 0) readFrom(time);
+  }
 
   let body;
   if (initialFailure !== undefined) {
@@ -128,10 +152,21 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1">
+      <Header variant="h1" actions={<Button onClick={() => setShowPut(true)}>Put log events</Button>}>
         <ValueText kind="name" value={stream} />
       </Header>
       <Container header={<Header variant="h2">Log events</Header>}>{body}</Container>
+      {showPut && (
+        <PutEventsForm
+          endpoint={connection.engineOrigin}
+          group={group}
+          stream={stream}
+          unavailable={putUnavailable}
+          onUnavailable={() => setPutUnavailable(true)}
+          onDismiss={() => setShowPut(false)}
+          onPut={handlePut}
+        />
+      )}
     </SpaceBetween>
   );
 }

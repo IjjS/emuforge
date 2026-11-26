@@ -1,20 +1,30 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
+import { PageFlashContext } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
 import { patternParams, screenCrumbs, screenTitle } from '../../../screen-paths';
 import { getLogEvents, type EventPage } from '../event-api';
 import { LOG_STREAM_PATH } from '../format';
+import { putLogEvents } from '../put-events-api';
 import { SCREENS } from '../screens/log-stream';
 import { LogStreamPage } from './log-stream-page';
 
 vi.mock('../event-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../event-api')>()),
   getLogEvents: vi.fn(),
+}));
+
+vi.mock('../put-events-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../put-events-api')>()),
+  putLogEvents: vi.fn(),
 }));
 
 const ENGINE = 'http://127.0.0.1:8311';
@@ -26,7 +36,27 @@ const address = '/aws/logs/log-groups/group/%2Fapp%23group/stream/a%2Fb%23c%3Fd%
 const group = '/app#group';
 const stream = 'a/b#c?d%e f';
 
-beforeEach(() => read.mockReset());
+const put = vi.mocked(putLogEvents);
+const show = vi.fn();
+
+beforeEach(() => {
+  read.mockReset();
+  put.mockReset();
+  show.mockReset();
+});
+
+function Page({ connection, params }: Parameters<typeof LogStreamPage>[0]) {
+  const root = useRef<HTMLDivElement>(null);
+  return (
+    <AreaRootContext.Provider value={root}>
+      <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
+        <div ref={root}>
+          <LogStreamPage connection={connection} params={params} />
+        </div>
+      </PageFlashContext.Provider>
+    </AreaRootContext.Provider>
+  );
+}
 
 function renderPage(result: AreaConnection['result'] = CONNECTED, path = address) {
   const resources = vi.fn();
@@ -34,7 +64,7 @@ function renderPage(result: AreaConnection['result'] = CONNECTED, path = address
   const { container } = render(
     <MemoryRouter initialEntries={[path]}>
       <PageResourcesContext.Provider value={resources}>
-        <LogStreamPage connection={{ engineOrigin: ENGINE, result }} params={params} />
+        <Page connection={{ engineOrigin: ENGINE, result }} params={params} />
       </PageResourcesContext.Provider>
     </MemoryRouter>,
   );
@@ -230,4 +260,160 @@ it('shows a continuation 501 beside its own control and keeps the log visible', 
   expect(control('newer')).toHaveTextContent('501 Not Implemented for GetLogEvents');
   expect(button('newer')).toBeDisabled();
   expect(messages()).toEqual(['initial']);
+});
+
+async function openPutForm() {
+  fireEvent.click(screen.getByRole('button', { name: 'Put log events' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Put log events' });
+  const editor = createWrapper(dialog).findAttributeEditor();
+  const submit = createWrapper().findModal()?.findFooter()?.findAllButtons().at(-1);
+  if (!editor || !submit) throw new Error('Put form controls missing');
+  return { dialog, editor, submit };
+}
+
+async function submitMessages(values: string[]) {
+  const { editor, submit } = await openPutForm();
+  values.forEach((message, index) => {
+    if (index > 0) editor.findAddButton().click();
+    const field = editor
+      .findRow(index + 1)
+      ?.findField(1)
+      ?.findControl()
+      ?.findTextarea();
+    if (!field) throw new Error('Put message field missing');
+    field.setTextareaValue(message);
+  });
+  submit.click();
+}
+
+it.each([
+  { values: ['one'], bounds: undefined, expected: [{ type: 'success', content: `1 log event put to ${stream}.` }] },
+  {
+    values: ['one', 'two'],
+    bounds: undefined,
+    expected: [{ type: 'success', content: `2 log events put to ${stream}.` }],
+  },
+  {
+    values: ['one', 'two', 'three'],
+    bounds: { tooOldLogEventEndIndex: 1, tooNewLogEventStartIndex: 2 },
+    expected: [
+      { type: 'success', content: `1 log event put to ${stream}.` },
+      { type: 'warning', content: '2 log events were not stored: older than 14 days or more than 2 hours ahead.' },
+    ],
+  },
+  {
+    values: ['one', 'two'],
+    bounds: { tooNewLogEventStartIndex: 1 },
+    expected: [
+      { type: 'success', content: `1 log event put to ${stream}.` },
+      { type: 'warning', content: '1 log event was not stored: older than 14 days or more than 2 hours ahead.' },
+    ],
+  },
+  {
+    values: ['one', 'two'],
+    bounds: { tooOldLogEventEndIndex: 2 },
+    expected: [
+      { type: 'warning', content: '2 log events were not stored: older than 14 days or more than 2 hours ahead.' },
+    ],
+  },
+])('reports only the outcomes of a put of $values with $bounds', async ({ values, bounds, expected }) => {
+  read.mockResolvedValueOnce(page(['initial'])).mockResolvedValueOnce(page(['submitted']));
+  put.mockResolvedValueOnce(bounds);
+  renderPage();
+  await screen.findByText('initial');
+
+  await submitMessages(values);
+  await waitFor(() => expect(show).toHaveBeenCalledExactlyOnceWith(expected));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  const time = put.mock.lastCall?.[3][0]?.timestamp;
+  expect(time).toEqual(expect.any(Number));
+  expect(put).toHaveBeenCalledWith(
+    ENGINE,
+    group,
+    stream,
+    values.map((message) => ({ message, timestamp: time })),
+    expect.any(AbortSignal),
+  );
+
+  if (expected[0]?.type === 'success') {
+    expect(await screen.findByText('submitted')).toBeVisible();
+    expect(read).toHaveBeenLastCalledWith(ENGINE, group, stream, { kind: 'from-time', time }, expect.any(AbortSignal));
+  } else {
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(messages()).toEqual(['initial']);
+  }
+});
+
+it('keeps the put result and the submitted-time events when a previous newer read answers late', async () => {
+  let answerNewer!: (value: EventPage) => void;
+  const newer = new Promise<EventPage>((resolve) => {
+    answerNewer = resolve;
+  });
+  read
+    .mockResolvedValueOnce(page(['initial']))
+    .mockReturnValueOnce(newer)
+    .mockResolvedValueOnce(page(['submitted']));
+  put.mockResolvedValueOnce(undefined);
+  renderPage();
+  await screen.findByText('initial');
+  fireEvent.click(button('newer'));
+  await submitMessages(['my message']);
+  await screen.findByText('submitted');
+
+  await act(async () => answerNewer(page(['late'])));
+  expect(messages()).toEqual(['submitted']);
+  expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]);
+});
+
+it('shows the put result when the read from the put time fails and retries that read', async () => {
+  read
+    .mockResolvedValueOnce(page(['initial']))
+    .mockRejectedValueOnce(
+      new RequestError({ kind: 'other', operation, code: 'InvalidParameterException', message: 'read failed' }),
+    )
+    .mockResolvedValueOnce(page(['after retry']));
+  put.mockResolvedValueOnce(undefined);
+  const { container } = renderPage();
+  await screen.findByText('initial');
+  await submitMessages(['my message']);
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  expect(container).toHaveTextContent('InvalidParameterException: read failed');
+  expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]);
+  fireEvent.click(retry);
+  expect(await screen.findByText('after retry')).toBeVisible();
+  expect(read.mock.calls[2]?.[3]).toEqual(read.mock.calls[1]?.[3]);
+  expect(read.mock.calls[2]?.[3]).toMatchObject({ kind: 'from-time' });
+});
+
+it('offers the put form while the emulator refuses to read a non-Standard stream', async () => {
+  const refusal = new RequestError({
+    kind: 'other',
+    operation,
+    code: 'ValidationException',
+    message: 'This operation is only supported on the Standard log class.',
+  });
+  read.mockRejectedValue(refusal);
+  put.mockResolvedValueOnce(undefined);
+  renderPage();
+  await screen.findByText('This operation is only supported on the Standard log class.');
+  await submitMessages(['my message']);
+  await waitFor(() =>
+    expect(show).toHaveBeenCalledExactlyOnceWith([{ type: 'success', content: `1 log event put to ${stream}.` }]),
+  );
+  expect(await screen.findByText('This operation is only supported on the Standard log class.')).toBeVisible();
+});
+
+it('keeps Put log events available after the put operation answers 501', async () => {
+  read.mockResolvedValueOnce(page(['initial']));
+  put.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'PutLogEvents' }));
+  renderPage();
+  await screen.findByText('initial');
+  await submitMessages(['my message']);
+  await screen.findByText('Not implemented by the emulator');
+  createWrapper().findModal()?.findFooter()?.findAllButtons()[0]?.click();
+  expect(screen.getByRole('button', { name: 'Put log events' })).toBeEnabled();
+  const { dialog, submit } = await openPutForm();
+  expect(dialog).toHaveTextContent('501 Not Implemented for PutLogEvents');
+  expect(submit.getElement()).toBeDisabled();
+  expect(show).not.toHaveBeenCalled();
 });
