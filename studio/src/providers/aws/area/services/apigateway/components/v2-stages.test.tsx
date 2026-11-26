@@ -286,6 +286,7 @@ it.each<[RequestFailure, string, boolean]>([
 it.each(changes)(
   'keeps the later stages and result when an older read answers after $action',
   async ({ action, request, updated, message }) => {
+    read.mockResolvedValueOnce({ items: [defaultStage, devStage], next: 'older-page' });
     const user = await open();
     let replyToOldRead!: (page: TokenPage<Stage>) => void;
     read.mockReturnValueOnce(
@@ -293,8 +294,10 @@ it.each(changes)(
         replyToOldRead = resolve;
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole('button', { name: 'Load more stages' }));
+    await waitFor(() =>
+      expect(read).toHaveBeenLastCalledWith(connection.engineOrigin, apiId, 'older-page', expect.any(AbortSignal)),
+    );
     const oldSignal = read.mock.calls[1]?.[3];
     request.mockImplementationOnce(async () => {
       read.mockResolvedValueOnce({ items: [...updated] });
