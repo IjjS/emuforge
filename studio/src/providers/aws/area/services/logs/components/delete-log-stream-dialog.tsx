@@ -6,6 +6,7 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
+import { LINE_BREAK, normalizeLineBreaks } from '../format';
 import { DELETE_LOG_STREAM, deleteLogStream } from '../stream-change-api';
 import { ConfirmNameDialog } from './confirm-name-dialog';
 
@@ -28,8 +29,8 @@ export function DeleteLogStreamDialog({
   onDeleted,
   onDismiss,
 }: DeleteLogStreamDialogProps) {
-  const confirmationName = name.replace(/\r\n?/g, '\n');
-  const hasLineBreaks = confirmationName.includes('\n');
+  const confirmationName = normalizeLineBreaks(name);
+  const hasLineBreaks = LINE_BREAK.test(name);
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
