@@ -113,7 +113,7 @@ it('waits for the entered filter and reads its first page after paging the unfil
   expect(read).toHaveBeenCalledTimes(2);
   expect(await screen.findByRole('link', { name: 'mixed-case match' })).toBeVisible();
   expectRead('MiXeD');
-  expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
 });
 
 async function endFilteredList() {
@@ -146,9 +146,9 @@ async function endFilteredList() {
 
 function expectEnd() {
   expect(screen.getByRole('link', { name: 'Keep 2' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
   expect(screen.queryByRole('button', { name: 'Page 3' })).not.toBeInTheDocument();
-  expect(nextPage()).toBeDisabled();
+  expect(nextPage()).toHaveAttribute('aria-disabled', 'true');
   expect(within(screen.getByRole('main')).getAllByText('No more log groups.').length).toBeGreaterThan(0);
 }
 
@@ -165,8 +165,8 @@ describe('after the end of a filtered list', () => {
     expect(await screen.findByRole('link', { name: 'New 1' })).toBeVisible();
     expectRead('New');
     expect(screen.queryByText('No more log groups.')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
-    expect(nextPage()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true');
+    expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('refreshes the ended page with its own token and clears its end until it is met again', async () => {
@@ -176,12 +176,11 @@ describe('after the end of a filtered list', () => {
     expect(await screen.findByRole('link', { name: 'Keep 2 refreshed' })).toBeVisible();
     expectRead('Keep', 'second');
     expect(screen.queryByText('No more log groups.')).not.toBeInTheDocument();
-    expect(nextPage()).toBeEnabled();
+    expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
 
     read.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ ...group('Keep 2'), next: 'third' });
     fireEvent.click(nextPage());
-    await screen.findByRole('link', { name: 'Keep 2' });
-    expectEnd();
+    await waitFor(expectEnd);
   });
 
   it('can go back and take the next page from the first page', async () => {
@@ -192,7 +191,7 @@ describe('after the end of a filtered list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
     expect(await screen.findByRole('link', { name: 'Keep 1' })).toBeVisible();
     expectRead('Keep');
-    expect(nextPage()).toBeEnabled();
+    expect(nextPage()).not.toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(nextPage());
     expect(await screen.findByRole('link', { name: 'Keep 2' })).toBeVisible();
     expectRead('Keep', 'second');

@@ -93,9 +93,9 @@ it('reads tags by the literal group name, including its hash', async () => {
 
 it('rejects immediately when a read aborts, before its response settles', async () => {
   const pending = deferred<Response>();
-  const started = deferred<void>();
+  const started = deferred<undefined>();
   answer.mockImplementationOnce(() => {
-    started.resolve();
+    started.resolve(undefined);
     return pending.promise;
   });
   const stop = new AbortController();

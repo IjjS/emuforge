@@ -174,13 +174,13 @@ export function LogGroupListPage({ connection }: { connection: AreaConnection })
         empty={
           failure !== undefined ? (
             <ReadFailure state={failure} onRetry={handleRefresh} />
-          ) : (
+          ) : listing.currentPage === 1 ? (
             <Box textAlign="center" color="inherit">
               <Box variant="strong" color="inherit">
                 {pattern === '' ? 'No log groups' : 'No log groups match'}
               </Box>
             </Box>
-          )
+          ) : null
         }
       />
       {listing.endedHere && <Box margin={{ top: 's' }}>{NO_MORE}</Box>}

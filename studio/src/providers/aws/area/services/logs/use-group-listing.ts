@@ -12,6 +12,7 @@ interface PopulatedPage {
 
 interface ListingState {
   key: string;
+  filterVisit: number;
   kept?: PopulatedPage;
   endedAt?: number | undefined;
 }
@@ -22,15 +23,16 @@ export interface GroupListing extends TokenListing<LogGroup> {
 
 export function useGroupListing(endpoint: string | undefined, pattern: string): GroupListing {
   const key = JSON.stringify([endpoint, pattern]);
-  const [stored, setStored] = useState<ListingState>({ key });
+  const [stored, setStored] = useState<ListingState>({ key, filterVisit: 0 });
+  // A return to a recent filter starts fresh even if the intervening filter never answered.
+  const state = stored.key === key ? stored : { key, filterVisit: stored.filterVisit + 1 };
   const listing = useTokenListing({
-    key: LOGS_KEYS.groups(pattern),
+    key: [...LOGS_KEYS.groups(pattern), state.filterVisit],
     endpoint,
     operation: OPERATIONS.describeLogGroups,
     read: (at, token, signal) => listLogGroups(at, pattern, token, signal),
   });
 
-  const state = stored.key === key ? stored : { key };
   const { currentPage, goToPage, items, loading, pastEnd } = listing;
   const { kept, endedAt } = state;
   const furtherThanKept = kept !== undefined && currentPage > kept.number;
