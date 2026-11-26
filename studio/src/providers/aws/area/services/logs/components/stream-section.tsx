@@ -5,9 +5,10 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
+import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
-import { useEffect, useState } from 'react';
+import { useEffect, useImperativeHandle, useState, type ReactNode, type Ref } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -22,7 +23,18 @@ function dateCell(time: number | undefined) {
   return <ValueText kind="fixed" value={creationDateText(time === undefined ? undefined : new Date(time))} />;
 }
 
-export function StreamSection({ connection, group }: { connection: AreaConnection; group: string }) {
+interface StreamSectionProps {
+  connection: AreaConnection;
+  group: string;
+  selection?: {
+    name: string | undefined;
+    onChange: (name: string | undefined) => void;
+  };
+  actions?: (selected: string | undefined) => ReactNode;
+  refreshRef?: Ref<() => void>;
+}
+
+export function StreamSection({ connection, group, selection, actions, refreshRef }: StreamSectionProps) {
   const follow = useFollow();
   const [announcement, announce] = useAnnouncer();
   const [filterText, setFilterText] = useState('');
@@ -31,10 +43,18 @@ export function StreamSection({ connection, group }: { connection: AreaConnectio
     key: ['logs', 'streams', group, prefix],
     endpoint: connection.engineOrigin,
     operation: DESCRIBE_LOG_STREAMS,
-    read: (endpoint, token, signal) => listLogStreams(endpoint, group, prefix, token, signal),
+    read: async (endpoint, token, signal) => {
+      const page = await listLogStreams(endpoint, group, prefix, token, signal);
+      signal.throwIfAborted();
+      return page;
+    },
   });
+  const rows = listing.items ?? [];
+  const selected = rows.find(({ logStreamName }) => logStreamName !== undefined && logStreamName === selection?.name);
   const failure = listing.failure && readFailureState(listing.failure, connection, 'log stream list');
   const message = failure?.firstText;
+
+  useImperativeHandle(refreshRef, () => listing.refresh, [listing.refresh]);
 
   useEffect(() => {
     announce(message ?? '');
@@ -43,8 +63,18 @@ export function StreamSection({ connection, group }: { connection: AreaConnectio
   return (
     <>
       <Table<LogStream>
-        items={listing.items ?? []}
+        items={rows}
         trackBy="logStreamName"
+        {...(selection && {
+          selectionType: 'single',
+          selectedItems: selected === undefined ? [] : [selected],
+          onSelectionChange: ({ detail }) => selection.onChange(detail.selectedItems[0]?.logStreamName),
+          isItemDisabled: ({ logStreamName }) => logStreamName === undefined,
+          ariaLabels: {
+            selectionGroupLabel: 'Log stream selection',
+            itemSelectionLabel: (_, row) => row.logStreamName ?? 'Unnamed log stream',
+          },
+        })}
         wrapLines
         loading={listing.loading}
         loadingText="Loading log streams"
@@ -52,12 +82,18 @@ export function StreamSection({ connection, group }: { connection: AreaConnectio
           <Header
             variant="h2"
             actions={
-              <Button
-                ariaLabel="Refresh log streams"
-                iconName="refresh"
-                loading={listing.loading}
-                onClick={listing.refresh}
-              />
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  ariaLabel="Refresh log streams"
+                  iconName="refresh"
+                  loading={listing.loading}
+                  onClick={() => {
+                    selection?.onChange(undefined);
+                    listing.refresh();
+                  }}
+                />
+                {actions?.(selected?.logStreamName)}
+              </SpaceBetween>
             }
           >
             Log streams
@@ -96,7 +132,12 @@ export function StreamSection({ connection, group }: { connection: AreaConnectio
               filteringText={filterText}
               filteringClearAriaLabel="Clear the prefix filter"
               onChange={({ detail }) => setFilterText(detail.filteringText)}
-              onDelayedChange={({ detail }) => setPrefix(detail.filteringText)}
+              onDelayedChange={({ detail }) => {
+                if (detail.filteringText !== prefix) {
+                  selection?.onChange(undefined);
+                  setPrefix(detail.filteringText);
+                }
+              }}
             />
           </FormField>
         }
@@ -111,7 +152,10 @@ export function StreamSection({ connection, group }: { connection: AreaConnectio
               previousPageLabel: 'Previous page',
               pageLabel: (page) => `Page ${String(page)}`,
             }}
-            onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
+            onChange={({ detail }) => {
+              selection?.onChange(undefined);
+              listing.goToPage(detail.currentPageIndex);
+            }}
           />
         }
         empty={
