@@ -1,10 +1,21 @@
 import type { Integration, Route } from '@aws-sdk/client-apigatewayv2';
-import { render, screen, within } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
+import { PageFlashContext } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
+import type { TokenPage } from '../../../components/use-token-listing';
 import type { AppendedPages } from '../queries';
+import { readV2Integrations, readV2Routes } from '../v2-api';
+import { useV2Integrations, useV2Routes } from '../v2-queries';
+import { deleteV2Route, isIntegrationShared, type IntegrationDeletionWarning } from '../v2-route-change-api';
+import { V2Integrations } from './v2-integrations';
 import { V2Routes } from './v2-routes';
 
 const connection = { engineOrigin: 'http://127.0.0.1:9681', result: undefined };
@@ -100,3 +111,148 @@ it('loads a further page and keeps existing rows with the operation failure and 
   await user.click(screen.getByRole('button', { name: 'Retry' }));
   expect(routes.retry).toHaveBeenCalledOnce();
 });
+
+vi.mock('../v2-api', { spy: true });
+vi.mock('../v2-route-change-api', { spy: true });
+
+const getRoutes = vi.mocked(readV2Routes);
+const getIntegrations = vi.mocked(readV2Integrations);
+const remove = vi.mocked(deleteV2Route);
+
+function RoutesWithReads({ isHttp }: { isHttp: boolean }) {
+  const id = 'api-1';
+  const routes = useV2Routes(connection.engineOrigin, id);
+  const integrations = useV2Integrations(connection.engineOrigin, id);
+  const { shown, pageFlash, dismiss, announce } = useAreaFlash('/v2/api-1', 0, true);
+
+  return (
+    <PageFlashContext value={pageFlash}>
+      {shown && <AreaFlash result={shown} onDismiss={dismiss} onAnnounce={announce} />}
+      <V2Routes
+        id={id}
+        isHttp={isHttp}
+        routes={routes}
+        integrations={integrations.items ?? []}
+        connection={connection}
+      />
+      <V2Integrations integrations={integrations} routes={routes} connection={connection} />
+    </PageFlashContext>
+  );
+}
+
+async function renderRoutes(isHttp: boolean, hasMore = false) {
+  const root = { current: null };
+  const user = userEvent.setup();
+  const next = hasMore ? { next: 'older-page' } : {};
+  getRoutes.mockReset().mockResolvedValueOnce({ items: [route], ...next });
+  getIntegrations.mockReset().mockResolvedValueOnce({ items: [integration], ...next });
+  vi.mocked(isIntegrationShared).mockResolvedValue(false);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <AreaRootContext value={root}>
+        <div ref={root}>
+          <MemoryRouter>
+            <RoutesWithReads isHttp={isHttp} />
+          </MemoryRouter>
+        </div>
+      </AreaRootContext>
+    </QueryClientProvider>,
+  );
+  await screen.findByRole('rowheader', { name: 'POST /events' });
+  await screen.findByRole('rowheader', { name: 'i-1' });
+  return user;
+}
+
+async function confirmDeletion(user: ReturnType<typeof userEvent.setup>) {
+  const selection = createWrapper(document.body).findTable()?.findRowSelectionArea(1)?.find('input');
+  if (!selection) throw new Error('Missing route selector');
+  await user.click(selection.getElement());
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'Delete route POST /events?' }));
+  await user.type(dialog.getByRole('textbox', { name: /To confirm/ }), 'delete');
+  const button = dialog.getByRole('button', { name: 'Delete' });
+  await waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
+}
+
+function expectDeleted() {
+  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent('Route POST /events deleted.');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('rowheader', { name: 'POST /events' })).not.toBeInTheDocument();
+}
+
+it.each([true, false])('shows successful deletion and refreshes both lists (HTTP: %s)', async (isHttp) => {
+  const user = await renderRoutes(isHttp);
+  getRoutes.mockResolvedValueOnce({ items: [] });
+  getIntegrations.mockResolvedValueOnce({ items: [] });
+  remove.mockResolvedValueOnce(undefined);
+  await confirmDeletion(user);
+  await waitFor(() => {
+    expectDeleted();
+    expect(screen.getByText('No integrations')).toBeVisible();
+  });
+  expect(getRoutes).toHaveBeenCalledTimes(2);
+  expect(getIntegrations).toHaveBeenCalledTimes(2);
+});
+
+it('announces the route deletion and the integration refusal while keeping that integration', async () => {
+  const user = await renderRoutes(true);
+  const warning: IntegrationDeletionWarning = {
+    integrationId: 'i-1',
+    failure: { operation: 'DeleteIntegration', kind: 'other', code: 'ConflictException', message: 'Still referenced.' },
+  };
+  getRoutes.mockResolvedValueOnce({ items: [] });
+  getIntegrations.mockResolvedValueOnce({ items: [integration] });
+  remove.mockResolvedValueOnce(warning);
+  await confirmDeletion(user);
+  await waitFor(expectDeleted);
+  expect(screen.getByRole('list', { name: 'Notifications' })).toHaveTextContent(
+    'Route POST /events deleted, but its integration i-1 was not: Still referenced.',
+  );
+  expect(screen.getByRole('rowheader', { name: 'i-1' })).toBeVisible();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each(['routes', 'integrations'] as const)(
+  'keeps both deletions and the result when the older %s response arrives last',
+  async (last) => {
+    const user = await renderRoutes(true, true);
+    const olderRoutes = deferred<TokenPage<Route>>();
+    const olderIntegrations = deferred<TokenPage<Integration>>();
+    getRoutes.mockReturnValueOnce(olderRoutes.promise).mockResolvedValueOnce({ items: [] });
+    getIntegrations.mockReturnValueOnce(olderIntegrations.promise).mockResolvedValueOnce({ items: [] });
+    remove.mockResolvedValueOnce(undefined);
+    await user.click(screen.getByRole('button', { name: 'Load more routes' }));
+    await user.click(screen.getByRole('button', { name: 'Load more integrations' }));
+    await waitFor(() => {
+      expect(getRoutes).toHaveBeenCalledTimes(2);
+      expect(getIntegrations).toHaveBeenCalledTimes(2);
+    });
+
+    await confirmDeletion(user);
+    await waitFor(() => {
+      expectDeleted();
+      expect(screen.getByText('No integrations')).toBeVisible();
+    });
+
+    const replies = {
+      routes: () => olderRoutes.resolve({ items: [route] }),
+      integrations: () => olderIntegrations.resolve({ items: [integration] }),
+    };
+    await act(async () => replies[last === 'routes' ? 'integrations' : 'routes']());
+    await act(async () => replies[last]());
+    expectDeleted();
+    expect(screen.getByText('No integrations')).toBeVisible();
+    for (const reader of [getRoutes, getIntegrations]) {
+      expect(reader.mock.calls[1]?.[3].aborted).toBe(true);
+      expect(reader).toHaveBeenCalledTimes(3);
+    }
+  },
+);

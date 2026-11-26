@@ -77,7 +77,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
     const links = api.ProtocolType === 'WEBSOCKET' ? [...apiLinks, ...webSocketLinks] : apiLinks;
     content = (
       <>
-        <V2Details api={api} id={id} onRefresh={() => void reading.refresh()} />
+        <V2Details api={api} id={id} endpoint={endpoint} onRefresh={() => void reading.refresh()} />
         <V2Routes
           id={id}
           isHttp={api.ProtocolType === 'HTTP'}
