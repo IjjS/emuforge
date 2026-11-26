@@ -339,10 +339,13 @@ it.each([
 ] as const)(
   'drops an old %s page that arrives after the post-delete read',
   async (label, read, api, current, token) => {
-    const oldPage = Promise.withResolvers<TokenPage<ApiRow>>();
+    let resolveOldPage!: (page: TokenPage<ApiRow>) => void;
+    const oldPage = new Promise<TokenPage<ApiRow>>((resolve) => {
+      resolveOldPage = resolve;
+    });
     vi.mocked(read)
       .mockResolvedValueOnce({ items: [api], next: token })
-      .mockReturnValueOnce(oldPage.promise)
+      .mockReturnValueOnce(oldPage)
       .mockResolvedValueOnce({ items: [current] });
     vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
     const { container } = open();
@@ -355,7 +358,7 @@ it.each([
     expect(read).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
     expect(vi.mocked(read).mock.calls[1]?.[2].aborted).toBe(true);
 
-    await act(async () => oldPage.resolve({ items: [api] }));
+    await act(async () => resolveOldPage({ items: [api] }));
 
     expect(screen.getByRole('link', { name: current.name })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: api.name })).not.toBeInTheDocument();

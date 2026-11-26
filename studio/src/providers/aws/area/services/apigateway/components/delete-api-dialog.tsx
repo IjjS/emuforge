@@ -82,12 +82,14 @@ export function DeleteApiDialog({ api, endpoint, onDeleted, onDismiss }: DeleteA
           />
         </FormField>
         {item !== undefined && (
-          <Alert type={item.type === 'info' ? 'info' : 'error'} header={item.header}>
-            {(failure?.kind === 'engine-did-not-answer' || failure?.kind === 'emulator-did-not-answer') && (
-              <> {operation} got no answer. </>
-            )}
-            {item.content}
-          </Alert>
+          <div role="alert">
+            <Alert type={item.type === 'info' ? 'info' : 'error'} header={item.header}>
+              {(failure?.kind === 'engine-did-not-answer' || failure?.kind === 'emulator-did-not-answer') && (
+                <> {operation} got no answer. </>
+              )}
+              {item.content}
+            </Alert>
+          </div>
         )}
       </SpaceBetween>
     </AreaModal>
