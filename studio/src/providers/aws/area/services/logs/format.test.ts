@@ -37,6 +37,8 @@ describe('log names in addresses', () => {
   it.each([
     ['CR', '\r'],
     ['LF', '\n'],
+    ['U+2028 LINE SEPARATOR', '\u2028'],
+    ['U+2029 PARAGRAPH SEPARATOR', '\u2029'],
     ['CRLF', '\r\n'],
   ])('keeps %s in group and stream names through both routers', (_label, lineBreak) => {
     const group = `/aws/lambda${lineBreak}group`;

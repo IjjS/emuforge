@@ -50,6 +50,14 @@ describe('CloudWatch Logs entries', () => {
     expect(entryFaults([{ folder, groups: ENTRIES }], screens)).toEqual([]);
   });
 
+  it('records where Log streams are shown inside a log group', () => {
+    const streams = entries.find(({ path }) => path === '/aws/logs/log-streams');
+    expect(streams?.shownIn).toEqual({
+      entry: '/aws/logs/log-groups',
+      place: 'the "Log streams" section of a log group',
+    });
+  });
+
   it('has screens for Log groups and Log streams', () => {
     const builtEntries = entries.filter(({ path }) => entryHasScreen(screens, service, path));
     expect(builtEntries.map(({ label }) => label)).toEqual(['Log groups', 'Log streams']);

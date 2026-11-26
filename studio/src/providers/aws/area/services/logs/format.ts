@@ -16,8 +16,8 @@ const LINE_BREAK_SEGMENT_PREFIX = '**';
 export function nameSegment(name: string): string {
   if (name === '.' || name === '..') return `*${name}`;
   const encoded = encodeURIComponent(name);
-  // React Router decodes the path for matching, and its splat cannot match CR or LF.
-  return /[\r\n]/.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
+  // React Router decodes the path for matching, and its splat excludes the four JavaScript line terminators.
+  return /[\r\n\u2028\u2029]/.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
 }
 
 /** The area has already percent-decoded the parameter once. */

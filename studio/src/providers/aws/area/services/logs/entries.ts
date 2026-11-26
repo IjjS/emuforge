@@ -14,6 +14,10 @@ export const ENTRIES: readonly EntryGroup[] = [
         path: LOG_STREAMS_PATH,
         listedBy: 'DescribeLogStreams',
         listedInside: LOG_GROUPS_PATH,
+        shownIn: {
+          entry: LOG_GROUPS_PATH,
+          place: 'the "Log streams" section of a log group',
+        },
       },
       {
         label: 'Deliveries',
