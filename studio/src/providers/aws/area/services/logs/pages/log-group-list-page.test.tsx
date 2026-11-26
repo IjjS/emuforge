@@ -2,15 +2,21 @@ import type { LogGroup } from '@aws-sdk/client-cloudwatch-logs';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
+import { AreaFlash } from '../../../components/area-flash';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
+import { PageFlashContext } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
 import type { TokenPage } from '../../../components/use-token-listing';
+import { useAreaFlash } from '../../../components/use-area-flash';
 import { listLogGroups } from '../api';
+import { deleteLogGroup } from '../group-delete-api';
 import { LogGroupListPage } from './log-group-list-page';
 
 vi.mock('../api', async (importOriginal) => ({
@@ -18,25 +24,48 @@ vi.mock('../api', async (importOriginal) => ({
   listLogGroups: vi.fn(),
 }));
 
+vi.mock('../group-delete-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../group-delete-api')>()),
+  deleteLogGroup: vi.fn(),
+}));
+
 const ENGINE = 'http://127.0.0.1:8306';
 const EMULATOR = { port: 9306, endpoint: 'https://127.0.0.1:9306' };
 const CONNECTED = { kind: 'connected', checkedAt: 0, emulator: EMULATOR } as const;
 const operation = 'DescribeLogGroups';
 const read = vi.mocked(listLogGroups);
+const remove = vi.mocked(deleteLogGroup);
 
-beforeEach(() => read.mockReset());
+beforeEach(() => {
+  read.mockReset();
+  remove.mockReset();
+});
 
 function renderPage(result: AreaConnection['result'] = CONNECTED) {
   const resources = vi.fn();
   const client = new QueryClient();
+  function Area() {
+    const root = useRef<HTMLDivElement>(null);
+    const flash = useAreaFlash('/aws/logs/log-groups', 0, true);
+    return (
+      <AreaRootContext.Provider value={root}>
+        <PageFlashContext.Provider value={flash.pageFlash}>
+          <div ref={root}>
+            {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
+            <PageResourcesContext.Provider value={resources}>
+              <main>
+                <LogGroupListPage connection={{ engineOrigin: ENGINE, result }} />
+              </main>
+            </PageResourcesContext.Provider>
+          </div>
+        </PageFlashContext.Provider>
+      </AreaRootContext.Provider>
+    );
+  }
   const rendered = render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <PageResourcesContext.Provider value={resources}>
-          <main>
-            <LogGroupListPage connection={{ engineOrigin: ENGINE, result }} />
-          </main>
-        </PageResourcesContext.Provider>
+        <Area />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -45,6 +74,16 @@ function renderPage(result: AreaConnection['result'] = CONNECTED) {
 }
 
 const group = (name: string): TokenPage<LogGroup> => ({ items: [{ logGroupName: name }] });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 
 function changeFilter(value: string) {
   fireEvent.change(screen.getByRole('searchbox', { name: 'Filter by name' }), { target: { value } });
@@ -258,4 +297,144 @@ it('links to the create form and disables Delete until a row is selected', async
   fireEvent.click(screen.getByRole('radio', { name: 'selectable' }));
   expect(remove).toBeEnabled();
   expect(remove).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+describe('deleting a log group', () => {
+  const name = '/app#Cold';
+  const current = group(name);
+  const afterDelete = group('remaining');
+  const readError = new RequestError({
+    kind: 'other',
+    operation,
+    code: 'InvalidParameterException',
+    message: 'List read refused.',
+  });
+
+  async function openDelete() {
+    await screen.findByRole('link', { name });
+    fireEvent.click(screen.getByRole('radio', { name }));
+    const opener = screen.getByRole('button', { name: 'Delete' });
+    opener.focus();
+    fireEvent.click(opener);
+    const modal = await screen.findByRole('dialog', { name: `Delete log group ${name}?` });
+    return within(modal);
+  }
+
+  function enterName(dialog: ReturnType<typeof within>) {
+    const field = dialog.getByRole('textbox', { name: "To confirm, type the log group's name." });
+    fireEvent.change(field, { target: { value: name } });
+    return field;
+  }
+
+  function confirm(dialog: ReturnType<typeof within>) {
+    enterName(dialog);
+    fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+  }
+
+  function expectSuccess(container: HTMLElement) {
+    const result = createWrapper(container).findFlashbar()?.findItemsByType('success')[0];
+    expect(result?.getElement()).toHaveTextContent(`Log group ${name} deleted.`);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  }
+
+  it('shows the result, closes the dialog and reads the shown page again', async () => {
+    read
+      .mockResolvedValueOnce({ ...group('first'), next: 'second' })
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(afterDelete);
+    remove.mockResolvedValueOnce(undefined);
+    const { container } = renderPage();
+    await screen.findByRole('link', { name: 'first' });
+    fireEvent.click(nextPage());
+    confirm(await openDelete());
+
+    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    expectRead('', 'second');
+    expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true');
+    expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
+    expectSuccess(container);
+  });
+
+  it.each([
+    ['before', 'rows'],
+    ['before', 'failure'],
+    ['after', 'rows'],
+    ['after', 'failure'],
+  ] as const)('keeps the post-delete result when the previous read answers %s it with %s', async (when, outcome) => {
+    const previous = deferred<TokenPage<LogGroup>>();
+    const deletion = deferred<void>();
+    const updated = deferred<TokenPage<LogGroup>>();
+    read.mockResolvedValueOnce(current).mockReturnValueOnce(previous.promise).mockReturnValueOnce(updated.promise);
+    remove.mockReturnValueOnce(deletion.promise);
+    const { container } = renderPage();
+    const dialog = await openDelete();
+
+    // Refresh has started independently of the open confirmation. The dialog still owns the group it opened for.
+    fireEvent.click(within(container).getByRole('button', { name: 'Refresh', hidden: true }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    confirm(dialog);
+    await act(async () => deletion.resolve());
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expectSuccess(container);
+
+    const finishPrevious = async () => {
+      await act(async () => {
+        if (outcome === 'rows') previous.resolve(current);
+        else previous.reject(readError);
+      });
+    };
+    if (when === 'before') {
+      await finishPrevious();
+      expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    }
+    await act(async () => updated.resolve(afterDelete));
+    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    if (when === 'after') await finishPrevious();
+
+    expectSuccess(container);
+    expect(screen.getByRole('link', { name: 'remaining' })).toBeVisible();
+    expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the successful deletion result when the subsequent page read fails', async () => {
+    read.mockResolvedValueOnce(current).mockRejectedValueOnce(readError).mockResolvedValueOnce(afterDelete);
+    remove.mockResolvedValueOnce(undefined);
+    const { container } = renderPage();
+    confirm(await openDelete());
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByRole('table')).toHaveTextContent('List read refused.');
+    expectSuccess(container);
+    fireEvent.click(retry);
+    expect(await screen.findByRole('link', { name: 'remaining' })).toBeVisible();
+    expectSuccess(container);
+  });
+
+  it('keeps Delete in the header and remembers 501 after dismissing the dialog', async () => {
+    read.mockResolvedValueOnce(current);
+    remove.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'DeleteLogGroup' }));
+    renderPage();
+    const dialog = await openDelete();
+    confirm(dialog);
+
+    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(dialog.getByRole('alert')).toHaveTextContent('DeleteLogGroup');
+    expect(dialog.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const opener = screen.getByRole('button', { name: 'Delete' });
+    await waitFor(() => expect(opener).toHaveFocus());
+    fireEvent.click(opener);
+
+    const reopened = within(await screen.findByRole('dialog'));
+    const field = reopened.getByRole('textbox');
+    expect(field).toHaveValue('');
+    expect(reopened.getByText('Not implemented by the emulator')).toBeVisible();
+    enterName(reopened);
+    expect(reopened.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
 });
