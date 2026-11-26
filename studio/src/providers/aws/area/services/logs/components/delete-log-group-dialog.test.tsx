@@ -10,7 +10,7 @@ import {
   modalAlert,
   expectModalBox,
   expectModalAlert,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { deleteLogGroup } from '../group-delete-api';

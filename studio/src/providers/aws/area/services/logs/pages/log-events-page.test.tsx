@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, boxText, buttonIn, requiredElement } from '../../../../../../test/logs-test-utils';
+import { aws, boxText, buttonIn, requiredElement } from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
@@ -527,56 +527,59 @@ it('explains the Standard class restriction with the emulator’s reason', async
   expect(detail).toHaveTextContent(reason);
 });
 
-it.each([
-  ['CR', '\r'],
-  ['CRLF', '\r\n'],
-  ['LF', '\n'],
-  ['U+2028', '\u2028'],
-  ['U+2029', '\u2029'],
-])('displays %s as a line break and keeps the exact submitted stream name', async (_name, terminator) => {
-  const multiline = `first${terminator}second`;
-  const displayName = 'first\nsecond';
-  const spaced = 'first second';
-  const multilineLabel = 'first second (contains a line break)';
-  streams.mockResolvedValueOnce({ items: [{ logStreamName: multiline }, { logStreamName: spaced }] });
-  search.mockResolvedValueOnce({
-    items: [
-      { eventId: 'multiline', logStreamName: multiline, message: 'first event' },
-      { eventId: 'spaced', logStreamName: spaced, message: 'second event' },
-    ],
-  });
+it('distinguishes line breaks and literal escapes in stream choices and submits each exact stored name', async () => {
+  const names = [
+    { stored: 'first\rsecond', label: 'first\\rsecond', display: 'first\nsecond' },
+    { stored: 'first\nsecond', label: 'first\\nsecond', display: 'first\nsecond' },
+    { stored: 'first\r\nsecond', label: 'first\\r\\nsecond', display: 'first\nsecond' },
+    { stored: 'first\u2028second', label: 'first\\u2028second', display: 'first\nsecond' },
+    { stored: 'first\u2029second', label: 'first\\u2029second', display: 'first\nsecond' },
+    { stored: 'first\\nsecond', label: 'first\\\\nsecond', display: 'first\\nsecond' },
+    { stored: 'first second', label: 'first second', display: 'first second' },
+    {
+      stored: 'first second (contains a line break)',
+      label: 'first second (contains a line break)',
+      display: 'first second (contains a line break)',
+    },
+  ];
+  streams.mockResolvedValue({ items: names.map(({ stored }) => ({ logStreamName: stored })) });
+  for (const { stored, label } of names) {
+    search.mockResolvedValueOnce({ items: [{ eventId: label, logStreamName: stored, message: label }] });
+  }
   open(`${LOG_EVENTS_PATH}?${new URLSearchParams({ group })}`);
-  choice(1).openDropdown();
-  const dropdown = choice(1).findDropdown();
-  await waitFor(() => {
-    expect(dropdown.findOptionByValue(multiline)?.findLabel().getElement()).toHaveTextContent(multilineLabel);
-    expect(dropdown.findOptionByValue(spaced)?.findLabel().getElement().textContent).toBe(spaced);
-  });
-  choice(1).selectOptionByValue(multiline);
-  expect(choice(1).findTrigger().getElement()).toHaveTextContent(multilineLabel);
-  submit();
-  await waitFor(() => expectResult('first event'));
-  expect(search).toHaveBeenCalledExactlyOnceWith(
-    engineOrigin,
-    { logGroupName: group, logStreamNames: [multiline] },
-    undefined,
-    expect.any(AbortSignal),
-  );
 
-  const multilineLink = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
-  expect(multilineLink?.textContent).toBe(displayName);
-  expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  expect(multilineLink).toHaveAccessibleName(multilineLabel);
-  expect(multilineLink).toHaveAttribute('href', logStreamPath(group, multiline));
-  const spacedLink = resultsTable()?.findBodyCell(2, 2)?.findLink()?.getElement();
-  expect(spacedLink).toHaveAccessibleName(spaced);
-  expect(spacedLink).toHaveAttribute('href', logStreamPath(group, spaced));
-  const summary = resultsTable()
-    ?.findHeaderSlot()
-    ?.findHeader()
-    ?.findDescription()
-    ?.find('span:nth-child(2)')
-    ?.getElement();
-  expect(summary?.textContent).toBe(`Log stream: ${displayName}`);
-  expect(summary).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  const streamChoice = choice(1);
+  for (const [index, { stored, label, display }] of names.entries()) {
+    streamChoice.openDropdown();
+    const dropdown = streamChoice.findDropdown();
+    const optionLabels = () => dropdown.findOptions().map((option) => option.findLabel().getElement().textContent);
+    await waitFor(() => expect(optionLabels()).toEqual(['All log streams', ...names.map((name) => name.label)]));
+    streamChoice.selectOption(index + 2);
+    expect(streamChoice.findTrigger().getElement()).toHaveTextContent(label);
+    submit();
+    await waitFor(() => expectResult(label));
+    expect(search).toHaveBeenNthCalledWith(
+      index + 1,
+      engineOrigin,
+      { logGroupName: group, logStreamNames: [stored] },
+      undefined,
+      expect.any(AbortSignal),
+    );
+
+    const link = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
+    expect(link?.textContent).toBe(display);
+    expect(link).toHaveAccessibleName(label);
+    expect(link).toHaveAttribute('href', logStreamPath(group, stored));
+    const summary = resultsTable()
+      ?.findHeaderSlot()
+      ?.findHeader()
+      ?.findDescription()
+      ?.find('span:nth-child(2)')
+      ?.getElement();
+    expect(summary?.textContent).toBe(`Log stream: ${display}`);
+    if (display.includes('\n')) {
+      expect(link).toHaveStyle({ whiteSpace: 'pre-wrap' });
+      expect(summary).toHaveStyle({ whiteSpace: 'pre-wrap' });
+    }
+  }
 });

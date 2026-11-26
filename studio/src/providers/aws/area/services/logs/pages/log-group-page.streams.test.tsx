@@ -21,7 +21,7 @@ import {
   rowRadio,
   tableByHeading,
   waitForLink,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import { AreaRootContext } from '../../../area-root';

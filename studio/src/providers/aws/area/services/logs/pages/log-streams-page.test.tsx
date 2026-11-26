@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, boxText, buttonIn, waitForLink, requiredElement } from '../../../../../../test/logs-test-utils';
+import { aws, boxText, buttonIn, waitForLink, requiredElement } from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { areaPage } from '../../../area-page';
 import type { AreaConnection } from '../../../components/emulator-line';

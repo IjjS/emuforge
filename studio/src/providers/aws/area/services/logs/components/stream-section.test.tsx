@@ -2,15 +2,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import {
-  aws,
-  buttonIn,
-  expectEmpty,
-  rowLink,
-  rowRadio,
-  waitForLink,
-  requiredElement,
-} from '../../../../../../test/logs-test-utils';
+import { aws, buttonIn, expectEmpty, rowRadio, waitForLink, requiredElement } from '../logs-test-utils.test';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -146,31 +138,48 @@ it('shows loading and distinguishes an empty list from an empty prefix result', 
   expectRead('Absent');
 });
 
-it.each(['selectable', 'read-only'])('distinguishes line breaks from spaces in the %s listing', async (mode) => {
-  const name = 'multiline\nworker';
-  const spacedName = 'multiline worker';
-  read.mockResolvedValueOnce({ items: [{ logStreamName: name }, { logStreamName: spacedName }] });
+it.each(['selectable', 'read-only'])('distinguishes stored names in the %s listing', async (mode) => {
+  const names = [
+    {
+      stored: 'first\rsecond',
+      label: 'first\\rsecond',
+      display: 'first\nsecond',
+      segment: '**first%250Dsecond',
+    },
+    {
+      stored: 'first\nsecond',
+      label: 'first\\nsecond',
+      display: 'first\nsecond',
+      segment: '**first%250Asecond',
+    },
+    {
+      stored: 'first\\nsecond',
+      label: 'first\\\\nsecond',
+      display: 'first\\nsecond',
+      segment: 'first%5Cnsecond',
+    },
+    {
+      stored: 'first second (contains a line break)',
+      label: 'first second (contains a line break)',
+      display: 'first second (contains a line break)',
+      segment: 'first%20second%20(contains%20a%20line%20break)',
+    },
+  ];
+  read.mockResolvedValueOnce({ items: names.map(({ stored }) => ({ logStreamName: stored })) });
   const onChange = vi.fn();
   renderSection(connected, mode === 'selectable' ? { name: undefined, onChange } : undefined);
 
-  const multilineLabel = 'multiline worker (contains a line break)';
-  const multilineLink = await waitForLink(streamTable, multilineLabel);
-  expect(multilineLink.textContent).toBe(name);
-  expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  expect(multilineLink).toHaveAttribute(
-    'href',
-    '/aws/logs/log-groups/group/%2Fapp%23Group/stream/**multiline%250Aworker',
-  );
-  expect(rowLink(streamTable(), spacedName)).toHaveAttribute(
-    'href',
-    '/aws/logs/log-groups/group/%2Fapp%23Group/stream/multiline%20worker',
-  );
+  for (const { stored, label, display, segment } of names) {
+    const link = await waitForLink(streamTable, label);
+    expect(link).toHaveAccessibleName(label);
+    expect(link.textContent).toBe(display);
+    expect(link).toHaveAttribute('href', `/aws/logs/log-groups/group/%2Fapp%23Group/stream/${segment}`);
+    if (display.includes('\n')) expect(link).toHaveStyle({ whiteSpace: 'pre-wrap' });
 
-  if (mode === 'selectable') {
-    fireEvent.click(rowRadio(streamTable(), spacedName));
-    expect(onChange).toHaveBeenLastCalledWith(spacedName);
-    fireEvent.click(rowRadio(streamTable(), multilineLabel));
-    expect(onChange).toHaveBeenLastCalledWith(name);
+    if (mode === 'selectable') {
+      fireEvent.click(rowRadio(streamTable(), label));
+      expect(onChange).toHaveBeenLastCalledWith(stored);
+    }
   }
 });
 

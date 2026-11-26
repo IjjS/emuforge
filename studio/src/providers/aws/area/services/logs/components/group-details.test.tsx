@@ -17,7 +17,7 @@ import {
   modalInputByValue,
   rowLink,
   tableByHeading,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import type { AreaConnection } from '../../../components/emulator-line';

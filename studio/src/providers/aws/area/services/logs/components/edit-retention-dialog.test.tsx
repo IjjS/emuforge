@@ -2,13 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import {
-  aws,
-  modal as openModal,
-  modalButton,
-  modalAlert,
-  expectModalAlert,
-} from '../../../../../../test/logs-test-utils';
+import { aws, modal as openModal, modalButton, modalAlert, expectModalAlert } from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { putRetentionPolicy } from '../group-create-api';

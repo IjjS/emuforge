@@ -1,16 +1,10 @@
 import type { ChoiceSource } from '../../components/use-paged-choices';
 import { listLogGroups, OPERATIONS } from './api';
+import { streamNameLabel } from './format';
 import { DESCRIBE_LOG_STREAMS, listLogStreams } from './stream-api';
 
 function nameOption(name: string) {
   return { label: name, value: name };
-}
-
-const streamLineBreak = /\r\n|[\r\n\u2028\u2029]/g;
-
-export function multilineStreamLabel(name: string) {
-  const singleLine = name.replace(streamLineBreak, ' ');
-  return singleLine === name ? undefined : `${singleLine} (contains a line break)`;
 }
 
 export function logGroupChoices(endpoint: string | undefined): ChoiceSource<string> {
@@ -40,6 +34,6 @@ export function logStreamChoices(endpoint: string | undefined, group: string | u
       const page = await listLogStreams(at, group, text, token, signal);
       return { ...page, items: page.items.flatMap(({ logStreamName }) => logStreamName ?? []) };
     },
-    optionOf: (name) => ({ label: multilineStreamLabel(name) ?? name, value: name }),
+    optionOf: (name) => ({ label: streamNameLabel(name), value: name }),
   };
 }

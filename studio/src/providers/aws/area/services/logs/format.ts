@@ -44,6 +44,18 @@ export function streamNameForDisplay(name: string): string {
   return name.replace(/\r\n|[\r\u2028\u2029]/g, '\n');
 }
 
+const STREAM_LABEL_ESCAPES: Record<string, string> = {
+  '\\': '\\\\',
+  '\r': '\\r',
+  '\n': '\\n',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029',
+};
+
+export function streamNameLabel(name: string): string {
+  return name.replace(/[\\\r\n\u2028\u2029]/g, (character) => STREAM_LABEL_ESCAPES[character] ?? character);
+}
+
 export const RETENTION_DAYS = [
   1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653,
 ] as const;

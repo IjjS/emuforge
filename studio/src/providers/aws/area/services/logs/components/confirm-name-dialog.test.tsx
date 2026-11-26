@@ -2,13 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 
-import {
-  aws,
-  modal as openModal,
-  modalInput,
-  modalButton,
-  expectModalBox,
-} from '../../../../../../test/logs-test-utils';
+import { aws, modal as openModal, modalInput, modalButton, expectModalBox } from '../logs-test-utils.test';
 import { AreaRootContext } from '../../../area-root';
 import { ConfirmNameDialog } from './confirm-name-dialog';
 

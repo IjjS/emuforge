@@ -12,7 +12,7 @@ import {
   modal as openModal,
   modalAlert,
   requiredElement,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -88,6 +88,7 @@ function page(messages: string[]): EventPage {
   };
 }
 
+const streamHeader = () => aws().findSpaceBetween()?.findHeader();
 const streamBody = () => aws().findContainer()?.findContent();
 const messageBlocks = () =>
   streamBody()
@@ -118,7 +119,9 @@ it.each([
   read.mockResolvedValueOnce(page(['event']));
   const { resources, params } = renderPage(CONNECTED, path);
   await waitForMessage('event');
-  expect(screen.getByRole('heading', { level: 1, name: stream })).toBeVisible();
+  const heading = streamHeader()?.findHeadingText().getElement();
+  expect(heading).toBeVisible();
+  expect(heading?.textContent).toBe(stream);
   expect(resources).toHaveBeenCalledWith({ word: 'log events' });
   expect(read).toHaveBeenCalledWith(ENGINE, group, stream, { kind: 'newest' }, expect.any(AbortSignal));
   const [registration] = SCREENS;
@@ -140,8 +143,9 @@ it.each([
   read.mockResolvedValueOnce(page([]));
   renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
 
-  expect(aws().findHeader()?.find('h1')?.getElement()).toHaveAccessibleName('multiline\nworker');
-  const name = aws().findHeader()?.findHeadingText().find('span[style]')?.getElement();
+  const heading = streamHeader()?.findHeadingText();
+  expect(heading?.getElement().closest('h1')).toHaveAccessibleName('multiline\nworker');
+  const name = heading?.find('span[style]')?.getElement();
   expect(name?.textContent).toBe('multiline\nworker');
   expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
   await waitFor(() => expect(emptyStream()).toBeVisible());

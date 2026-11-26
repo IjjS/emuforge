@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { modal as openModal, modalAlert, expectModalAlert } from '../../../../../../test/logs-test-utils';
+import { modal as openModal, modalAlert, expectModalAlert } from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { putLogEvents } from '../put-events-api';

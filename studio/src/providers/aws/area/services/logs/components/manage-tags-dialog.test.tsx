@@ -18,7 +18,7 @@ import {
   modalTextInputs,
   modalInputByValue,
   type Modal,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import { getLogGroup, listLogGroupTags } from '../api';

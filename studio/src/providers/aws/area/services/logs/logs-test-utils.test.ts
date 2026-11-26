@@ -1,4 +1,3 @@
-// eslint-disable-next-line studio/boundaries -- Shared unit-test support is excluded from the app build.
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { waitFor } from '@testing-library/react';
 import { expect } from 'vitest';
