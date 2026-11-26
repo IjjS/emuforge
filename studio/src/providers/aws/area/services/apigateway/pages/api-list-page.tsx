@@ -132,7 +132,12 @@ export function ApiListPage({ connection }: ScreenPageProps) {
         </Link>
       ),
     },
-    { id: 'id', header: 'ID', cell: (api) => <ValueText kind="name" value={api.id} /> },
+    {
+      id: 'id',
+      header: 'ID',
+      minWidth: 'calc(15ch + 24px)',
+      cell: (api) => <ValueText kind="name" value={api.id} />,
+    },
     { id: 'kind', header: 'Kind', cell: (api) => <ValueText kind="fixed" value={api.kind} /> },
     {
       id: 'description',
