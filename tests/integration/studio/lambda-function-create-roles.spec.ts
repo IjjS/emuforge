@@ -4,12 +4,13 @@
 //
 // `studio.lambda-function-create-lists-the-roles-of-the-emulator`.
 //
-// The check has its own emulator: it needs the whole list of roles, empty and then exactly 52. Words and readers:
+// The check has its own emulator, emptied of the roles it starts with (`withoutRoles`): it needs the whole list of
+// roles, empty and then exactly 52. Words and readers:
 // `support/lambda-page.ts`; direct calls: `support/lambda.ts`.
 
 import { expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
-import { LambdaSeeded, listRolesDirect, listRolesPage } from './services/lambda/lambda';
+import { LambdaSeeded, listRolesDirect, listRolesPage, withoutRoles } from './services/lambda/lambda';
 import {
   createForm,
   EXISTING_ROLE,
@@ -32,6 +33,7 @@ test('studio.lambda-function-create-lists-the-roles-of-the-emulator', async ({ c
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'lfc-roles');
   const seeded = new LambdaSeeded(ctx, port, p);
+  await withoutRoles(ctx, port);
   const f = createForm(page);
 
   /** Opens the form, chooses "Use another role" and opens "Existing role". */
