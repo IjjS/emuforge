@@ -1,7 +1,8 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { assert, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -33,22 +34,36 @@ async function open() {
       </div>
     </AreaRootContext>,
   );
-  const dialog = within(await screen.findByRole('dialog', { name: 'Edit API' }));
+  const modal = await waitFor(() => {
+    const modal = createWrapper(document.body).findModal();
+    assert(modal);
+    return modal;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent('Edit API');
+  const content = modal.findContent();
+  const [nameField, descriptionField] = content.findAllFormFields();
+  const name = nameField?.findControl()?.findInput()?.findNativeInput();
+  const description = descriptionField?.findControl()?.findTextarea()?.findNativeTextarea();
+  const footer = modal.findFooter();
+  assert(name && description && footer);
+  expect(nameField?.findLabel()?.getElement()).toHaveTextContent('Name');
+  expect(descriptionField?.findLabel()?.getElement()).toHaveTextContent('Description');
   return {
-    dialog,
+    content,
+    nameField,
     user,
     onSaved,
-    name: dialog.getByRole('textbox', { name: 'Name' }),
-    description: dialog.getByRole('textbox', { name: 'Description' }),
-    save: dialog.getByRole('button', { name: 'Save' }),
+    name: name.getElement(),
+    description: description.getElement(),
+    save: within(footer.getElement()).getByRole('button', { name: 'Save' }),
   };
 }
 
 it('fills the current fields, gives the name rule and disables an unchanged save', async () => {
-  const { dialog, name, description, save } = await open();
+  const { nameField, name, description, save } = await open();
   expect(name).toHaveValue(current.name);
   expect(description).toHaveValue(current.description);
-  expect(dialog.getByText('1 to 512 characters.')).toBeVisible();
+  expect(nameField?.findConstraint()?.getElement()).toHaveTextContent('1 to 512 characters.');
   expect(save).toBeDisabled();
 });
 
@@ -60,12 +75,15 @@ it.each<[RequestFailure, string]>([
   [{ operation, kind: 'engine-did-not-answer' }, 'did not answer'],
 ])('keeps the dialog and fields on a rejected save (%j)', async (failure, message) => {
   vi.mocked(updateRestApi).mockRejectedValueOnce(new RequestError(failure));
-  const { dialog, user, name, description, save, onSaved } = await open();
+  const { content, user, name, description, save, onSaved } = await open();
   await user.clear(name);
   await user.type(name, 'New orders');
   await user.click(save);
-  expect(await dialog.findByRole('alert')).toHaveTextContent(message);
-  expect(dialog.getByRole('alert')).toHaveTextContent(operation);
+  await waitFor(() => {
+    const alert = content.findAlert()?.getElement();
+    expect(alert).toHaveTextContent(message);
+    expect(alert).toHaveTextContent(operation);
+  });
   expect(name).toHaveValue('New orders');
   expect(description).toHaveValue(current.description);
   expect(onSaved).not.toHaveBeenCalled();

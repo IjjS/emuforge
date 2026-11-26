@@ -4,17 +4,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { AreaFlash } from '../../../components/area-flash';
+import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext } from '../../../components/page-flash';
 import { useAreaFlash } from '../../../components/use-area-flash';
 import type { TokenPage } from '../../../components/use-token-listing';
-import { createResource, deleteMethod, deleteResource } from '../rest-change-api';
-import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
-import type { AreaConnection } from '../../../components/emulator-line';
 import { readRestResources } from '../rest-api';
+import { createResource, deleteMethod, deleteResource } from '../rest-change-api';
 import { useRestResources } from '../rest-queries';
 import { testInvokeMethod } from '../test-api';
 import { RestResources } from './rest-resources';
@@ -70,7 +70,7 @@ beforeEach(() => {
   reader.mockResolvedValue({ items: [orders, root] });
 });
 
-function Content() {
+function Content({ connection }: { connection: AreaConnection }) {
   const list = useRestResources(apiId, engineOrigin);
   const { shown, pageFlash, dismiss, announce } = useAreaFlash('/rest/api-1', 0, true);
   return (
@@ -81,7 +81,7 @@ function Content() {
   );
 }
 
-function open() {
+function open(areaConnection = connection) {
   const user = userEvent.setup();
   const root = { current: null };
   const result = render(
@@ -89,7 +89,7 @@ function open() {
       <MemoryRouter>
         <AreaRootContext value={root}>
           <div ref={root}>
-            <Content />
+            <Content connection={areaConnection} />
           </div>
         </AreaRootContext>
       </MemoryRouter>
@@ -181,7 +181,7 @@ it('loads the further resource page by position and appends it to the visible pa
   expect(screen.queryByRole('button', { name: 'Load more resources' })).not.toBeInTheDocument();
 });
 
-it.each<[RequestFailure, string, string]>([
+const readFailures: [RequestFailure, string, string, boolean?, AreaConnection?][] = [
   [
     { kind: 'not-implemented', operation: 'GetResources' },
     'Not implemented by the emulator',
@@ -198,28 +198,64 @@ it.each<[RequestFailure, string, string]>([
     'GetResources: BadRequestException: Invalid position',
   ],
   [
+    { kind: 'emulator-did-not-answer', operation: 'GetResources', message: 'The emulator is stopped.' },
+    'Not started on port 9682',
+    'GetResources got no answer from the emulator. The emulator is stopped.',
+    true,
+    {
+      engineOrigin,
+      result: {
+        kind: 'emulator-unreachable',
+        checkedAt: 1,
+        emulator: { port: 9682, endpoint },
+        reason: 'not_started',
+        message: 'The emulator is stopped.',
+      },
+    },
+  ],
+  [
     { kind: 'emulator-did-not-answer', operation: 'GetResources', message: 'Timeout.' },
     `Not answering at ${endpoint}`,
     'GetResources got no answer from the emulator. Timeout.',
+    true,
   ],
   [
     { kind: 'engine-did-not-answer', operation: 'GetResources' },
     `The EmuForge engine at ${engineOrigin} is not answering`,
     'GetResources got no answer.',
+    true,
   ],
-])('shows and retries a failed resource read (%j)', async (failure, first, detail) => {
-  reader.mockRejectedValueOnce(new RequestError(failure));
-  const { user } = open();
-  const region = within(screen.getByRole('region', { name: 'Resources' }));
-  await region.findByText(detail, { exact: false });
-  expect(
-    region.getByText(
-      (_, element) =>
-        element?.textContent === first && ![...element.children].some((child) => child.textContent === first),
-    ),
-  ).toBeInTheDocument();
-  await user.click(region.getByRole('button', { name: 'Retry' }));
-  expect(await region.findByRole('heading', { name: '/orders' })).toBeVisible();
+];
+
+describe.each(['first', 'further'] as const)('when the %s resources page fails', (page) => {
+  it.each(readFailures)('shows and retries %j', async (failure, first, detail, recovery, areaConnection) => {
+    if (page === 'further') reader.mockResolvedValueOnce({ items: [root], next: 'more' });
+    reader.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ items: [orders] });
+    const { user } = open(areaConnection);
+    const resources = screen.getByRole('region', { name: 'Resources' });
+    const region = within(resources);
+    if (page === 'further') {
+      await user.click(await region.findByRole('button', { name: 'Load more resources' }));
+    }
+
+    const retry = await region.findByRole('button', { name: 'Retry' });
+    expect(createWrapper(resources).findStatusIndicator()?.getElement()).toHaveTextContent(first);
+    expect(resources).toHaveTextContent(detail);
+    if (recovery) {
+      expect(region.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+    }
+    if (page === 'further') expect(region.getByRole('heading', { name: '/' })).toBeVisible();
+
+    await user.click(retry);
+    expect(await region.findByRole('heading', { name: '/orders' })).toBeVisible();
+    expect(region.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(reader).toHaveBeenLastCalledWith(
+      engineOrigin,
+      apiId,
+      page === 'further' ? 'more' : undefined,
+      expect.any(AbortSignal),
+    );
+  });
 });
 
 const newResource = { id: 'new', path: '/new' };
@@ -243,9 +279,11 @@ it('opens Test for an eligible method and explains why a VPC link method cannot 
   expect(testInvokeMethod).not.toHaveBeenCalled();
 
   await user.click(eligible);
-  const panel = within(screen.getByRole('region', { name: 'Test method' }));
-  expect(panel.getByText('ANY')).toBeVisible();
-  expect(panel.getByRole('textbox', { name: 'Path with query' })).toHaveValue('/');
+  const panel = screen.getByRole('region', { name: 'Test method' });
+  expect(within(panel).getByText('ANY')).toBeVisible();
+  const pathField = createWrapper(panel).findFormField();
+  expect(pathField?.findLabel()?.getElement()).toHaveTextContent('Path with query');
+  expect(pathField?.findControl()?.findInput()?.findNativeInput().getElement()).toHaveValue('/');
 });
 
 it('closes the panel from its own control and returns focus to the Test button for the selected method', async () => {
@@ -281,19 +319,28 @@ async function openChange(kind: 'create' | 'resource' | 'method', user = open().
     resource: 'Delete resource /orders?',
     method: 'Delete method GET /orders?',
   }[kind];
-  const dialog = within(await screen.findByRole('dialog', { name: title }));
-  await user.type(dialog.getByRole('textbox'), { create: 'new', resource: '/orders', method: 'delete' }[kind]);
+  const modal = createWrapper(document.body).findModal();
+  if (!modal) throw new Error('Missing change dialog');
+  expect(modal.findHeader().getElement()).toHaveTextContent(title);
+  const field = modal.findContent().findAllFormFields()[kind === 'create' ? 1 : 0];
+  const input = field?.findControl()?.findInput()?.findNativeInput().getElement();
+  if (!input) throw new Error('Missing change input');
+  await user.type(input, { create: 'new', resource: '/orders', method: 'delete' }[kind]);
+  const footer = modal.findFooter();
+  if (!footer) throw new Error('Missing change dialog footer');
   return {
     user,
-    submit: () => user.click(dialog.getByRole('button', { name: kind === 'create' ? 'Create resource' : 'Delete' })),
+    submit: () =>
+      user.click(
+        within(footer.getElement()).getByRole('button', { name: kind === 'create' ? 'Create resource' : 'Delete' }),
+      ),
   };
 }
 
 function expectFlash(message: string) {
-  const status = screen.getByText(
-    (_, node) => node?.textContent === message && ![...node.children].some((child) => child.textContent === message),
-  );
-  expect(status).toBeVisible();
+  const content = createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent();
+  expect(content?.getElement()).toBeVisible();
+  expect(content?.getElement()).toHaveTextContent(message);
 }
 
 it.each([
@@ -315,7 +362,7 @@ it.each([
     await submit();
     await waitFor(() => {
       expectFlash(message);
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(createWrapper(document.body).findModal()).toBeNull();
       if (kind === 'create') expect(screen.getByRole('heading', { name: '/new' })).toBeVisible();
       if (kind === 'resource') expect(screen.queryByRole('heading', { name: '/orders' })).not.toBeInTheDocument();
       if (kind === 'method') expect(screen.queryByRole('heading', { name: 'GET' })).not.toBeInTheDocument();
@@ -335,40 +382,64 @@ it('leaves the root Delete unavailable and explains the reason', async () => {
   await user.hover(button);
   expect(await screen.findByRole('tooltip')).toHaveTextContent('The root resource cannot be deleted.');
   await user.click(button);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(createWrapper(document.body).findModal()).toBeNull();
 });
 
-it.each([
+function deferredPage() {
+  let resolve!: (page: TokenPage<Resource>) => void;
+  const promise = new Promise<TokenPage<Resource>>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe.each([
   ['create', [root, orders, newResource], '/new', 'Resource /new created.'],
   ['resource', [root], '/orders', 'Resource /orders deleted.'],
-] as const)(
-  'keeps the refreshed rows and result after an earlier page answers last (%s)',
-  async (kind, items, path, flash) => {
-    reader.mockResolvedValueOnce({ items: [root, orders], next: 'next' });
-    vi.mocked(createResource).mockResolvedValueOnce({ ...newResource, $metadata: {} });
-    vi.mocked(deleteResource).mockResolvedValueOnce({ $metadata: {} });
-    let answerEarlier!: (value: TokenPage<Resource>) => void;
-    const earlier = new Promise<TokenPage<Resource>>((resolve) => {
-      answerEarlier = resolve;
-    });
+] as const)('after the %s action', (kind, items, path, flash) => {
+  it.each(['earlier', 'refreshed'] as const)(
+    'keeps the refreshed rows and result when the %s read answers first',
+    async (first) => {
+      const earlier = deferredPage();
+      const refreshed = deferredPage();
+      reader.mockResolvedValueOnce({ items: [root, orders], next: 'next' });
+      vi.mocked(createResource).mockResolvedValueOnce({ ...newResource, $metadata: {} });
+      vi.mocked(deleteResource).mockResolvedValueOnce({ $metadata: {} });
 
-    reader.mockReturnValueOnce(earlier).mockResolvedValueOnce({ items: [...items] });
-    const { user } = open();
-    await user.click(await screen.findByRole('button', { name: 'Load more resources' }));
-    await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
-    const { submit } = await openChange(kind, user);
-    await submit();
-    const expectLatest = () => {
-      expectFlash(flash);
-      const changed = screen.queryByRole('heading', { name: path, level: 3 });
-      if (kind === 'create') expect(changed).toBeVisible();
-      else expect(changed).not.toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
-    };
-    await waitFor(expectLatest);
-    expect(reader).toHaveBeenCalledTimes(3);
-    expect(reader.mock.calls[1]?.[3].aborted).toBe(true);
-    await act(async () => answerEarlier({ items: [{ id: 'old', path: '/stale' }] }));
-    expectLatest();
-  },
-);
+      reader.mockReturnValueOnce(earlier.promise);
+      const { user } = open();
+      await user.click(await screen.findByRole('button', { name: 'Load more resources' }));
+      await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+      const { submit } = await openChange(kind, user);
+      reader.mockReturnValueOnce(refreshed.promise);
+      await submit();
+      await waitFor(() => {
+        expectFlash(flash);
+        expect(reader).toHaveBeenCalledTimes(3);
+      });
+      expect(reader.mock.calls[1]?.[3].aborted).toBe(true);
+
+      const answerEarlier = () => act(async () => earlier.resolve({ items: [{ id: 'old', path: '/stale' }] }));
+      const answerRefreshed = () => act(async () => refreshed.resolve({ items: [...items] }));
+      const expectLatest = () => {
+        expectFlash(flash);
+        const changed = screen.queryByRole('heading', { name: path, level: 3 });
+        if (kind === 'create') expect(changed).toBeVisible();
+        else expect(changed).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
+      };
+
+      if (first === 'earlier') {
+        await answerEarlier();
+        expectFlash(flash);
+        expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
+        await answerRefreshed();
+      } else {
+        await answerRefreshed();
+        await waitFor(expectLatest);
+        await answerEarlier();
+      }
+      await waitFor(expectLatest);
+    },
+  );
+});

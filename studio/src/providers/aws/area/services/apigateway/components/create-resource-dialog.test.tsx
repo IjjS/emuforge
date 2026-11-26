@@ -1,9 +1,9 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -62,24 +62,33 @@ async function open(connection = connected) {
       </AreaRootContext>
     </MemoryRouter>,
   );
-  const modal = await screen.findByRole('dialog', { name: 'Create resource' });
-  const dialog = within(modal);
-  const select = createWrapper(modal).findSelect();
-  if (!select) throw new Error('Missing parent choice');
+  const modal = await waitFor(() => {
+    const modal = createWrapper(document.body).findModal();
+    assert(modal);
+    return modal;
+  });
+  expect(modal.findHeader().getElement()).toHaveTextContent('Create resource');
+  const content = modal.findContent();
+  const [parentField, pathField] = content.findAllFormFields();
+  const select = parentField?.findControl()?.findSelect();
+  const input = pathField?.findControl()?.findInput()?.findNativeInput();
+  const footer = modal.findFooter();
+  assert(select && input && footer);
   return {
     user,
     onCreated,
-    dialog,
+    content,
+    pathField,
     select,
-    input: dialog.getByRole('textbox', { name: 'Path part' }),
-    submit: dialog.getByRole('button', { name: 'Create resource' }),
+    input: input.getElement(),
+    submit: within(footer.getElement()).getByRole('button', { name: 'Create resource' }),
   };
 }
 
 it('shows the path rule and root, then reads the parent options by ID when opened', async () => {
-  const { user, select, dialog } = await open();
-  expect(select.findTrigger().getElement()).toHaveTextContent('/');
-  expect(dialog.getByText(/Use letters, digits, periods/)).toBeVisible();
+  const { user, select, pathField } = await open();
+  expect(select.findTrigger().getElement()).toHaveTextContent(/^\/$/);
+  expect(pathField?.findConstraint()?.getElement()).toHaveTextContent(/Use letters, digits, periods/);
   expect(read).not.toHaveBeenCalled();
   await user.click(select.findTrigger().getElement());
   await waitFor(() => {
@@ -109,49 +118,78 @@ it('loads another page and creates under the parent from that page', async () =>
   expect(create).toHaveBeenCalledWith(engineOrigin, 'api-1', 'orders', 'child', expect.any(AbortSignal));
 });
 
-it.each<[RequestFailure, AreaConnection, string]>([
+it.each<[RequestFailure, AreaConnection, string, string, string]>([
   [
     { kind: 'not-implemented', operation: 'GetResources' },
     connected,
+    'Not implemented by the emulator',
     'The emulator answered 501 Not Implemented for GetResources, so Studio cannot show the resources.',
+    'Not implemented by the emulator. The emulator answered 501 Not Implemented for GetResources.',
   ],
   [
     { kind: 'other', operation: 'GetResources', code: 'Refused', message: 'The read was refused.' },
     disconnected,
+    'The resources could not be read',
     'GetResources: Refused: The read was refused.',
+    'Refused: The read was refused.',
   ],
   [
     { kind: 'emulator-did-not-answer', operation: 'GetResources', message: 'Timed out.' },
     connected,
+    `Not answering at ${endpoint}`,
     'GetResources got no answer from the emulator. Timed out.',
+    'The emulator did not answer',
   ],
-  [{ kind: 'engine-did-not-answer', operation: 'GetResources' }, connected, 'GetResources got no answer.'],
-])('shows and retries a failed parent choice read in the dialog (%j)', async (failure, connection, message) => {
-  read.mockRejectedValueOnce(new RequestError(failure));
-  const { user, select, dialog } = await open(connection);
-  await user.click(select.findTrigger().getElement());
-  expect(await dialog.findByText(message, { exact: false })).toBeInTheDocument();
-  if (failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') {
-    const expected =
-      failure.kind === 'engine-did-not-answer'
-        ? `The EmuForge engine at ${engineOrigin} is not answering`
-        : `Not answering at ${endpoint}`;
-    expect(
-      dialog.getByText(
-        (_, element) =>
-          element?.textContent === expected && ![...element.children].some((child) => child.textContent === expected),
-      ),
-    ).toBeVisible();
-    expect(dialog.getByRole('link', { name: 'Connection status' })).toBeVisible();
-  }
-  const retry = dialog
-    .getAllByRole('button', { name: 'Retry' })
-    .find((button) => !select.findDropdown().getElement().contains(button));
-  if (!retry) throw new Error('Missing retry below the choice');
-  await user.click(retry);
-  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(dialog.queryByText(message, { exact: false })).not.toBeInTheDocument());
-});
+  [
+    { kind: 'engine-did-not-answer', operation: 'GetResources' },
+    connected,
+    `The EmuForge engine at ${engineOrigin} is not answering`,
+    'GetResources got no answer.',
+    `The EmuForge engine at ${engineOrigin} did not answer`,
+  ],
+])(
+  'shows and retries a failed parent choice read in the dialog (%j)',
+  async (failure, connection, heading, message, status) => {
+    let answerRetry!: (page: Awaited<ReturnType<typeof readRestResources>>) => void;
+    const recovered = new Promise<Awaited<ReturnType<typeof readRestResources>>>((resolve) => {
+      answerRetry = resolve;
+    });
+    read.mockRejectedValueOnce(new RequestError(failure)).mockReturnValueOnce(recovered);
+    const { user, select, content } = await open(connection);
+    await user.click(select.findTrigger().getElement());
+    const dropdown = select.findDropdown();
+    const failureStatus = () =>
+      content.findAllStatusIndicators().find((indicator) => !dropdown.getElement().contains(indicator.getElement()));
+    const retry = await waitFor(() => {
+      expect(select.findStatusIndicator()?.getElement()).toHaveTextContent(status);
+      expect(select.findErrorRecoveryButton()?.getElement()).toHaveTextContent('Retry');
+      expect(failureStatus()?.getElement()).toHaveTextContent(heading);
+      expect(content.getElement()).toHaveTextContent(message);
+      const retry = within(content.getElement())
+        .getAllByRole('button', { name: 'Retry' })
+        .find((button) => !dropdown.getElement().contains(button));
+      assert(retry);
+      return retry;
+    });
+    const connectionLink = within(content.getElement()).queryByRole('link', { name: 'Connection status' });
+    if (failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') {
+      expect(connectionLink).toBeVisible();
+    } else {
+      expect(connectionLink).not.toBeInTheDocument();
+    }
+    await user.click(retry);
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    // The Retry below the choice closes its dropdown. Reopen it while that same read is pending.
+    await user.click(select.findTrigger().getElement());
+    await act(async () => answerRetry({ items: [rootResource, orders] }));
+    await waitFor(() => {
+      expect(failureStatus()).toBeUndefined();
+      expect(select.findDropdown().findOptionByValue('root')?.getElement()).toHaveTextContent('/ID root');
+      expect(select.findDropdown().findOptionByValue('orders')?.getElement()).toHaveTextContent('/ordersID orders');
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+  },
+);
 
 const operation = 'CreateResource';
 it.each<[RequestFailure, string]>([
@@ -162,13 +200,16 @@ it.each<[RequestFailure, string]>([
   [{ operation, kind: 'engine-did-not-answer' }, 'did not answer'],
 ])('keeps the dialog and fields on a failed creation (%j)', async (failure, message) => {
   create.mockRejectedValueOnce(new RequestError(failure));
-  const { dialog, user, input, select, submit, onCreated } = await open();
+  const { content, user, input, select, submit, onCreated } = await open();
   await user.type(input, 'child');
   await user.click(submit);
-  expect(await dialog.findByRole('alert')).toHaveTextContent(message);
-  expect(dialog.getByRole('alert')).toHaveTextContent(operation);
+  await waitFor(() => {
+    const alert = content.findAlert()?.getElement();
+    expect(alert).toHaveTextContent(message);
+    expect(alert).toHaveTextContent(operation);
+  });
   expect(input).toHaveValue('child');
-  expect(select.findTrigger().getElement()).toHaveTextContent('/');
+  expect(select.findTrigger().getElement()).toHaveTextContent(/^\/$/);
   expect(onCreated).not.toHaveBeenCalled();
   if (failure.kind === 'not-implemented') expect(submit).toBeDisabled();
   else expect(submit).toBeEnabled();
