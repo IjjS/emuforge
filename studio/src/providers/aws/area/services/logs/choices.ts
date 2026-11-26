@@ -14,7 +14,10 @@ export function logGroupChoices(endpoint: string | undefined): ChoiceSource<stri
     operation: OPERATIONS.describeLogGroups,
     filtering: 'sent',
     read: async (at, text, token, signal) => {
-      const page = await listLogGroups(at, text, token, signal);
+      const page =
+        text === ''
+          ? await listLogGroups(at, text, token, signal)
+          : await listLogGroups(at, text, token, signal, { namesOnly: true });
       return { ...page, items: page.items.flatMap(({ logGroupName }) => logGroupName ?? []) };
     },
     optionOf: nameOption,

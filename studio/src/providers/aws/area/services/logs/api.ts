@@ -8,11 +8,14 @@ export const OPERATIONS = {
   listTagsLogGroup: 'ListTagsLogGroup',
 } as const;
 
+const LOG_GROUP_PAGE_SIZE = 25;
+
 export function listLogGroups(
   endpoint: string,
   pattern: string,
   token: string | undefined,
   signal: AbortSignal,
+  { namesOnly = false }: { namesOnly?: boolean } = {},
 ): Promise<TokenPage<LogGroup>> {
   return sendLogs(
     endpoint,
@@ -23,17 +26,32 @@ export function listLogGroups(
         abortSignal.throwIfAborted();
         const answer = await client.send(
           new DescribeLogGroupsCommand({
-            limit: 25,
+            limit: LOG_GROUP_PAGE_SIZE,
             logGroupNamePattern: pattern === '' ? undefined : pattern,
             nextToken: next,
           }),
           { abortSignal },
         );
-        const items = answer.logGroups ?? [];
+        let items = answer.logGroups ?? [];
         next = answer.nextToken;
-        if (items.length > 0 || next === undefined) {
-          return next === undefined ? { items } : { items, next };
+        if (items.length === 0 && next !== undefined) continue;
+
+        if (pattern !== '' && !namesOnly) {
+          // A pattern read omits retention and deletion protection.
+          const names = items.flatMap(({ logGroupName }) => logGroupName ?? []);
+          if (names.length > 0) {
+            abortSignal.throwIfAborted();
+            const details = await client.send(
+              new DescribeLogGroupsCommand({ logGroupIdentifiers: names.slice(0, LOG_GROUP_PAGE_SIZE) }),
+              { abortSignal },
+            );
+            const byName = new Map((details.logGroups ?? []).map((group) => [group.logGroupName, group]));
+            items = items.map((group) =>
+              group.logGroupName === undefined ? group : (byName.get(group.logGroupName) ?? group),
+            );
+          }
         }
+        return next === undefined ? { items } : { items, next };
       }
     },
     signal,
