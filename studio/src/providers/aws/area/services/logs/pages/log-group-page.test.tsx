@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -111,6 +111,13 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   vi.mocked(listLogGroups).mockResolvedValue({ items: [] });
   vi.mocked(createLogGroup).mockResolvedValue({ $metadata: {} });
   vi.mocked(putRetentionPolicy).mockResolvedValue({ $metadata: {} });
@@ -120,6 +127,8 @@ beforeEach(() => {
   tags.mockReset().mockResolvedValue({ team: 'web' });
   streams.mockReset().mockResolvedValue({ items: [{ logStreamName: 'some-stream' }] });
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function renderPage(result: AreaConnection['result'] = connected) {
   const route = areaPage(path);

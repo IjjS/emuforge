@@ -46,6 +46,13 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   vi.mocked(getLogGroup).mockResolvedValue({ kind: 'found', group: { logGroupName: name } });
   vi.mocked(listLogStreams).mockResolvedValue({ items: [] });
   listTags.mockResolvedValue(initial);

@@ -3,7 +3,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -99,12 +99,21 @@ const saveTags = vi.mocked(saveLogGroupTags);
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   vi.mocked(listLogStreams).mockResolvedValue({ items: [] });
   getGroup.mockResolvedValue({ kind: 'found', group });
   putRetention.mockResolvedValue({ $metadata: {} });
   putProtection.mockResolvedValue({ $metadata: {} });
   saveTags.mockResolvedValue(undefined);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function Details({ connection }: { connection: AreaConnection }) {
   const tags = useLogGroupTags(connection.engineOrigin, group.logGroupName);
