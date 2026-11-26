@@ -23,6 +23,7 @@ vi.mock('../stream-change-api', async (importOriginal) => ({
 
 const remove = vi.mocked(deleteLogStream);
 const name = 'a b/[$LATEST]';
+const terminators = ['\r', '\n', '\r\n', '\u2028', '\u2029'];
 
 beforeEach(() => remove.mockReset());
 afterEach(() => vi.unstubAllGlobals());
@@ -75,45 +76,49 @@ it('describes what is deleted and requires the exact stream name', async () => {
   expect(remove).not.toHaveBeenCalled();
 });
 
-it('shows stored line breaks in the title and copies the original name exactly', async () => {
-  const stored = 'first\rsecond\r\n\rthird\n';
-  const displayed = 'first\nsecond\n\nthird\n';
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-  const { dialog } = await renderDialog(stored);
+it.each(terminators)(
+  'shows stored line break %# in the title and copies the original name exactly',
+  async (lineBreak) => {
+    const stored = `first${lineBreak}second`;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const { dialog } = await renderDialog(stored);
 
-  const titleName = dialog.findHeader().find('span[style]')?.getElement();
-  expect(titleName?.textContent).toBe(displayed);
-  expect(titleName).toBeVisible();
-  expect(titleName).toHaveStyle({ whiteSpace: 'pre-wrap' });
-  const copy = dialog.findContent().findCopyToClipboard();
-  expect(copy?.findCopyButton().getElement()).toHaveAccessibleName('Copy log stream name');
-  copy?.findCopyButton().click();
+    const heading = dialog.findHeader().findHeader()?.findHeadingText();
+    expect(heading?.getElement().textContent).toBe('Delete log stream first\nsecond?');
+    expect(heading?.getElement()).toBeVisible();
+    expect(heading?.find('span[style]')?.getElement()).toHaveStyle({ whiteSpace: 'pre-wrap' });
+    const copy = dialog.findContent().findCopyToClipboard();
+    expect(copy?.findCopyButton().getElement()).toHaveAccessibleName('Copy log stream name');
+    copy?.findCopyButton().click();
 
-  await waitFor(() => {
-    const status = copy?.findStatusText({ popoverRenderWithPortal: false })?.getElement();
-    expect(status).toBeVisible();
-    expect(status).toHaveTextContent('Log stream name copied');
-  });
-  expect(writeText).toHaveBeenCalledExactlyOnceWith(stored);
-  expect(remove).not.toHaveBeenCalled();
-});
+    await waitFor(() => {
+      const status = copy?.findStatusText({ popoverRenderWithPortal: false })?.getElement();
+      expect(status).toBeVisible();
+      expect(status).toHaveTextContent('Log stream name copied');
+    });
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(stored);
+    expect(remove).not.toHaveBeenCalled();
+  },
+);
 
-it.each(['\r', '\n', '\r\n'])('accepts the entered line break %# and deletes the stored name', async (lineBreak) => {
-  const stored = 'first\rsecond\nthird\r\nfourth';
+it.each(terminators)('accepts the entered line break %# and deletes the stored name', async (lineBreak) => {
+  const stored = 'first\rsecond\nthird\r\nfourth\u2028fifth\u2029sixth';
   remove.mockResolvedValueOnce(undefined);
   const { field, action, deleted } = await renderDialog(stored);
 
   for (const wrong of [
-    'first second\nthird\nfourth',
-    'first\n\nsecond\nthird\nfourth',
-    'First\nsecond\nthird\nfourth',
+    'first second\nthird\nfourth\nfifth\nsixth',
+    'first\n\nsecond\nthird\nfourth\nfifth\nsixth',
+    'First\nsecond\nthird\nfourth\nfifth\nsixth',
   ]) {
     fireEvent.change(field, { target: { value: wrong } });
     expect(action).toBeDisabled();
   }
   expect(remove).not.toHaveBeenCalled();
-  fireEvent.change(field, { target: { value: ['first', 'second', 'third', 'fourth'].join(lineBreak) } });
+  fireEvent.change(field, {
+    target: { value: ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'].join(lineBreak) },
+  });
   expect(action).toBeEnabled();
   fireEvent.click(action);
 

@@ -12,12 +12,14 @@ export const LOG_GROUPS_TITLE = 'Log groups';
 export const CREATE_LOG_GROUP_TITLE = 'Create log group';
 
 const LINE_BREAK_SEGMENT_PREFIX = '**';
+export const LINE_BREAK = /\r\n|[\r\n\u2028\u2029]/;
+const LINE_BREAKS = new RegExp(LINE_BREAK, 'g');
 
 export function nameSegment(name: string): string {
   if (name === '.' || name === '..') return `*${name}`;
   const encoded = encodeURIComponent(name);
   // React Router decodes the path for matching, and its splat excludes the four JavaScript line terminators.
-  return /[\r\n\u2028\u2029]/.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
+  return LINE_BREAK.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
 }
 
 /** The area has already percent-decoded the parameter once. */
@@ -40,20 +42,22 @@ export function logStreamPath(group: string, stream: string): string {
   return `${logGroupPath(group)}/stream/${nameSegment(stream)}`;
 }
 
-export function streamNameForDisplay(name: string): string {
-  return name.replace(/\r\n|[\r\u2028\u2029]/g, '\n');
+export function normalizeLineBreaks(name: string): string {
+  return name.replace(LINE_BREAKS, '\n');
 }
 
-const STREAM_LABEL_ESCAPES: Record<string, string> = {
-  '\\': '\\\\',
+export const streamNameForDisplay = normalizeLineBreaks;
+
+const LINE_BREAK_ESCAPES: Record<string, string> = {
   '\r': '\\r',
   '\n': '\\n',
+  '\r\n': '\\r\\n',
   '\u2028': '\\u2028',
   '\u2029': '\\u2029',
 };
 
 export function streamNameLabel(name: string): string {
-  return name.replace(/[\\\r\n\u2028\u2029]/g, (character) => STREAM_LABEL_ESCAPES[character] ?? character);
+  return name.replaceAll('\\', '\\\\').replace(LINE_BREAKS, (lineBreak) => LINE_BREAK_ESCAPES[lineBreak] ?? lineBreak);
 }
 
 export const RETENTION_DAYS = [
