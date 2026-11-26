@@ -57,7 +57,7 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
       )}
       {api.data === undefined && api.loading && <StatusIndicator type="loading">Loading API…</StatusIndicator>}
       {api.data && (
-        <>
+        <SpaceBetween size="l">
           <RestDetails api={api.data} apiId={apiId} endpoint={connection.engineOrigin} onRefresh={refresh} />
           <RestResources apiId={apiId} connection={connection} list={resources} />
           <RestStages apiId={apiId} connection={connection} />
@@ -70,7 +70,7 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
               ))}
             </SpaceBetween>
           </Container>
-        </>
+        </SpaceBetween>
       )}
     </SpaceBetween>
   );
