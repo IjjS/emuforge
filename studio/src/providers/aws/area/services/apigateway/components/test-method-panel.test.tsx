@@ -18,7 +18,14 @@ const renderPanel = () => {
   const user = userEvent.setup();
   const { container } = render(
     <QueryClientProvider client={client}>
-      <TestMethodPanel endpoint={endpoint} apiId="api-1" resourceId="orders" method="ANY" path="/orders" />
+      <TestMethodPanel
+        endpoint={endpoint}
+        apiId="api-1"
+        resourceId="orders"
+        method="ANY"
+        path="/orders"
+        onClose={vi.fn()}
+      />
     </QueryClientProvider>,
   );
   return { client, container, user };

@@ -248,6 +248,24 @@ it('opens Test for an eligible method and explains why a VPC link method cannot 
   expect(panel.getByRole('textbox', { name: 'Path with query' })).toHaveValue('/');
 });
 
+it('closes the panel from its own control and returns focus to the Test button for the selected method', async () => {
+  const { user } = open();
+  const [getTest, postTest] = await screen.findAllByRole('button', { name: 'Test' });
+  if (!getTest || !postTest) throw new Error('Expected GET and POST Test controls');
+
+  await user.click(getTest);
+  await user.click(postTest);
+  const panel = screen.getByRole('region', { name: 'Test method' });
+  expect(within(panel).getByText('POST')).toBeVisible();
+  expect(postTest).toHaveAttribute('aria-expanded', 'true');
+
+  await user.click(within(panel).getByRole('button', { name: 'Close' }));
+  expect(panel).not.toBeInTheDocument();
+  expect(postTest).toHaveAttribute('aria-expanded', 'false');
+  expect(postTest).toHaveFocus();
+  expect(testInvokeMethod).not.toHaveBeenCalled();
+});
+
 async function openChange(kind: 'create' | 'resource' | 'method', user = open().user) {
   await screen.findByRole('heading', { name: '/orders' });
   if (kind === 'create') {

@@ -63,9 +63,10 @@ interface TestMethodPanelProps {
   resourceId: string;
   method: string;
   path: string;
+  onClose: () => void;
 }
 
-export function TestMethodPanel({ endpoint, apiId, resourceId, method, path }: TestMethodPanelProps) {
+export function TestMethodPanel({ endpoint, apiId, resourceId, method, path, onClose }: TestMethodPanelProps) {
   const [pathWithQueryString, setPath] = useState(path);
   const [headerText, setHeaders] = useState('');
   const [headerError, setHeaderError] = useState<string>();
@@ -111,7 +112,15 @@ export function TestMethodPanel({ endpoint, apiId, resourceId, method, path }: T
         >
           <Container
             header={
-              <Header variant="h3" description="Calls the method in the emulator without a deployment.">
+              <Header
+                variant="h3"
+                description="Calls the method in the emulator without a deployment."
+                actions={
+                  <Button formAction="none" onClick={onClose}>
+                    Close
+                  </Button>
+                }
+              >
                 Test method
               </Header>
             }
