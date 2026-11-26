@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
@@ -27,7 +27,17 @@ function show(failure: RequestFailure, result?: AreaConnection['result'], origin
       />
     </MemoryRouter>,
   );
-  return { container, onRetry, status: createWrapper(container).findStatusIndicator()?.getElement() };
+  const wrapper = createWrapper(container);
+  const retry = wrapper.findButton()?.getElement();
+  if (retry === undefined) throw new Error('Missing retry button');
+  expect(retry).toHaveTextContent('Retry');
+  return {
+    container,
+    onRetry,
+    retry,
+    status: wrapper.findStatusIndicator()?.getElement(),
+    link: wrapper.findLink()?.getElement(),
+  };
 }
 
 it.each([
@@ -38,23 +48,26 @@ it.each([
   ],
   ['access-denied', 'Access denied', 'GetIntegrations was refused: Full denial reason.'],
 ] as const)('reports %s by operation without connection recovery', async (kind, first, detail) => {
-  const { container, onRetry, status } = show({ kind, operation, message: 'Full denial reason.' }, stopped);
+  const { container, onRetry, retry, status, link } = show(
+    { kind, operation, message: 'Full denial reason.' },
+    stopped,
+  );
   expect(status).toHaveTextContent(first);
   expect(container).toHaveTextContent(detail);
-  expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(link).toBeUndefined();
+  await userEvent.click(retry);
   expect(onRetry).toHaveBeenCalledOnce();
 });
 
 it.each([connected, unavailable, stopped])('keeps an ordinary refusal even when health is %j', async (result) => {
-  const { container, onRetry, status } = show(
+  const { container, onRetry, retry, status, link } = show(
     { kind: 'other', operation, code: 'InvalidId', message: 'Full failure reason.' },
     result,
   );
   expect(status).toHaveTextContent('The integrations could not be read');
   expect(container).toHaveTextContent('GetIntegrations: InvalidId: Full failure reason.');
-  expect(screen.queryByRole('link', { name: 'Connection status' })).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(link).toBeUndefined();
+  await userEvent.click(retry);
   expect(onRetry).toHaveBeenCalledOnce();
 });
 
@@ -69,14 +82,15 @@ it.each([
   [connected, 'Not answering at https://127.0.0.1:9682'],
   [undefined, 'The emulator did not answer'],
 ] as const)('uses health only for the details of an emulator connection failure', async (result, first) => {
-  const { container, onRetry, status } = show(
+  const { container, onRetry, retry, status, link } = show(
     { kind: 'emulator-did-not-answer', operation, message: 'Timed out.' },
     result,
   );
   expect(status).toHaveTextContent(first);
   expect(container).toHaveTextContent('GetIntegrations got no answer from the emulator. Timed out.');
-  expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
-  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(link).toHaveTextContent('Connection status');
+  expect(link).toHaveAttribute('href', '/');
+  await userEvent.click(retry);
   expect(onRetry).toHaveBeenCalledOnce();
 });
 
@@ -87,11 +101,16 @@ it.each([
 ] as const)(
   'reports the engine failure immediately with its configured address when available',
   async (result, origin, first) => {
-    const { container, onRetry, status } = show({ kind: 'engine-did-not-answer', operation }, result, origin);
+    const { container, onRetry, retry, status, link } = show(
+      { kind: 'engine-did-not-answer', operation },
+      result,
+      origin,
+    );
     expect(status).toHaveTextContent(first);
     expect(container).toHaveTextContent('GetIntegrations got no answer.');
-    expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
-    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(link).toHaveTextContent('Connection status');
+    expect(link).toHaveAttribute('href', '/');
+    await userEvent.click(retry);
     expect(onRetry).toHaveBeenCalledOnce();
   },
 );

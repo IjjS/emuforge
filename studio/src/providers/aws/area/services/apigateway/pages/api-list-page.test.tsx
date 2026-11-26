@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -118,6 +118,24 @@ function expectApiNames(container: HTMLElement, names: string[]) {
   expect(apiNames(container)).toEqual(names);
 }
 
+function headerAction(container: HTMLElement, index: number, label: string) {
+  const button = createWrapper(container).findHeader()?.findActions()?.findAllButtons()[index]?.getElement();
+  if (button === undefined) throw new Error(`Missing header action ${label}`);
+  expect(button).toHaveTextContent(label);
+  return button;
+}
+
+async function loadMoreButton(container: HTMLElement, kind: string) {
+  return waitFor(() => {
+    const buttons = createWrapper(container).findTable()?.findFooterSlot()?.findAllButtons() ?? [];
+    expect(buttons).toHaveLength(1);
+    const button = buttons[0]?.getElement();
+    if (button === undefined) throw new Error(`Missing load more button for ${kind}`);
+    expect(button).toHaveTextContent(`Load more ${kind}`);
+    return button;
+  });
+}
+
 it('keeps room for ten-character IDs and their cell padding inside the API table', async () => {
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
@@ -170,10 +188,9 @@ it('shows loading until the lists answer, then offers Create API when both are e
     expect(slot).toHaveTextContent('No APIs');
     return slot;
   });
-  expect(within(empty).getByRole('link', { name: 'Create API' })).toHaveAttribute(
-    'href',
-    '/aws/apigateway/apis/create',
-  );
+  const create = createWrapper(empty).findButton()?.getElement();
+  expect(create).toHaveTextContent('Create API');
+  expect(create).toHaveAttribute('href', '/aws/apigateway/apis/create');
 });
 
 it.each([
@@ -186,13 +203,11 @@ it.each([
       .mockResolvedValueOnce({ items: [first], next: token })
       .mockResolvedValueOnce({ items: [further] });
     const { container } = open();
-    const button = await screen.findByRole('button', { name: `Load more ${kind}` });
-    expect(screen.getAllByRole('button', { name: /Load more/ })).toHaveLength(1);
-    await userEvent.click(button);
+    await userEvent.click(await loadMoreButton(container, kind));
     const otherApi = reader === readRestApis ? http : rest;
     const expectedNames = [first.name, further.name, otherApi.name].sort((a, b) => a.localeCompare(b));
     await waitFor(() => expectApiNames(container, expectedNames));
-    expect(screen.queryByRole('button', { name: /Load more/ })).not.toBeInTheDocument();
+    expect(createWrapper(container).findTable()?.findFooterSlot()?.findButton()).toBeFalsy();
     expect(reader).toHaveBeenLastCalledWith(engineOrigin, token, expect.any(AbortSignal));
     expect(other).toHaveBeenCalledOnce();
   },
@@ -209,13 +224,16 @@ it.each([
     );
     const { container } = open();
     const alert = await waitFor(() => {
-      const element = createWrapper(container).findAlert()?.getElement();
-      if (element === undefined) throw new Error('Missing list failure alert');
-      expect(element).toHaveTextContent(`${operation}: Refused: Full reason.`);
+      const found = createWrapper(container).findAlert();
+      if (found === null) throw new Error('Missing list failure alert');
+      expect(found.getElement()).toHaveTextContent(`${operation}: Refused: Full reason.`);
       expectApiNames(container, [visible.name]);
-      return element;
+      return found;
     });
-    await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    const retry = alert.findActionSlot()?.findButton()?.getElement();
+    if (retry === undefined) throw new Error('Missing list retry button');
+    expect(retry).toHaveTextContent('Retry');
+    await userEvent.click(retry);
     await waitFor(() => expectApiNames(container, [visible.name, retried.name].sort()));
     expect(reader).toHaveBeenCalledTimes(2);
     expect(other).toHaveBeenCalledOnce();
@@ -303,21 +321,33 @@ it.each([
     expect(container).toHaveTextContent(heading);
     expect(container).toHaveTextContent(restDetail);
     expect(container).toHaveTextContent(v2Detail);
-    expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(2);
   });
-  const links = screen.queryAllByRole('link', { name: 'Connection status' });
+  const links = wrapper.findAllLinks().map((link) => link.getElement());
   expect(links).toHaveLength(recovery ? 2 : 0);
-  for (const link of links) expect(link).toHaveAttribute('href', '/');
+  for (const link of links) {
+    expect(link).toHaveTextContent('Connection status');
+    expect(link).toHaveAttribute('href', '/');
+  }
 
-  const [retryRest] = screen.getAllByRole('button', { name: 'Retry' });
+  const actions = wrapper.findHeader()?.findActions()?.getElement();
+  const retryButtons = wrapper
+    .findAllButtons()
+    .map((button) => button.getElement())
+    .filter((button) => !actions?.contains(button));
+  expect(retryButtons).toHaveLength(2);
+  for (const retry of retryButtons) expect(retry).toHaveTextContent('Retry');
+  const [retryRest] = retryButtons;
   if (retryRest === undefined) throw new Error('Missing REST list retry button');
   await userEvent.click(retryRest);
   await waitFor(() => expectApiNames(container, [rest.name]));
-  const remaining = wrapper.findAlert()?.getElement();
-  if (remaining === undefined) throw new Error('Missing remaining list failure alert');
-  expect(remaining).toHaveTextContent(heading);
-  expect(remaining).toHaveTextContent(v2Detail);
-  await userEvent.click(within(remaining).getByRole('button', { name: 'Retry' }));
+  const remaining = wrapper.findAlert();
+  if (remaining === null) throw new Error('Missing remaining list failure alert');
+  expect(remaining.getElement()).toHaveTextContent(heading);
+  expect(remaining.getElement()).toHaveTextContent(v2Detail);
+  const retryV2 = remaining.findActionSlot()?.findButton()?.getElement();
+  if (retryV2 === undefined) throw new Error('Missing v2 list retry button');
+  expect(retryV2).toHaveTextContent('Retry');
+  await userEvent.click(retryV2);
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
   expect(wrapper.findAlert()).toBeNull();
 });
@@ -345,9 +375,9 @@ it('refreshes both lists from their first page after a further page was loaded',
     .mockResolvedValueOnce({ items: [http] })
     .mockResolvedValueOnce({ items: [webSocket] });
   const { container } = open();
-  await userEvent.click(await screen.findByRole('button', { name: 'Load more REST APIs' }));
+  await userEvent.click(await loadMoreButton(container, 'REST APIs'));
   await waitFor(() => expectApiNames(container, [rest2.name, http.name, rest.name]));
-  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await userEvent.click(headerAction(container, 0, 'Refresh'));
   await waitFor(() => expectApiNames(container, [webSocket.name]));
   expect(readRestApis).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
   expect(readV2Apis).toHaveBeenNthCalledWith(2, engineOrigin, undefined, expect.any(AbortSignal));
@@ -361,7 +391,7 @@ it('copies the selected ID verbatim and reports both clipboard outcomes', async 
     .mockRejectedValueOnce(new Error('Blocked'));
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-  const copy = screen.getByRole('button', { name: 'Copy ID' });
+  const copy = headerAction(container, 1, 'Copy ID');
   expect(copy).toBeDisabled();
   await selectApi(container, 2, user);
   expect(copy).toBeEnabled();
@@ -380,7 +410,7 @@ async function selectApi(container: HTMLElement, rowIndex: number, user = userEv
 }
 
 async function confirmDelete(container: HTMLElement, api: ApiRow) {
-  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await userEvent.click(headerAction(container, 2, 'Delete'));
   const modal = await waitFor(() => {
     const found = createWrapper(container).findModal();
     if (found === null) throw new Error('Missing delete modal');
@@ -390,7 +420,10 @@ async function confirmDelete(container: HTMLElement, api: ApiRow) {
   const input = modal.findContent().findFormField()?.findControl()?.findInput()?.findNativeInput().getElement();
   if (input === undefined) throw new Error('Missing name confirmation input');
   fireEvent.change(input, { target: { value: api.name } });
-  await userEvent.click(within(modal.getElement()).getByRole('button', { name: 'Delete' }));
+  const confirm = modal.findFooter()?.findAllButtons()[1]?.getElement();
+  if (confirm === undefined) throw new Error('Missing delete confirmation button');
+  expect(confirm).toHaveTextContent('Delete');
+  await userEvent.click(confirm);
 }
 
 function expectDeleted(container: HTMLElement, api: ApiRow) {
@@ -403,23 +436,35 @@ function expectDeleted(container: HTMLElement, api: ApiRow) {
 
 it('enables Delete when a row is selected, then closes the dialog, shows the result and reads both lists', async () => {
   vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
-  vi.mocked(readRestApis)
-    .mockResolvedValueOnce({ items: [rest] })
-    .mockResolvedValueOnce({ items: [] });
   const { container } = open();
   await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  const feedbackAtRead: { modalOpen: boolean; message: string | null | undefined }[] = [];
+  function recordFeedback(items: ApiRow[]) {
+    const wrapper = createWrapper(container);
+    feedbackAtRead.push({
+      modalOpen: wrapper.findModal() !== null,
+      message: wrapper.findFlashbar()?.findItemsByType('success')[0]?.getElement().textContent,
+    });
+    return Promise.resolve({ items });
+  }
+  vi.mocked(readRestApis).mockImplementationOnce(() => recordFeedback([]));
+  vi.mocked(readV2Apis).mockImplementationOnce(() => recordFeedback([http]));
+  expect(headerAction(container, 2, 'Delete')).toBeDisabled();
   await selectApi(container, 2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  expect(headerAction(container, 2, 'Delete')).toBeEnabled();
   await confirmDelete(container, rest);
   await waitFor(() => {
     expectDeleted(container, rest);
     expectApiNames(container, [http.name]);
   });
+  expect(feedbackAtRead).toEqual([
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+    { modalOpen: false, message: `API ${rest.name} deleted.` },
+  ]);
   expect(deleteApi).toHaveBeenCalledExactlyOnceWith(engineOrigin, rest, expect.any(AbortSignal));
   expect(readRestApis).toHaveBeenCalledTimes(2);
   expect(readV2Apis).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  expect(headerAction(container, 2, 'Delete')).toBeDisabled();
 });
 
 function deferred<T>() {
@@ -431,51 +476,59 @@ function deferred<T>() {
 }
 
 describe.each([
-  ['REST APIs', readRestApis, rest, rest2, http, 2, 'rest-position'],
-  ['HTTP and WebSocket APIs', readV2Apis, http, webSocket, rest, 1, 'v2-token'],
-] as const)('%s post-delete reads', (label, read, api, current, other, rowIndex, token) => {
+  ['REST APIs', readRestApis, readV2Apis, rest, rest2, http, 'rest-position'],
+  ['HTTP and WebSocket APIs', readV2Apis, readRestApis, http, webSocket, rest, 'v2-token'],
+] as const)('%s post-delete reads', (label, read, readOther, api, survivor, other, token) => {
   it.each(['old page first', 'refreshed page first'] as const)(
     'keeps the delete result and drops the old page when the %s answers',
     async (order) => {
       const oldPage = deferred<TokenPage<ApiRow>>();
       const refreshed = deferred<TokenPage<ApiRow>>();
+      const otherRefreshed = deferred<TokenPage<ApiRow>>();
+      const updatedOther = { ...other, name: `Updated ${other.name}` };
+      const initialNames = [api.name, survivor.name, other.name].sort();
+      const survivingNames = [survivor.name, other.name].sort();
       vi.mocked(read)
-        .mockResolvedValueOnce({ items: [api], next: token })
+        .mockResolvedValueOnce({ items: [api, survivor], next: token })
         .mockReturnValueOnce(oldPage.promise)
         .mockReturnValueOnce(refreshed.promise);
+      vi.mocked(readOther)
+        .mockResolvedValueOnce({ items: [other] })
+        .mockReturnValueOnce(otherRefreshed.promise);
       vi.mocked(deleteApi).mockResolvedValueOnce(undefined);
       const { container } = open();
-      await waitFor(() => expectApiNames(container, [http.name, rest.name]));
-      await selectApi(container, rowIndex);
-      await userEvent.click(screen.getByRole('button', { name: `Load more ${label}` }));
+      await waitFor(() => expectApiNames(container, initialNames));
+      await selectApi(container, initialNames.indexOf(api.name) + 1);
+      await userEvent.click(await loadMoreButton(container, label));
       expect(read).toHaveBeenNthCalledWith(2, engineOrigin, token, expect.any(AbortSignal));
 
       await confirmDelete(container, api);
       await waitFor(() => {
         expectDeleted(container, api);
         expect(read).toHaveBeenNthCalledWith(3, engineOrigin, undefined, expect.any(AbortSignal));
+        expect(readOther).toHaveBeenNthCalledWith(2, engineOrigin, undefined, expect.any(AbortSignal));
+        expect(apiNames(container)).toEqual(expect.arrayContaining(survivingNames));
       });
       expect(vi.mocked(read).mock.calls[1]?.[2].aborted).toBe(true);
       const resolveOld = () => act(async () => oldPage.resolve({ items: [api] }));
-      const resolveRefreshed = () => act(async () => refreshed.resolve({ items: [current] }));
+      const resolveRefreshed = () => act(async () => refreshed.resolve({ items: [survivor] }));
 
       if (order === 'old page first') {
         await resolveOld();
-        expectDeleted(container, api);
-        expectApiNames(container, [other.name]);
         await resolveRefreshed();
       } else {
         await resolveRefreshed();
         await waitFor(() => {
           expectDeleted(container, api);
-          expectApiNames(container, [current.name, other.name].sort());
+          expectApiNames(container, survivingNames);
         });
         await resolveOld();
       }
 
+      await act(async () => otherRefreshed.resolve({ items: [updatedOther] }));
       await waitFor(() => {
         expectDeleted(container, api);
-        expectApiNames(container, [current.name, other.name].sort());
+        expectApiNames(container, [survivor.name, updatedOther.name].sort());
       });
     },
   );

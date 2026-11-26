@@ -1,10 +1,10 @@
 import type { Resource } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -98,74 +98,112 @@ function open(areaConnection = connection) {
   return { user, ...result };
 }
 
+function resources() {
+  return createWrapper(screen.getByRole('region', { name: 'Resources' }));
+}
+
+function resourcePaths() {
+  const region = resources();
+  return region
+    .findAllContainers()
+    .filter((container) => container.getElement().closest('section') === region.getElement())
+    .map((container) => container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent);
+}
+
+function resourceActions(index: number) {
+  return resources().findAllHeaders()[index + 1]?.findActions()?.findAllButtons() ?? [];
+}
+
+function methodActions(index: number) {
+  const method = resources().findAll('h4')[index];
+  if (!method) return [];
+  const actions = method.findClosestSpaceBetween();
+  return actions ? createWrapper(actions.getElement()).findAllButtons() : [];
+}
+
+async function loadMoreResources() {
+  return waitFor(() => {
+    const button = resources().findAllButtons().at(-1)?.getElement();
+    assert(button);
+    expect(button).toHaveTextContent('Load more resources');
+    return button;
+  });
+}
+
 it('shows resource paths and methods, and copies IDs, Lambda ARNs and HTTP addresses verbatim', async () => {
   const { user } = open();
-  const region = within(screen.getByRole('region', { name: 'Resources' }));
-  const headings = await region.findAllByRole('heading', { level: 3 });
-  expect(headings.map((heading) => heading.textContent)).toEqual(['/', '/orders']);
-  for (const value of [
-    'GET',
-    'POST',
-    'AWS_IAM',
-    'NONE',
-    'Yes',
-    'No',
-    'Lambda function',
-    'HTTP endpoint',
-    'No methods',
-  ]) {
-    expect(
-      region.getByText(
-        (_, element) =>
-          element?.textContent === value && ![...element.children].some((child) => child.textContent === value),
-      ),
-    ).toBeInTheDocument();
-  }
-  const resourceCopies = region.getAllByRole('button', { name: 'Copy Resource ID' });
-  const copies = [
-    [resourceCopies[0], root.id],
-    [resourceCopies[1], orders.id],
-    [region.getByRole('button', { name: 'Copy Lambda function ARN' }), fn],
-    [region.getByRole('button', { name: 'Copy HTTP address' }), uri],
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const region = resources();
+  expect(region.findAll('h4').map((box) => box.getElement().textContent)).toEqual(['GET', 'POST']);
+  const methodFields = region
+    .findAllKeyValuePairs()
+    .map((group) => group.findItems())
+    .filter(([first]) => first?.findLabel()?.getElement().textContent === 'Authorization');
+  expect(methodFields).toHaveLength(2);
+  const expectedMethods = [
+    ['AWS_IAM', 'Yes', 'Lambda function'],
+    ['NONE', 'No', 'HTTP endpoint'],
   ] as const;
-  for (const [button, expected] of copies) {
-    if (!button) throw new Error('Missing copy control');
+  for (const [index, [authorization, apiKey, integration]] of expectedMethods.entries()) {
+    const [authValue, keyValue, integrationValue] = methodFields[index] ?? [];
+    expect(authValue?.findValue()?.getElement().textContent).toBe(authorization);
+    expect(keyValue?.findValue()?.getElement().textContent).toBe(apiKey);
+    expect(integrationValue?.findValue()?.getElement()).toHaveTextContent(integration);
+  }
+  const rootResource = region.findContainer()?.findContent()?.getElement();
+  expect(rootResource).toHaveTextContent('No methods');
+  const copies = region.findAllCopyToClipboards();
+  const expectedCopies = [
+    ['Copy Resource ID', root.id],
+    ['Copy Resource ID', orders.id],
+    ['Copy Lambda function ARN', fn],
+    ['Copy HTTP address', uri],
+  ] as const;
+  expect(copies).toHaveLength(expectedCopies.length);
+  for (const [index, [label, value]] of expectedCopies.entries()) {
+    const button = copies[index]?.findCopyButton().getElement();
+    assert(button);
+    expect(button).toHaveAccessibleName(label);
     await user.click(button);
-    expect(await navigator.clipboard.readText()).toBe(expected);
+    expect(await navigator.clipboard.readText()).toBe(value);
   }
 });
 
 it('opens read-only Responses showing codes, the selection pattern, and the exact template as text', async () => {
-  const { container, user } = open();
-  await screen.findByRole('heading', { name: 'POST' });
-  const sections = createWrapper(container).findAllExpandableSections();
-  const getResponses = sections[0];
-  const postResponses = sections[1];
-  if (!getResponses || !postResponses) throw new Error('Expected two method response sections');
-  const get = within(getResponses.getElement());
-  const post = within(postResponses.getElement());
+  const { user } = open();
+  const [getResponses, postResponses] = await waitFor(() => {
+    const sections = resources().findAllExpandableSections();
+    expect(sections).toHaveLength(2);
+    return sections;
+  });
+  assert(getResponses && postResponses);
 
-  await user.click(get.getByRole('button', { name: 'Responses' }));
+  expect(getResponses.findHeaderText()?.getElement()).toHaveTextContent('Responses');
+  await user.click(getResponses.findExpandButton().getElement());
+  const get = getResponses.findContent();
   for (const text of ['Method responses', 'Integration responses', '204', '403', 'denied.*', 'text/plain']) {
-    expect(get.getByText(text)).toBeVisible();
+    expect(get.getElement()).toHaveTextContent(text);
   }
-  const template = get.getByText(
-    (_, element) => element?.tagName === 'PRE' && element.textContent === responseTemplate,
-  );
+  const template = get.findBox('pre')?.getElement();
   expect(template).toBeVisible();
-  expect(template.querySelector('script')).toBeNull();
-  expect(get.getAllByRole('button')).toHaveLength(1);
-  expect(get.queryByRole('textbox')).not.toBeInTheDocument();
+  expect(template?.textContent).toBe(responseTemplate);
+  expect(template?.querySelector('script')).toBeNull();
+  expect(get.findAllButtons()).toHaveLength(0);
+  expect(get.findInput()).toBeNull();
+  expect(get.findTextarea()).toBeNull();
 
-  await user.click(post.getByRole('button', { name: 'Responses' }));
-  expect(post.getByText('No method responses')).toBeVisible();
-  expect(post.getByText('No integration responses')).toBeVisible();
+  expect(postResponses.findHeaderText()?.getElement()).toHaveTextContent('Responses');
+  await user.click(postResponses.findExpandButton().getElement());
+  expect(postResponses.findContent().getElement()).toHaveTextContent('No method responses');
+  expect(postResponses.findContent().getElement()).toHaveTextContent('No integration responses');
 });
 
 it('links each resource to Create method with that resource preselected', async () => {
   open();
-  const links = await screen.findAllByRole('link', { name: 'Create method' });
-  expect(links.map((link) => link.getAttribute('href'))).toEqual([
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const links = [resourceActions(0)[1]?.getElement(), resourceActions(1)[1]?.getElement()];
+  for (const link of links) expect(link).toHaveTextContent('Create method');
+  expect(links.map((link) => link?.getAttribute('href'))).toEqual([
     '/aws/apigateway/apis/rest/api-1/methods/create?resource=root',
     '/aws/apigateway/apis/rest/api-1/methods/create?resource=resource-orders',
   ]);
@@ -174,11 +212,11 @@ it('links each resource to Create method with that resource preselected', async 
 it('loads the further resource page by position and appends it to the visible paths', async () => {
   reader.mockResolvedValueOnce({ items: [root], next: 'more' }).mockResolvedValueOnce({ items: [orders] });
   const { user } = open();
-  await user.click(await screen.findByRole('button', { name: 'Load more resources' }));
-  expect(await screen.findByRole('heading', { name: '/orders' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: '/' })).toBeInTheDocument();
+  const loadMore = await loadMoreResources();
+  await user.click(loadMore);
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
   expect(reader).toHaveBeenLastCalledWith(engineOrigin, apiId, 'more', expect.any(AbortSignal));
-  expect(screen.queryByRole('button', { name: 'Load more resources' })).not.toBeInTheDocument();
+  expect(loadMore).not.toBeInTheDocument();
 });
 
 const readFailures: [RequestFailure, string, string, boolean?, AreaConnection?][] = [
@@ -232,23 +270,30 @@ describe.each(['first', 'further'] as const)('when the %s resources page fails',
     if (page === 'further') reader.mockResolvedValueOnce({ items: [root], next: 'more' });
     reader.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ items: [orders] });
     const { user } = open(areaConnection);
-    const resources = screen.getByRole('region', { name: 'Resources' });
-    const region = within(resources);
-    if (page === 'further') {
-      await user.click(await region.findByRole('button', { name: 'Load more resources' }));
-    }
+    if (page === 'further') await user.click(await loadMoreResources());
 
-    const retry = await region.findByRole('button', { name: 'Retry' });
-    expect(createWrapper(resources).findStatusIndicator()?.getElement()).toHaveTextContent(first);
-    expect(resources).toHaveTextContent(detail);
+    const region = resources();
+    const retry = await waitFor(() => {
+      const status = region.findStatusIndicator()?.getElement();
+      assert(status);
+      expect(status).toHaveTextContent(first);
+      const failure = createWrapper(status).findClosestBox();
+      const button = failure && createWrapper(failure.getElement()).findButton()?.getElement();
+      assert(button);
+      expect(button).toHaveTextContent('Retry');
+      return button;
+    });
+    expect(region.getElement()).toHaveTextContent(detail);
     if (recovery) {
-      expect(region.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
+      const link = region.findLink('[href="/"]')?.getElement();
+      expect(link).toHaveTextContent('Connection status');
+      expect(link).toHaveAttribute('href', '/');
     }
-    if (page === 'further') expect(region.getByRole('heading', { name: '/' })).toBeVisible();
+    if (page === 'further') expect(resourcePaths()).toEqual(['/']);
 
     await user.click(retry);
-    expect(await region.findByRole('heading', { name: '/orders' })).toBeVisible();
-    expect(region.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    await waitFor(() => expect(resourcePaths()).toEqual(page === 'further' ? ['/', '/orders'] : ['/orders']));
+    expect(retry).not.toBeInTheDocument();
     expect(reader).toHaveBeenLastCalledWith(
       engineOrigin,
       apiId,
@@ -268,8 +313,12 @@ it('opens Test for an eligible method and explains why a VPC link method cannot 
     ],
   });
   const { user } = open();
-  const [eligible, unavailable] = await screen.findAllByRole('button', { name: 'Test' });
-  if (!eligible || !unavailable) throw new Error('Expected both Test controls');
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const eligible = methodActions(0)[0]?.getElement();
+  const unavailable = methodActions(1)[0]?.getElement();
+  assert(eligible && unavailable);
+  expect(eligible).toHaveTextContent('Test');
+  expect(unavailable).toHaveTextContent('Test');
   expect(unavailable).toHaveAttribute('aria-disabled', 'true');
   expect(unavailable).toHaveAccessibleDescription(
     'Test is not offered for an integration through a VPC link: where the emulator sends it has not been verified.',
@@ -280,7 +329,7 @@ it('opens Test for an eligible method and explains why a VPC link method cannot 
 
   await user.click(eligible);
   const panel = screen.getByRole('region', { name: 'Test method' });
-  expect(within(panel).getByText('ANY')).toBeVisible();
+  expect(createWrapper(panel).findKeyValuePairs()?.findItems()[0]?.findValue()?.getElement()).toHaveTextContent('ANY');
   const pathField = createWrapper(panel).findFormField();
   expect(pathField?.findLabel()?.getElement()).toHaveTextContent('Path with query');
   expect(pathField?.findControl()?.findInput()?.findNativeInput().getElement()).toHaveValue('/');
@@ -288,16 +337,24 @@ it('opens Test for an eligible method and explains why a VPC link method cannot 
 
 it('closes the panel from its own control and returns focus to the Test button for the selected method', async () => {
   const { user } = open();
-  const [getTest, postTest] = await screen.findAllByRole('button', { name: 'Test' });
-  if (!getTest || !postTest) throw new Error('Expected GET and POST Test controls');
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const getTest = methodActions(0)[0]?.getElement();
+  const postTest = methodActions(1)[0]?.getElement();
+  assert(getTest && postTest);
+  expect(getTest).toHaveTextContent('Test');
+  expect(postTest).toHaveTextContent('Test');
 
   await user.click(getTest);
   await user.click(postTest);
   const panel = screen.getByRole('region', { name: 'Test method' });
-  expect(within(panel).getByText('POST')).toBeVisible();
+  const panelWrapper = createWrapper(panel);
+  expect(panelWrapper.findKeyValuePairs()?.findItems()[0]?.findValue()?.getElement()).toHaveTextContent('POST');
   expect(postTest).toHaveAttribute('aria-expanded', 'true');
 
-  await user.click(within(panel).getByRole('button', { name: 'Close' }));
+  const close = panelWrapper.findHeader()?.findActions()?.findButton()?.getElement();
+  assert(close);
+  expect(close).toHaveTextContent('Close');
+  await user.click(close);
   expect(panel).not.toBeInTheDocument();
   expect(postTest).toHaveAttribute('aria-expanded', 'false');
   expect(postTest).toHaveFocus();
@@ -305,15 +362,14 @@ it('closes the panel from its own control and returns focus to the Test button f
 });
 
 async function openChange(kind: 'create' | 'resource' | 'method', user = open().user) {
-  await screen.findByRole('heading', { name: '/orders' });
-  if (kind === 'create') {
-    await user.click(screen.getByRole('button', { name: 'Create resource' }));
-  } else {
-    const buttons = screen.getAllByRole('button', { name: 'Delete' });
-    const button = buttons[kind === 'resource' ? 1 : 2];
-    if (!button) throw new Error('Missing delete button');
-    await user.click(button);
-  }
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const partActions = resources().findHeader()?.findActions()?.findAllButtons();
+  const trigger = (
+    kind === 'create' ? partActions?.[1] : kind === 'resource' ? resourceActions(1)[0] : methodActions(0)[1]
+  )?.getElement();
+  assert(trigger);
+  expect(trigger).toHaveTextContent(kind === 'create' ? 'Create resource' : 'Delete');
+  await user.click(trigger);
   const title = {
     create: 'Create resource',
     resource: 'Delete resource /orders?',
@@ -326,21 +382,20 @@ async function openChange(kind: 'create' | 'resource' | 'method', user = open().
   const input = field?.findControl()?.findInput()?.findNativeInput().getElement();
   if (!input) throw new Error('Missing change input');
   await user.type(input, { create: 'new', resource: '/orders', method: 'delete' }[kind]);
-  const footer = modal.findFooter();
-  if (!footer) throw new Error('Missing change dialog footer');
-  return {
-    user,
-    submit: () =>
-      user.click(
-        within(footer.getElement()).getByRole('button', { name: kind === 'create' ? 'Create resource' : 'Delete' }),
-      ),
-  };
+  const submit = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
+  assert(submit);
+  expect(submit).toHaveTextContent(kind === 'create' ? 'Create resource' : 'Delete');
+  return { submit: () => user.click(submit) };
+}
+
+function successMessage() {
+  return createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
 }
 
 function expectFlash(message: string) {
-  const content = createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent();
-  expect(content?.getElement()).toBeVisible();
-  expect(content?.getElement()).toHaveTextContent(message);
+  const flash = successMessage();
+  expect(flash).toBeVisible();
+  expect(flash).toHaveTextContent(message);
 }
 
 it.each([
@@ -358,15 +413,29 @@ it.each([
     vi.mocked(deleteResource).mockResolvedValueOnce({ $metadata: {} });
     vi.mocked(deleteMethod).mockResolvedValueOnce({ $metadata: {} });
     const { submit } = await openChange(kind);
-    reader.mockResolvedValueOnce({ items: [...answer] });
+    const feedbackAtRead = vi.fn();
+    reader.mockImplementationOnce(async () => {
+      const flash = successMessage();
+      const modal = createWrapper(document.body).findModal();
+      const flashVisible = flash?.isConnected === true && getComputedStyle(flash).visibility === 'visible';
+      feedbackAtRead(flash?.textContent, flashVisible, Boolean(modal?.isVisible()));
+      return { items: [...answer] };
+    });
     await submit();
     await waitFor(() => {
       expectFlash(message);
       expect(createWrapper(document.body).findModal()).toBeNull();
-      if (kind === 'create') expect(screen.getByRole('heading', { name: '/new' })).toBeVisible();
-      if (kind === 'resource') expect(screen.queryByRole('heading', { name: '/orders' })).not.toBeInTheDocument();
-      if (kind === 'method') expect(screen.queryByRole('heading', { name: 'GET' })).not.toBeInTheDocument();
+      if (kind === 'create') expect(resourcePaths()).toEqual(['/', '/new', '/orders']);
+      if (kind === 'resource') expect(resourcePaths()).toEqual(['/']);
+      if (kind === 'method') {
+        expect(
+          resources()
+            .findAll('h4')
+            .map((box) => box.getElement().textContent),
+        ).toEqual(['POST']);
+      }
     });
+    expect(feedbackAtRead).toHaveBeenCalledExactlyOnceWith(message, true, false);
     expect(reader).toHaveBeenCalledTimes(2);
     expect(reader).toHaveBeenLastCalledWith(engineOrigin, apiId, undefined, expect.any(AbortSignal));
   },
@@ -374,13 +443,18 @@ it.each([
 
 it('leaves the root Delete unavailable and explains the reason', async () => {
   const { user } = open();
-  await screen.findByRole('heading', { name: '/' });
-  const button = screen.getAllByRole('button', { name: 'Delete' })[0];
-  if (!button) throw new Error('Missing root Delete');
+  await waitFor(() => expect(resourcePaths()).toEqual(['/', '/orders']));
+  const button = resourceActions(0)[0]?.getElement();
+  assert(button);
+  expect(button).toHaveTextContent('Delete');
   expect(button).toHaveAttribute('aria-disabled', 'true');
   expect(button).toHaveAccessibleDescription('The root resource cannot be deleted.');
   await user.hover(button);
-  expect(await screen.findByRole('tooltip')).toHaveTextContent('The root resource cannot be deleted.');
+  await waitFor(() => {
+    expect(resourceActions(0)[0]?.findDisabledReason()?.getElement()).toHaveTextContent(
+      'The root resource cannot be deleted.',
+    );
+  });
   await user.click(button);
   expect(createWrapper(document.body).findModal()).toBeNull();
 });
@@ -408,31 +482,23 @@ describe.each([
 
       reader.mockReturnValueOnce(earlier.promise);
       const { user } = open();
-      await user.click(await screen.findByRole('button', { name: 'Load more resources' }));
+      await user.click(await loadMoreResources());
       await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
       const { submit } = await openChange(kind, user);
       reader.mockReturnValueOnce(refreshed.promise);
       await submit();
-      await waitFor(() => {
-        expectFlash(flash);
-        expect(reader).toHaveBeenCalledTimes(3);
-      });
+      await waitFor(() => expect(reader).toHaveBeenCalledTimes(3));
       expect(reader.mock.calls[1]?.[3].aborted).toBe(true);
 
       const answerEarlier = () => act(async () => earlier.resolve({ items: [{ id: 'old', path: '/stale' }] }));
       const answerRefreshed = () => act(async () => refreshed.resolve({ items: [...items] }));
       const expectLatest = () => {
         expectFlash(flash);
-        const changed = screen.queryByRole('heading', { name: path, level: 3 });
-        if (kind === 'create') expect(changed).toBeVisible();
-        else expect(changed).not.toBeInTheDocument();
-        expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
+        expect(resourcePaths()).toEqual(kind === 'create' ? ['/', path, '/orders'] : ['/']);
       };
 
       if (first === 'earlier') {
         await answerEarlier();
-        expectFlash(flash);
-        expect(screen.queryByRole('heading', { name: '/stale' })).not.toBeInTheDocument();
         await answerRefreshed();
       } else {
         await answerRefreshed();

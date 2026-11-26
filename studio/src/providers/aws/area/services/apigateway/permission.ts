@@ -52,7 +52,7 @@ export function operationReason(failure: RequestFailure): string {
   }
 }
 
-export type PermissionOutcome = { kind: 'given' } | { kind: 'not-given'; reason: string };
+export type PermissionOutcome = { kind: 'given' } | { kind: 'not-given'; reason: string; failure?: RequestFailure };
 
 export async function allowApiInvocation(
   endpoint: string,
@@ -68,7 +68,7 @@ export async function allowApiInvocation(
     if (!(error instanceof RequestError)) throw error;
     const { failure } = error;
     if (failure.kind !== 'other' || failure.code !== 'ResourceConflictException') {
-      return { kind: 'not-given', reason: `${ADD_PERMISSION}: ${operationReason(failure)}` };
+      return { kind: 'not-given', reason: `${ADD_PERMISSION}: ${operationReason(failure)}`, failure };
     }
   }
 
@@ -79,7 +79,7 @@ export async function allowApiInvocation(
       : { kind: 'not-given', reason: `a statement named ${input.StatementId} exists and does not allow this API` };
   } catch (error) {
     if (error instanceof RequestError) {
-      return { kind: 'not-given', reason: `${GET_POLICY}: ${operationReason(error.failure)}` };
+      return { kind: 'not-given', reason: `${GET_POLICY}: ${operationReason(error.failure)}`, failure: error.failure };
     }
     if (signal.aborted) throw error;
     return { kind: 'not-given', reason: `${GET_POLICY}: the function's policy could not be parsed` };
