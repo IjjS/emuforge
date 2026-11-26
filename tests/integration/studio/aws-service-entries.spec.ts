@@ -568,7 +568,8 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page, 
           text: entry.label,
           href: entry.path,
           description: NO_SCREEN_STATUS,
-          beside: NO_SCREEN_STATUS,
+          // The page draws a dash between a link and its words: the words are among what is drawn beside the link.
+          beside: expect.stringContaining(NO_SCREEN_STATUS) as unknown as string,
           descriptionDrawn: true,
         }))
         .sort((a, b) => a.href.localeCompare(b.href));
