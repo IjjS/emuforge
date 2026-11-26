@@ -42,8 +42,10 @@ const PAGE_DESCRIPTION = (
 
 const FIELD_DESCRIPTION = (
   <>
-    The emulator plays a task from its containers&apos; <Code>command</Code>: what it <Code>echo</Code>es becomes the
-    task&apos;s log, and a <Code>sleep</Code> keeps the task running.
+    The emulator plays a task from its containers&apos; <Code>command</Code>: what a container with the{' '}
+    <Code>awslogs</Code> log driver <Code>echo</Code>es becomes the task&apos;s log, and the task stops when an
+    essential container&apos;s command ends. The command of Studio&apos;s starter ends with <Code>sleep infinity</Code>,
+    which keeps its task running.
   </>
 );
 
