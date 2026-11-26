@@ -8,7 +8,7 @@ import {
   allowsApi,
   at,
   button,
-  cellsOf,
+  cellOf,
   choose,
   chosenIn,
   createMethodPath,
@@ -35,7 +35,6 @@ import {
   resourcesPart,
   restApiPath,
   rootId,
-  rowNamed,
   sourceArn,
   studioStatementId,
   tableOf,
@@ -120,9 +119,7 @@ test('studio.apigateway-build-a-rest-api-with-a-mock-and-call-it', async ({ ctx,
     await expectResult(page, 'API deployed to stage dev.');
   };
   await deploy(() => textbox(dialogContent(page), 'Stage name').fill('dev'));
-  const stage = cellsOf(rowNamed(tableOf(page, 'Stages'), 'dev'));
-  await expect(stage.nth(1)).toHaveText('dev');
-  await expect(stage.nth(4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
+  await expect(await cellOf(tableOf(page, 'Stages'), 'dev', 4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
 
   const hello = await f.callOutside(f.restStagePath(id, 'dev', '/hello'));
   expect(hello).toMatchObject({ status: 200, body });

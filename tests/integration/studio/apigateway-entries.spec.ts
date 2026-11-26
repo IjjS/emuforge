@@ -27,7 +27,7 @@ import {
   pageHeading,
   restApiPath,
   rootId,
-  rowNamed,
+  expectNamed,
   SUB_SERVICE,
   v2ApiPath,
 } from './services/apigateway/apigateway';
@@ -57,18 +57,37 @@ test('studio.apigateway-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
   // 1. The navigation on APIs.
   await page.goto(APIS);
   const list = await apisRead(page);
-  await expect(rowNamed(list, rest.name!)).toHaveCount(1);
+  await expectNamed(list, rest.name!, 1);
   await openEverySection(page);
   const tree = await navigationTree(page);
-  const sections = tree.sections.map((section) => section.title);
-  for (const group of ENTRY_GROUPS) expect(sections, `the group "${group.name}"`).toContain(group.name);
-  const shown = tree.links.map((link) => `${link.text} → ${link.href}`);
-  const wanted = [SUB_SERVICE, ...ENTRIES.map((entry) => ({ name: entry.label, path: entry.path }))].map(
-    (link) => `${link.name} → ${link.path}`,
-  );
-  expect(wanted.filter((link) => !shown.includes(link)), 'entries without a link').toEqual([]);
-  expect(shown.filter((link) => !wanted.includes(link)), 'links that are no entry').toEqual([]);
-  expect(new Set(shown).size, 'no link twice').toBe(shown.length);
+  // The two groups, in the model's order, are the navigation's outer sections; each holds its own entries' links,
+  // drawn, the sub-service's own link in its group, and no link stands outside them.
+  const groupNames = ENTRY_GROUPS.map((group) => group.name);
+  expect(
+    tree.sections.filter((section) => section.outermost).map((section) => section.title),
+    'the groups',
+  ).toEqual(groupNames);
+  const pair = (text: string, href: string) => `${text} → ${href}`;
+  for (const group of ENTRY_GROUPS) {
+    const inGroup = tree.links.filter((link) => link.sections[0] === group.name);
+    expect(
+      inGroup.filter((link) => !link.shown).map((link) => link.href),
+      `links of "${group.name}" that are not drawn`,
+    ).toEqual([]);
+    const wanted = [
+      ...(group.name === SUB_SERVICE.name ? [pair(SUB_SERVICE.name, SUB_SERVICE.path)] : []),
+      ...group.entries.map((entry) => pair(entry.label, entry.path)),
+    ];
+    expect(
+      inGroup.map((link) => pair(link.text, link.href)).sort(),
+      `the links of "${group.name}"`,
+    ).toEqual(wanted.sort());
+  }
+  expect(
+    tree.links.filter((link) => !groupNames.includes(link.sections[0] ?? '')).map((link) => link.href),
+    'links outside the two groups',
+  ).toEqual([]);
+  expect(tree.links.length, 'a link for each of the 33 entries and for the sub-service').toBe(ENTRIES.length + 1);
   for (const entry of ENTRIES) {
     const beside = tree.links.find((link) => link.href === entry.path)?.beside;
     expect(beside, `beside "${entry.label}"`).toBe(entry.screen ? '' : NO_SCREEN_STATUS);

@@ -8,7 +8,8 @@ import {
   apisRead,
   at,
   button,
-  cellsOf,
+  cellOf,
+  columnTexts,
   confirmDeleteApi,
   containerOf,
   CREATE_API,
@@ -22,7 +23,8 @@ import {
   link,
   pageHeading,
   restApiPath,
-  rowNamed,
+  expectNamed,
+  alertIn,
   rowsOf,
   selectRow,
   sel,
@@ -36,7 +38,6 @@ import {
 test.use({ timezoneId: SEOUL.timeZone });
 
 /** The selection cell of a row: Cloudscape's own, whatever it holds. */
-const SELECTION = /.*/;
 
 test('studio.apigateway-apis-made-outside-are-listed', async ({ ctx, page }) => {
   const f = await fixture(ctx);
@@ -56,7 +57,6 @@ test('studio.apigateway-apis-made-outside-are-listed', async ({ ctx, page }) => 
   await page.goto(APIS);
   const list = await apisRead(page);
   await expectRow(list, rest.name!, [
-    SELECTION,
     rest.name!,
     rest.id!,
     'REST',
@@ -64,9 +64,8 @@ test('studio.apigateway-apis-made-outside-are-listed', async ({ ctx, page }) => 
     dateText(rest.createdDate!),
     'Regional',
   ]);
-  await expectRow(list, http.Name!, [SELECTION, http.Name!, http.ApiId!, 'HTTP', '-', dateText(http.CreatedDate!), '-']);
+  await expectRow(list, http.Name!, [http.Name!, http.ApiId!, 'HTTP', '-', dateText(http.CreatedDate!), '-']);
   await expectRow(list, ws.Name!, [
-    SELECTION,
     ws.Name!,
     ws.ApiId!,
     'WebSocket',
@@ -83,12 +82,12 @@ test('studio.apigateway-apis-made-outside-are-listed', async ({ ctx, page }) => 
   await button(page, ABOUT_CONTROL).click();
   await expect(notice).toContainText('These APIs are in your local emulator');
 
-  await link(rowNamed(list, rest.name!), rest.name!).click();
+  await link(await cellOf(list, rest.name!, 1), rest.name!).click();
   await expect(page).toHaveURL(at(restApiPath(rest.id!)));
   await expect(pageHeading(page)).toHaveText(rest.name!);
 
   await page.goto(APIS);
-  await link(rowNamed(await apisRead(page), http.Name!), http.Name!).click();
+  await link(await cellOf(await apisRead(page), http.Name!, 1), http.Name!).click();
   await expect(page).toHaveURL(at(v2ApiPath(http.ApiId!)));
   await expect(pageHeading(page)).toHaveText(http.Name!);
 });
@@ -111,7 +110,7 @@ test('studio.apigateway-api-list-reads-further-pages', async ({ ctx, page }) => 
   // The first pages are both read once each kind offers its further page.
   await expect(moreRest).toBeEnabled();
   await expect(moreV2).toBeEnabled();
-  const shownNames = async () => (await rowsOf(list).locator('th').allTextContents()).map((text) => text.trim());
+  const shownNames = () => columnTexts(list, 1);
   const first = await shownNames();
   expect(names.filter((name) => !first.includes(name)).length).toBeGreaterThan(0);
 
@@ -132,7 +131,7 @@ test('studio.apigateway-api-list-reads-further-pages', async ({ ctx, page }) => 
 
   const all = await shownNames();
   expect(names.filter((name) => !all.includes(name))).toEqual([]);
-  const ids = (await rowsOf(list).locator(':scope > td:nth-of-type(2)').allTextContents()).map((text) => text.trim());
+  const ids = await columnTexts(list, 2);
   expect(ids.length).toBe(all.length);
   expect(new Set(ids).size).toBe(ids.length);
 });
@@ -178,9 +177,7 @@ test('studio.apigateway-create-rest-and-http-apis', async ({ ctx, page }) => {
   await expect(page).toHaveURL(at(v2ApiPath(madeHttp[0]!.ApiId!)));
   const stages = (await f.v2.getStages({ ApiId: madeHttp[0]!.ApiId! })).Items!;
   expect(stages.map((stage) => [stage.StageName, stage.AutoDeploy])).toEqual([['$default', true]]);
-  const stageRow = cellsOf(rowNamed(tableOf(page, 'Stages'), '$default'));
-  await expect(stageRow.nth(1)).toHaveText('$default');
-  await expect(stageRow.nth(2)).toHaveText('On');
+  await expect(await cellOf(tableOf(page, 'Stages'), '$default', 2)).toHaveText('On');
 });
 
 test('studio.apigateway-delete-apis-from-the-list', async ({ ctx, page }) => {
@@ -200,18 +197,18 @@ test('studio.apigateway-delete-apis-from-the-list', async ({ ctx, page }) => {
   await confirmDeleteApi(page, rest.name!);
   await expect(dialog(page)).toBeHidden();
   await expectResult(page, `API ${rest.name!} deleted.`);
-  await expect(rowNamed(list, rest.name!)).toHaveCount(0);
+  await expectNamed(list, rest.name!, 0);
   await expect(f.rest.getRestApi({ restApiId: rest.id! })).rejects.toMatchObject({ name: 'NotFoundException' });
 
-  await expect(rowNamed(list, http.Name!)).toHaveCount(1);
+  await expectNamed(list, http.Name!, 1);
   await selectRow(list, http.Name!);
   await confirmDeleteApi(page, http.Name!);
   await expect(dialog(page)).toBeHidden();
   await expectResult(page, `API ${http.Name!} deleted.`);
-  await expect(rowNamed(list, http.Name!)).toHaveCount(0);
+  await expectNamed(list, http.Name!, 0);
   await expect(f.v2.getApi({ ApiId: http.ApiId! })).rejects.toMatchObject({ name: 'NotFoundException' });
 
-  await expect(rowNamed(list, gone.name!)).toHaveCount(1);
+  await expectNamed(list, gone.name!, 1);
   await selectRow(list, gone.name!);
   await button(page, 'Delete').click();
   await expect(dialog(page)).toBeVisible();
@@ -224,7 +221,7 @@ test('studio.apigateway-delete-apis-from-the-list', async ({ ctx, page }) => {
   );
   await dialogContent(page).getByRole('textbox').fill(gone.name!);
   await button(dialog(page), 'Delete').click();
-  const refusal = dialogContent(page).getByRole('alert');
+  const refusal = alertIn(dialogContent(page));
   await expect(refusal).toContainText('DeleteRestApi');
   await expect(refusal).toContainText(reason);
   await expect(dialog(page)).toBeVisible();

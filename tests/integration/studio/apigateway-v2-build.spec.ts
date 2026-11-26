@@ -32,8 +32,6 @@ import {
 } from './services/apigateway/apigateway';
 import type { Page } from '@playwright/test';
 
-/** A cell the scenario says nothing of: the selection control. */
-const ANY = /[\s\S]*/;
 const address = (name: string) => `http://127.0.0.1:1/${name}`;
 
 /** The API's screen as Create route leaves it: its "Routes" part asked for. */
@@ -109,7 +107,7 @@ test('studio.apigateway-build-an-http-api-with-a-lambda-route', async ({ ctx, pa
   const shownIntegrations = tableOf(page, 'Integrations');
   for (const part of [routes, shownIntegrations]) await expect(loadingOf(part)).toHaveCount(0);
   await expect(rowsOf(routes)).toHaveCount(1);
-  await expectRow(routes, 'GET /hello', [ANY, 'GET /hello', authorization, 'Lambda function', fn.arn]);
+  await expectRow(routes, 'GET /hello', ['GET /hello', authorization, 'Lambda function', fn.arn]);
   await expect(rowsOf(shownIntegrations)).toHaveCount(1);
   await expectRow(shownIntegrations, integrationId, [integrationId, 'AWS_PROXY', fn.arn, '2.0', 'GET /hello']);
 

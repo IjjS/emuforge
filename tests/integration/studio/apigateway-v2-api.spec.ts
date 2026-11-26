@@ -25,7 +25,7 @@ import {
   pairValue,
   radioOf,
   refusalOf,
-  rowNamed,
+  expectNamed,
   rowsOf,
   selectRow,
   tableOf,
@@ -37,8 +37,8 @@ import type { Page } from '@playwright/test';
 
 test.use({ timezoneId: SEOUL.timeZone });
 
-/** A cell the scenario says nothing of: a selection control, a deployment's ID, a date. */
-const ANY = /[\s\S]*/;
+/** A cell the scenario says nothing of: a deployment's ID, a date. */
+const ANY = null;
 const address = (name: string) => `http://127.0.0.1:1/${name}`;
 
 /** A WebSocket API named `name` made outside with a `$connect` route to a mock integration and the stage `prod`. */
@@ -118,9 +118,8 @@ test('studio.apigateway-v2-api-page-shows-routes-integrations-stages', async ({ 
   const parts = await partsRead(page);
 
   await expect(rowsOf(parts.routes)).toHaveCount(2);
-  await expectRow(parts.routes, 'GET /one', [ANY, 'GET /one', authorization('GET /one'), 'Lambda function', fn.arn]);
+  await expectRow(parts.routes, 'GET /one', ['GET /one', authorization('GET /one'), 'Lambda function', fn.arn]);
   await expectRow(parts.routes, '$default', [
-    ANY,
     '$default',
     authorization('$default'),
     'HTTP endpoint',
@@ -139,8 +138,8 @@ test('studio.apigateway-v2-api-page-shows-routes-integrations-stages', async ({ 
   expect(reported(http).IntegrationType).toBe('HTTP_PROXY');
 
   await expect(rowsOf(parts.stages)).toHaveCount(2);
-  await expectRow(parts.stages, '$default', [ANY, '$default', 'On', ANY, ANY, endpoint]);
-  await expectRow(parts.stages, 'dev', [ANY, 'dev', 'Off', ANY, ANY, `${endpoint}/dev`]);
+  await expectRow(parts.stages, '$default', ['$default', 'On', ANY, ANY, endpoint]);
+  await expectRow(parts.stages, 'dev', ['dev', 'Off', ANY, ANY, `${endpoint}/dev`]);
   await expect(link(parts.routes, 'Create route')).toBeVisible();
   await expect(button(parts.stages, 'Create stage')).toBeVisible();
 
@@ -148,8 +147,8 @@ test('studio.apigateway-v2-api-page-shows-routes-integrations-stages', async ({ 
   await expect(pageHeading(page)).toHaveText(ws.Name!);
   await expect.poll(() => pairValue(containerOf(page, 'Details'), 'Protocol')).toBe('WebSocket');
   const wsParts = await partsRead(page);
-  await expect(rowNamed(wsParts.routes, '$connect')).toHaveCount(1);
-  await expect(rowNamed(wsParts.stages, 'prod')).toHaveCount(1);
+  await expectNamed(wsParts.routes, '$connect', 1);
+  await expectNamed(wsParts.stages, 'prod', 1);
   await expect(link(page, 'Create route')).toHaveCount(0);
   await expect(button(page, 'Create route')).toHaveCount(0);
   await expect(button(page, 'Create stage')).toHaveCount(0);
@@ -220,7 +219,7 @@ test('studio.apigateway-v2-api-changes-and-cleanup', async ({ ctx, page }) => {
   await openCreateStage(parts.stages);
   await expect(dialog(page)).toBeHidden();
   await expectResult(page, 'Stage dev created.');
-  await expectRow(parts.stages, 'dev', [ANY, 'dev', 'Off', ANY, ANY, ANY]);
+  await expectRow(parts.stages, 'dev', ['dev', 'Off', ANY, ANY, ANY]);
   const undeployed = await f.callHttpApi(ApiId, '/dev/a');
   expect(undeployed.status).toBeGreaterThanOrEqual(400);
   expect(undeployed.location).toBeUndefined();
@@ -247,12 +246,12 @@ test('studio.apigateway-v2-api-changes-and-cleanup', async ({ ctx, page }) => {
   await expect(dialog(page)).toBeHidden();
 
   await deleteRoute(parts.routes, 'GET /a', ofA);
-  await expect(rowNamed(parts.routes, 'GET /a')).toHaveCount(0);
+  await expectNamed(parts.routes, 'GET /a', 0);
   expect(await routeKeys(ApiId)).toEqual(['GET /b']);
   expect(await integrationIds(ApiId)).toEqual([ofB]);
 
   await deleteStage(parts.stages, 'dev');
-  await expect(rowNamed(parts.stages, 'dev')).toHaveCount(0);
+  await expectNamed(parts.stages, 'dev', 0);
   expect(await stageNames(ApiId)).toEqual(['$default']);
 
   await page.goto(v2ApiPath(ws.ApiId!));

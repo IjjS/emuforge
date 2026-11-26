@@ -8,7 +8,11 @@ import {
   APIS,
   at,
   button,
-  cellsOf,
+  cellOf,
+  expandHeader,
+  expectNamed,
+  pairGroups,
+  responsesOf,
   confirmDelete,
   containerOf,
   dateText,
@@ -34,7 +38,6 @@ import {
   resourcesPart,
   restApiPath,
   rootId,
-  rowNamed,
   rowsOf,
   sel,
   selectRow,
@@ -94,21 +97,25 @@ test('studio.apigateway-rest-api-page-shows-what-it-serves', async ({ ctx, page 
   ]);
   await shownMethod('/items/{id}', 'DELETE', ['NONE', 'No', 'No integration']);
 
-  const stage = cellsOf(rowNamed(tableOf(page, 'Stages'), 'dev'));
-  await expect(stage.nth(1)).toHaveText('dev');
-  await expect(stage.nth(2)).toHaveText(deployment.id!);
-  await expect(stage.nth(4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
+  const stages = tableOf(page, 'Stages');
+  await expect(await cellOf(stages, 'dev', 2)).toHaveText(deployment.id!);
+  await expect(await cellOf(stages, 'dev', 4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
 
   const get = methodOf(resourceOf(page, '/items'), 'GET');
+  await expect(expandHeader(get)).toHaveText('Responses');
   await expandControl(get).click();
-  await expectPairs(get, [
-    ['Authorization', 'NONE'],
-    ['API key required', 'No'],
-    ['Integration', 'Mock'],
-    ['Status code', '200'],
-    ['Status code', '200'],
-  ]);
-  await expect(get.locator('pre')).toHaveText(template);
+  // The opened section reads, in order: the method responses with their one code, then the integration responses
+  // with their one code and its template. Each code is in a group of its own, and the template comes after the
+  // integration response's.
+  const responses = responsesOf(get);
+  const oneCode = /^\s*Status code\s*200\s*$/;
+  await expect(pairGroups(responses)).toHaveText([oneCode, oneCode]);
+  await expect(responses.locator('pre')).toHaveText(template);
+  await expect(responses).toHaveText(
+    new RegExp(
+      `^\\s*Method responses\\s*Status code\\s*200\\s*Integration responses\\s*Status code\\s*200\\s*application/json\\s*${escapeText(template)}\\s*$`,
+    ),
+  );
 
   const missing = 'nope000000';
   await expect(f.rest.getRestApi({ restApiId: missing })).rejects.toMatchObject({ name: 'NotFoundException' });
@@ -128,7 +135,8 @@ test('studio.apigateway-test-a-method-shows-answer-and-log', async ({ ctx, page 
   await putMockMethod(f.rest, id, echo.id!, 'GET', known);
   await f.rest.putMethod({ restApiId: id, resourceId: echo.id!, httpMethod: 'POST', authorizationType: 'NONE' });
   const anyResource = await f.rest.createResource({ restApiId: id, parentId: root, pathPart: 'any' });
-  await putMockMethod(f.rest, id, anyResource.id!, 'ANY', known);
+  const anyKnown = `{"any": "${f.prefix}"}`;
+  await putMockMethod(f.rest, id, anyResource.id!, 'ANY', anyKnown);
   const privateResource = await f.rest.createResource({ restApiId: id, parentId: root, pathPart: 'private' });
   const privateGet = { restApiId: id, resourceId: privateResource.id!, httpMethod: 'GET' };
   await f.rest.putMethod({ ...privateGet, authorizationType: 'NONE' });
@@ -171,12 +179,13 @@ test('studio.apigateway-test-a-method-shows-answer-and-log', async ({ ctx, page 
   await expect(panel.locator(sel(ui.findSelect()))).toHaveCount(0);
   await expect(panel.getByRole('radio')).toHaveCount(0);
   await button(panel, 'Test').click();
+  await expect(panel.locator('pre').nth(0)).toHaveText(anyKnown);
   await answered('200');
 
   await button(methodOf(resourceOf(page, '/echo'), 'POST'), 'Test').click();
   await expect.poll(() => pairValue(panel, 'Method')).toBe('POST');
   await button(panel, 'Test').click();
-  const refused = panel.getByRole('alert');
+  const refused = alertIn(panel);
   await expect(refused).toContainText('TestInvokeMethod');
   await expect(refused).toContainText(refusal);
 
@@ -244,7 +253,7 @@ test('studio.apigateway-rest-api-changes-and-cleanup', async ({ ctx, page }) => 
   await confirmDelete(page, 'Delete stage old?', 'old');
   await expect(dialog(page)).toBeHidden();
   await expectResult(page, 'Stage old deleted.');
-  await expect(rowNamed(stages, 'old')).toHaveCount(0);
+  await expectNamed(stages, 'old', 0);
   expect(((await f.rest.getStages({ restApiId: id })).item ?? []).map((stage) => stage.stageName)).toEqual(['dev']);
 
   await expectUnavailable(button(resourceOf(page, '/'), 'Delete'), 'The root resource cannot be deleted.');

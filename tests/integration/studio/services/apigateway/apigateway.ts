@@ -34,7 +34,7 @@ export type Fixture = Awaited<ReturnType<typeof fixture>>;
 /**
  * Starts the check's stack on the run's emulator and gives its prefix `<p>` and the four direct clients. When the
  * check ends, every REST, HTTP and WebSocket API whose name starts with the prefix is deleted, made outside or by
- * Studio, and every function and role the check made.
+ * Studio, and every function and role the check made, each kind by a disposer of its own.
  */
 export async function fixture(ctx: Ctx) {
   const stack = await startStack(ctx);
@@ -60,6 +60,9 @@ export async function fixture(ctx: Ctx) {
   const functions: string[] = [];
   const roles: string[] = [];
 
+  // What the check owns is disposed of last registered first, and each on its own: a list or a deletion that fails
+  // stops none of the others. So the APIs go first, then the functions, then their roles, and the clients last.
+  const logged = (e: unknown) => ctx.log(`cleanup: ${String(e)}`);
   ctx.own({
     dispose: async () => {
       for (const client of [rest, v2, lambda, iam]) client.destroy();
@@ -67,18 +70,22 @@ export async function fixture(ctx: Ctx) {
   });
   ctx.own({
     dispose: async () => {
-      for (const api of await restApisNamed(rest, prefix)) {
-        await rest.deleteRestApi({ restApiId: api.id }).catch((e: unknown) => ctx.log(`cleanup: ${String(e)}`));
-      }
-      for (const api of await v2ApisNamed(v2, prefix)) {
-        await v2.deleteApi({ ApiId: api.ApiId }).catch((e: unknown) => ctx.log(`cleanup: ${String(e)}`));
-      }
-      for (const name of functions) {
-        await lambda.deleteFunction({ FunctionName: name }).catch((e: unknown) => ctx.log(`cleanup: ${String(e)}`));
-      }
-      for (const name of roles) {
-        await iam.deleteRole({ RoleName: name }).catch((e: unknown) => ctx.log(`cleanup: ${String(e)}`));
-      }
+      for (const name of roles) await iam.deleteRole({ RoleName: name }).catch(logged);
+    },
+  });
+  ctx.own({
+    dispose: async () => {
+      for (const name of functions) await lambda.deleteFunction({ FunctionName: name }).catch(logged);
+    },
+  });
+  ctx.own({
+    dispose: async () => {
+      for (const api of await v2ApisNamed(v2, prefix)) await v2.deleteApi({ ApiId: api.ApiId }).catch(logged);
+    },
+  });
+  ctx.own({
+    dispose: async () => {
+      for (const api of await restApisNamed(rest, prefix)) await rest.deleteRestApi({ restApiId: api.id }).catch(logged);
     },
   });
 
@@ -399,27 +406,70 @@ export const emptyOf = (tableRoot: Locator) => tableRoot.locator(below(table, ta
 /** The table's loading text, gone once the list is read. */
 export const loadingOf = (tableRoot: Locator) => tableRoot.locator(below(table, table.findLoadingText()));
 
-/** The cells of one row in the columns' order, the row header (`th`) counted with the others (`td`). */
-export const cellsOf = (row: Locator) => row.locator(':scope > th, :scope > td');
-
-/** The row whose row header cell is exactly `name`. */
-export function rowNamed(tableRoot: Locator, name: string): Locator {
-  return rowsOf(tableRoot).filter({
-    has: tableRoot.page().locator('th').filter({ hasText: new RegExp(`^${escapeText(name)}$`) }),
-  });
+/** Whether the table's rows begin with a selection control, which Cloudscape counts as the first column. */
+async function selectionColumns(tableRoot: Locator): Promise<number> {
+  return (await tableRoot.locator(below(table, table.findRowSelectionArea(1))).count()) > 0 ? 1 : 0;
 }
 
-/** The text of every cell of the row named `name`, a selection cell included when the table has one. */
-export async function expectRow(tableRoot: Locator, name: string, cells: (string | RegExp)[]): Promise<void> {
-  await expect(cellsOf(rowNamed(tableRoot, name))).toHaveText(cells);
+/**
+ * The body cell of the row `row` in the data column `column`, both counted from 1; a selection column is not a
+ * data column, so column 1 is the row's name in every table of the service.
+ */
+async function cellAt(tableRoot: Locator, row: number, column: number): Promise<Locator> {
+  return tableRoot.locator(below(table, table.findBodyCell(row, column + (await selectionColumns(tableRoot)))));
+}
+
+/** The text of the data column `column` in every row now, top to bottom. */
+export async function columnTexts(tableRoot: Locator, column: number): Promise<string[]> {
+  const offset = await selectionColumns(tableRoot);
+  const count = await rowsOf(tableRoot).count();
+  const texts: string[] = [];
+  for (let row = 1; row <= count; row++) {
+    const cell = tableRoot.locator(below(table, table.findBodyCell(row, column + offset)));
+    texts.push(((await cell.textContent()) ?? '').trim());
+  }
+  return texts;
+}
+
+/** The place, from 1, of the one row whose name is exactly `name`; waits until the table shows it. */
+async function rowIndexOf(tableRoot: Locator, name: string): Promise<number> {
+  let places: number[] = [];
+  await expect
+    .poll(async () => {
+      const names = await columnTexts(tableRoot, 1);
+      places = names.flatMap((shown, at) => (shown === name ? [at + 1] : []));
+      return places.length;
+    }, `the rows named "${name}"`)
+    .toBe(1);
+  return places[0]!;
+}
+
+/** The table shows `count` rows whose name is exactly `name`. */
+export async function expectNamed(tableRoot: Locator, name: string, count: number): Promise<void> {
+  await expect
+    .poll(async () => (await columnTexts(tableRoot, 1)).filter((shown) => shown === name).length, `rows named "${name}"`)
+    .toBe(count);
+}
+
+/** The cell of the row named `name` in the data column `column` (1 is the name). */
+export async function cellOf(tableRoot: Locator, name: string, column: number): Promise<Locator> {
+  return cellAt(tableRoot, await rowIndexOf(tableRoot, name), column);
+}
+
+/** The text of every data cell of the row named `name`, in the columns' order; `null` for a cell left unread. */
+export async function expectRow(tableRoot: Locator, name: string, cells: (string | RegExp | null)[]): Promise<void> {
+  const row = await rowIndexOf(tableRoot, name);
+  for (const [at, text] of cells.entries()) {
+    if (text !== null) await expect(await cellAt(tableRoot, row, at + 1), `column ${String(at + 1)} of "${name}"`).toHaveText(text);
+  }
+  // The row has no further data cell.
+  await expect(await cellAt(tableRoot, row, cells.length + 1)).toHaveCount(0);
 }
 
 /** Selects the row named `name` with the table's own selection control. */
 export async function selectRow(tableRoot: Locator, name: string): Promise<void> {
-  const row = rowNamed(tableRoot, name);
-  await expect(row).toHaveCount(1);
-  const index = await row.evaluate((node) => (node as HTMLTableRowElement).sectionRowIndex + 1);
-  await tableRoot.locator(below(table, table.findRowSelectionArea(index))).click();
+  const row = await rowIndexOf(tableRoot, name);
+  await tableRoot.locator(below(table, table.findRowSelectionArea(row))).click();
 }
 
 /** `text` as a pattern that matches it literally. */
@@ -689,3 +739,10 @@ export function refusalOf(call: Promise<unknown>, accepted: string): Promise<str
     (e: Error) => e.message,
   );
 }
+
+/** The opened "Responses" of a method: the content of its one expandable section. */
+export const responsesOf = (method: Locator) => method.locator(sel(ui.findExpandableSection().findContent()));
+/** The header of a method's one expandable section. */
+export const expandHeader = (method: Locator) => method.locator(sel(ui.findExpandableSection().findHeader()));
+/** The key and value groups drawn below `scope`, in order. */
+export const pairGroups = (scope: Locator) => scope.locator(sel(ui.findKeyValuePairs()));
