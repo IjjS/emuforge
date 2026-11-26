@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { getV2Api, readV2Integrations, readV2Routes, readV2Stages } from './v2-api';
+import { GET_STAGES, getV2Api, readV2Integrations, readV2Routes, readV2Stages } from './v2-api';
 import { useV2Api, useV2Integrations, useV2Routes, useV2Stages } from './v2-queries';
 import { createV2Stage, deleteV2Stage, deployV2Stage } from './v2-stage-api';
 import { useCreateV2Stage, useDeleteV2Stage, useDeployV2Stage } from './v2-stage-queries';
@@ -86,6 +86,39 @@ it.each(actions)('refreshes only the stages after %s succeeds', async (action) =
   expect(api).toHaveBeenCalledOnce();
   expect(routes).toHaveBeenCalledOnce();
   expect(integrations).toHaveBeenCalledOnce();
+});
+
+it('removes the confirmed deletion after a failed refresh and retries only the first page', async () => {
+  const success = vi.fn();
+  const remaining = { StageName: 'prod' };
+  stages
+    .mockResolvedValueOnce({ items: [present], next: 'old-page-2' })
+    .mockResolvedValueOnce({ items: [remaining], next: 'old-page-3' })
+    .mockRejectedValueOnce(new Error('Stage refresh refused'))
+    .mockResolvedValueOnce({ items: [], next: 'new-page-2' });
+
+  const { result, submit } = await open(success);
+  act(() => result.current.stages.loadMore());
+  await waitFor(() => expect(result.current.stages.items).toEqual([present, remaining]));
+  expect(stages).toHaveBeenNthCalledWith(2, endpoint, id, 'old-page-2', expect.any(AbortSignal));
+
+  submit('delete');
+  await waitFor(() => {
+    expect(result.current.stages.failure).toMatchObject({ kind: 'other', operation: GET_STAGES });
+    expect(result.current.stages.items).toEqual([remaining]);
+    expect(result.current.stages.more).toBe(false);
+  });
+  expect(success).toHaveBeenCalledExactlyOnceWith('dev');
+  expect(stages).toHaveBeenNthCalledWith(3, endpoint, id, undefined, expect.any(AbortSignal));
+
+  act(() => result.current.stages.retry());
+  await waitFor(() => {
+    expect(result.current.stages.items).toEqual([]);
+    expect(result.current.stages.failure).toBeUndefined();
+    expect(result.current.stages.more).toBe(true);
+  });
+  expect(stages).toHaveBeenCalledTimes(4);
+  expect(stages).toHaveBeenNthCalledWith(4, endpoint, id, undefined, expect.any(AbortSignal));
 });
 
 it.each(actions)('does not refresh any reads after %s fails', async (action) => {
