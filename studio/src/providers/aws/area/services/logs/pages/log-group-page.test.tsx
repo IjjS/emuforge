@@ -99,6 +99,16 @@ const tags = vi.mocked(listLogGroupTags);
 const streams = vi.mocked(listLogStreams);
 const found = { kind: 'found', group: { logGroupName: group, logGroupClass: 'STANDARD' } } as const;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listLogGroups).mockResolvedValue({ items: [] });
@@ -243,8 +253,8 @@ function HeldPage({ flash }: { flash: PageFlash }) {
 }
 
 it('still hands over the result if an outstanding group read finds the deleted group missing before navigation', async () => {
-  const oldRead = Promise.withResolvers<LogGroupRead>();
-  const write = Promise.withResolvers<void>();
+  const oldRead = deferred<LogGroupRead>();
+  const write = deferred<undefined>();
   read.mockResolvedValueOnce(found).mockReturnValueOnce(oldRead.promise);
   deleteGroup.mockReturnValueOnce(write.promise);
   const handOver = vi.fn<PageFlash['handOver']>();
@@ -265,7 +275,7 @@ it('still hands over the result if an outstanding group read finds the deleted g
   await act(async () => oldRead.resolve({ kind: 'not-found' }));
   await waitFor(() => expect(client.getQueryData(readKey(client))).toEqual({ kind: 'not-found' }));
   expect(screen.queryByText('Log group not found')).not.toBeInTheDocument();
-  await act(async () => write.resolve());
+  await act(async () => write.resolve(undefined));
   expect(handOver).toHaveBeenCalledWith(LOG_GROUPS_PATH, [expect.objectContaining({ type: 'success' })]);
   expect(screen.queryByText('Log group not found')).not.toBeInTheDocument();
   expect(read).toHaveBeenCalledTimes(2);
@@ -288,10 +298,10 @@ it.each(
 )(
   'keeps the %s result and closes its dialog when the new group read %s after the tags',
   async (setting, outcome, result) => {
-    const oldRead = Promise.withResolvers<LogGroupRead>();
-    const newRead = Promise.withResolvers<LogGroupRead>();
-    const newTags = Promise.withResolvers<Record<string, string>>();
-    const write = Promise.withResolvers<{ $metadata: object }>();
+    const oldRead = deferred<LogGroupRead>();
+    const newRead = deferred<LogGroupRead>();
+    const newTags = deferred<Record<string, string>>();
+    const write = deferred<{ $metadata: object }>();
     read.mockResolvedValueOnce(original).mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
     tags.mockResolvedValueOnce({ team: 'old-team' }).mockReturnValueOnce(newTags.promise);
     if (setting === 'retention') putRetention.mockReturnValueOnce(write.promise);
@@ -365,9 +375,9 @@ const readOrders = ['tags first', 'streams first', 'tags fail', 'group fails'] a
 it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, order] as const)))(
   'keeps the create hand-over (partial = %s) when %s',
   async (partial, order) => {
-    const groupRead = Promise.withResolvers<LogGroupRead>();
-    const tagsRead = Promise.withResolvers<Record<string, string>>();
-    const streamsRead = Promise.withResolvers<Awaited<ReturnType<typeof listLogStreams>>>();
+    const groupRead = deferred<LogGroupRead>();
+    const tagsRead = deferred<Record<string, string>>();
+    const streamsRead = deferred<Awaited<ReturnType<typeof listLogStreams>>>();
     const result = partial
       ? `Log group ${group} created, but its retention was not set.`
       : `Log group ${group} created.`;

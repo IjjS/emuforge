@@ -253,12 +253,16 @@ it.each(['refused', '501'])('keeps the details when a protection switch is %s', 
 });
 
 it('keeps Manage tags unavailable while the tags are loading or failed', async () => {
-  const tags = Promise.withResolvers<Record<string, string>>();
-  read.mockReturnValueOnce(tags.promise);
+  let refuseTags!: (error: RequestError) => void;
+  read.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      refuseTags = reject;
+    }),
+  );
   renderDetails();
   expect(screen.getByRole('button', { name: 'Manage tags' })).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByText('Loading tags')).toBeVisible();
-  tags.reject(
+  refuseTags(
     new RequestError({
       kind: 'other',
       operation,

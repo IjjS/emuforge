@@ -1,5 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+  type BoundFunctions,
+  type queries,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -24,6 +33,16 @@ const name = '/app#Group';
 const listTags = vi.mocked(listLogGroupTags);
 const initial = { a: 'one', b: 'two' };
 const headers = { 'content-type': 'application/x-amz-json-1.1' };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -78,19 +97,22 @@ async function open() {
   return { element, dialog, save: dialog.getByRole('button', { name: 'Save' }) };
 }
 
-function addTag(dialog: ReturnType<typeof within>, key: string, value: string) {
+function addTag(dialog: BoundFunctions<typeof queries>, key: string, value: string) {
   fireEvent.click(dialog.getByRole('button', { name: 'Add tag' }));
   const inputs = dialog.getAllByRole('textbox');
-  fireEvent.change(inputs.at(-2)!, { target: { value: key } });
-  fireEvent.change(inputs.at(-1)!, { target: { value } });
+  const keyInput = inputs.at(-2);
+  const valueInput = inputs.at(-1);
+  if (keyInput === undefined || valueInput === undefined) throw new Error('Tag fields were not found.');
+  fireEvent.change(keyInput, { target: { value: key } });
+  fireEvent.change(valueInput, { target: { value } });
 }
 
-function replaceA(dialog: ReturnType<typeof within>) {
+function replaceA(dialog: BoundFunctions<typeof queries>) {
   fireEvent.click(dialog.getByRole('button', { name: 'Remove tag a' }));
   addTag(dialog, 'c', 'refused');
 }
 
-function expectDraftKept(dialog: ReturnType<typeof within>) {
+function expectDraftKept(dialog: BoundFunctions<typeof queries>) {
   expect(dialog.getAllByRole('textbox').map((input) => (input as HTMLInputElement).value)).toEqual([
     'b',
     'two',
@@ -132,8 +154,8 @@ it('keeps the draft and stops before the tag call when untag is refused', async 
 
 it('blocks save after a partial write until a retry reads fresh tags, then saves only the remaining change', async () => {
   const sent = writes([200, 400, 200]);
-  const tagRead = Promise.withResolvers<Record<string, string>>();
-  const retry = Promise.withResolvers<Record<string, string>>();
+  const tagRead = deferred<Record<string, string>>();
+  const retry = deferred<Record<string, string>>();
   listTags
     .mockResolvedValueOnce(initial)
     .mockReturnValueOnce(tagRead.promise)
