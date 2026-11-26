@@ -16,8 +16,7 @@ import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { multilineStreamLabel } from '../choices';
-import { logStreamPath, streamNameForDisplay } from '../format';
+import { logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
 import { DESCRIBE_LOG_STREAMS, listLogStreams } from '../stream-api';
 
 function dateCell(time: number | undefined) {
@@ -74,9 +73,7 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
           ariaLabels: {
             selectionGroupLabel: 'Log stream selection',
             itemSelectionLabel: (_, { logStreamName }) =>
-              logStreamName === undefined
-                ? 'Unnamed log stream'
-                : (multilineStreamLabel(logStreamName) ?? logStreamName),
+              logStreamName === undefined ? 'Unnamed log stream' : streamNameLabel(logStreamName),
           },
         })}
         wrapLines
@@ -111,17 +108,17 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
             minWidth: '28ch',
             cell: ({ logStreamName }) => {
               if (logStreamName === undefined) return '-';
-              const label = multilineStreamLabel(logStreamName);
+              const displayName = streamNameForDisplay(logStreamName);
               return (
                 <Link
                   href={logStreamPath(group, logStreamName)}
                   onFollow={follow}
-                  {...(label !== undefined && {
-                    ariaLabel: label,
+                  ariaLabel={streamNameLabel(logStreamName)}
+                  {...(displayName.includes('\n') && {
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
-                  <ValueText kind="name" value={streamNameForDisplay(logStreamName)} />
+                  <ValueText kind="name" value={displayName} />
                 </Link>
               );
             },

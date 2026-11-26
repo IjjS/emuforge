@@ -2,13 +2,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import {
-  modal as openModal,
-  modalInput,
-  modalButton,
-  modalAlert,
-  expectModalAlert,
-} from '../../../../../../test/logs-test-utils';
+import { modal as openModal, modalInput, modalButton, modalAlert, expectModalAlert } from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { CREATE_LOG_STREAM, createLogStream } from '../stream-change-api';

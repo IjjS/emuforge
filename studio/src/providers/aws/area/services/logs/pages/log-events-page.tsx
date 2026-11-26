@@ -25,9 +25,9 @@ import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { logGroupChoices, logStreamChoices, multilineStreamLabel } from '../choices';
+import { logGroupChoices, logStreamChoices } from '../choices';
 import { EventMessage } from '../components/event-message';
-import { logStreamPath, streamNameForDisplay } from '../format';
+import { logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
 import { FILTER_LOG_EVENTS, filterLogEvents } from '../search-api';
 import { searchRequest, type SearchForm, type SearchRequest, type SearchTime } from '../search-form';
 
@@ -140,17 +140,17 @@ function SearchResults({
             header: 'Log stream',
             cell: ({ logStreamName }) => {
               if (logStreamName === undefined) return '-';
-              const label = multilineStreamLabel(logStreamName);
+              const displayName = streamNameForDisplay(logStreamName);
               return (
                 <Link
                   href={logStreamPath(request.logGroupName, logStreamName)}
                   onFollow={follow}
-                  {...(label !== undefined && {
-                    ariaLabel: label,
+                  ariaLabel={streamNameLabel(logStreamName)}
+                  {...(displayName.includes('\n') && {
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
-                  <ValueText kind="name" value={streamNameForDisplay(logStreamName)} />
+                  <ValueText kind="name" value={displayName} />
                 </Link>
               );
             },

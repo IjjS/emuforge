@@ -19,7 +19,7 @@ import {
   modalInputByValue,
   tableByHeading,
   waitForLink,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
 import { areaPage, areaPageTitle } from '../../../area-page';
@@ -110,6 +110,7 @@ const failures: [string, RequestFailure, AreaConnection['result'], string][] = [
 const group = '/app#Group';
 const path = '/aws/logs/log-groups/group/%2Fapp%23Group';
 const streamTable = () => tableByHeading('Log streams');
+const groupHeading = () => aws().findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
 const groupReadBody = () => aws().findContentLayout()?.findContent().findContainer()?.findContent();
 const read = vi.mocked(getLogGroup);
 const tags = vi.mocked(listLogGroupTags);
@@ -183,7 +184,9 @@ it('opens the address by group name, uses it for the title and crumb, and shows 
   const { route, resources } = renderPage();
   expect(areaPageTitle(route)).toBe(group);
   expect(screenCrumbs(route.screen, route.params, new URLSearchParams()).at(-1)).toEqual({ text: group });
-  expect(screen.getByRole('heading', { level: 1, name: group })).toBeVisible();
+  const heading = groupHeading();
+  expect(heading).toBeVisible();
+  expect(heading?.textContent).toBe(group);
   expect(resources).toHaveBeenCalledWith({ word: 'log streams' });
   await waitFor(() => {
     const value = detailValue('Class');
@@ -314,7 +317,9 @@ it('hands the deletion result to Log groups without restarting the deleted group
   read.mockResolvedValueOnce(found);
   openLayout();
   await startDelete();
-  expect(await screen.findByRole('heading', { level: 1, name: 'Log groups' })).toBeVisible();
+  await waitFor(() =>
+    expect(tableByHeading('Log groups')?.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toBeVisible(),
+  );
   expect(flash()?.getElement()).toHaveTextContent(`Log group ${group} deleted.`);
   expect(deleteGroup).toHaveBeenCalledWith(engineOrigin, group, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(1);
@@ -501,7 +506,11 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
     }
     fireEvent.click(screen.getByRole('button', { name: 'Create log group' }));
 
-    expect(await screen.findByRole('heading', { level: 1, name: group })).toBeVisible();
+    await waitFor(() => {
+      const heading = groupHeading();
+      expect(heading).toBeVisible();
+      expect(heading?.textContent).toBe(group);
+    });
     const loading = groupReadBody()?.findStatusIndicator()?.getElement();
     expect(loading).toBeVisible();
     expect(loading).toHaveTextContent('Loading log group');
@@ -528,7 +537,18 @@ it.each([false, true].flatMap((partial) => readOrders.map((order) => [partial, o
       expect(streams).not.toHaveBeenCalled();
     } else {
       await act(async () => groupRead.resolve(found));
-      await screen.findByRole('heading', { name: 'Details' });
+      await waitFor(() => {
+        const heading = aws()
+          .findContentLayout()
+          ?.findContent()
+          .findContainer()
+          ?.findHeader()
+          ?.findHeader()
+          ?.findHeadingText()
+          .getElement();
+        expect(heading).toBeVisible();
+        expect(heading?.textContent).toBe('Details');
+      });
       expect(notification).toHaveTextContent(result);
       if (order === 'streams first') {
         await act(async () => streamsRead.resolve({ items: [{ logStreamName: 'first-stream' }] }));

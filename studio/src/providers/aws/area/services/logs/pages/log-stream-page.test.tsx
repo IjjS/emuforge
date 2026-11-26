@@ -12,7 +12,7 @@ import {
   modal as openModal,
   modalAlert,
   requiredElement,
-} from '../../../../../../test/logs-test-utils';
+} from '../logs-test-utils.test';
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -116,9 +116,11 @@ it.each([
   },
 ])('uses decoded names, a group crumb and a log events notice at $path', async ({ path, group, stream, groupHref }) => {
   read.mockResolvedValueOnce(page(['event']));
-  const { resources, params } = renderPage(CONNECTED, path);
+  const { resources, params, container } = renderPage(CONNECTED, path);
   await waitForMessage('event');
-  expect(screen.getByRole('heading', { level: 1, name: stream })).toBeVisible();
+  const heading = createWrapper(container).findHeader()?.findHeadingText().getElement();
+  expect(heading).toBeVisible();
+  expect(heading?.textContent).toBe(stream);
   expect(resources).toHaveBeenCalledWith({ word: 'log events' });
   expect(read).toHaveBeenCalledWith(ENGINE, group, stream, { kind: 'newest' }, expect.any(AbortSignal));
   const [registration] = SCREENS;
@@ -138,10 +140,14 @@ it.each([
   ['%250D%250A', '\r\n'],
 ])('preserves the line break in the heading and sends the decoded name from %s', async (encoded, lineBreak) => {
   read.mockResolvedValueOnce(page([]));
-  renderPage(CONNECTED, `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`);
+  const { container } = renderPage(
+    CONNECTED,
+    `/aws/logs/log-groups/group/%2Fapp%23group/stream/**multiline${encoded}worker`,
+  );
 
-  expect(aws().findHeader()?.find('h1')?.getElement()).toHaveAccessibleName('multiline\nworker');
-  const name = aws().findHeader()?.findHeadingText().find('span[style]')?.getElement();
+  const heading = createWrapper(container).findHeader()?.findHeadingText();
+  expect(heading?.getElement().closest('h1')).toHaveAccessibleName('multiline\nworker');
+  const name = heading?.find('span[style]')?.getElement();
   expect(name?.textContent).toBe('multiline\nworker');
   expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
   await waitFor(() => expect(emptyStream()).toBeVisible());

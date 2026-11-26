@@ -1,11 +1,13 @@
+import ContentLayout from '@cloudscape-design/components/content-layout';
+import Header from '@cloudscape-design/components/header';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { aws, buttonIn, modal as openModal, modalButton } from '../../../../../../test/logs-test-utils';
+import { aws, buttonIn, modal as openModal, modalButton } from '../logs-test-utils.test';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
@@ -57,7 +59,7 @@ function open() {
       <MemoryRouter initialEntries={[CREATE_LOG_GROUP_PATH]}>
         <Routes>
           <Route path={CREATE_LOG_GROUP_PATH} element={<FormInArea />} />
-          <Route path={LOG_GROUPS_PATH} element={<h1>Log groups</h1>} />
+          <Route path={LOG_GROUPS_PATH} element={<ContentLayout header={<Header variant="h1">Log groups</Header>} />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -65,6 +67,12 @@ function open() {
 }
 
 const page = createWrapper(document.body);
+
+function expectLogGroupsPage() {
+  const heading = page.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+  expect(heading).toBeVisible();
+  expect(heading?.textContent).toBe('Log groups');
+}
 
 function required<T>(control: T | null | undefined, label: string): T {
   if (control === null || control === undefined) throw new Error(`Control "${label}" was not found.`);
@@ -380,7 +388,7 @@ it('reports an invalid name and an invalid tag on their fields without sending a
 it('cancels an untouched form immediately', () => {
   open();
   cancel();
-  expect(screen.getByRole('heading', { name: 'Log groups' })).toBeVisible();
+  expectLogGroupsPage();
   expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
   expect(create).not.toHaveBeenCalled();
 });
@@ -397,7 +405,7 @@ it('offers to discard edits, keeps them on request and discards without sending 
   cancel();
   const reopened = await openModal('Discard what you entered?');
   fireEvent.click(modalButton(reopened, 'Discard'));
-  expect(screen.getByRole('heading', { name: 'Log groups' })).toBeVisible();
+  expectLogGroupsPage();
   expect(create).not.toHaveBeenCalled();
   expect(put).not.toHaveBeenCalled();
 });
