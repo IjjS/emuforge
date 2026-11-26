@@ -108,8 +108,10 @@ test('studio.apigateway-rest-api-page-shows-what-it-serves', async ({ ctx, page 
   // with their one code and its template. Each code is in a group of its own, and the template comes after the
   // integration response's.
   const responses = responsesOf(get);
+  await expect(responses).toBeVisible();
   const oneCode = /^\s*Status code\s*200\s*$/;
   await expect(pairGroups(responses)).toHaveText([oneCode, oneCode]);
+  await expect(responses.locator('pre')).toBeVisible();
   await expect(responses.locator('pre')).toHaveText(template);
   await expect(responses).toHaveText(
     new RegExp(

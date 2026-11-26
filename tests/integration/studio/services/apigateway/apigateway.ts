@@ -740,8 +740,11 @@ export function refusalOf(call: Promise<unknown>, accepted: string): Promise<str
   );
 }
 
-/** The opened "Responses" of a method: the content of its one expandable section. */
-export const responsesOf = (method: Locator) => method.locator(sel(ui.findExpandableSection().findContent()));
+/**
+ * The opened "Responses" of a method: the content of its one expandable section while it is expanded. A collapsed
+ * section keeps its content mounted, and this does not find it.
+ */
+export const responsesOf = (method: Locator) => method.locator(sel(ui.findExpandableSection().findExpandedContent()));
 /** The header of a method's one expandable section. */
 export const expandHeader = (method: Locator) => method.locator(sel(ui.findExpandableSection().findHeader()));
 /** The key and value groups drawn below `scope`, in order. */

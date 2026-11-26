@@ -91,8 +91,18 @@ test('studio.apigateway-v2-api-page-shows-routes-integrations-stages', async ({ 
   });
   const http = await makeHttpIntegration(f, ApiId, address('default'));
   const unused = await makeHttpIntegration(f, ApiId, address('unused'));
-  await f.v2.createRoute({ ApiId, RouteKey: 'GET /one', Target: `integrations/${lambda.IntegrationId!}` });
-  await f.v2.createRoute({ ApiId, RouteKey: '$default', Target: `integrations/${http}` });
+  await f.v2.createRoute({
+    ApiId,
+    RouteKey: 'GET /one',
+    AuthorizationType: 'NONE',
+    Target: `integrations/${lambda.IntegrationId!}`,
+  });
+  await f.v2.createRoute({
+    ApiId,
+    RouteKey: '$default',
+    AuthorizationType: 'AWS_IAM',
+    Target: `integrations/${http}`,
+  });
   await f.v2.createStage({ ApiId, StageName: '$default', AutoDeploy: true });
   await f.v2.createStage({ ApiId, StageName: 'dev', AutoDeploy: false });
   const ws = await makeWebSocketApi(f, `${f.prefix}-ws`);
@@ -103,7 +113,11 @@ test('studio.apigateway-v2-api-page-shows-routes-integrations-stages', async ({ 
   const routes = (await f.v2.getRoutes({ ApiId })).Items!;
   const integrations = (await f.v2.getIntegrations({ ApiId })).Items!;
   const reported = (id: string) => integrations.find((integration) => integration.IntegrationId === id)!;
-  const authorization = (key: string) => routes.find((route) => route.RouteKey === key)!.AuthorizationType ?? '-';
+  // Each route's authorization as the emulator reports it; the two differ, so a column that shows one value for
+  // every route does not pass.
+  const authorization = (key: string) => routes.find((route) => route.RouteKey === key)!.AuthorizationType!;
+  expect(authorization('GET /one')).toBe('NONE');
+  expect(authorization('$default')).toBe('AWS_IAM');
 
   await page.goto(v2ApiPath(ApiId));
   await expect(pageHeading(page)).toHaveText(api.Name!);
