@@ -13,11 +13,13 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
 import { registryFaults } from '../../../screens';
 import { createRoutePath, v2ApiPath } from '../format';
-import { createRoute } from '../route-create-api';
+import { readFunctions } from '../lambda-api';
+import { createRoute, type RouteOutcome } from '../route-create-api';
 import { SCREENS } from '../screens';
 import { getV2Api, readV2Integrations } from '../v2-api';
 
 vi.mock('../v2-api', { spy: true });
+vi.mock('../lambda-api', { spy: true });
 vi.mock('../route-create-api', { spy: true });
 
 const apiId = 'a1b2c3d4e5';
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   api.mockResolvedValue({ found: true, api: { ProtocolType: 'HTTP', ApiId: apiId } });
   integrations.mockResolvedValue({ items: [existing] });
+  vi.mocked(readFunctions).mockResolvedValue({ items: [{ name: 'orders', arn }] });
   create.mockResolvedValue({ kind: 'created' });
 });
 
@@ -498,38 +501,59 @@ it('shows API not found for a missing API', async () => {
   expect(wrapper.findLink('[href="/aws/apigateway/apis"]')?.getElement()).toHaveTextContent('View APIs');
 });
 
-it.each([false, true])(
-  'returns to the API with the creation result and optional permission warning (%s)',
-  async (warn) => {
-    if (warn)
-      create.mockResolvedValueOnce({
-        kind: 'created',
-        permissionWarning: { functionName: 'orders', reason: 'AddPermission: Refused' },
-      });
-    const form = open();
-    await form.shown();
-    await form.choose('Route', 'default');
-    await form.choose('Existing integration', 'int-existing');
-    await form.submit();
-    await waitFor(() => expect(form.handOver).toHaveBeenCalledOnce());
-    const [target, result] = form.handOver.mock.calls[0] as [string, FlashResult];
-    expect(target).toBe(v2ApiPath(apiId, 'routes'));
-    const { container } = render(
-      <AreaFlash
-        result={{ id: 1, visit: 1, path: v2ApiPath(apiId), items: result.map((item) => ({ key: item.type, item })) }}
-        onDismiss={vi.fn()}
-        onAnnounce={vi.fn()}
-      />,
-    );
-    const flash = createWrapper(container).findFlashbar();
-    expect(flash?.findItems()).toHaveLength(warn ? 2 : 1);
-    expect(flash?.findItemsByType('success')[0]?.getElement()).toHaveTextContent('Route $default created.');
-    if (warn)
-      expect(flash?.findItemsByType('warning')[0]?.getElement()).toHaveTextContent(
-        'Route $default created, but the permission was not added to orders: AddPermission: Refused',
-      );
+type PermissionCase = {
+  name: string;
+  warning?: Extract<RouteOutcome, { kind: 'created' }>['permissionWarning'];
+  header?: string;
+  reason?: string;
+};
+
+it.each<PermissionCase>([
+  { name: 'with permission' },
+  {
+    name: 'with a permission refusal',
+    warning: { functionName: 'orders', reason: 'AddPermission: Refused' },
+    reason: 'AddPermission: Refused',
   },
-);
+  ...['AddPermission', 'GetPolicy'].map((operation): PermissionCase => ({
+    name: `when ${operation} returns 501`,
+    warning: {
+      functionName: 'orders',
+      reason: `${operation}: 501 Not Implemented`,
+      failure: { kind: 'not-implemented', operation },
+    },
+    header: 'Not implemented by the emulator',
+    reason: `The emulator answered 501 Not Implemented for ${operation}.`,
+  })),
+])('returns to the API with the creation result $name', async ({ warning, header, reason }) => {
+  if (warning) create.mockResolvedValueOnce({ kind: 'created', permissionWarning: warning });
+  const form = open();
+  await form.shown();
+  await form.choose('Route', 'default');
+  await form.choose('Integration', 'new');
+  await form.choose('Lambda function', arn);
+  await form.submit();
+  await waitFor(() => expect(form.handOver).toHaveBeenCalledOnce());
+  const [target, result] = form.handOver.mock.calls[0] as [string, FlashResult];
+  expect(target).toBe(v2ApiPath(apiId, 'routes'));
+  const { container } = render(
+    <AreaFlash
+      result={{ id: 1, visit: 1, path: v2ApiPath(apiId), items: result.map((item) => ({ key: item.type, item })) }}
+      onDismiss={vi.fn()}
+      onAnnounce={vi.fn()}
+    />,
+  );
+  const flash = createWrapper(container).findFlashbar();
+  expect(flash?.findItems()).toHaveLength(warning ? 2 : 1);
+  expect(flash?.findItemsByType('success')[0]?.getElement()).toHaveTextContent('Route $default created.');
+  if (warning) {
+    const item = flash?.findItemsByType('warning')[0];
+    if (header) expect(item?.findHeader()?.getElement()).toHaveTextContent(header);
+    expect(item?.findContent()?.getElement()).toHaveTextContent(
+      `Route $default created, but the permission was not added to orders: ${reason}`,
+    );
+  }
+});
 
 const refusals = [
   { kind: 'not-implemented' },
