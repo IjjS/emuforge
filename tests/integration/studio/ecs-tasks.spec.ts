@@ -114,10 +114,10 @@ test('studio.ecs-starter-registers-runs-and-logs', async ({ ctx, page }) => {
   // starter's, which stays, gives none at any read (issue 657, requirement R1.1 and R1.2).
   await expectCell(tableOf(main, 'Containers'), 'Name', 'app', 'Exit code', '-');
   const direct = await taskDirect(ctx, port, cluster, task);
-  expect([direct?.lastStatus, direct?.launchType, direct?.exitCode], 'the task, directly').toEqual([
-    'RUNNING',
-    'FARGATE',
-    undefined,
+  expect([direct?.lastStatus, direct?.launchType], 'the task, directly').toEqual(['RUNNING', 'FARGATE']);
+  // The same answer holds the starter's container, and that container has no exit code.
+  expect(direct?.containers, 'the containers of the task, directly').toStrictEqual([
+    { name: 'app', exitCode: undefined },
   ]);
 });
 
