@@ -122,7 +122,7 @@ test('studio.dynamodb-routes-lead-to-the-table-screens', async ({ ctx, page }) =
   await seeded.table(name, { partition: 'pk:S' });
 
   await lines.line(
-    'Open `/aws/dynamodb/tables` directly → the same list as at `/aws/dynamodb`, the address unchanged (neither redirects); the crumbs `EmuForge > AWS > DynamoDB > Tables`; the side navigation\'s header "DynamoDB" and its one entry "Tables", current',
+    'Open `/aws/dynamodb/tables` directly → the same list as at `/aws/dynamodb`, the address unchanged (neither redirects); the crumbs `EmuForge > AWS > DynamoDB > Tables`; the side navigation\'s header "DynamoDB" and its entry "Tables", current',
     async () => {
       await open(page, DYNAMODB_PATH, LIST_H1);
       await expect(page).toHaveURL(addressOf(DYNAMODB_PATH));
@@ -139,7 +139,8 @@ test('studio.dynamodb-routes-lead-to-the-table-screens', async ({ ctx, page }) =
       const navigation = page.locator(SIDE_NAVIGATION);
       await expect(navigation.getByRole('link', { name: NAVIGATION_HEADER, exact: true })).toBeVisible();
       const links = (await navigation.getByRole('link').allInnerTexts()).map((t) => t.trim());
-      expect(links, 'the side navigation: its header and one entry').toEqual([NAVIGATION_HEADER, 'Tables']);
+      // Issue 650 (design.md, D6 A): "Tables" is among the navigation's entries, no longer the only one.
+      expect(links, 'the side navigation: the entry "Tables"').toContain('Tables');
       await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'the current entry').toHaveText('Tables');
     },
   );

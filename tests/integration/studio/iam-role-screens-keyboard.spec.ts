@@ -24,6 +24,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
 
 import { expect, startStack, test, type Ctx } from './support';
+import { focusInNavigation, navigationStops } from './support/aws-entries';
 import {
   ABOUT_CONTROL,
   areaImages,
@@ -47,7 +48,6 @@ const ROLES_PATH = '/aws/iam/roles';
 const CREATE_PATH = '/aws/iam/roles/create';
 const LIST_H1 = 'Roles';
 const NAV_HEADER = 'Identity and Access Management (IAM)';
-const NAV_GROUP = 'Access Management';
 const NAV_ROLES = 'Roles';
 const NAV_POLICIES = 'Policies';
 const NOTICE_CLOSE = 'Close the local emulator notice';
@@ -182,6 +182,9 @@ interface Stop {
   role: string;
   name: string;
   inArea: boolean;
+  /** Inside the side navigation, and whether it is its header link (by Cloudscape's own selector). */
+  inNavigation: boolean;
+  navigationHeader: boolean;
   inPagination: boolean;
   ring: string | null;
 }
@@ -197,7 +200,13 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     }
     return { inArea, inPagination: active?.closest(pagination) != null };
   }, PAGINATION);
-  return { role: ax.role, name: ax.name, ...where, ring: await focusRing(page) };
+  return {
+    role: ax.role,
+    name: ax.name,
+    ...where,
+    ...(await focusInNavigation(page)),
+    ring: await focusRing(page),
+  };
 }
 
 const shown = (stop: Stop) => `${stop.role} "${stop.name}"`;
@@ -219,15 +228,9 @@ function listOrder(names: string[]): Expected[] {
   const [first, ...rest] = names;
   return [
     { what: '"Close navigation" (Cloudscape\'s layout)', match: named('Close navigation', 'button'), optional: true },
-    { what: `the side navigation's header "${NAV_HEADER}"`, match: named(NAV_HEADER, 'link') },
-    {
-      what: "the toggle of the navigation's section (Cloudscape's)",
-      match: named(NAV_GROUP, 'button'),
-      optional: true,
-    },
-    { what: `the side navigation's link "${NAV_ROLES}"`, match: named(NAV_ROLES, 'link') },
-    // Issue 535: the side navigation's second entry.
-    { what: `the side navigation's link "${NAV_POLICIES}"`, match: named(NAV_POLICIES, 'link') },
+    // Issue 650 (design.md, D6 C): the navigation holds every entry of the service, each a stop.
+    // "Roles", then "Policies" (issue 535), among them in that order.
+    ...navigationStops<Stop>(NAV_HEADER, [NAV_ROLES, NAV_POLICIES]),
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "IAM"', match: named('IAM', 'link') },
@@ -388,7 +391,7 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
   const s = screen(page);
 
   await lines.line(
-    "Fresh load of the role list with two roles under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R11 (the side navigation's header and its link, the crumbs, the (i) control, the notice's close, the three actions with the disabled one as Cloudscape places it, the filter, pagination, preferences, the heading's check box, the first row's check box, the first name link), each with a visible focus indicator",
+    "Fresh load of the role list with two roles under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R11 (the side navigation's header and its links, the crumbs, the (i) control, the notice's close, the three actions with the disabled one as Cloudscape places it, the filter, pagination, preferences, the heading's check box, the first row's check box, the first name link), each with a visible focus indicator",
     async () => {
       await listUnder(page, p, two);
       await focusDocumentStart(page);

@@ -7,21 +7,21 @@ import {
   PARAMETER_DETAIL_PATH,
   PARAMETER_EDIT_PATH,
   PARAMETER_STORE_PATH,
+  PARAMETERS_PATH,
   parameterName,
   parameterPath,
 } from './paths';
 
 const NAVIGATION: ScreenNavigation = {
   header: { text: 'Systems Manager', href: PARAMETER_STORE_PATH },
-  items: [{ type: 'link', text: 'Parameter Store', href: PARAMETER_STORE_PATH }],
-  activeHref: PARAMETER_STORE_PATH,
+  activeHref: PARAMETERS_PATH,
 };
 
 const STORE_CRUMB = { text: 'Parameter Store', href: PARAMETER_STORE_PATH };
 
 export const SCREENS: readonly ServiceScreen[] = [
   {
-    paths: [PARAMETER_STORE_PATH],
+    paths: [PARAMETER_STORE_PATH, PARAMETERS_PATH],
     title: 'Parameter Store',
     crumbs: [{ text: 'Parameter Store' }],
     navigation: NAVIGATION,

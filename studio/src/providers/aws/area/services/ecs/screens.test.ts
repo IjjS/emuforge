@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { findResourceEntry } from '../../entries';
 import { patternFault, samePatterns } from '../../screen-paths';
+import { ENTRIES } from './entries';
 import { SCREENS } from './screens';
 
 const NO_QUERY = new URLSearchParams();
@@ -36,6 +38,16 @@ describe("ECS's screens", () => {
     for (const path of ['/aws/ecs', '/aws/ecs/clusters/create']) {
       expect(screenAt(path).navigation.activeHref).toBe('/aws/ecs/clusters');
       expect(screenAt(path).navigation.header).toEqual({ text: 'ECS', href: '/aws/ecs' });
+    }
+  });
+
+  it('marks the entry for the section of each screen current', () => {
+    for (const { paths, navigation } of SCREENS) {
+      const isTaskDefinitionScreen = paths[0]?.startsWith('/aws/ecs/task-definitions');
+      const activeHref = isTaskDefinitionScreen ? '/aws/ecs/task-definitions' : '/aws/ecs/clusters';
+      expect(navigation.activeHref, paths[0]).toBe(activeHref);
+      expect(findResourceEntry(ENTRIES, navigation.activeHref)).toBeDefined();
+      expect(navigation).not.toHaveProperty('items');
     }
   });
 

@@ -357,20 +357,16 @@ async function openLoaded(buckets: FakeBucket[] = THREE, path?: string) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the bucket list, loaded', () => {
-  // Issue 480 (test-criteria.md, "Unit s1"): no tab and no navigation link "Directory buckets".
   it('three buckets: the h1, no tabs, the counted heading, the columns in order, one row per bucket in the answer’s order', async () => {
     await openLoaded();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Buckets');
     expect(screen.queryAllByRole('tab')).toEqual([]);
-    expect(screen.queryByText('Directory buckets')).toBeNull();
     const navigation = createWrapper(document.body).findSideNavigation();
-    const header = navigation?.findHeaderLink()?.getElement();
-    const links = within(navigation?.getElement() as HTMLElement)
-      .getAllByRole('link')
-      .filter((link) => link !== header)
-      .map((link) => link.textContent);
-    expect(links).toEqual(['General purpose buckets']);
+    expect(navigation?.findLinkByHref('/aws/s3/buckets')?.getElement()).toHaveAccessibleName('General purpose buckets');
+    expect(navigation?.findLinkByHref('/aws/s3/directory-buckets')?.getElement()).toHaveTextContent(
+      'Directory buckets',
+    );
     expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
     expect(titleText()).toBe('General purpose buckets (3)');
     const headings = (table().findColumnHeaders() ?? []).map((header) => header.getElement().textContent);

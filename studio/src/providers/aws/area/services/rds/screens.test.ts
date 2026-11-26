@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { findResourceEntry } from '../../entries';
 import { patternFault, samePatterns } from '../../screen-paths';
+import { ENTRIES } from './entries';
 import { SCREENS } from './screens';
 
 const NO_QUERY = new URLSearchParams();
@@ -53,7 +55,8 @@ describe("RDS's screens", () => {
         expect(crumbs(path, sample).length).toBeGreaterThan(0);
       }
       expect(screen.navigation.header.text).toBe('RDS');
-      expect(screen.navigation.items.length).toBe(2);
+      expect(screen.navigation.items).toBeUndefined();
+      expect(findResourceEntry(ENTRIES, screen.navigation.activeHref)).toBeDefined();
     }
   });
 });

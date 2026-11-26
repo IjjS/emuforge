@@ -1,5 +1,3 @@
-import type { SideNavigationProps } from '@cloudscape-design/components/side-navigation';
-
 import { AWS_PATH } from '../../../identity';
 import type { ScreenCrumbs, ScreenNavigation } from '../../screens';
 
@@ -165,18 +163,12 @@ export const TASK_DEFINITIONS_WORD = 'task definitions';
 
 const HEADER: ScreenNavigation['header'] = { text: 'ECS', href: ECS_PATH };
 
-const ITEMS: readonly SideNavigationProps.Item[] = [
-  { type: 'link', text: CLUSTERS_TITLE, href: CLUSTERS_PATH },
-  { type: 'link', text: TASK_DEFINITIONS_TITLE, href: TASK_DEFINITIONS_PATH },
-];
-
 /** The navigation of S1 to S6: "Clusters" current. */
-export const CLUSTERS_NAVIGATION: ScreenNavigation = { header: HEADER, items: ITEMS, activeHref: CLUSTERS_PATH };
+export const CLUSTERS_NAVIGATION: ScreenNavigation = { header: HEADER, activeHref: CLUSTERS_PATH };
 
 /** The navigation of S7 to S10: "Task definitions" current. */
 export const TASK_DEFINITIONS_NAVIGATION: ScreenNavigation = {
   header: HEADER,
-  items: ITEMS,
   activeHref: TASK_DEFINITIONS_PATH,
 };
 
