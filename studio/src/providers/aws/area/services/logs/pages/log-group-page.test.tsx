@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -193,6 +194,35 @@ it('links Search log events to the events page with the group chosen', async () 
   const search = container.querySelector('a[href^="/aws/logs/log-events?"]');
   expect(search).toHaveAccessibleName('Search log events');
   expect(search).toHaveAttribute('href', '/aws/logs/log-events?group=%2Fapp%23Group');
+});
+
+it('jumps from the header to the log streams table on keyboard activation', async () => {
+  read.mockResolvedValueOnce(found);
+  const user = userEvent.setup();
+  const { container } = renderPage();
+  const jump = await screen.findByRole('link', { name: 'Jump to log streams' });
+  const header = createWrapper(container).findContentLayout()?.findHeader()?.getElement();
+  expect(header).toContainElement(jump);
+  expect(header).toContainElement(screen.getByRole('link', { name: 'Search log events' }));
+  const section = screen.getByRole('region', { name: 'Log streams' });
+  expect(jump).toHaveAttribute('href', `#${section.id}`);
+  expect(await within(section).findByRole('table')).toBeVisible();
+  const scroll = vi.fn();
+  Object.defineProperty(section, 'scrollIntoView', { value: scroll });
+
+  jump.focus();
+  await user.keyboard('{Enter}');
+
+  expect(section).toHaveFocus();
+  expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'start' });
+});
+
+it('omits the jump when there is no streams section', async () => {
+  read.mockResolvedValueOnce({ kind: 'not-found' });
+  renderPage();
+  await screen.findByText('Log group not found', { selector: 'strong' });
+
+  expect(screen.queryByRole('link', { name: 'Jump to log streams' })).not.toBeInTheDocument();
 });
 
 const connection = { engineOrigin, result: connected };
