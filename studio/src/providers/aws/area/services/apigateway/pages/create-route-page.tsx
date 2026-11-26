@@ -104,19 +104,27 @@ function RouteSelect<T extends string>({
   );
 }
 
-function createdResult(key: string, outcome: Extract<RouteOutcome, { kind: 'created' }>): FlashResult {
+function createdResult(
+  key: string,
+  outcome: Extract<RouteOutcome, { kind: 'created' }>,
+  endpoint: string,
+): FlashResult {
   const route = <ValueText kind="name" value={key} />;
   const success: FlashItem = { type: 'success', content: <>Route {route} created.</> };
   const warning = outcome.permissionWarning;
   if (!warning) return [success];
+  const unsupported =
+    warning.failure?.kind === 'not-implemented' ? actionFailureItem(warning.failure, title, endpoint) : undefined;
   return [
     success,
     {
       type: 'warning',
+      header: unsupported?.header,
       content: (
         <>
           Route {route} created, but the permission was not added to{' '}
-          <ValueText kind="name" value={warning.functionName} />: <ValueText kind="text" value={warning.reason} />
+          <ValueText kind="name" value={warning.functionName} />:{' '}
+          {unsupported?.content ?? <ValueText kind="text" value={warning.reason} />}
         </>
       ),
     },
@@ -247,7 +255,7 @@ function RouteEditor({ apiId, endpoint, connection }: { apiId: string; endpoint:
       const outcome = await mutation.mutateAsync({ input, signal });
       if (signal.aborted) return;
       if (outcome.kind === 'created') {
-        flash.handOver(v2ApiPath(apiId, 'routes'), createdResult(input.key, outcome));
+        flash.handOver(v2ApiPath(apiId, 'routes'), createdResult(input.key, outcome, endpoint));
       } else {
         setFailure(failureItem(outcome, endpoint));
         if (outcome.failure.kind === 'not-implemented') setUnavailableOperation(outcome.failure.operation);

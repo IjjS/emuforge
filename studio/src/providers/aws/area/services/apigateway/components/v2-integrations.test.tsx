@@ -67,7 +67,9 @@ function view(routes: AppendedPages<Route>) {
 function integrationTable() {
   return createWrapper(document.body)
     .findAllTables()
-    .find((table) => table.findHeaderSlot()?.getElement().textContent?.startsWith('Integrations'));
+    .find(
+      (table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Integrations',
+    );
 }
 
 function cell(row: number, column: number) {

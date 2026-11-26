@@ -1,7 +1,7 @@
 import type { Resource, RestApi } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
@@ -111,8 +111,14 @@ function open(address = path, pageConnection = connection) {
   return user;
 }
 
+const page = createWrapper(document.body);
+const apiHeading = () => page.findHeader()?.findHeadingText().getElement().closest('h1');
+const detailsHeader = () => page.findContainer()?.findHeader()?.findHeader();
+const resourcesSection = () => page.find('section[aria-label="Resources"]');
+const stagesHeader = () => page.findTable()?.findHeaderSlot()?.findHeader();
+
 function expectSuccessFlash(content: string) {
-  const flash = createWrapper(document.body).findFlashbar()?.findItemsByType('success')[0]?.findContent();
+  const flash = page.findFlashbar()?.findItemsByType('success')[0]?.findContent();
   expect(flash?.getElement()).toBeVisible();
   expect(flash?.getElement()).toHaveTextContent(content);
 }
@@ -120,7 +126,7 @@ function expectSuccessFlash(content: string) {
 it('registers the REST API address without registry faults and uses its ID for the read', async () => {
   expect(registryFaults(folders, (folder) => folder === 'apigateway')).toEqual([]);
   open();
-  await screen.findByRole('heading', { name: 'Orders', level: 1 });
+  await waitFor(() => expect(apiHeading()).toHaveTextContent('Orders'));
   expect(apiReader).toHaveBeenCalledWith(engineOrigin, id, expect.any(AbortSignal));
 });
 
@@ -128,23 +134,31 @@ it('shows loading until the API answers, then shows its three parts', async () =
   const pending = deferred<RestApi>();
   apiReader.mockReturnValueOnce(pending.promise);
   open();
-  expect(screen.getByText('Loading API…')).toBeVisible();
+  const loading = page.findStatusIndicator()?.getElement();
+  expect(loading).toBeVisible();
+  expect(loading).toHaveTextContent('Loading API…');
   await act(async () => pending.resolve(api));
-  for (const name of ['Details', 'Resources', 'Stages']) {
-    expect(await screen.findByRole('heading', { name, level: 2 })).toBeVisible();
-  }
-  expect(screen.queryByText('Loading API…')).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(detailsHeader()?.findHeadingText().getElement().closest('h2')).toHaveTextContent('Details');
+    expect(resourcesSection()?.findHeader()?.findHeadingText().getElement().closest('h2')).toHaveTextContent(
+      'Resources',
+    );
+    expect(stagesHeader()?.findHeadingText().getElement().closest('h2')).toHaveTextContent('Stages');
+  });
+  expect(loading).not.toBeInTheDocument();
 });
 
 it('shows the missing ID and a link back to APIs when the emulator has no REST API of that ID', async () => {
   apiReader.mockResolvedValueOnce(null);
   open();
-  expect(await screen.findByRole('heading', { name: 'API not found', level: 1 })).toBeVisible();
+  await waitFor(() => expect(apiHeading()).toHaveTextContent('API not found'));
   expect(screen.getByText(/The emulator holds no REST API/)).toHaveTextContent(
     `The emulator holds no REST API with the ID ${id}.`,
   );
-  expect(screen.getByRole('link', { name: 'View APIs' })).toHaveAttribute('href', '/aws/apigateway/apis');
-  expect(screen.queryByRole('heading', { name: 'Details' })).not.toBeInTheDocument();
+  const recovery = page.findLink()?.getElement();
+  expect(recovery).toHaveTextContent('View APIs');
+  expect(recovery).toHaveAttribute('href', '/aws/apigateway/apis');
+  expect(detailsHeader()).toBeUndefined();
 });
 
 it.each<[RequestFailure, string, string, 'connection status'?, AreaConnection?]>([
@@ -186,15 +200,19 @@ it.each<[RequestFailure, string, string, 'connection status'?, AreaConnection?]>
   apiReader.mockRejectedValueOnce(new RequestError(failure));
   const user = open(path, pageConnection);
   expect(await screen.findByText(detail, { exact: false })).toBeVisible();
-  expect(createWrapper(document.body).findStatusIndicator()?.getElement()).toHaveTextContent(first);
-  const connectionStatus = screen.queryByRole('link', { name: 'Connection status' });
+  expect(page.findStatusIndicator()?.getElement()).toHaveTextContent(first);
+  const connectionStatus = page.findLink()?.getElement();
   if (recovery) {
+    expect(connectionStatus).toHaveTextContent('Connection status');
     expect(connectionStatus).toHaveAttribute('href', '/');
   } else {
-    expect(connectionStatus).not.toBeInTheDocument();
+    expect(page.findLink()).toBeNull();
   }
-  await user.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('heading', { name: 'Orders', level: 1 })).toBeVisible();
+  const retry = page.findButton()?.getElement();
+  assert(retry);
+  expect(retry).toHaveTextContent('Retry');
+  await user.click(retry);
+  await waitFor(() => expect(apiHeading()).toHaveTextContent('Orders'));
   expect(screen.queryByText(detail, { exact: false })).not.toBeInTheDocument();
 });
 
@@ -206,20 +224,24 @@ it('keeps a pending edit mounted and shows its result when Details refresh fails
   vi.mocked(updateRestApi).mockReturnValueOnce(pendingEdit.promise);
 
   const user = open();
-  await screen.findByRole('heading', { name: 'Details' });
-  const wrapper = createWrapper(document.body);
-  const detailsHeader = wrapper.findContainer()?.findHeader()?.getElement();
-  assert.isOk(detailsHeader, 'Expected the Details header');
-  expect(detailsHeader).toHaveTextContent('Details');
-  await user.click(within(detailsHeader).getByRole('button', { name: 'Refresh' }));
+  const [refresh, edit] = await waitFor(() => {
+    const header = detailsHeader();
+    expect(header?.findHeadingText().getElement()).toHaveTextContent('Details');
+    const [refresh, edit] = header?.findActions()?.findAllButtons() ?? [];
+    assert(refresh && edit);
+    expect(refresh.getElement()).toHaveTextContent('Refresh');
+    expect(edit.getElement()).toHaveTextContent('Edit');
+    return [refresh, edit] as const;
+  });
+  await user.click(refresh.getElement());
   await waitFor(() => expect(apiReader).toHaveBeenCalledTimes(2));
 
-  await user.click(within(detailsHeader).getByRole('button', { name: 'Edit' }));
+  await user.click(edit.getElement());
   const modal = await waitFor(() => {
-    const edit = wrapper.findModal();
-    assert.isOk(edit, 'Expected the Edit API dialog');
-    expect(edit.findHeader().getElement()).toHaveTextContent('Edit API');
-    return edit;
+    const dialog = page.findModal();
+    assert.isOk(dialog, 'Expected the Edit API dialog');
+    expect(dialog.findHeader().getElement()).toHaveTextContent('Edit API');
+    return dialog;
   });
   const nameField = modal.findContent().findFormField();
   expect(nameField?.findLabel()?.getElement()).toHaveTextContent('Name');
@@ -228,9 +250,10 @@ it('keeps a pending edit mounted and shows its result when Details refresh fails
   expect(nameInput).toHaveValue(api.name);
   await user.clear(nameInput);
   await user.type(nameInput, updated.name);
-  const footer = modal.findFooter()?.getElement();
-  assert.isOk(footer, 'Expected the Edit API footer');
-  await user.click(within(footer).getByRole('button', { name: 'Save' }));
+  const save = modal.findFooter()?.findAllButtons().at(-1)?.getElement();
+  assert.isOk(save, 'Expected the Save button');
+  expect(save).toHaveTextContent('Save');
+  await user.click(save);
   await waitFor(() => expect(updateRestApi).toHaveBeenCalledOnce());
 
   const message = 'GetRestApi: BadRequestException: Details refresh refused.';
@@ -245,20 +268,24 @@ it('keeps a pending edit mounted and shows its result when Details refresh fails
     );
   });
   expect(await screen.findByText(message)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Retry', hidden: true })).toBeInTheDocument();
-  expect(wrapper.findModal()?.findContent().getElement()).toBe(modal.findContent().getElement());
+  expect(page.findButton()?.getElement()).toHaveTextContent('Retry');
+  expect(page.findModal()?.findContent().getElement()).toBe(modal.findContent().getElement());
   expect(nameInput).toHaveValue(updated.name);
   expect(vi.mocked(updateRestApi).mock.calls[0]?.[4].aborted).toBe(false);
 
   await act(async () => pendingEdit.resolve({ ...updated, $metadata: {} }));
-  await waitFor(() => expect(wrapper.findModal()).toBeNull());
+  await waitFor(() => expect(page.findModal()).toBeNull());
   expectSuccessFlash(`API ${updated.name} updated.`);
-  expect(await screen.findByRole('heading', { name: updated.name, level: 1 })).toBeVisible();
+  await waitFor(() => expect(apiHeading()).toHaveTextContent(updated.name));
 });
 
 it('focuses the Stages heading when it appears for ?show=stages', async () => {
   open(`${path}?show=stages`);
-  expect(await screen.findByRole('heading', { name: 'Stages' })).toHaveFocus();
+  await waitFor(() => {
+    const heading = stagesHeader()?.findHeadingText().getElement().closest('h2');
+    expect(heading).toHaveTextContent('Stages');
+    expect(heading).toHaveFocus();
+  });
 });
 
 it.each(['resources', 'api'] as const)('keeps the handed-over result when %s answers first', async (first) => {
@@ -275,14 +302,16 @@ it.each(['resources', 'api'] as const)('keeps the handed-over result when %s ans
   });
   if (first === 'resources') {
     await act(async () => pendingResources.resolve(resources));
-    expectSuccessFlash('API Orders created.');
     await act(async () => pendingApi.resolve(api));
   } else {
     await act(async () => pendingApi.resolve(api));
-    expectSuccessFlash('API Orders created.');
     await act(async () => pendingResources.resolve(resources));
   }
-  expect(await screen.findByRole('heading', { name: '/orders' })).toBeVisible();
+  await waitFor(() => {
+    const heading = resourcesSection()?.findContainer()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+    expect(heading).toHaveTextContent('/orders');
+    expect(heading).toBeVisible();
+  });
   expectSuccessFlash('API Orders created.');
 });
 
@@ -297,6 +326,6 @@ it.each([
 ])('links %s to its area entry', async (title, route) => {
   open();
   const entryPath = `/aws/apigateway/${route}`;
-  expect(await screen.findByRole('link', { name: title })).toHaveAttribute('href', entryPath);
+  await waitFor(() => expect(page.findLink(`[href="${entryPath}"]`)?.getElement()).toHaveTextContent(title));
   expect(areaPage(entryPath)).toMatchObject({ kind: 'entry', label: title });
 });

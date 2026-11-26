@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor, within } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { assert, expect, it, vi } from 'vitest';
 
@@ -45,7 +45,9 @@ async function open() {
   const name = nameField?.findControl()?.findInput()?.findNativeInput();
   const description = descriptionField?.findControl()?.findTextarea()?.findNativeTextarea();
   const footer = modal.findFooter();
-  assert(name && description && footer);
+  const submit = footer?.findAllButtons().at(-1)?.getElement();
+  expect(submit).toHaveTextContent('Save');
+  assert(name && description && submit);
   expect(nameField?.findLabel()?.getElement()).toHaveTextContent('Name');
   expect(descriptionField?.findLabel()?.getElement()).toHaveTextContent('Description');
   return {
@@ -55,7 +57,7 @@ async function open() {
     onSaved,
     name: name.getElement(),
     description: description.getElement(),
-    save: within(footer.getElement()).getByRole('button', { name: 'Save' }),
+    save: submit,
   };
 }
 
