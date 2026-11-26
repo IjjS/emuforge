@@ -110,7 +110,7 @@ const failures: [string, RequestFailure, AreaConnection['result'], string][] = [
 const group = '/app#Group';
 const path = '/aws/logs/log-groups/group/%2Fapp%23Group';
 const streamTable = () => tableByHeading('Log streams');
-const groupReadBody = () => aws().findContentLayout()?.findContainer()?.findContent();
+const groupReadBody = () => aws().findContentLayout()?.findContent().findContainer()?.findContent();
 const read = vi.mocked(getLogGroup);
 const tags = vi.mocked(listLogGroupTags);
 const streams = vi.mocked(listLogStreams);

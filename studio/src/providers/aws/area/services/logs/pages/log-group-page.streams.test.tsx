@@ -231,7 +231,9 @@ it.each([
   }
   expect(aws().findModal()?.getElement() ?? null).not.toBeInTheDocument();
 
-  fireEvent.click(requiredElement(buttonIn(aws().findContentLayout()?.findContainer()?.findContent(), 'Retry')));
+  fireEvent.click(
+    requiredElement(buttonIn(aws().findContentLayout()?.findContent().findContainer()?.findContent(), 'Retry')),
+  );
   if (unavailable) {
     const reopened = await openStreamDialog();
     expect(modalAlert(reopened)?.findContent().getElement()).toHaveTextContent(`501 Not Implemented for ${operation}`);
