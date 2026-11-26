@@ -5,10 +5,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { raisedBounds, readStudioFile, scanCaseBounds, scanRepository } from './case-bounds';
+import {
+  AREA_WAIT_FILES,
+  raisedBounds,
+  readStudioFile,
+  scanCaseBounds,
+  scanRepository,
+  scanWaitBounds,
+} from './case-bounds';
 import * as notRaised from './case-bounds/not-raised';
 import * as raised from './case-bounds/raised';
 import * as refused from './case-bounds/refused';
+import * as waits from './case-bounds/waits';
 
 const FILE = 'src/given.test.ts';
 
@@ -106,6 +114,36 @@ describe('what raises many bounds at once, with a `// Bound:` comment or not', (
   });
 });
 
+describe('a wait above the default case bound', () => {
+  it.each([
+    ['a findBy call in a case', waits.FIND_BY, 'await screen.findByRole'],
+    ['a named options object', waits.NAMED_OPTIONS, 'await vi.waitFor'],
+    ['a named timeout in options', waits.NAMED_TIMEOUT, 'await screen.findByRole'],
+    ['a wait in a helper', waits.HELPER, 'return screen.findByRole'],
+    ['a wait in a hook', waits.HOOK, 'await screen.findByRole'],
+    ['a waitFor call', waits.WAIT_FOR, 'await waitFor('],
+    ['a findAllBy call', waits.FIND_ALL_BY, 'await screen.findAllByRole'],
+    ['a waitForElementToBeRemoved call', waits.WAIT_FOR_REMOVAL, 'await waitForElementToBeRemoved'],
+  ])('names the call for %s', (_label, source, start) => {
+    expect(scanWaitBounds(source, FILE)).toEqual([
+      expect.objectContaining({ file: FILE, line: lineStarting(source, start) }),
+    ]);
+  });
+
+  it('names vi.waitFor calls with a number or a name directly as the second argument', () => {
+    const first = lineStarting(waits.DIRECT_TIMEOUT, 'await vi.waitFor');
+    expect(scanWaitBounds(waits.DIRECT_TIMEOUT, FILE).map(({ line }) => line)).toEqual([first, first + 1]);
+  });
+
+  it('accepts waits at or below 5000 ms and waits with no options', () => {
+    expect(scanWaitBounds(waits.SHORT_WAITS, FILE)).toEqual([]);
+  });
+
+  it('ignores timeouts that are not wait options', () => {
+    expect(scanWaitBounds(waits.OTHER_TIMEOUTS, FILE)).toEqual([]);
+  });
+});
+
 describe('the repository', () => {
   it('every test file under studio/src/ as it is on the branch → no finding', () => {
     expect(scanRepository()).toEqual([]);
@@ -116,6 +154,23 @@ describe('the repository', () => {
       'src/providers/aws/area/services/s3/components/bucket-tags.test.tsx',
       'src/providers/aws/area/services/iam/components/role-tags.test.tsx',
       'src/providers/aws/area/services/iam/pages/create-role-page.test.tsx',
+    ]) {
+      expect(raisedBounds(readStudioFile(file)), file).toEqual([]);
+    }
+  });
+
+  it.each(AREA_WAIT_FILES)('%s → no wait above 5000 ms', (file) => {
+    expect(scanWaitBounds(readStudioFile(file), file)).toEqual([]);
+  });
+
+  it('the six suites opening the AWS area → no case bound above 5000 ms, commented or not', () => {
+    for (const file of [
+      'src/app/app.test.tsx',
+      'src/app/frame.test.tsx',
+      'src/app/routes.test.tsx',
+      'src/features/home/home-languages.test.tsx',
+      'src/providers/aws/area/services/kms/pages/key.test.tsx',
+      'src/providers/aws/area/services/kms/pages/keys.test.tsx',
     ]) {
       expect(raisedBounds(readStudioFile(file)), file).toEqual([]);
     }

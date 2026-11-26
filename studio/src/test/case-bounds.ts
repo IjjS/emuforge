@@ -16,6 +16,18 @@ export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 /** The default bound of a case, in milliseconds. */
 export const DEFAULT_BOUND_MS = 5000;
 
+/** The suites whose waits are checked after moving their AWS area loads out of timed bodies (issue 466). */
+export const AREA_WAIT_FILES = [
+  'src/app/app.test.tsx',
+  'src/app/frame.test.tsx',
+  'src/app/routes.test.tsx',
+  'src/features/home/home-languages.test.tsx',
+  'src/providers/aws/area/area-layout.test.tsx',
+  'src/providers/aws/area/screens.test.ts',
+  'src/providers/aws/area/services/kms/pages/key.test.tsx',
+  'src/providers/aws/area/services/kms/pages/keys.test.tsx',
+] as const;
+
 /** The comment a raised bound carries on the line directly above its case. */
 export const BOUND_COMMENT = '// Bound:';
 
@@ -173,6 +185,58 @@ export function scanCaseBounds(source: string, name: string): Finding[] {
   return findings.sort((a, b) => a.line - b.line);
 }
 
+/** The argument that can give this wait its timeout options. */
+function waitOptions(call: ts.CallExpression): ts.Expression | undefined {
+  const callee = call.expression;
+  const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : calledName(callee);
+  if (name === 'waitFor' || name === 'waitForElementToBeRemoved') {
+    return call.arguments[1];
+  }
+  if (name !== undefined && /^find(?:All)?By/.test(name)) {
+    return call.arguments.length >= 2 ? call.arguments.at(-1) : undefined;
+  }
+  return undefined;
+}
+
+/** Waits given more than 5000 ms in one of the AWS area suites. */
+export function scanWaitBounds(source: string, name: string): Finding[] {
+  const file = parse(source);
+  const initializers = new Map<string, ts.Expression>();
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      initializers.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+
+  const resolve = (value: ts.Expression): ts.Expression =>
+    ts.isIdentifier(value) ? (initializers.get(value.text) ?? value) : value;
+  const findings: Finding[] = [];
+  for (const call of calls(file)) {
+    const argument = waitOptions(call);
+    if (argument === undefined) continue;
+    const options = resolve(argument);
+    const callee = call.expression;
+    const vitestWait =
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === 'vi' &&
+      callee.name.text === 'waitFor';
+    const timeout = timeoutOption(options) ?? (vitestWait ? options : undefined);
+    if (timeout === undefined) continue;
+    const bound = resolve(timeout);
+    if (ts.isNumericLiteral(bound) && raised(bound)) {
+      findings.push({
+        file: name,
+        line: lineOf(file, call),
+        reason: `a wait with a timeout of ${bound.getText(file)} above ${String(DEFAULT_BOUND_MS)} ms`,
+      });
+    }
+  }
+  return findings;
+}
+
 /** Every unit-test file under `studio/src/`, the set `vite.config.ts`'s `include` reads, relative to `studio/`. */
 export function testFiles(): string[] {
   const src = path.join(STUDIO_DIR, 'src');
@@ -190,5 +254,10 @@ export function readStudioFile(file: string): string {
 
 /** What the scan names in every unit-test file under `studio/src/`. */
 export function scanRepository(): Finding[] {
-  return testFiles().flatMap((file) => scanCaseBounds(readStudioFile(file), file));
+  const waitFiles = new Set<string>(AREA_WAIT_FILES);
+  return testFiles().flatMap((file) => {
+    const source = readStudioFile(file);
+    const caseFindings = scanCaseBounds(source, file);
+    return waitFiles.has(file) ? [...caseFindings, ...scanWaitBounds(source, file)] : caseFindings;
+  });
 }

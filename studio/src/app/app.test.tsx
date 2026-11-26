@@ -2,13 +2,13 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AWS_PROVIDER } from '../providers/aws/provider';
+import { preloadArea } from '../test/area-preload';
 import { advance, connected, FakeEngine, present, row } from '../test/home-test-kit';
 import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../test/no-screen';
-import { App } from './app';
 import type { Provider, ProviderAreaProps } from './provider-list';
 
-/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
-const AREA_LOAD = { timeout: 10_000, interval: 20 };
+const AREA_WAIT = { timeout: 5000, interval: 20 };
 
 let engine: FakeEngine;
 // The browser's IndexedDB, watched: jsdom has none, so the test gives the page one that records every use.
@@ -68,19 +68,28 @@ const TEST_PROVIDER: Provider = {
   loadArea: () => Promise.resolve({ default: TestArea }),
 };
 
-describe('Studio with a second provider in the list', () => {
-  afterEach(() => {
-    vi.doUnmock('./provider-list');
-    vi.resetModules();
-  });
+vi.resetModules();
+vi.doMock('./provider-list', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./provider-list')>();
+  const providers = await Promise.all(
+    actual.PROVIDERS.map(async (provider) => {
+      const area = await provider.loadArea();
+      return { ...provider, loadArea: () => Promise.resolve(area) };
+    }),
+  );
+  return { ...actual, PROVIDERS: [...providers, TEST_PROVIDER] };
+});
+const { App: AppWithTest } = await preloadArea(() => import('./app'));
+vi.doUnmock('./provider-list');
+vi.resetModules();
 
+const { App } = await preloadArea(async () => {
+  await AWS_PROVIDER.loadArea();
+  return import('./app');
+});
+
+describe('Studio with a second provider in the list', () => {
   it('shows it in the frame and on Home, renders its area under its segment, and keeps the AWS area as it was', async () => {
-    vi.resetModules();
-    vi.doMock('./provider-list', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('./provider-list')>();
-      return { ...actual, PROVIDERS: [...actual.PROVIDERS, TEST_PROVIDER] };
-    });
-    const { App: AppWithTest } = await import('./app');
     render(<AppWithTest />);
     await advance();
 
@@ -99,7 +108,7 @@ describe('Studio with a second provider in the list', () => {
     await vi.waitFor(async () => {
       await advance();
       expect(screen.getByText('Test area')).toBeInTheDocument();
-    }, AREA_LOAD);
+    }, AREA_WAIT);
     expect(window.location.pathname).toBe('/test/svc');
     // Inside Studio's frame: its banner is still above the area.
     expect(screen.getByRole('banner')).toContainElement(screen.getByRole('link', { name: 'EmuForge Studio' }));
@@ -112,7 +121,7 @@ describe('Studio with a second provider in the list', () => {
     await vi.waitFor(async () => {
       await advance();
       expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
-    }, AREA_LOAD);
+    }, AREA_WAIT);
     expect(screen.getByText(NO_SCREEN_SENTENCE)).toBeInTheDocument();
   });
 });
@@ -126,14 +135,13 @@ describe('Studio in the browser', () => {
 
     const studio = screen.getByRole('navigation', { name: 'Studio' });
     fireEvent.click(within(studio).getByRole('link', { name: 'AWS' }));
-    // The AWS area loads on its first opening; the import is real work, not a timer.
     const service = await vi.waitFor(async () => {
       await advance();
       return present(
         screen.queryAllByRole('link', { name: NO_SCREEN_SERVICE.label })[0],
         `a link to ${NO_SCREEN_SERVICE.label} in the AWS area`,
       );
-    }, AREA_LOAD);
+    }, AREA_WAIT);
     expect(window.location.pathname).toBe('/aws');
     expect(screen.getByRole('heading', { level: 1, name: 'Amazon Web Services' })).toBeInTheDocument();
 
