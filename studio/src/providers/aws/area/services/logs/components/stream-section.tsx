@@ -16,7 +16,7 @@ import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
+import { LINE_BREAK, logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
 import { DESCRIBE_LOG_STREAMS, listLogStreams } from '../stream-api';
 
 function dateCell(time: number | undefined) {
@@ -109,16 +109,24 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
             cell: ({ logStreamName }) => {
               if (logStreamName === undefined) return '-';
               const displayName = streamNameForDisplay(logStreamName);
+              const label = streamNameLabel(logStreamName);
+              const hasLineBreaks = LINE_BREAK.test(logStreamName);
               return (
                 <Link
                   href={logStreamPath(group, logStreamName)}
                   onFollow={follow}
-                  ariaLabel={streamNameLabel(logStreamName)}
-                  {...(displayName.includes('\n') && {
+                  ariaLabel={label}
+                  {...(hasLineBreaks && {
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
                   <ValueText kind="name" value={displayName} />
+                  {hasLineBreaks && (
+                    <>
+                      {' '}
+                      <ValueText kind="name" value={`(${label})`} />
+                    </>
+                  )}
                 </Link>
               );
             },

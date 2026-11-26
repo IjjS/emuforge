@@ -27,7 +27,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { logGroupChoices, logStreamChoices } from '../choices';
 import { EventMessage } from '../components/event-message';
-import { logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
+import { LINE_BREAK, logStreamPath, streamNameForDisplay, streamNameLabel } from '../format';
 import { FILTER_LOG_EVENTS, filterLogEvents } from '../search-api';
 import { searchRequest, type SearchForm, type SearchRequest, type SearchTime } from '../search-form';
 
@@ -54,6 +54,12 @@ function SubmittedFilters({ request }: { request: SearchRequest }) {
       {stream !== undefined && (
         <span style={{ display: 'block', whiteSpace: 'pre-wrap' }}>
           Log stream: <ValueText kind="name" value={streamNameForDisplay(stream)} />
+          {LINE_BREAK.test(stream) && (
+            <>
+              {' '}
+              <ValueText kind="name" value={`(${streamNameLabel(stream)})`} />
+            </>
+          )}
         </span>
       )}
       {request.filterPattern !== undefined && (
@@ -141,16 +147,24 @@ function SearchResults({
             cell: ({ logStreamName }) => {
               if (logStreamName === undefined) return '-';
               const displayName = streamNameForDisplay(logStreamName);
+              const label = streamNameLabel(logStreamName);
+              const hasLineBreaks = LINE_BREAK.test(logStreamName);
               return (
                 <Link
                   href={logStreamPath(request.logGroupName, logStreamName)}
                   onFollow={follow}
-                  ariaLabel={streamNameLabel(logStreamName)}
-                  {...(displayName.includes('\n') && {
+                  ariaLabel={label}
+                  {...(hasLineBreaks && {
                     nativeAttributes: { style: { whiteSpace: 'pre-wrap' } },
                   })}
                 >
                   <ValueText kind="name" value={displayName} />
+                  {hasLineBreaks && (
+                    <>
+                      {' '}
+                      <ValueText kind="name" value={`(${label})`} />
+                    </>
+                  )}
                 </Link>
               );
             },

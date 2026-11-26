@@ -567,7 +567,8 @@ it('distinguishes line breaks and literal escapes in stream choices and submits 
     );
 
     const link = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
-    expect(link?.textContent).toBe(display);
+    const expectedName = display.includes('\n') ? `${display} (${label})` : display;
+    expect(link?.textContent).toBe(expectedName);
     expect(link).toHaveAccessibleName(label);
     expect(link).toHaveAttribute('href', logStreamPath(group, stored));
     const summary = resultsTable()
@@ -576,7 +577,7 @@ it('distinguishes line breaks and literal escapes in stream choices and submits 
       ?.findDescription()
       ?.find('span:nth-child(2)')
       ?.getElement();
-    expect(summary?.textContent).toBe(`Log stream: ${display}`);
+    expect(summary?.textContent).toBe(`Log stream: ${expectedName}`);
     if (display.includes('\n')) {
       expect(link).toHaveStyle({ whiteSpace: 'pre-wrap' });
       expect(summary).toHaveStyle({ whiteSpace: 'pre-wrap' });

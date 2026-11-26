@@ -19,7 +19,14 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { EventMessage } from '../components/event-message';
 import { PutEventsForm } from '../components/put-events-form';
-import { LOG_GROUPS_PATH, logGroupPath, nameFromSegment, streamNameForDisplay } from '../format';
+import {
+  LINE_BREAK,
+  LOG_GROUPS_PATH,
+  logGroupPath,
+  nameFromSegment,
+  streamNameForDisplay,
+  streamNameLabel,
+} from '../format';
 import { useStreamEvents } from '../use-stream-events';
 
 const STANDARD_CLASS = 'The emulator reads and searches log events only in log groups of the Standard class.';
@@ -177,9 +184,10 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
           </Button>
         }
       >
-        {displayName.includes('\n') ? (
+        {LINE_BREAK.test(stream) ? (
           <span style={{ whiteSpace: 'pre-wrap' }}>
-            <ValueText kind="name" value={displayName} />
+            <ValueText kind="name" value={displayName} />{' '}
+            <ValueText kind="name" value={`(${streamNameLabel(stream)})`} />
           </span>
         ) : (
           <ValueText kind="name" value={displayName} />

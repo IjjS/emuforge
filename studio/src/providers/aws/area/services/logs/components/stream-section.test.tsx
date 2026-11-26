@@ -172,7 +172,7 @@ it.each(['selectable', 'read-only'])('distinguishes stored names in the %s listi
   for (const { stored, label, display, segment } of names) {
     const link = await waitForLink(streamTable, label);
     expect(link).toHaveAccessibleName(label);
-    expect(link.textContent).toBe(display);
+    expect(link.textContent).toBe(display.includes('\n') ? `${display} (${label})` : display);
     expect(link).toHaveAttribute('href', `/aws/logs/log-groups/group/%2Fapp%23Group/stream/${segment}`);
     if (display.includes('\n')) expect(link).toHaveStyle({ whiteSpace: 'pre-wrap' });
 

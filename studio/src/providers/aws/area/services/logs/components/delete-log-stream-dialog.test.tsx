@@ -23,7 +23,13 @@ vi.mock('../stream-change-api', async (importOriginal) => ({
 
 const remove = vi.mocked(deleteLogStream);
 const name = 'a b/[$LATEST]';
-const terminators = ['\r', '\n', '\r\n', '\u2028', '\u2029'];
+const terminators = [
+  ['\r', '\\r'],
+  ['\n', '\\n'],
+  ['\r\n', '\\r\\n'],
+  ['\u2028', '\\u2028'],
+  ['\u2029', '\\u2029'],
+];
 
 beforeEach(() => remove.mockReset());
 afterEach(() => vi.unstubAllGlobals());
@@ -77,15 +83,15 @@ it('describes what is deleted and requires the exact stream name', async () => {
 });
 
 it.each(terminators)(
-  'shows stored line break %# in the title and copies the original name exactly',
-  async (lineBreak) => {
+  'shows the multiline title with escaped identity and copies the original name exactly (%#)',
+  async (lineBreak, escaped) => {
     const stored = `first${lineBreak}second`;
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     const { dialog } = await renderDialog(stored);
 
     const heading = dialog.findHeader().findHeader()?.findHeadingText();
-    expect(heading?.getElement().textContent).toBe('Delete log stream first\nsecond?');
+    expect(heading?.getElement().textContent).toBe(`Delete log stream first\nsecond (first${escaped}second)?`);
     expect(heading?.getElement()).toBeVisible();
     expect(heading?.find('span[style]')?.getElement()).toHaveStyle({ whiteSpace: 'pre-wrap' });
     const copy = dialog.findContent().findCopyToClipboard();
