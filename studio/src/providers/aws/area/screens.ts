@@ -17,8 +17,8 @@ export type { ScreenParams } from './screen-paths';
 export interface ScreenNavigation {
   /** The navigation's header: the service's name and the address it leads to. */
   header: { text: string; href: string };
-  /** The navigation's sections and links, in visible order. */
-  items: readonly SideNavigationProps.Item[];
+  /** Navigation items for a service without an entries.ts. */
+  items?: readonly SideNavigationProps.Item[];
   /** The link shown current on every path of the screen. */
   activeHref: string;
 }

@@ -16,6 +16,7 @@ import { AreaModal } from './components/area-modal';
 import { usePageFlash, type FlashResult } from './components/page-flash';
 import { usePageHelp } from './components/page-help';
 import { useShowsResources } from './components/page-resources';
+import type { ServiceEntries } from './entries';
 import AwsArea from './index';
 import type { AreaScreen, ScreenPageProps } from './screens';
 import { AREA_ROOT_CLASS } from './styles/root-class';
@@ -42,9 +43,13 @@ vi.mock('./pages/no-screen-page', async (importOriginal) => {
 });
 
 /** The area's screens as a case registers them; empty, as on `main`, unless a case adds one. */
-const registry = vi.hoisted(() => ({ screens: [] as unknown[] }));
+const registry = vi.hoisted(() => ({ screens: [] as unknown[], entries: [] as ServiceEntries[] }));
 
 vi.mock('./screens', () => ({ SCREENS: registry.screens }));
+vi.mock('./entries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./entries')>()),
+  ENTRIES: registry.entries,
+}));
 
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
@@ -683,35 +688,40 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     expect(links).toEqual(SERVICES);
   });
 
-  it('on /aws with the real build\'s registry: the description of "Services" is the registry\'s sentence, not "No service has a Studio screen yet."; the emulator line, and neither the notice nor "About the local emulator" (issue 61, R4, R6)', async () => {
-    const actual = await vi.importActual<typeof import('./screens')>('./screens');
-    registry.screens.push(...actual.SCREENS);
-    try {
-      const registered = new Set(actual.SCREENS.map(({ service }) => service));
-      const routes = SERVICES.map(([, path]) => path.replace(/^\/aws/, ''));
-      const screens = routes.filter((route) => registered.has(route)).length;
-      expect(screens).toBeGreaterThan(0);
-      const count = String(SERVICES.length);
-      const expected =
-        screens === SERVICES.length
-          ? 'Every service has a Studio screen.'
-          : screens === 1
-            ? `1 of ${count} services has a Studio screen.`
-            : `${String(screens)} of ${count} services have a Studio screen.`;
+  // Bound: This case awaits the real screens module, which loads every service screen.
+  it(
+    'on /aws with the real build\'s registry: the description of "Services" is the registry\'s sentence, not "No service has a Studio screen yet."; the emulator line, and neither the notice nor "About the local emulator" (issue 61, R4, R6)',
+    { timeout: 15_000 },
+    async () => {
+      const actual = await vi.importActual<typeof import('./screens')>('./screens');
+      registry.screens.push(...actual.SCREENS);
+      try {
+        const registered = new Set(actual.SCREENS.map(({ service }) => service));
+        const routes = SERVICES.map(([, path]) => path.replace(/^\/aws/, ''));
+        const screens = routes.filter((route) => registered.has(route)).length;
+        expect(screens).toBeGreaterThan(0);
+        const count = String(SERVICES.length);
+        const expected =
+          screens === SERVICES.length
+            ? 'Every service has a Studio screen.'
+            : screens === 1
+              ? `1 of ${count} services has a Studio screen.`
+              : `${String(screens)} of ${count} services have a Studio screen.`;
 
-      const { wrapper } = open('/aws');
-      const container = wrapper.findContentLayout()?.findContent()?.findContainer();
-      const description = container?.findHeader()?.findHeader()?.findDescription()?.getElement();
-      expect(description).toHaveTextContent(expected);
-      expect(description).not.toHaveTextContent('No service has a Studio screen yet.');
-      expect(screen.queryByText('No service has a Studio screen yet.')).toBeNull();
-      expect(emulatorLine()).toBeInTheDocument();
-      expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
-      expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
-    } finally {
-      registry.screens.length = 0;
-    }
-  });
+        const { wrapper } = open('/aws');
+        const container = wrapper.findContentLayout()?.findContent()?.findContainer();
+        const description = container?.findHeader()?.findHeader()?.findDescription()?.getElement();
+        expect(description).toHaveTextContent(expected);
+        expect(description).not.toHaveTextContent('No service has a Studio screen yet.');
+        expect(screen.queryByText('No service has a Studio screen yet.')).toBeNull();
+        expect(emulatorLine()).toBeInTheDocument();
+        expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
+        expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+      } finally {
+        registry.screens.length = 0;
+      }
+    },
+  );
 
   it.each([
     [NO_SCREEN_SERVICE.path, NO_SCREEN_SENTENCE],
@@ -2761,5 +2771,77 @@ describe('a dialog of the area, told to Studio (issue 531)', () => {
 
     await act(() => router.navigate('/'));
     expect(modals).toEqual([true, false, true, false]);
+  });
+});
+
+describe('a service that gives entries (issue 650, R4–R5)', () => {
+  const service = '/dynamodb';
+  const route = '/aws/dynamodb';
+  const widgets = { label: 'Widgets', path: `${route}/widgets`, listedBy: 'ListWidgets' };
+  const things = { label: 'Things', path: `${route}/things`, listedBy: 'ListThings' };
+  const header = { text: 'Amazon DynamoDB', href: route };
+  const widgetScreen: AreaScreen = {
+    service,
+    paths: [route, widgets.path],
+    title: widgets.label,
+    crumbs: [{ text: widgets.label }],
+    navigation: { header, activeHref: widgets.path },
+    help: () => <HelpPanel header={<h2>Widgets help</h2>} />,
+    Page: () => <Header variant="h1">{widgets.label}</Header>,
+  };
+
+  beforeEach(() => {
+    registry.screens.push(widgetScreen);
+    registry.entries.push({ service, groups: [{ entries: [widgets, things] }] });
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+    registry.entries.length = 0;
+  });
+
+  it('shows the service header and the entries, with exactly one current link on the built screen', () => {
+    const { wrapper } = open(widgets.path);
+    const nav = wrapper.findSideNavigation();
+    expect(nav?.findHeaderLink()?.getElement()).toHaveAttribute('href', route);
+    expect(nav?.findLinkByHref(things.path)?.getElement()).toHaveTextContent(things.label);
+    expect(nav?.findLinkByHref(widgets.path)?.getElement()).toHaveAttribute('aria-current', 'page');
+    expect(nav?.getElement().querySelectorAll('a[aria-current="page"]')).toHaveLength(1);
+  });
+
+  it('uses the entry’s title and crumbs, with the emulator line and without the notice or help controls', () => {
+    const { wrapper } = open(things.path);
+    expect(breadcrumbs(wrapper)).toEqual([
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['DynamoDB', route],
+      [things.label, null],
+    ]);
+    const target = screen.getByRole('region', { name: things.label });
+    expect(within(target).getByRole('heading', { name: things.label, level: 1 })).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
+    expect(within(target).queryByText(/are in your local emulator/)).not.toBeInTheDocument();
+    expect(within(target).queryByRole('button', { name: 'About the local emulator' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open help panel' })).not.toBeInTheDocument();
+    expect(titles.at(-1)).toBe(things.label);
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', things.path);
+  });
+
+  it('focuses the entry’s content target after following the navigation from a built screen', async () => {
+    const { wrapper, router } = open(widgets.path);
+    const link = wrapper.findSideNavigation()?.findLinkByHref(things.path)?.getElement();
+    expect(link).toBeDefined();
+    fireEvent.click(link as HTMLElement);
+
+    expect(router.state.location.pathname).toBe(things.path);
+    await expectFocusOnTarget(things.label, 'Go to Widgets');
+  });
+
+  it('shows the generated navigation with the screen above current on a generic part page', () => {
+    const { wrapper } = open(`${widgets.path}/extra`);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_PART })).toBeInTheDocument();
+    const nav = wrapper.findSideNavigation();
+    expect(nav?.findLinkByHref(things.path)?.getElement()).toBeInTheDocument();
+    expect(nav?.findActiveLink()?.getElement()).toHaveAttribute('href', widgets.path);
   });
 });

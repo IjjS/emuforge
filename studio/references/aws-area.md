@@ -47,6 +47,70 @@ pages included.
 The UI and UX of a screen are its worker's to shape, inside these points; the impeccable critique judges them, once,
 on the built app (`critique.md`).
 
+## A service's entries
+
+The requirement of a service issue gives its entries using these rules. Use the API models the local emulator
+answers at the service's entry, in the order of the service's `models` in `.pm/bin/probe-services.json`. Use the
+emulator's answers and the API models, independently of the AWS console's navigation.
+
+1. Each model with entries is a group. The first model is the service itself. Each later model is a sub-service
+   with its own name and path, `/aws/<service>/<sub-service-name-in-kebab-case>`, in its group's navigation.
+   Show group names when there is more than one group.
+2. A resource kind has a list read whose output model contains a list and a making operation in the same model.
+   An account list is a `Describe*` or `List*` read from the probe table that answers 2xx without an argument of its
+   own. A scoped list is a `List*` or plural `Describe*` outside the table with one required member naming a parent
+   kind of the same model, or a read from the table refused without its parent and with a member that identifies
+   that parent. Probe scoped reads with an existing parent and require a 2xx answer. A 501 gives no entry. Reads of
+   one item at a time and reads requiring more than one argument are reached from their parent's screens. When
+   both `List` and `Describe` give the same kind, use `List`.
+3. Pair the list read with an operation that makes the kind. Start with the singular or plural noun after a
+   making verb such as `Create`, `Register` or `Put`, and use the API's semantics when names differ. Record the
+   list read, the maker, any parent and the emulator's answer for each entry, and explain why other candidate
+   reads give no entry. Catalogues, account settings and limits, tags or state of a single item, and activity
+   without its own making operation give no entry. See issue 650 for the first application of this rule.
+4. A kind from a model shared by services belongs to one service. From the `ec2` model, VPC gets nouns containing
+   `Vpc`, `Subnet`, `Route`, `Gateway`, `NetworkAcl`, `NetworkInsights`, `NetworkPerformance`,
+   `SecondaryNetwork`, `Ipam`, `Vpn`, `DhcpOptions`, `FlowLog`, `PrefixList`, `TrafficMirror`,
+   `VerifiedAccess`, `Pool` or `Cidr`. EC2 gets the other kinds.
+5. Keep existing navigation labels and addresses and the existing links, tabs and buttons between resource
+   screens. When a built list has only the service's route, register a second path for its entry
+   (`/aws/kms/keys`, `/aws/ssm/parameters`) and continue to open the list at the service's route.
+6. Label a new kind with the read's noun in words, capitalising the first word and retaining API acronyms. Its
+   path is `/aws/<service>/<noun-in-kebab-case>`, including for kinds listed inside a parent. For a path shared
+   by two groups, prefix the later model's kind with that model's words. Labels and paths are unique within a
+   service. The service's route belongs to its navigation header.
+7. Inside a group, show entries with screens first, in the order written, followed by other entries by label. A
+   screen is available when a registered screen matches the entry's path. Adding that screen needs no entry edit.
+8. For a scoped kind record the parent entry's path as `listedInside`. If Studio already lists a kind inside
+   another entry's screen, record `shownIn` with that entry's path and the place in words, even for a kind listed
+   for the account. Write this when the view is built.
+9. Write `ENTRIES` in the service's own `entries.ts` as plain data using the area's `EntryGroup` type. The area
+   collects these files at build time. Each group gives its name when needed, its optional `subService` (name and
+   path), and its `entries` (label, path, `listedBy`, and any `listedInside` and `shownIn`). The file requires a
+   `screens.ts` and takes the place of the screen's hand-written navigation items. A folder without an
+   `entries.ts` keeps its existing navigation, including a service with no screens.
+
+On every screen and area page of the service, the side navigation carries a link for each entry, with
+"No screen yet" in text beside the ones without a screen. Show each sub-service's link alongside its kinds in
+its group. Group headings are controls or text. Mark at most one link current, including the header. A screen
+uses its `activeHref`, an entry page uses its path, and a generic page uses the screen above the path when
+there is one. Open the group containing the current entry.
+
+A registered screen takes precedence. At an exact entry path without a screen, the area's entry page calls
+nothing and shows the emulator line, with no notice, (i) control or help toggle. Its title, `h1` and final crumb
+are the entry's label or sub-service name. It says "Opening this page changed nothing in your local emulator."
+and offers "Go to Home". A path below an entry still follows the generic page rules.
+
+- A kind shows "Resource kind", "Part of" for a named group in a multi-group service, "Listed by" with the API
+  operation as code, and "Listed inside" with the parent label when scoped.
+- With `shownIn` it says "Studio has no screen that lists these across {service's crumb} yet." and
+  "It shows them in {place}." The primary action leads to the entry named by `shownIn`.
+- Otherwise it says "Studio has no screen for this yet." The primary action leads to the parent for a scoped
+  kind, or the service's first screen at a literal path when one exists.
+- A sub-service uses the same general statement, shows "Sub-service" and "Part of" with the service's crumb,
+  lists links under "Resource kinds" with the same status text as the navigation, and offers the first screen
+  when one exists.
+
 ## The emulator line
 
 - Every page of the area shows one line, the emulator line, between the breadcrumbs and the page's content, at
