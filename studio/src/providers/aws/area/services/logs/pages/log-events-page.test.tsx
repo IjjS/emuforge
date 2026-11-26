@@ -527,8 +527,15 @@ it('explains the Standard class restriction with the emulator’s reason', async
   expect(detail).toHaveTextContent(reason);
 });
 
-it('keeps line breaks in submitted stream names and distinguishes a newline from a space', async () => {
-  const multiline = 'first\nsecond';
+it.each([
+  ['CR', '\r'],
+  ['CRLF', '\r\n'],
+  ['LF', '\n'],
+  ['U+2028', '\u2028'],
+  ['U+2029', '\u2029'],
+])('displays %s as a line break and keeps the exact submitted stream name', async (_name, terminator) => {
+  const multiline = `first${terminator}second`;
+  const displayName = 'first\nsecond';
   const spaced = 'first second';
   const multilineLabel = 'first second (contains a line break)';
   streams.mockResolvedValueOnce({ items: [{ logStreamName: multiline }, { logStreamName: spaced }] });
@@ -557,7 +564,7 @@ it('keeps line breaks in submitted stream names and distinguishes a newline from
   );
 
   const multilineLink = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
-  expect(multilineLink?.textContent).toBe(multiline);
+  expect(multilineLink?.textContent).toBe(displayName);
   expect(multilineLink).toHaveStyle({ whiteSpace: 'pre-wrap' });
   expect(multilineLink).toHaveAccessibleName(multilineLabel);
   expect(multilineLink).toHaveAttribute('href', logStreamPath(group, multiline));
@@ -570,6 +577,6 @@ it('keeps line breaks in submitted stream names and distinguishes a newline from
     ?.findDescription()
     ?.find('span:nth-child(2)')
     ?.getElement();
-  expect(summary?.textContent).toBe(`Log stream: ${multiline}`);
+  expect(summary?.textContent).toBe(`Log stream: ${displayName}`);
   expect(summary).toHaveStyle({ whiteSpace: 'pre-wrap' });
 });

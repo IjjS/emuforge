@@ -40,6 +40,10 @@ export function logStreamPath(group: string, stream: string): string {
   return `${logGroupPath(group)}/stream/${nameSegment(stream)}`;
 }
 
+export function streamNameForDisplay(name: string): string {
+  return name.replace(/\r\n|[\r\u2028\u2029]/g, '\n');
+}
+
 export const RETENTION_DAYS = [
   1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653,
 ] as const;
