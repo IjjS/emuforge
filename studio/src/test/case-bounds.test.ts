@@ -138,6 +138,17 @@ describe('a wait above the default case bound', () => {
     expect(scanWaitBounds(waits.DIRECT_TIMEOUT, FILE).map(({ line }) => line)).toEqual([first, first + 1]);
   });
 
+  it.each([
+    ['imported query receivers', waits.IMPORTED_QUERIES, 'await queries.findByRole', 4],
+    ['wrapped options and numbers', waits.WRAPPED_TIMEOUTS, 'await waitFor(ready, options)', 6],
+    ['literal keys in a wait call and its options', waits.LITERAL_KEYS, "await vi['waitFor']", 2],
+  ])('names every long wait using %s', (_label, source, start, count) => {
+    const first = lineStarting(source, start);
+    expect(scanWaitBounds(source, FILE).map(({ line }) => line)).toEqual(
+      Array.from({ length: count }, (_value, offset) => first + offset),
+    );
+  });
+
   it('accepts waits at or below 5000 ms and waits with no options', () => {
     expect(scanWaitBounds(waits.SHORT_WAITS, FILE)).toEqual([]);
   });

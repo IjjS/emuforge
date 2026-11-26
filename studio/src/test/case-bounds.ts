@@ -76,6 +76,12 @@ function raised(bound: ts.Expression): boolean {
   return true;
 }
 
+/** The name of a literal key, including a computed key with a literal value. */
+function literalKey(node: ts.Node): string | undefined {
+  const key = ts.isComputedPropertyName(node) ? unwrap(node.expression) : node;
+  return ts.isStringLiteralLike(key) ? key.text : undefined;
+}
+
 /** The `timeout` of an options object, or `undefined` when the argument is not one or has none. */
 function timeoutOption(argument: ts.Expression | undefined): ts.Expression | undefined {
   if (argument === undefined || !ts.isObjectLiteralExpression(argument)) {
@@ -84,8 +90,7 @@ function timeoutOption(argument: ts.Expression | undefined): ts.Expression | und
   for (const property of argument.properties) {
     if (
       ts.isPropertyAssignment(property) &&
-      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
-      property.name.text === 'timeout'
+      (ts.isIdentifier(property.name) ? property.name.text : literalKey(property.name)) === 'timeout'
     ) {
       return property.initializer;
     }
@@ -109,8 +114,9 @@ function caseBound(call: ts.CallExpression): ts.Expression | undefined {
   return undefined;
 }
 
-function parse(source: string): ts.SourceFile {
-  return ts.createSourceFile('case.test.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function parse(source: string, kind = ts.ScriptKind.TSX): ts.SourceFile {
+  const filename = kind === ts.ScriptKind.TSX ? 'case.test.tsx' : 'case.test.ts';
+  return ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, kind);
 }
 
 function lineOf(file: ts.SourceFile, node: ts.Node): number {
@@ -189,56 +195,95 @@ export function scanCaseBounds(source: string, name: string): Finding[] {
   return findings.sort((a, b) => a.line - b.line);
 }
 
-/** The argument that can give this wait its timeout options. */
-function waitOptions(call: ts.CallExpression, checker: ts.TypeChecker): ts.Expression | undefined {
-  const callee = call.expression;
-  const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : calledName(callee);
+/** Syntax that leaves the value of a wait argument unchanged at runtime. */
+function unwrap(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
+function namedImport(expression: ts.Expression, checker: ts.TypeChecker): ts.ImportSpecifier | undefined {
+  return checker.getSymbolAtLocation(expression)?.declarations?.find(ts.isImportSpecifier);
+}
+
+function member(expression: ts.Expression) {
+  if (ts.isPropertyAccessExpression(expression)) {
+    return { name: expression.name.text, receiver: unwrap(expression.expression) };
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    return { name: literalKey(unwrap(expression.argumentExpression)), receiver: unwrap(expression.expression) };
+  }
+  return undefined;
+}
+
+/** The argument that can give this wait its timeout, and whether it accepts a number directly. */
+function waitArgument(call: ts.CallExpression, checker: ts.TypeChecker) {
+  const callee = unwrap(call.expression);
+  const access = member(callee);
+  const imported = namedImport(callee, checker);
+  const name = access?.name ?? imported?.propertyName?.text ?? calledName(callee);
   if (name === 'waitFor' || name === 'waitForElementToBeRemoved') {
-    return call.arguments[1];
+    const receiver = access?.receiver;
+    const direct =
+      name === 'waitFor' &&
+      receiver !== undefined &&
+      ts.isIdentifier(receiver) &&
+      (namedImport(receiver, checker)?.propertyName?.text ?? receiver.text) === 'vi';
+    return { argument: call.arguments[1], direct };
   }
   if (name !== undefined && /^find(?:All)?By/.test(name)) {
-    // A bound query takes (matcher, query options, wait options). Imported queries also take a container first.
-    const method = ts.isPropertyAccessExpression(callee);
-    const receiver = method ? callee.expression : callee;
-    const imported = checker
-      .getSymbolAtLocation(receiver)
-      ?.declarations?.some(method ? ts.isNamespaceImport : ts.isImportSpecifier);
-    return call.arguments[imported ? 3 : 2];
+    // Unbound queries take a container before the matcher, query options and wait options.
+    const receiver = access?.receiver;
+    const queriesImport = receiver === undefined ? undefined : namedImport(receiver, checker);
+    const receiverMember = receiver === undefined ? undefined : member(receiver);
+    const namespace = receiverMember?.name === 'queries' ? receiverMember.receiver : receiver;
+    const unbound =
+      imported !== undefined ||
+      (queriesImport?.propertyName ?? queriesImport?.name)?.text === 'queries' ||
+      (namespace !== undefined && checker.getSymbolAtLocation(namespace)?.declarations?.some(ts.isNamespaceImport));
+    return { argument: call.arguments[unbound ? 3 : 2], direct: false };
   }
   return undefined;
 }
 
 /** Waits given more than 5000 ms in one of the AWS area suites. */
 export function scanWaitBounds(source: string, name: string): Finding[] {
-  const file = parse(source);
+  const file = parse(source, name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   // Bind names in this source alone. Imports and library types are unnecessary for local declarations.
   const options = { noLib: true, noResolve: true };
   const host = ts.createCompilerHost(options);
   host.getSourceFile = (path) => (path === file.fileName ? file : undefined);
   const checker = ts.createProgram([file.fileName], options, host).getTypeChecker();
 
-  const resolve = (value: ts.Expression): ts.Expression => {
-    if (!ts.isIdentifier(value)) return value;
-    const binding = ts.isShorthandPropertyAssignment(value.parent)
-      ? checker.getShorthandAssignmentValueSymbol(value.parent)
-      : checker.getSymbolAtLocation(value);
-    const declaration = binding?.valueDeclaration;
-    return declaration !== undefined && ts.isVariableDeclaration(declaration)
-      ? (declaration.initializer ?? value)
-      : value;
+  const resolve = (expression: ts.Expression): ts.Expression => {
+    let value = unwrap(expression);
+    const seen = new Set<ts.VariableDeclaration>();
+    while (ts.isIdentifier(value)) {
+      const binding = ts.isShorthandPropertyAssignment(value.parent)
+        ? checker.getShorthandAssignmentValueSymbol(value.parent)
+        : checker.getSymbolAtLocation(value);
+      const declaration = binding?.valueDeclaration;
+      if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer || seen.has(declaration)) {
+        break;
+      }
+      seen.add(declaration);
+      value = unwrap(declaration.initializer);
+    }
+    return value;
   };
   const findings: Finding[] = [];
   for (const call of calls(file)) {
-    const argument = waitOptions(call, checker);
-    if (argument === undefined) continue;
-    const options = resolve(argument);
-    const callee = call.expression;
-    const vitestWait =
-      ts.isPropertyAccessExpression(callee) &&
-      ts.isIdentifier(callee.expression) &&
-      callee.expression.text === 'vi' &&
-      callee.name.text === 'waitFor';
-    const timeout = timeoutOption(options) ?? (vitestWait ? options : undefined);
+    const wait = waitArgument(call, checker);
+    if (wait?.argument === undefined) continue;
+    const value = resolve(wait.argument);
+    const timeout = timeoutOption(value) ?? (wait.direct ? value : undefined);
     if (timeout === undefined) continue;
     const bound = resolve(timeout);
     if (ts.isNumericLiteral(bound) && raised(bound)) {
