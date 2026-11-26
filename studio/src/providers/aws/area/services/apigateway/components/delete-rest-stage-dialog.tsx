@@ -9,7 +9,6 @@ import { useState } from 'react';
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
 import { failureOf } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { DELETE_STAGE } from '../rest-stage-api';
@@ -20,15 +19,16 @@ export function DeleteRestStageDialog({
   stageName,
   connection,
   onClose,
+  onSuccess,
 }: {
   apiId: string;
   stageName: string;
   connection: AreaConnection;
   onClose: () => void;
+  onSuccess: (stageName: string) => void;
 }) {
   const [typed, setTyped] = useState('');
-  const flash = usePageFlash();
-  const remove = useDeleteRestStage(apiId, connection.engineOrigin);
+  const remove = useDeleteRestStage(apiId, connection.engineOrigin, onSuccess);
   const failure = remove.isError ? failureOf(remove.error, DELETE_STAGE) : undefined;
   const alert = failure && actionFailureItem(failure, failure.operation, connection.engineOrigin);
   const unavailable =
@@ -39,21 +39,7 @@ export function DeleteRestStageDialog({
   };
   const handleDelete = () => {
     if (unavailable || remove.isPending) return;
-    remove.mutate(stageName, {
-      onSuccess: () => {
-        flash.show([
-          {
-            type: 'success',
-            content: (
-              <>
-                Stage <ValueText kind="name" value={stageName} /> deleted.
-              </>
-            ),
-          },
-        ]);
-        onClose();
-      },
-    });
+    remove.mutate(stageName);
   };
 
   return (
