@@ -112,6 +112,10 @@ export interface NavigationLink extends LinkPair {
   sections: string[];
   /** The text the link is described by (`aria-describedby`); empty when it has none. */
   description: string;
+  /** The words drawn beside the link, in its own item of the list and outside the link; empty when there are none. */
+  beside: string;
+  /** Every element the link is described by is drawn, in the link's own item. */
+  descriptionDrawn: boolean;
   current: boolean;
   /** The link is drawn: no section around it is closed. */
   shown: boolean;
@@ -145,6 +149,11 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
       const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
       const button = (section: Element) => section.querySelector(selectors.button);
       const around = (el: Element) => el.parentElement?.closest(selectors.section) ?? null;
+      const drawn = (el: Element | null): boolean => {
+        if (el === null || el.getClientRects().length === 0) return false;
+        const style = getComputedStyle(el);
+        return style.visibility === 'visible' && style.opacity !== '0';
+      };
       const header = root.querySelector(selectors.header);
       const links = [...root.querySelectorAll('a[href]')]
         .filter((link) => link !== header)
@@ -153,16 +162,32 @@ export async function navigationTree(page: Page): Promise<NavigationTree> {
           for (let section = link.closest(selectors.section); section !== null; section = around(section)) {
             sections.unshift(clean(button(section)?.textContent));
           }
-          const description = (link.getAttribute('aria-describedby') ?? '')
-            .split(/\s+/)
-            .filter((id) => id !== '')
-            .map((id) => clean(document.getElementById(id)?.textContent))
-            .join(' ');
+          const ids = (link.getAttribute('aria-describedby') ?? '').split(/\s+/).filter((id) => id !== '');
+          const described = ids.map((id) => document.getElementById(id));
+          const item = link.closest('li');
+          // The words drawn beside the link: the texts of its item that are drawn, outside the link and outside a
+          // list of the item's own (a section's links).
+          const beside: string[] = [];
+          if (item !== null) {
+            const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+              const parent = node.parentElement;
+              const text = clean(node.textContent);
+              if (text === '' || parent === null || link.contains(node)) continue;
+              const list = parent.closest('ul, ol');
+              if (list !== null && item.contains(list)) continue;
+              if (!drawn(parent)) continue;
+              beside.push(text);
+            }
+          }
           return {
             text: clean(link.textContent),
             href: link.getAttribute('href') ?? '',
             sections,
-            description,
+            description: described.map((el) => clean(el?.textContent)).join(' '),
+            beside: beside.join(' '),
+            descriptionDrawn:
+              described.length > 0 && described.every((el) => drawn(el) && item !== null && item.contains(el)),
             current: link.getAttribute('aria-current') === 'page',
             shown: link.getClientRects().length > 0,
           };
@@ -335,21 +360,38 @@ export function resourceKinds(page: Page): Locator {
     .filter({ has: page.getByRole('heading', { level: 2, name: 'Resource kinds', exact: true }) });
 }
 
-/** The links under the page's heading "Resource kinds", each with its description. */
-export async function resourceKindLinks(page: Page): Promise<(LinkPair & { description: string })[]> {
+/** A link under the page's heading "Resource kinds". */
+export interface ResourceKindLink extends LinkPair {
+  /** The text the link is described by (`aria-describedby`); empty when it has none. */
+  description: string;
+  /** Every element the link is described by is drawn, in the link's own item of the list. */
+  descriptionDrawn: boolean;
+}
+
+/** The links under the page's heading "Resource kinds", each with the words it is described by. */
+export async function resourceKindLinks(page: Page): Promise<ResourceKindLink[]> {
   return resourceKinds(page)
     .getByRole('link')
     .evaluateAll((els) =>
       els.map((el) => {
         const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+        const drawn = (target: Element | null): boolean => {
+          if (target === null || target.getClientRects().length === 0) return false;
+          const style = getComputedStyle(target);
+          return style.visibility === 'visible' && style.opacity !== '0';
+        };
+        const item = el.closest('li');
+        const described = (el.getAttribute('aria-describedby') ?? '')
+          .split(/\s+/)
+          .filter((id) => id !== '')
+          .map((id) => document.getElementById(id));
         return {
           text: clean(el.textContent),
           href: el.getAttribute('href') ?? '',
-          description: (el.getAttribute('aria-describedby') ?? '')
-            .split(/\s+/)
-            .filter((id) => id !== '')
-            .map((id) => clean(document.getElementById(id)?.textContent))
-            .join(' '),
+          description: described.map((target) => clean(target?.textContent)).join(' '),
+          descriptionDrawn:
+            described.length > 0 &&
+            described.every((target) => drawn(target) && item !== null && item.contains(target)),
         };
       }),
     );
@@ -359,9 +401,18 @@ export async function resourceKindLinks(page: Page): Promise<(LinkPair & { descr
 // The navigation's Tab stops (design.md, D6 C).
 // ---------------------------------------------------------------------------------------------------------------
 
-/** True when the focused element is inside the side navigation. */
-export async function focusInNavigation(page: Page): Promise<boolean> {
-  return page.evaluate((navigation) => document.activeElement?.closest(navigation) != null, SIDE_NAVIGATION);
+/** Where the focused element is against the side navigation: inside it, and whether it is its header link. */
+export async function focusInNavigation(page: Page): Promise<{ inNavigation: boolean; navigationHeader: boolean }> {
+  return page.evaluate(
+    ([navigation, header]) => {
+      const active = document.activeElement;
+      return {
+        inNavigation: active?.closest(navigation) != null,
+        navigationHeader: active?.matches(header) === true,
+      };
+    },
+    [SIDE_NAVIGATION, HEADER_LINK] as const,
+  );
 }
 
 /** What a keyboard check knows of a Tab stop, as far as the navigation's stops need it. */
@@ -370,6 +421,8 @@ export interface NavigationStop {
   name: string;
   /** Inside the side navigation (`focusInNavigation`). */
   inNavigation: boolean;
+  /** The navigation's header link, by Cloudscape's own selector. */
+  navigationHeader: boolean;
 }
 
 /** One expected stop of a keyboard check's walk, as its `orderProblems` reads it. */
@@ -384,7 +437,8 @@ export interface ExpectedNavigationStop<S extends NavigationStop> {
  * The stops of a service's side navigation in a Tab walk, since the navigation holds every entry of the service
  * (issue 650; `decisions.md`, PM decisions, Tab-stop lists): the header `header`, then every stop inside the
  * navigation, any number (its other links and the toggles of its sections), with the links `links` among them in
- * that order. The stops after the navigation are the walk's own.
+ * that order. The header is the navigation's own header link and each named link a stop inside the navigation, so
+ * a link of the same name elsewhere on the page stands for neither. The stops after the navigation are the walk's own.
  */
 export function navigationStops<S extends NavigationStop>(
   header: string,
@@ -392,22 +446,91 @@ export function navigationStops<S extends NavigationStop>(
 ): ExpectedNavigationStop<S>[] {
   const others = (): ExpectedNavigationStop<S> => ({
     what: 'the other stops of the side navigation (its other entries and the toggles of its sections)',
-    match: (stop) => stop.inNavigation && !(stop.role === 'link' && links.includes(stop.name)),
+    match: (stop) =>
+      stop.inNavigation && !stop.navigationHeader && !(stop.role === 'link' && links.includes(stop.name)),
     optional: true,
     many: true,
   });
   return [
     {
       what: `the side navigation's header "${header}"`,
-      match: (stop) => stop.role === 'link' && stop.name === header,
+      match: (stop) => stop.navigationHeader && stop.role === 'link' && stop.name === header,
     },
     ...links.flatMap((link) => [
       others(),
       {
         what: `the side navigation's link "${link}"`,
-        match: (stop: S) => stop.role === 'link' && stop.name === link,
+        match: (stop: S) => stop.inNavigation && stop.role === 'link' && stop.name === link,
       },
     ]),
     others(),
   ];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A list screen a link leads to.
+// ---------------------------------------------------------------------------------------------------------------
+
+const TABLE = createWrapper().findTable();
+const H1_HEADING_TEXT = createWrapper().findHeader().findHeadingText().toSelector();
+
+/** A list screen as shown now: its table in `main`, read through Cloudscape's selectors. */
+export interface ListShown {
+  /** The `h1`'s heading text, its counter apart (Cloudscape's header); the `h1`'s text when it is no such header. */
+  heading: string | null;
+  /** The table's column headers, in order. */
+  columns: string[];
+  rows: number;
+  /** The table shows its empty slot. */
+  empty: boolean;
+  /** The table shows its loading text. */
+  loading: boolean;
+  /** The empty slot holds a status (the area's failure state), not the words of an empty list. */
+  failed: boolean;
+}
+
+/** Reads the list now; `null` when `main` shows no table. Never waits. */
+export async function listShown(page: Page): Promise<ListShown | null> {
+  const drawn = (selector: string) => page.locator(selector).filter({ visible: true });
+  if (
+    (await page
+      .getByRole('main')
+      .locator(TABLE.toSelector().replace(/^body /, ''))
+      .count()) === 0
+  )
+    return null;
+  const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const ofHeader = page.locator(H1_HEADING_TEXT).and(page.locator('h1, h1 *'));
+  const h1 = (await ofHeader.count()) > 0 ? ofHeader.first() : page.getByRole('heading', { level: 1 }).first();
+  return {
+    heading: (await h1.count()) > 0 ? clean(await h1.innerText(ACTION)) : null,
+    columns: (await drawn(TABLE.findColumnHeaders().toSelector()).allInnerTexts()).map(clean),
+    rows: await drawn(TABLE.findRows().toSelector()).count(),
+    empty: (await drawn(TABLE.findEmptySlot().toSelector()).count()) > 0,
+    loading: (await drawn(TABLE.findLoadingText().toSelector()).count()) > 0,
+    failed: (await drawn(TABLE.findEmptySlot().findStatusIndicator().toSelector()).count()) > 0,
+  };
+}
+
+/**
+ * Waits until the list of `main` has settled as a list that was read: its table shown, the loading text gone, and
+ * either rows or the empty slot with no failure status in it (other checks hold resources on the run's emulator, so
+ * a list is populated or empty). Returns the list as settled.
+ */
+export async function expectSettledList(page: Page, what: string): Promise<ListShown> {
+  await expect
+    .poll(
+      async () => {
+        const list = await listShown(page);
+        if (list === null) return 'no table';
+        if (list.loading) return 'loading';
+        return list.rows > 0 || list.empty ? 'settled' : 'neither rows nor the empty slot';
+      },
+      { message: `${what}: the list has settled`, ...ACTION },
+    )
+    .toBe('settled');
+  const list = await listShown(page);
+  if (list === null) throw new Error(`${what}: the table went away`);
+  expect(list.failed, `${what}: the list shows a failure, not rows or an empty list`).toBe(false);
+  return list;
 }

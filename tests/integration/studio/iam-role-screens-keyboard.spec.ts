@@ -182,8 +182,9 @@ interface Stop {
   role: string;
   name: string;
   inArea: boolean;
-  /** Inside the side navigation. */
+  /** Inside the side navigation, and whether it is its header link (by Cloudscape's own selector). */
   inNavigation: boolean;
+  navigationHeader: boolean;
   inPagination: boolean;
   ring: string | null;
 }
@@ -203,7 +204,7 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     role: ax.role,
     name: ax.name,
     ...where,
-    inNavigation: await focusInNavigation(page),
+    ...(await focusInNavigation(page)),
     ring: await focusRing(page),
   };
 }

@@ -699,8 +699,9 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
-  /** Inside the side navigation. */
+  /** Inside the side navigation, and whether it is its header link (by Cloudscape's own selector). */
   inNavigation: boolean;
+  navigationHeader: boolean;
   /** The focus indicator it draws; `null` when none. */
   ring: string | null;
 }
@@ -718,7 +719,7 @@ async function areaStop(page: Page): Promise<Stop | null> {
     role: ax.role,
     name: ax.name,
     inArea,
-    inNavigation: await focusInNavigation(page),
+    ...(await focusInNavigation(page)),
     ring: await focusRing(page),
   };
 }

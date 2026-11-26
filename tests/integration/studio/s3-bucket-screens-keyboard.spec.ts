@@ -95,8 +95,9 @@ interface Stop {
   name: string;
   /** Inside the AWS area (an element with a Cloudscape class around it). */
   inArea: boolean;
-  /** Inside the side navigation. */
+  /** Inside the side navigation, and whether it is its header link (by Cloudscape's own selector). */
   inNavigation: boolean;
+  navigationHeader: boolean;
   /** The section the stop is in: the level-2 heading of the nearest element around it that holds exactly one. */
   section: string | null;
   /** The focus indicator it draws; `null` when none. */
@@ -131,7 +132,7 @@ async function focusedStop(page: Page): Promise<Stop | null> {
     role: ax.role,
     name: ax.name,
     ...where,
-    inNavigation: await focusInNavigation(page),
+    ...(await focusInNavigation(page)),
     ring: await focusRing(page),
   };
 }

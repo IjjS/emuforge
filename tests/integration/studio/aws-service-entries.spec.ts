@@ -21,10 +21,9 @@
 // The inventory and the readers of the navigation and of the page: `support/aws-entries.ts`. The generic "No screen
 // yet" page: `support/no-screen-part.ts`.
 
-import createWrapper from '@cloudscape-design/components/test-utils/selectors';
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 
-import { expect, startStack, test } from './support';
+import { expect, startStack, test, type Ctx } from './support';
 import { connectedAt, crumbs, expectLine, noticeParts } from './support/aws-area';
 import {
   acrossStatement,
@@ -32,6 +31,7 @@ import {
   entryLinkProblems,
   expectOneCurrent,
   expectPairs,
+  expectSettledList,
   groupLinks,
   groupsOf,
   INVENTORY,
@@ -83,22 +83,46 @@ async function expectEntryPage(page: Page, path: string, label: string): Promise
   await expect(nothingChanged(page), 'the sentence that opening the page changed nothing').toBeVisible();
 }
 
-/** The table of a list screen, in the page's `main`. */
-const LIST_TABLE = createWrapper()
-  .findTable()
-  .toSelector()
-  .replace(/^body /, '');
+/** A list screen: its address (when the line names it), its `h1`, and its list settled, read and not failed. */
+async function expectList(page: Page, path: string | null, name: string): Promise<void> {
+  if (path !== null) await expect(page).toHaveURL(addressOf(path));
+  await expect(heading(page, name), `the h1 "${name}"`).toBeVisible();
+  await expectSettledList(page, `the list "${name}"`);
+}
 
-/** Waits for a list screen known by its crumbs: the crumbs, and a table in `main`. */
-async function expectListByCrumbs(page: Page, trail: string[]): Promise<void> {
+/** A list screen known by its crumbs: the crumbs, and its list settled; what tells the list from another. */
+async function expectListByCrumbs(page: Page, trail: string[]): Promise<{ heading: string | null; columns: string[] }> {
   await expect.poll(() => crumbs(page), { message: `the crumbs ${trail.join(' > ')}`, ...ACTION }).toEqual(trail);
-  await expect(page.getByRole('main').locator(LIST_TABLE).first(), 'the list’s table').toBeVisible();
+  const list = await expectSettledList(page, `the list at ${trail.join(' > ')}`);
+  return { heading: list.heading, columns: list.columns };
+}
+
+/**
+ * Logs the requests the browser sent to the engine's AWS endpoint during the check, each once: the list reads of the
+ * screens the check opened, which its manifest row names as `operations`.
+ */
+function awsRequestLog(ctx: Ctx, context: BrowserContext, engineOrigin: string): () => void {
+  const seen = new Set<string>();
+  context.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== engineOrigin || url.pathname.startsWith('/__emuforge/') || request.method() === 'OPTIONS')
+      return;
+    const headers = request.headers();
+    const action = /(?:^|&)Action=([A-Za-z0-9]+)/.exec(request.postData() ?? '')?.[1] ?? '';
+    seen.add(
+      [request.method(), url.pathname + url.search, headers['x-amz-target'] ?? '', action]
+        .filter((part) => part !== '')
+        .join(' '),
+    );
+  });
+  return () => ctx.log(`requests to the engine's AWS endpoint: ${JSON.stringify([...seen].sort())}`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-navigation-holds-every-entry-of-the-inventory', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-navigation-holds-every-entry-of-the-inventory', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
 
   await lines.line(
@@ -120,13 +144,19 @@ test('studio.aws-entries-navigation-holds-every-entry-of-the-inventory', async (
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-screen', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-screen', async ({
+  ctx,
+  page,
+  context,
+}) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
   const ec2Groups = groupsOf('ec2');
   const elb = ec2Groups.find((group) => group.name === ELB);
@@ -177,8 +207,13 @@ test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-scr
         tree.links.filter((link) => link.href === EC2_LOAD_BALANCERS || link.href === EC2_VOLUMES),
         'the two links as read from the navigation',
       ).toEqual([
-        expect.objectContaining({ href: EC2_VOLUMES, description: '' }),
-        expect.objectContaining({ href: EC2_LOAD_BALANCERS, description: NO_SCREEN_STATUS }),
+        expect.objectContaining({ href: EC2_VOLUMES, description: '', beside: '' }),
+        expect.objectContaining({
+          href: EC2_LOAD_BALANCERS,
+          description: NO_SCREEN_STATUS,
+          beside: NO_SCREEN_STATUS,
+          descriptionDrawn: true,
+        }),
       ]);
     },
   );
@@ -192,33 +227,40 @@ test('studio.aws-entries-navigation-names-groups-and-marks-entries-without-a-scr
       ctx.log(`side navigation: ${JSON.stringify(tree)}`);
       expect(tree.sections, 'no group name').toEqual([]);
       expect(
-        tree.links.map((link) => ({ text: link.text, description: link.description, current: link.current })),
+        tree.links.map((link) => ({
+          text: link.text,
+          description: link.description,
+          beside: link.beside,
+          current: link.current,
+        })),
         'the links',
       ).toEqual([
-        { text: 'Queues', description: '', current: true },
-        { text: 'Message move tasks', description: NO_SCREEN_STATUS, current: false },
+        { text: 'Queues', description: '', beside: '', current: true },
+        { text: 'Message move tasks', description: NO_SCREEN_STATUS, beside: NO_SCREEN_STATUS, current: false },
       ]);
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
 
   await lines.line(
     'On `/aws/ec2/instances`, follow "Volumes" in the navigation → the address is `/aws/ec2/volumes`, the `h1` is the volume list\'s, and "Volumes" is the one current link',
     async () => {
       await page.goto(EC2_INSTANCES);
-      await expectScreen(page, EC2_INSTANCES, 'Instances');
+      await expectList(page, EC2_INSTANCES, 'Instances');
       const volumes = navigationLink(page, EC2_VOLUMES);
       await expect(volumes, 'the link "Volumes"').toHaveText('Volumes');
       await volumes.click(ACTION);
-      await expectScreen(page, EC2_VOLUMES, 'Volumes');
+      await expectList(page, EC2_VOLUMES, 'Volumes');
       await expectOneCurrent(page, 'Volumes');
     },
   );
@@ -227,16 +269,14 @@ test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', asyn
   async function listWithSecondPath(route: string, entryPath: string, entry: string, trail: string[]) {
     await page.goto(route);
     await expect(page).toHaveURL(addressOf(route));
-    await expectListByCrumbs(page, trail);
+    const atRoute = await expectListByCrumbs(page, trail);
     const link = navigationLink(page, entryPath);
     await expect(link, `the link at ${entryPath}`).toHaveText(entry);
     await expectOneCurrent(page, entry);
-    const h1 = await page.getByRole('heading', { level: 1 }).first().innerText(ACTION);
     await markPage(page);
     await link.click(ACTION);
     await expect(page).toHaveURL(addressOf(entryPath));
-    await expectListByCrumbs(page, trail);
-    await expect(page.getByRole('heading', { level: 1 }).first(), 'the same list: its h1').toHaveText(h1);
+    expect(await expectListByCrumbs(page, trail), 'the same list: its heading and its columns').toEqual(atRoute);
     await expectOneCurrent(page, entry);
     expect(await stillSamePage(page), 'no document was loaded').toBe(true);
   }
@@ -265,6 +305,7 @@ test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', asyn
     },
   );
 
+  logRequests();
   lines.end();
 });
 
@@ -272,6 +313,7 @@ test('studio.aws-entries-entry-with-a-screen-opens-it-from-another-screen', asyn
 
 test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, page, context }) => {
   const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
   const traffic = Traffic.attach(ctx, context, page);
   const loadBalancers = entryAt('ec2', EC2_LOAD_BALANCERS);
@@ -291,7 +333,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
     'On `/aws/ec2/instances`, open the group "Elastic Load Balancing" in the navigation and follow "Load balancers" → the address is `/aws/ec2/load-balancers`; the `h1` is "Load balancers"; the document title is "Load balancers | EmuForge Studio"; the crumbs are "EmuForge", "AWS", "EC2", "Load balancers"; the statement "Studio has no screen for this yet."; the values "Resource kind" "Load balancers", "Part of" "Elastic Load Balancing", "Listed by" `DescribeLoadBalancers`; the sentence "Opening this page changed nothing in your local emulator."; the actions "Go to Instances" and "Go to Home"; "Load balancers" is the one current link and its group is open',
     async () => {
       await page.goto(EC2_INSTANCES);
-      await expectScreen(page, EC2_INSTANCES, 'Instances');
+      await expectList(page, EC2_INSTANCES, 'Instances');
       await openSection(page, ELB);
       const link = navigationLink(page, EC2_LOAD_BALANCERS);
       await expect(link, 'the link "Load balancers"').toHaveText('Load balancers');
@@ -353,7 +395,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
       await page.goto(EC2_LOAD_BALANCERS);
       await expectEntryPage(page, EC2_LOAD_BALANCERS, 'Load balancers');
       await action(page, goTo('Instances')).click(ACTION);
-      await expectScreen(page, '/aws/ec2', 'Instances');
+      await expectList(page, '/aws/ec2', 'Instances');
     },
   );
 
@@ -382,7 +424,7 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
     async () => {
       const path = '/aws/s3/directory-buckets';
       await page.goto('/aws/s3');
-      await expectScreen(page, '/aws/s3', 'Buckets');
+      await expectList(page, '/aws/s3', 'Buckets');
       const link = navigationLink(page, path);
       await expect(link, 'the link "Directory buckets"').toHaveText('Directory buckets');
       await link.click(ACTION);
@@ -392,13 +434,15 @@ test('studio.aws-entries-kind-without-a-screen-opens-its-page', async ({ ctx, pa
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
 
   await lines.line(
@@ -418,7 +462,7 @@ test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, pa
         href: '/aws/ecs/clusters',
       });
       await action(page, goTo('Clusters')).click(ACTION);
-      await expectScreen(page, '/aws/ecs/clusters', 'Clusters');
+      await expectList(page, '/aws/ecs/clusters', 'Clusters');
     },
   );
 
@@ -435,17 +479,19 @@ test('studio.aws-entries-kind-shown-inside-another-says-where', async ({ ctx, pa
       ).toBeVisible();
       await expectPairs(page, { 'Resource kind': entryAt('ec2', path).label }, ['Listed inside']);
       await action(page, goTo('Security groups')).click(ACTION);
-      await expectScreen(page, '/aws/ec2/security-groups', 'Security groups');
+      await expectList(page, '/aws/ec2/security-groups', 'Security groups');
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
 
   await lines.line(
@@ -458,7 +504,7 @@ test('studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent', async
       await expectPairs(page, { 'Listed inside': 'General purpose buckets' });
       await expect(page.getByRole('main').getByText(/^It shows them/), 'no sentence "It shows them …"').toHaveCount(0);
       await action(page, goTo('General purpose buckets')).click(ACTION);
-      await expectScreen(page, '/aws/s3/buckets', 'Buckets');
+      await expectList(page, '/aws/s3/buckets', 'Buckets');
     },
   );
 
@@ -475,13 +521,15 @@ test('studio.aws-entries-kind-listed-inside-a-parent-leads-to-the-parent', async
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
   const elb = groupsOf('ec2').find((group) => group.name === ELB);
 
@@ -492,7 +540,12 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page }
       await expectEntryPage(page, EC2_ELB, ELB);
       await expectPairs(page, { 'Sub-service': ELB, 'Part of': 'EC2' });
       const wanted = (elb?.entries ?? [])
-        .map((entry) => ({ text: entry.label, href: entry.path, description: NO_SCREEN_STATUS }))
+        .map((entry) => ({
+          text: entry.label,
+          href: entry.path,
+          description: NO_SCREEN_STATUS,
+          descriptionDrawn: true,
+        }))
         .sort((a, b) => a.href.localeCompare(b.href));
       expect(wanted.length, 'the inventory holds kinds of the group').toBeGreaterThan(0);
       await expect
@@ -523,20 +576,22 @@ test('studio.aws-entries-sub-service-page-links-its-kinds', async ({ ctx, page }
       await page.goto(path);
       await expectEntryPage(page, path, 'DynamoDB Accelerator (DAX)');
       await action(page, goTo('Tables')).click(ACTION);
-      await expect(heading(page, 'Tables'), "the table list's h1").toBeVisible();
+      await expectList(page, null, 'Tables');
       await expect
         .poll(() => crumbs(page), { message: 'the crumbs of the table list', ...ACTION })
         .toEqual(['EmuForge', 'AWS', 'DynamoDB', 'Tables']);
     },
   );
 
+  logRequests();
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test('studio.aws-entries-path-below-an-entry-shows-the-generic-page', async ({ ctx, page }) => {
-  await startStack(ctx);
+test('studio.aws-entries-path-below-an-entry-shows-the-generic-page', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const logRequests = awsRequestLog(ctx, context, stack.engine.url);
   const lines = new Lines(ctx);
 
   /** The generic page at `path` for the service `label`, with no link of the navigation current. */
@@ -570,5 +625,6 @@ test('studio.aws-entries-path-below-an-entry-shows-the-generic-page', async ({ c
     },
   );
 
+  logRequests();
   lines.end();
 });
