@@ -1,7 +1,7 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
-import { useState, type Ref } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type Ref, type RefObject } from 'react';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
@@ -54,11 +54,20 @@ export interface ChoiceFieldProps<T> {
   /** The field is shown as failing a check. */
   invalid?: boolean | undefined;
   ariaLabel?: string | undefined;
+  /** The label of a parent that must be chosen before the field can open. */
+  lockedBy?: string | undefined;
+  /** The words of an empty, unfiltered list. */
+  none?: string | undefined;
+  /** A status shown while the form checks which choices are valid. */
+  held?: string | undefined;
+  /** Runs on every opening, including the first. */
+  onOpen?: (() => void) | undefined;
 }
 
 /** What the two fields share of Cloudscape's props, from the choices read. */
 interface FieldParts<T> {
   choices: PagedChoices<T>;
+  fieldRef: RefObject<HTMLDivElement | null>;
   items: T[];
   options: SelectProps.Option[];
   props: Pick<
@@ -75,22 +84,52 @@ interface FieldParts<T> {
     | 'filteringAriaLabel'
     | 'onLoadItems'
     | 'renderDropdownFooter'
-    | 'onFocus'
+    | 'disabled'
   >;
 }
 
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
 // eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
 export function useChoiceField<T>(
-  { source, connection, things }: ChoiceFieldProps<T>,
+  { source, connection, things, lockedBy, none, held, onOpen }: ChoiceFieldProps<T>,
   fixed: SelectProps.Option | undefined,
 ): FieldParts<T> {
   const [opened, setOpened] = useState(false);
   const [text, setText] = useState('');
+  const fieldRef = useRef<HTMLDivElement>(null);
   const filtering = source.filtering ?? 'none';
-  const choices = usePagedChoices(source, opened, text);
+  const choices = usePagedChoices(source, opened && lockedBy === undefined, text);
+
+  const handleOpen = useEffectEvent((again: boolean) => {
+    if (again && source.readAgainOnOpen === true) {
+      setText('');
+      choices.restart('');
+    }
+    onOpen?.();
+  });
+
+  useEffect(() => {
+    const trigger = fieldRef.current?.querySelector('button[aria-haspopup][aria-expanded]');
+    if (trigger === undefined || trigger === null) return;
+
+    // Cloudscape only requests items when the filtering text changes. Its trigger reports every opening.
+    let openedBefore = false;
+    const observer = new MutationObserver((records) => {
+      const finalValue = trigger.getAttribute('aria-expanded');
+      for (const [index, record] of records.entries()) {
+        const next = index + 1 < records.length ? records[index + 1]?.oldValue : finalValue;
+        if (record.oldValue !== 'true' && next === 'true') {
+          handleOpen(openedBefore);
+          openedBefore = true;
+        }
+      }
+    });
+    observer.observe(trigger, { attributes: true, attributeOldValue: true, attributeFilter: ['aria-expanded'] });
+    return () => observer.disconnect();
+  }, []);
   const items = choices.choices ?? [];
-  const options = [...(fixed === undefined ? [] : [fixed]), ...items.map(source.optionOf)];
+  const available = [...(fixed === undefined ? [] : [fixed]), ...items.map(source.optionOf)];
+  const options = held === undefined ? available : available.map((option) => ({ ...option, disabled: true }));
 
   let statusType: NonNullable<SelectProps['statusType']> = 'finished';
   if (choices.failure !== undefined) {
@@ -100,12 +139,13 @@ export function useChoiceField<T>(
   }
   // A further page is read when the developer asks for it with "Load more" at the list's end, never by itself.
   const more = statusType === 'finished' && choices.more;
-  const none = choices.text === '' ? `No ${things}` : `No ${things} match`;
+  const empty = choices.text === '' ? (none ?? `No ${things}`) : `No ${things} match`;
   // With a fixed first choice the list is never empty, so the words that it holds nothing stand at its end.
-  const finishedText = fixed !== undefined && choices.choices !== undefined && items.length === 0 ? none : undefined;
+  const finishedText = fixed !== undefined && choices.choices !== undefined && items.length === 0 ? empty : undefined;
 
   return {
     choices,
+    fieldRef,
     items,
     options,
     props: {
@@ -116,7 +156,8 @@ export function useChoiceField<T>(
           ? ''
           : `The ${things} could not be loaded: ${failureWords(choices.failure, connection, things)}`,
       recoveryText: 'Retry',
-      empty: none,
+      empty,
+      disabled: lockedBy !== undefined,
       ...(finishedText === undefined ? {} : { finishedText }),
       noMatch: `No ${things} match`,
       ...(filtering === 'none'
@@ -126,13 +167,6 @@ export function useChoiceField<T>(
             filteringPlaceholder: `Find ${things}`,
             filteringAriaLabel: `Find ${things}`,
           }),
-      // The field is focused before it is opened again (Cloudscape asks for no first page a second time), so a
-      // source read again on each opening reads again then.
-      onFocus: () => {
-        if (source.readAgainOnOpen === true && choices.choices !== undefined) {
-          choices.restart();
-        }
-      },
       onLoadItems: ({ detail }) => {
         setOpened(true);
         if (detail.samePage) {
@@ -161,6 +195,8 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
   onChange: (choice: T | undefined) => void;
   /** The label of a fixed first choice ("No key pair"), offered above the others and the choice at start. */
   fixed?: string | undefined;
+  /** The sentence shown with the fixed first choice. */
+  fixedDescription?: string | undefined;
   selectRef?: Ref<SelectProps.Ref> | undefined;
   /**
    * What the closed field shows of the choice made: its label alone (`label`, the default), or its label with its
@@ -171,35 +207,56 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
 
 /** A field of one choice of `source`, read a page at a time. */
 export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
-  const { source, value, onChange, fixed, placeholder, invalid, ariaLabel, selectRef, triggerVariant } = props;
-  const fixedOption = fixed === undefined ? undefined : { value: FIXED, label: fixed };
-  const { items, options, props: parts } = useChoiceField(props, fixedOption);
-
-  let selected: SelectProps.Option | null = null;
-  if (value !== undefined) {
-    selected = source.optionOf(value);
-  } else if (fixedOption !== undefined) {
-    selected = fixedOption;
-  }
+  const {
+    source,
+    value,
+    onChange,
+    fixed,
+    fixedDescription,
+    placeholder,
+    invalid,
+    ariaLabel,
+    selectRef,
+    triggerVariant,
+    lockedBy,
+    held,
+  } = props;
+  const fixedOption =
+    fixed === undefined ? undefined : { value: FIXED, label: fixed, ...optional({ description: fixedDescription }) };
+  const { fieldRef, items, options, props: parts } = useChoiceField(props, fixedOption);
+  const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
+  const variant = value === undefined && fixedOption?.description !== undefined ? 'option' : triggerVariant;
 
   return (
-    <Select
-      ref={selectRef}
-      {...parts}
-      selectedOption={selected}
-      options={options}
-      {...optional({ placeholder, invalid, ariaLabel, triggerVariant })}
-      dropdownRole="dialog"
-      onChange={({ detail }) => {
-        if (detail.selectedOption.value === FIXED && fixedOption !== undefined) {
-          onChange(undefined);
-          return;
-        }
-        const chosen = items.find((each) => source.optionOf(each).value === detail.selectedOption.value);
-        if (chosen !== undefined) {
-          onChange(chosen);
-        }
-      }}
-    />
+    <div ref={fieldRef}>
+      <Select
+        ref={selectRef}
+        {...parts}
+        selectedOption={lockedBy === undefined ? selected : null}
+        options={options}
+        {...optional({
+          placeholder: lockedBy === undefined ? placeholder : `Choose ${lockedBy} first`,
+          invalid,
+          ariaLabel,
+          triggerVariant: variant,
+        })}
+        dropdownRole="dialog"
+        onChange={({ detail }) => {
+          const selectedValue = detail.selectedOption.value;
+          if (!options.some((option) => option.value === selectedValue && option.disabled !== true)) return;
+          if (selectedValue === FIXED && fixedOption !== undefined) {
+            onChange(undefined);
+            return;
+          }
+          const chosen = items.find((each) => source.optionOf(each).value === selectedValue);
+          if (chosen !== undefined) onChange(chosen);
+        }}
+      />
+      {held !== undefined && (
+        <Box color="text-status-inactive" padding={{ top: 'xxs' }} nativeAttributes={{ role: 'status' }}>
+          {held}
+        </Box>
+      )}
+    </div>
   );
 }

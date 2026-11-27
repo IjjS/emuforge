@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../lib/aws/request';
-import { ChoiceMultiselect } from './choice-multiselect';
+import { ChoiceMultiselect, type ChoiceMultiselectProps } from './choice-multiselect';
 import type { AreaConnection } from './emulator-line';
 import type { ChoiceSource } from './use-paged-choices';
 import type { TokenPage } from './use-token-listing';
@@ -21,6 +21,7 @@ const CONNECTION: AreaConnection = {
 interface Thing {
   id: string;
   name: string;
+  disabledReason?: string;
 }
 
 const thing = (id: string, name = id): Thing => ({ id, name });
@@ -36,18 +37,28 @@ const SOURCE: ChoiceSource<Thing> = {
   operation: 'ListThings',
   filtering: 'sent',
   read: (_endpoint, text, token) => read(text, token),
-  optionOf: (each) => ({ value: each.id, label: each.name, description: each.id }),
+  optionOf: (each) => ({
+    value: each.id,
+    label: each.name,
+    description: each.id,
+    ...(each.disabledReason === undefined ? {} : { disabled: true, disabledReason: each.disabledReason }),
+  }),
 };
 
-function Field() {
+interface FieldOptions extends Pick<ChoiceMultiselectProps<Thing>, 'lockedBy' | 'none'> {
+  readAgainOnOpen?: boolean;
+}
+
+function Field({ readAgainOnOpen, ...options }: FieldOptions) {
   const [value, setValue] = useState<Thing[]>([]);
   return (
     <ChoiceMultiselect<Thing>
-      source={SOURCE}
+      source={{ ...SOURCE, readAgainOnOpen }}
       connection={CONNECTION}
       things="things"
       placeholder="Choose things"
       value={value}
+      {...options}
       onChange={(choices) => {
         latest = choices;
         setValue(choices);
@@ -56,13 +67,12 @@ function Field() {
   );
 }
 
-function open() {
+function open(options: FieldOptions = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={client}>
-      <Field />
-    </QueryClientProvider>,
-  );
+  const view = render(<Field {...options} />, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  });
+  return (changes: Partial<FieldOptions>) => view.rerender(<Field {...options} {...changes} />);
 }
 
 const PAGE = createWrapper(document.body);
@@ -186,4 +196,46 @@ describe('ChoiceMultiselect', () => {
       expect(dropdownText()).toContain('Access denied. ListThings was refused: denied here');
     });
   });
+});
+
+it('is locked until the parent is chosen and then uses the custom empty words', async () => {
+  read.mockResolvedValue({ items: [] });
+  const update = open({ lockedBy: 'VPC', none: 'No security groups in vpc-1' });
+  expect(field().findTrigger().getElement()).toBeDisabled();
+  expect(text(field().findTrigger().getElement())).toContain('Choose VPC first');
+  field().openDropdown();
+  expect(read).not.toHaveBeenCalled();
+  update({ lockedBy: undefined });
+  field().openDropdown();
+  await waitFor(() => expect(dropdownText()).toContain('No security groups in vpc-1'));
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it('shows a disabled option and its reason without choosing it', async () => {
+  read.mockResolvedValue({ items: [{ ...thing('a', 'alpha'), disabledReason: 'Already used' }] });
+  open();
+  field().openDropdown();
+  const option = await screen.findByRole('option', { name: /alpha/ });
+  expect(option).toHaveAttribute('aria-disabled', 'true');
+  expect(option).toHaveAccessibleDescription('Already used');
+  field().selectOptionByValue('a');
+  expect(latest).toEqual([]);
+});
+
+it('reads a marked source again on reopen and keeps a chosen token from the earlier list', async () => {
+  read.mockResolvedValueOnce({ items: [thing('a')] }).mockResolvedValueOnce({ items: [thing('b')] });
+  open({ readAgainOnOpen: true });
+  field().openDropdown();
+  await waitFor(() => expect(shown()).toEqual(['a']));
+  field().selectOptionByValue('a');
+  field().closeDropdown();
+  await waitFor(() => expect(field().findTrigger().getElement()).toHaveAttribute('aria-expanded', 'false'));
+  field().openDropdown();
+  await waitFor(() => expect(shown()).toEqual(['b']));
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(tokens()).toEqual(['a']);
+  field().closeDropdown();
+  field().findToken(1)?.findDismiss().click();
+  expect(tokens()).toEqual([]);
+  expect(latest).toEqual([]);
 });

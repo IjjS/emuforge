@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../lib/aws/request';
-import { ChoiceSelect } from './choice-select';
+import { ChoiceSelect, type ChoiceSelectProps } from './choice-select';
 import type { AreaConnection } from './emulator-line';
 import type { ChoiceFiltering, ChoiceSource } from './use-paged-choices';
 import type { TokenPage } from './use-token-listing';
@@ -23,6 +23,7 @@ interface Thing {
   name: string;
   size: string;
   note?: string;
+  disabledReason?: string;
 }
 
 const thing = (id: string, name = id, size = '1', note?: string): Thing => ({
@@ -49,27 +50,29 @@ function source(filtering: ChoiceFiltering | undefined): ChoiceSource<Thing> {
       label: each.name,
       ...(each.note === undefined ? {} : { description: each.note }),
       tags: [each.id, `size ${each.size}`],
+      ...(each.disabledReason === undefined ? {} : { disabled: true, disabledReason: each.disabledReason }),
     }),
   };
 }
 
-interface FieldOptions {
-  filtering: ChoiceFiltering | undefined;
-  fixed: string | undefined;
-  triggerVariant: 'label' | 'option' | undefined;
+interface FieldOptions extends Pick<
+  ChoiceSelectProps<Thing>,
+  'fixed' | 'fixedDescription' | 'triggerVariant' | 'lockedBy' | 'none' | 'held' | 'onOpen'
+> {
+  filtering?: ChoiceFiltering;
+  readAgainOnOpen?: boolean;
 }
 
-function Field({ filtering, fixed, triggerVariant }: FieldOptions) {
+function Field({ filtering = 'sent', readAgainOnOpen, ...options }: FieldOptions) {
   const [value, setValue] = useState<Thing>();
   return (
     <ChoiceSelect<Thing>
-      source={source(filtering)}
+      source={{ ...source(filtering), readAgainOnOpen }}
       connection={CONNECTION}
       things="things"
       placeholder="Choose a thing"
-      fixed={fixed}
-      triggerVariant={triggerVariant}
       value={value}
+      {...options}
       onChange={(choice) => {
         chosen.push(choice);
         setValue(choice);
@@ -78,17 +81,12 @@ function Field({ filtering, fixed, triggerVariant }: FieldOptions) {
   );
 }
 
-function open({
-  filtering = 'sent',
-  fixed,
-  triggerVariant,
-}: { filtering?: ChoiceFiltering; fixed?: string; triggerVariant?: 'label' | 'option' } = {}) {
+function open(options: FieldOptions = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={client}>
-      <Field filtering={filtering} fixed={fixed} triggerVariant={triggerVariant} />
-    </QueryClientProvider>,
-  );
+  const view = render(<Field {...options} />, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  });
+  return (changes: Partial<FieldOptions>) => view.rerender(<Field {...options} {...changes} />);
 }
 
 const PAGE = createWrapper(document.body);
@@ -330,5 +328,119 @@ describe('ChoiceSelect', () => {
     expect(triggerText()).toContain('the first');
     expect(triggerText()).toContain('t-1');
     expect(triggerText()).toContain('size 2');
+  });
+});
+
+describe('described and dependent choices', () => {
+  it('shows the fixed choice and its description when closed and when open', async () => {
+    read.mockResolvedValue({ items: [] });
+    open({ fixed: 'No key', fixedDescription: 'No key is sent.' });
+    expect(triggerText()).toContain('No key');
+    expect(triggerText()).toContain('No key is sent.');
+    select().openDropdown();
+    await waitFor(() => {
+      expect(text(select().findDropdown().findOption(1)?.getElement())).toContain('No key is sent.');
+    });
+  });
+
+  it('shows a disabled option and its reason and does not choose it', async () => {
+    read.mockResolvedValue({ items: [{ ...thing('a'), disabledReason: 'Already used' }] });
+    open();
+    select().openDropdown();
+    const option = await screen.findByRole('option', { name: /a/ });
+    expect(option).toHaveAttribute('aria-disabled', 'true');
+    expect(option).toHaveAccessibleDescription('Already used');
+    select().selectOptionByValue('a');
+    expect(chosen).toEqual([]);
+  });
+
+  it('is locked until the named parent is chosen', async () => {
+    read.mockResolvedValue({ items: [thing('a')] });
+    const update = open({ lockedBy: 'VPC', fixed: 'No choice' });
+    expect(select().findTrigger().getElement()).toBeDisabled();
+    expect(triggerText()).toBe('Choose VPC first');
+    select().openDropdown();
+    expect(read).not.toHaveBeenCalled();
+
+    update({ lockedBy: undefined });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['No choice', 'a']));
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, 'Nothing chosen'])('uses the custom empty words with fixed choice %s', async (fixed) => {
+    read.mockResolvedValue({ items: [] });
+    open({ fixed, none: 'No security groups in vpc-1' });
+    select().openDropdown();
+    await waitFor(() => expect(dropdownText()).toContain('No security groups in vpc-1'));
+  });
+
+  it('shows the holding status and locks the options while keeping the chosen value', async () => {
+    read.mockResolvedValue({ items: [thing('a'), thing('b')] });
+    const update = open({ fixed: 'No choice' });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['No choice', 'a', 'b']));
+    select().selectOptionByValue('a');
+    update({ held: 'Checking VPC' });
+    expect(triggerText()).toBe('a');
+    expect(screen.getByRole('status')).toHaveTextContent('Checking VPC');
+
+    select().openDropdown();
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(3);
+    for (const option of options) expect(option).toHaveAttribute('aria-disabled', 'true');
+    select().selectOptionByValue('b');
+    expect(chosen).toEqual([thing('a')]);
+
+    update({ held: undefined });
+    select().selectOptionByValue('b');
+    expect(chosen).toEqual([thing('a'), thing('b')]);
+  });
+});
+
+describe('openings', () => {
+  it('reads again after Esc even if the trigger retains focus', async () => {
+    read.mockResolvedValueOnce({ items: [thing('a')] }).mockResolvedValueOnce({ items: [thing('b')] });
+    open({ readAgainOnOpen: true });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a']));
+    const filter = screen.getByRole('combobox');
+    fireEvent.keyDown(filter, { key: 'Escape' });
+    expect(select().findTrigger().getElement()).toHaveFocus();
+
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['b']));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('focus alone does not read and a later opening sees a change made after focus', async () => {
+    read.mockResolvedValue({ items: [thing('a')] });
+    open({ readAgainOnOpen: true });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a']));
+    select().closeDropdown();
+    act(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      select().findTrigger().focus();
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+
+    read.mockResolvedValue({ items: [thing('a'), thing('b')] });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a', 'b']));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads an unmarked source once and calls onOpen once per opening', async () => {
+    read.mockResolvedValue({ items: [thing('a')] });
+    const onOpen = vi.fn();
+    open({ onOpen });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a']));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    select().closeDropdown();
+    select().openDropdown();
+    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2));
+    expect(read).toHaveBeenCalledTimes(1);
   });
 });
