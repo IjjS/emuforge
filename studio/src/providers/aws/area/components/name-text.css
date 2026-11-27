@@ -1,0 +1,10 @@
+/* The accessible identity takes no room and is left out of a text selection. */
+.aws-area-name-identity {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  user-select: none;
+}
