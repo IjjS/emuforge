@@ -299,6 +299,32 @@ it('focuses the invalid evaluation periods or the invalid explicit datapoint cou
   expect(send).not.toHaveBeenCalled();
 });
 
+it('clears the prior datapoint rule from the field when the count is implicit again', async () => {
+  read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
+  const page = open();
+  await ready(page);
+
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  datapoints.setInputValue('2');
+  await submit(page);
+  const datapointField = field(page, 'Data points to alarm');
+  expect(datapointField.findError()?.getElement()).toHaveTextContent(
+    'Data points to alarm cannot exceed the evaluation periods.',
+  );
+
+  datapoints.setInputValue('1');
+  periods.setInputValue('');
+  await submit(page);
+  expect(datapointField.findError()).toBeNull();
+  expect(field(page, 'Evaluation periods').findError()?.getElement()).toHaveTextContent(
+    'Enter a whole number of at least 1.',
+  );
+  expect(periods.findNativeInput().getElement()).toHaveFocus();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(send).not.toHaveBeenCalled();
+});
+
 it('shows loading and then the missing alarm state, and makes no request for a missing name', async () => {
   const opening = deferred<undefined>();
   read.mockReturnValueOnce(opening.promise);
