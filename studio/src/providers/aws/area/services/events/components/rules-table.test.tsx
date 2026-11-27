@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -71,7 +71,7 @@ it('shows one linked row per rule with state, trigger and description', async ()
     'nightlyDisabledrate(1 day)-',
     '..Enabled, with all CloudTrail management eventsEvent pattern, rate(1 hour)-',
   ]);
-  expect(screen.getByRole('table', { name: 'Rules' })).toBeVisible();
+  expect(table.find('table')?.getElement()).toHaveAccessibleName('Rules');
   expect(table.findHeaderSlot()?.findHeader()?.findDescription()).toBeNull();
 });
 
@@ -80,10 +80,11 @@ it('shows the overflow hint in the rules header and table label when columns ext
   vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(570);
   read.mockResolvedValueOnce({ items: [{ Name: 'daily', ScheduleExpression: 'rate(1 day)' }] });
   const table = renderTable();
+  const nativeTable = table.find('table')?.getElement();
   const hint = 'Scroll sideways to see the trigger and description.';
 
-  expect(screen.getByRole('table', { name: 'Rules' })).toBeVisible();
-  expect(await screen.findByRole('table', { name: `Rules. ${hint}` })).toBeVisible();
+  expect(nativeTable).toHaveAccessibleName('Rules');
+  await waitFor(() => expect(nativeTable).toHaveAccessibleName(`Rules. ${hint}`));
   expect(table.findHeaderSlot()?.findHeader()?.findDescription()?.getElement()).toHaveTextContent(hint);
 });
 
