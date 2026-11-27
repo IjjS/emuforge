@@ -22,7 +22,9 @@ const connected = { kind: 'connected', checkedAt: 0, emulator } as const;
 const operation = 'ListEventBuses';
 const read = vi.mocked(listEventBuses);
 
-beforeEach(() => read.mockReset());
+beforeEach(() => {
+  read.mockReset();
+});
 
 function renderPage(result: AreaConnection['result'] = connected) {
   const resources = vi.fn();
@@ -137,12 +139,24 @@ const refusals: { failure: RequestFailure; status: string; detail?: string }[] =
 it.each(refusals)('shows $status in place of the list and retries', async ({ failure, status, detail }) => {
   read.mockRejectedValueOnce(new RequestError(failure)).mockResolvedValueOnce({ items: [{ Name: 'default' }] });
   const { table } = renderPage();
+  await waitFor(() => expect(table.findEmptySlot()?.findStatusIndicator()?.getElement().textContent).toBe(status));
   const empty = required(table.findEmptySlot());
-  await waitFor(() => expect(empty.findStatusIndicator()?.getElement().textContent).toBe(status));
   if (detail !== undefined) expect(empty.getElement()).toHaveTextContent(detail);
   const retry = required(empty.findButton());
   expect(retry.getElement()).toHaveAccessibleName('Retry');
   fireEvent.click(retry.getElement());
   await waitFor(() => expect(table.findRows()).toHaveLength(1));
   expectRead('');
+});
+
+it.each([
+  ['not_started', 'Not started on port 9306'],
+  ['connection_failed', 'Not answering at https://127.0.0.1:9306'],
+])('shows the connection recovery for an emulator that is %s', async (reason, status) => {
+  read.mockRejectedValueOnce(new RequestError({ kind: 'emulator-did-not-answer', operation, message: '' }));
+  const { table } = renderPage({ kind: 'emulator-unreachable', checkedAt: 0, emulator, reason, message: '' });
+  await waitFor(() => expect(table.findEmptySlot()?.findStatusIndicator()?.getElement().textContent).toBe(status));
+  const recovery = table.findEmptySlot()?.findLink()?.getElement();
+  expect(recovery).toHaveAccessibleName('Connection status');
+  expect(recovery).toHaveAttribute('href', '/');
 });

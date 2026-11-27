@@ -42,12 +42,13 @@ export type EventBusRead = { kind: 'found'; bus: DescribeEventBusResponse } | { 
 
 export async function getEventBus(endpoint: string, name: string, signal: AbortSignal): Promise<EventBusRead> {
   try {
-    const { $metadata: _metadata, ...bus } = await sendEvents(
+    const { $metadata, ...bus } = await sendEvents(
       endpoint,
       BUS_OPERATIONS.describeEventBus,
       (client, abortSignal) => client.send(new DescribeEventBusCommand({ Name: name }), { abortSignal }),
       signal,
     );
+    void $metadata;
     return { kind: 'found', bus };
   } catch (error) {
     if (
@@ -55,7 +56,8 @@ export async function getEventBus(endpoint: string, name: string, signal: AbortS
       error.failure.kind === 'other' &&
       error.failure.code === 'ResourceNotFoundException'
     ) {
-      return { kind: 'not-found', message: error.failure.message };
+      const { message } = error.failure;
+      return message === undefined ? { kind: 'not-found' } : { kind: 'not-found', message };
     }
     throw error;
   }

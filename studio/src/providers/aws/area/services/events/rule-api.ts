@@ -43,12 +43,13 @@ export type RuleRead = { kind: 'found'; rule: DescribeRuleResponse } | { kind: '
 
 export async function getRule(endpoint: string, bus: string, name: string, signal: AbortSignal): Promise<RuleRead> {
   try {
-    const { $metadata: _metadata, ...rule } = await sendEvents(
+    const { $metadata, ...rule } = await sendEvents(
       endpoint,
       RULE_OPERATIONS.describeRule,
       (client, abortSignal) => client.send(new DescribeRuleCommand({ EventBusName: bus, Name: name }), { abortSignal }),
       signal,
     );
+    void $metadata;
     return { kind: 'found', rule };
   } catch (error) {
     if (
@@ -56,7 +57,8 @@ export async function getRule(endpoint: string, bus: string, name: string, signa
       error.failure.kind === 'other' &&
       error.failure.code === 'ResourceNotFoundException'
     ) {
-      return { kind: 'not-found', message: error.failure.message };
+      const { message } = error.failure;
+      return message === undefined ? { kind: 'not-found' } : { kind: 'not-found', message };
     }
     throw error;
   }

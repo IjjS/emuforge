@@ -6,7 +6,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { RequestError } from '../../../../../lib/aws/request';
 import { getEventBus, listResourceTags, type EventBusRead } from './bus-api';
 import { useEventBus, useResourceTags, useRule, useRuleTargets } from './queries';
-import { getRule, listRuleTargets } from './rule-api';
+import { getRule, listRuleTargets, type RuleRead } from './rule-api';
 
 vi.mock('./bus-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bus-api')>()),
@@ -24,7 +24,9 @@ const endpoint = 'http://127.0.0.1:8306';
 const reads = [getEventBus, listResourceTags, getRule, listRuleTargets];
 const operations = ['DescribeEventBus', 'ListTagsForResource', 'DescribeRule', 'ListTargetsByRule'];
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+});
 
 function queryWrapper() {
   const client = new QueryClient();
@@ -55,6 +57,8 @@ function useReads(at?: string) {
 it('waits for the address, then sends each read with its arguments and shows its answer', async () => {
   const busAnswer = deferred<EventBusRead>();
   const tagsAnswer = deferred<Record<string, string>>();
+  const ruleAnswer = deferred<RuleRead>();
+  const targetsAnswer = deferred<Awaited<ReturnType<typeof listRuleTargets>>>();
   const rule = { kind: 'found', rule: { Name: 'route' } } as const;
   const targets = [{ Id: 'queue', Arn: 'arn:queue' }];
   const { result, rerender } = renderHook(({ at }: { at?: string }) => useReads(at), {
@@ -63,8 +67,8 @@ it('waits for the address, then sends each read with its arguments and shows its
   });
   vi.mocked(getEventBus).mockReturnValueOnce(busAnswer.promise);
   vi.mocked(listResourceTags).mockReturnValueOnce(tagsAnswer.promise);
-  vi.mocked(getRule).mockResolvedValueOnce(rule);
-  vi.mocked(listRuleTargets).mockResolvedValueOnce(targets);
+  vi.mocked(getRule).mockReturnValueOnce(ruleAnswer.promise);
+  vi.mocked(listRuleTargets).mockReturnValueOnce(targetsAnswer.promise);
 
   for (const read of reads) expect(read).not.toHaveBeenCalled();
   expect(result.current.map(({ loading }) => loading)).toEqual([true, true, true, true]);
@@ -75,10 +79,12 @@ it('waits for the address, then sends each read with its arguments and shows its
     expect(getRule).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', 'route', expect.any(AbortSignal));
     expect(listRuleTargets).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', 'route', expect.any(AbortSignal));
   });
-  expect(result.current[0]).toMatchObject({ loading: true, value: undefined });
+  for (const query of result.current) expect(query).toMatchObject({ loading: true, value: undefined });
   await act(async () => {
     busAnswer.resolve(bus('orders'));
     tagsAnswer.resolve({ env: 'local' });
+    ruleAnswer.resolve(rule);
+    targetsAnswer.resolve(targets);
   });
   await waitFor(() => {
     expect(result.current.map(({ value }) => value)).toEqual([bus('orders'), { env: 'local' }, rule, targets]);
