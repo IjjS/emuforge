@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -178,14 +178,35 @@ const loaded: EventBusRead = {
   bus: { Name: 'orders', Arn: 'arn:orders', Description: 'Routes orders' },
 };
 
-async function openDelete() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  return within(await screen.findByRole('dialog', { name: 'Delete event bus orders?' }));
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('Expected a Cloudscape wrapper');
+  return value;
 }
 
-function confirmDelete(dialog: ReturnType<typeof within>) {
-  fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'orders' } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+function deleteOpener({ layout }: Page) {
+  return layout.findHeader()?.findHeader()?.findActions()?.findButton('button');
+}
+
+async function openDelete(page: Page) {
+  const button = await waitFor(() => {
+    const opener = required(deleteOpener(page));
+    expect(opener.getElement()).toHaveAccessibleName('Delete');
+    expect(opener.getElement()).toBeEnabled();
+    return opener;
+  });
+  button.click();
+  const modal = await waitFor(() => required(createWrapper(page.container).findModal()));
+  expect(modal.findHeader().getElement()).toHaveTextContent('Delete event bus orders?');
+  const [cancel, deleteBus] = modal.findFooter()?.findAllButtons() ?? [];
+  expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
+  expect(deleteBus?.getElement()).toHaveAccessibleName('Delete');
+  const input = required(modal.findContent().findFormField()?.findControl()?.findInput()).findNativeInput();
+  return { modal, cancel: required(cancel), deleteBus: required(deleteBus), input };
+}
+
+function confirmDelete(dialog: Awaited<ReturnType<typeof openDelete>>) {
+  fireEvent.change(dialog.input.getElement(), { target: { value: 'orders' } });
+  dialog.deleteBus.click();
 }
 
 function expectDeleteResult(handOver: ReturnType<typeof vi.fn<PageFlash['handOver']>>) {
@@ -198,18 +219,20 @@ function expectDeleteResult(handOver: ReturnType<typeof vi.fn<PageFlash['handOve
 
 it('explains why default cannot be deleted', async () => {
   read.mockResolvedValueOnce({ kind: 'found', bus: { Name: 'default' } });
-  renderPage(undefined, 'default');
-  const action = await screen.findByRole('button', { name: 'Delete' });
+  const page = renderPage(undefined, 'default');
+  const action = await waitFor(() => required(deleteOpener(page)).getElement());
+  expect(action).toHaveAccessibleName('Delete');
   expect(action).toHaveAttribute('aria-disabled', 'true');
   expect(action).toHaveAccessibleDescription('The default event bus cannot be deleted.');
   fireEvent.click(action);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(createWrapper(page.container).findModal()).toBeNull();
 });
 
 it('opens the delete dialog and hands over the result to Event buses on confirmation', async () => {
   read.mockResolvedValueOnce(loaded);
-  const { handOver } = renderPage(undefined, 'orders');
-  confirmDelete(await openDelete());
+  const page = renderPage(undefined, 'orders');
+  const { handOver } = page;
+  confirmDelete(await openDelete(page));
   await waitFor(() => expect(handOver).toHaveBeenCalledOnce());
   expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
   expectDeleteResult(handOver);
@@ -253,9 +276,11 @@ it.each(['before', 'after'] as const)(
         answerDelete = resolve;
       }),
     );
-    const { handOver, client, layout } = renderPage(undefined, 'orders');
-    await screen.findByText('core');
-    await screen.findByRole('link', { name: 'original-rule' });
+    const page = renderPage(undefined, 'orders');
+    const { handOver, client, layout } = page;
+    const ruleLink = () => layout.findContent().findAllTables()[1]?.findRows()[0]?.findLink()?.getElement();
+    await waitFor(() => expect(tagTable(page)?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('core'));
+    await waitFor(() => expect(ruleLink()).toHaveAccessibleName('original-rule'));
 
     const pendingReads = client.refetchQueries({ queryKey: ['events'] });
     await waitFor(() => {
@@ -263,7 +288,7 @@ it.each(['before', 'after'] as const)(
       expect(listRules).toHaveBeenCalledTimes(2);
       expect(listResourceTags).toHaveBeenCalledTimes(2);
     });
-    const dialog = await openDelete();
+    const dialog = await openDelete(page);
     confirmDelete(dialog);
 
     async function settleReads() {
@@ -276,15 +301,18 @@ it.each(['before', 'after'] as const)(
     }
 
     function expectStablePage() {
-      const content = layout.findContent().getElement();
-      expect(content).toHaveTextContent('Routes orders');
-      expect(content).toHaveTextContent('core');
-      expect(content).toHaveTextContent('original-rule');
-      expect(content).not.toHaveTextContent('Event bus not found');
-      expect(content).not.toHaveTextContent('Event bus orders does not exist.');
-      expect(content).not.toHaveTextContent('The rule list could not be read');
-      expect(dialog.getByRole('button', { name: 'Delete' })).toBeDisabled();
-      expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      const content = layout.findContent();
+      expect(descriptionText(page)).toBe('Routes orders');
+      expect(tagTable(page)?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('core');
+      expect(ruleLink()).toHaveAccessibleName('original-rule');
+      expect(content.findAllContainers()[0]?.getElement()).not.toHaveTextContent('Event bus not found');
+      expect(content.getElement()).not.toHaveTextContent('Event bus orders does not exist.');
+      expect(content.getElement()).not.toHaveTextContent('The rule list could not be read');
+      for (const liveRegion of content.findAll('.aws-area-announcer')) {
+        expect(liveRegion.getElement()).not.toHaveTextContent('Event bus not found');
+      }
+      expect(dialog.deleteBus.getElement()).toBeDisabled();
+      expect(dialog.cancel.getElement()).toBeDisabled();
     }
 
     if (order === 'before') {
@@ -312,17 +340,18 @@ it('shows the missing bus when an open delete dialog is dismissed without deleti
       answer = resolve;
     }),
   );
-  const { client, layout } = renderPage(undefined, 'orders');
-  await screen.findByText('Routes orders');
+  const page = renderPage(undefined, 'orders');
+  const { client, layout } = page;
+  await waitFor(() => expect(descriptionText(page)).toBe('Routes orders'));
   const pending = client.refetchQueries({ queryKey: ['events', 'bus'] });
-  const dialog = await openDelete();
+  const dialog = await openDelete(page);
   await act(async () => {
     answer({ kind: 'not-found' });
     await pending;
   });
   expect(layout.findContent().getElement()).not.toHaveTextContent('Event bus not found');
-  fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-  expect(await screen.findByRole('link', { name: 'Event buses' })).toBeVisible();
+  dialog.cancel.click();
+  await waitFor(() => expect(layout.findContent().findLink()?.getElement()).toHaveAccessibleName('Event buses'));
   expect(layout.findContent().findContainer()?.getElement()).toHaveTextContent('Event bus not found');
   expect(deleteEventBus).not.toHaveBeenCalled();
 });
@@ -340,10 +369,7 @@ function deferred<T>() {
 type Page = ReturnType<typeof renderPage>;
 
 function tagTable({ layout }: Page) {
-  return layout
-    .findContent()
-    .findAllTables()
-    .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags');
+  return layout.findContent().findAllTables()[0];
 }
 
 function manageTagsButton(page: Page) {
@@ -352,11 +378,7 @@ function manageTagsButton(page: Page) {
 
 function descriptionText({ layout }: Page) {
   const pairs = layout.findContent().findContainer()?.findContent().findKeyValuePairs();
-  return pairs
-    ?.findItems()
-    .find((item) => item.findLabel()?.getElement().textContent === 'Description')
-    ?.findValue()
-    ?.getElement().textContent;
+  return pairs?.findItems()[1]?.findValue()?.getElement().textContent;
 }
 
 async function openSettings(page: Page, heading: string) {
@@ -373,19 +395,18 @@ async function openSettings(page: Page, heading: string) {
 
   return waitFor(() => {
     const modal = createWrapper(page.container).findModal();
-    const save = modal
-      ?.findFooter()
-      ?.findAllButtons()
-      .find((action) => action.getElement().textContent === 'Save');
-    if (!modal || !save) throw new Error('Expected a settings dialog');
+    const [cancel, save] = modal?.findFooter()?.findAllButtons() ?? [];
+    if (!modal || !cancel || !save) throw new Error('Expected a settings dialog');
     expect(modal.findHeader().getElement()).toHaveTextContent(heading);
-    return { modal, save };
+    expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+    expect(save.getElement()).toHaveAccessibleName('Save');
+    return { modal, cancel, save };
   });
 }
 
 async function saveDescription(page: Page) {
   const { modal, save } = await openSettings(page, 'Edit description');
-  const input = modal.findContent().findTextarea()?.findNativeTextarea().getElement();
+  const input = modal.findContent().findFormField()?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
   if (!input) throw new Error('Expected the description field');
   fireEvent.change(input, { target: { value: 'Updated description' } });
   save.click();
@@ -562,4 +583,102 @@ it('keeps the description success result when the subsequent bus read finds no b
   );
   expect(read).toHaveBeenCalledTimes(2);
   expectSaved(page, 'Description of orders saved.');
+});
+
+it('reopens the bus Delete dialog after 501 and sends nothing on confirmation', async () => {
+  const operation = 'DeleteEventBus';
+  vi.mocked(deleteEventBus).mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  read.mockResolvedValue(loaded);
+  const page = renderPage(undefined, 'orders');
+  const first = await openDelete(page);
+  confirmDelete(first);
+  await expectUnavailable(first.modal, first.deleteBus, operation);
+  expect(first.input.getElement()).toHaveValue('orders');
+  first.cancel.click();
+  expect(createWrapper(page.container).findModal()).toBeNull();
+
+  const reopened = await openDelete(page);
+  confirmDelete(reopened);
+  await expectUnavailable(reopened.modal, reopened.deleteBus, operation);
+  expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
+  expect(page.handOver).not.toHaveBeenCalled();
+  expect(page.show).not.toHaveBeenCalled();
+});
+
+async function expectUnavailable(
+  modal: Awaited<ReturnType<typeof openSettings>>['modal'],
+  button: Awaited<ReturnType<typeof openSettings>>['save'],
+  operation: string,
+) {
+  await waitFor(() => {
+    const alert = modal.findContent().findAlert()?.getElement();
+    expect(alert).toHaveTextContent('Not implemented by the emulator');
+    expect(alert).toHaveTextContent(operation);
+    expect(button.getElement()).toBeDisabled();
+  });
+}
+
+it('reopens Edit description after 501 with Save disabled', async () => {
+  const operation = 'UpdateEventBus';
+  vi.mocked(updateBusDescription).mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  read.mockResolvedValue(loaded);
+  const page = renderPage(undefined, 'orders');
+  const first = await openSettings(page, 'Edit description');
+  const textarea = (modal: typeof first.modal) =>
+    required(modal.findContent().findFormField()?.findControl()?.findTextarea()).findNativeTextarea().getElement();
+  fireEvent.change(textarea(first.modal), { target: { value: 'Updated description' } });
+  first.save.click();
+  await expectUnavailable(first.modal, first.save, operation);
+  expect(textarea(first.modal)).toHaveValue('Updated description');
+  first.cancel.click();
+  expect(createWrapper(page.container).findModal()).toBeNull();
+
+  const reopened = await openSettings(page, 'Edit description');
+  await expectUnavailable(reopened.modal, reopened.save, operation);
+  expect(textarea(reopened.modal)).toHaveValue('Routes orders');
+  fireEvent.change(textarea(reopened.modal), { target: { value: 'Try again' } });
+  reopened.save.click();
+  expect(updateBusDescription).toHaveBeenCalledExactlyOnceWith(
+    endpoint,
+    'orders',
+    'Updated description',
+    expect.any(AbortSignal),
+  );
+  expect(page.show).not.toHaveBeenCalled();
+});
+
+it.each(['UntagResource', 'TagResource'] as const)('reopens Manage tags after %s answers 501', async (operation) => {
+  vi.mocked(saveBusTags).mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  read.mockResolvedValue(loaded);
+  vi.mocked(listResourceTags).mockResolvedValue({ team: 'core' });
+  if (operation === 'UntagResource') {
+    vi.mocked(listResourceTags)
+      .mockResolvedValueOnce({ team: 'core' })
+      .mockRejectedValueOnce(new Error('Read refused'));
+  }
+  const page = renderPage(undefined, 'orders');
+  const first = await openSettings(page, 'Manage tags');
+  const editor = required(first.modal.findContent().findAttributeEditor());
+  const value = () =>
+    required(editor.findRow(1)?.findField(2)?.findControl()?.findInput()).findNativeInput().getElement();
+  if (operation === 'UntagResource') editor.findRow(1)?.findRemoveButton()?.click();
+  else fireEvent.change(value(), { target: { value: 'local' } });
+  first.save.click();
+  await expectUnavailable(first.modal, first.save, operation);
+  if (operation === 'UntagResource') {
+    expect(editor.findRows()).toHaveLength(0);
+    await waitFor(() =>
+      expect(first.modal.findContent().findStatusIndicator()?.getElement()).toHaveTextContent(
+        'The event bus tags could not be read',
+      ),
+    );
+  } else expect(value()).toHaveValue('local');
+  first.cancel.click();
+  expect(createWrapper(page.container).findModal()).toBeNull();
+
+  const reopened = await openSettings(page, 'Manage tags');
+  await expectUnavailable(reopened.modal, reopened.save, operation);
+  reopened.save.click();
+  expect(saveBusTags).toHaveBeenCalledOnce();
+  expect(page.show).not.toHaveBeenCalled();
 });

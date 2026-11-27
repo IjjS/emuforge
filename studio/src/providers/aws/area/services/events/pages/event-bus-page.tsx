@@ -15,8 +15,8 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { BUS_DELETE_UNAVAILABLE, DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
-import { BUS_SETTINGS_OPERATIONS, type TagWriteOperation } from '../bus-settings-api';
+import { DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
+import { type TagWriteOperation } from '../bus-settings-api';
 import { BusDetails } from '../components/bus-details';
 import { DeleteEventBusDialog } from '../components/delete-event-bus-dialog';
 import { EditDescriptionDialog } from '../components/edit-description-dialog';
@@ -39,7 +39,10 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
   const [refreshingDescription, setRefreshingDescription] = useState<DescribeEventBusResponse>();
   const [tagsDraft, setTagsDraft] = useState<{ arn: string; initial: Record<string, string> }>();
   const [descriptionUnavailable, setDescriptionUnavailable] = useState(false);
-  const [tagWritesUnavailable, setTagWritesUnavailable] = useState<ReadonlySet<TagWriteOperation>>(() => new Set());
+  const [unavailableTagWrite, setUnavailableTagWrite] = useState<{
+    operation: TagWriteOperation;
+    lastRead: Record<string, string>;
+  }>();
   const [leaving, setLeaving] = useState(false);
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
   const read = useEventBus(engineOrigin, name, !leaving);
@@ -51,25 +54,13 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
   const failure =
     deleting === undefined && read.failure ? readFailureState(read.failure, connection, 'event bus') : undefined;
   const missing = deleting === undefined && read.value?.kind === 'not-found';
-  const deleteReason =
-    name === 'default' ? DEFAULT_BUS_DELETE_REASON : deleteUnavailable ? BUS_DELETE_UNAVAILABLE : undefined;
+  const deleteReason = name === 'default' ? DEFAULT_BUS_DELETE_REASON : undefined;
   const canDelete =
     engineOrigin !== undefined && currentBus !== undefined && deleting === undefined && deleteReason === undefined;
-  const editDescriptionReason = descriptionUnavailable
-    ? `Not implemented by the emulator (${BUS_SETTINGS_OPERATIONS.update}).`
-    : undefined;
-  const manageTagsReason =
-    tagWritesUnavailable.size > 0
-      ? `Not implemented by the emulator (${[...tagWritesUnavailable].join(', ')}).`
-      : undefined;
-  const canEditDescription =
-    engineOrigin !== undefined && currentBus !== undefined && deleting === undefined && !descriptionUnavailable;
+  const canEditDescription = engineOrigin !== undefined && currentBus !== undefined && deleting === undefined;
+  const initialTags = tags.value ?? unavailableTagWrite?.lastRead;
   const canManageTags =
-    engineOrigin !== undefined &&
-    Boolean(currentBus?.Arn) &&
-    tags.value !== undefined &&
-    deleting === undefined &&
-    manageTagsReason === undefined;
+    engineOrigin !== undefined && Boolean(currentBus?.Arn) && initialTags !== undefined && deleting === undefined;
   const [announcement, announce] = useAnnouncer();
   const message = failure?.firstText ?? (missing ? 'Event bus not found' : '');
 
@@ -141,15 +132,13 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
               tags={shownTags}
               detailsLoading={refreshingDescription !== undefined && read.loading}
               editDescriptionDisabled={!canEditDescription}
-              editDescriptionReason={editDescriptionReason}
               onEditDescription={() => {
                 if (canEditDescription) setEditingDescription(currentBus);
               }}
               manageTagsDisabled={!canManageTags}
-              manageTagsReason={manageTagsReason}
               onManageTags={() => {
-                if (canManageTags && currentBus?.Arn && tags.value !== undefined) {
-                  setTagsDraft({ arn: currentBus.Arn, initial: tags.value });
+                if (canManageTags && currentBus?.Arn && initialTags !== undefined) {
+                  setTagsDraft({ arn: currentBus.Arn, initial: initialTags });
                 }
               }}
             />
@@ -167,6 +156,7 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
             endpoint={engineOrigin}
             name={name}
             onDismiss={() => setDeleting(undefined)}
+            writeUnavailable={deleteUnavailable}
             onUnavailable={() => setDeleteUnavailable(true)}
             onDeleted={() => {
               setLeaving(true);
@@ -188,6 +178,7 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
             endpoint={engineOrigin}
             name={name}
             description={editingDescription.Description ?? ''}
+            writeUnavailable={descriptionUnavailable}
             onUnavailable={() => setDescriptionUnavailable(true)}
             onDismiss={() => setEditingDescription(undefined)}
             onSaved={() => {
@@ -214,8 +205,10 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
             arn={tagsDraft.arn}
             initialTags={tagsDraft.initial}
             tags={tags}
-            unavailable={tagWritesUnavailable}
-            onUnavailable={(operation) => setTagWritesUnavailable((current) => new Set([...current, operation]))}
+            unavailable={unavailableTagWrite?.operation}
+            onUnavailable={(operation) =>
+              setUnavailableTagWrite({ operation, lastRead: tags.value ?? tagsDraft.initial })
+            }
             onDismiss={() => setTagsDraft(undefined)}
             onSaved={() => {
               setTagsDraft(undefined);

@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import { PageFlashContext, type FlashResult } from '../../../components/page-fla
 import { PageResourcesContext } from '../../../components/page-resources';
 import { deleteEventBus } from '../bus-change-api';
 import { listEventBuses } from '../bus-api';
+import { busPath } from '../format';
 import { EventBusListPage } from './event-bus-list-page';
 
 vi.mock('../bus-api', async (importOriginal) => ({
@@ -61,9 +62,10 @@ function renderPage(result: AreaConnection['result'] = connected) {
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const table = createWrapper(container).findTable();
+  const page = createWrapper(container);
+  const table = page.findTable();
   if (!table) throw new Error('Expected the event bus table');
-  return { table, resources, show, client };
+  return { page, table, resources, show, client };
 }
 
 function required<T>(value: T | null | undefined): T {
@@ -104,10 +106,10 @@ it.each([
   [1280, false],
 ] as const)('offers a scroll hint only when the bus table overflows at width %s', async (width, overflows) => {
   const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
-    return this.querySelector(':scope > table') ? 760 : 0;
+    return Array.from(this.children).some((child) => child.tagName === 'TABLE') ? 760 : 0;
   });
   const clientWidth = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
-    return this.querySelector(':scope > table') ? width : 0;
+    return Array.from(this.children).some((child) => child.tagName === 'TABLE') ? width : 0;
   });
   try {
     read.mockResolvedValueOnce({ items: [{ Name: 'orders', Description: 'Routes orders' }] });
@@ -115,11 +117,13 @@ it.each([
     await waitFor(() => expect(table.findRows()).toHaveLength(1));
     const hint = 'Scroll sideways to see creation and last change times.';
     const nativeTable = required(table.find('table')).getElement();
+    const description = table.findHeaderSlot()?.findHeader()?.findDescription();
     if (overflows) {
-      expect(screen.getByText(hint)).toBeVisible();
+      expect(description?.getElement()).toBeVisible();
+      expect(description?.getElement()).toHaveTextContent(hint);
       expect(nativeTable).toHaveAccessibleName(`Event buses. ${hint}`);
     } else {
-      expect(screen.queryByText(hint)).toBeNull();
+      expect(description).toBeNull();
       expect(nativeTable).toHaveAccessibleName('Event buses');
     }
   } finally {
@@ -223,38 +227,58 @@ const listFailure = new RequestError({
   message: 'List refused',
 });
 
-function action() {
-  return screen.getByRole('button', { name: 'Delete' });
+type Page = ReturnType<typeof renderPage>;
+type BusTable = Page['table'];
+
+function action(table: BusTable) {
+  const button = required(table.findHeaderSlot()?.findHeader()?.findActions()?.findAllButtons()[1]);
+  expect(button.getElement()).toHaveAccessibleName('Delete');
+  return button;
 }
 
-type BusTable = ReturnType<typeof renderPage>['table'];
+function busLink(table: BusTable, name: string) {
+  return table.findRows().flatMap((row) => row.findLink(`[href="${busPath(name)}"]`) ?? [])[0];
+}
+
+async function waitForBus(table: BusTable, name: string) {
+  await waitFor(() => expect(busLink(table, name)?.getElement()).toHaveAccessibleName(name));
+}
 
 function select(table: BusTable, name: string) {
-  const link = screen.getByRole('link', { name });
-  const index = table.findRows().findIndex((row) => row.getElement().contains(link));
+  const index = table.findRows().findIndex((row) => row.findLink(`[href="${busPath(name)}"]`) !== null);
   const radio = required(table.findRowSelectionArea(index + 1)?.find('input[type="radio"]'));
   fireEvent.click(radio.getElement());
 }
 
-async function confirmOrdersDelete(table: BusTable) {
-  select(table, 'orders');
-  fireEvent.click(action());
-  const dialog = within(await screen.findByRole('dialog', { name: 'Delete event bus orders?' }));
-  fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'orders' } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+async function openOrdersDelete({ page, table }: Page) {
+  action(table).click();
+  const dialog = await waitFor(() => required(page.findModal()));
+  expect(dialog.findHeader().getElement()).toHaveTextContent('Delete event bus orders?');
+  const [cancel, deleteBus] = dialog.findFooter()?.findAllButtons() ?? [];
+  expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
+  expect(deleteBus?.getElement()).toHaveAccessibleName('Delete');
+  const input = required(dialog.findContent().findFormField()?.findControl()?.findInput()).findNativeInput();
+  return { dialog, cancel: required(cancel), deleteBus: required(deleteBus), input };
+}
+
+async function confirmOrdersDelete(page: Page) {
+  select(page.table, 'orders');
+  const { input, deleteBus } = await openOrdersDelete(page);
+  fireEvent.change(input.getElement(), { target: { value: 'orders' } });
+  deleteBus.click();
 }
 
 it('enables Delete only for an eligible selected bus and explains why default is protected', async () => {
   read.mockResolvedValueOnce(orders);
   const { table } = renderPage();
-  await screen.findByRole('link', { name: 'default' });
-  expect(action()).toHaveAttribute('aria-disabled', 'true');
+  await waitForBus(table, 'default');
+  expect(action(table).getElement()).toHaveAttribute('aria-disabled', 'true');
   select(table, 'default');
-  expect(action()).toHaveAttribute('aria-disabled', 'true');
-  expect(action()).toHaveAccessibleDescription('The default event bus cannot be deleted.');
+  expect(action(table).getElement()).toHaveAttribute('aria-disabled', 'true');
+  expect(action(table).getElement()).toHaveAccessibleDescription('The default event bus cannot be deleted.');
   select(table, 'orders');
-  expect(action()).toBeEnabled();
-  expect(action()).not.toHaveAttribute('aria-disabled', 'true');
+  expect(action(table).getElement()).toBeEnabled();
+  expect(action(table).getElement()).not.toHaveAttribute('aria-disabled', 'true');
 });
 
 it('reports a successful delete, clears selection, and rereads the shown page', async () => {
@@ -262,17 +286,18 @@ it('reports a successful delete, clears selection, and rereads the shown page', 
     .mockResolvedValueOnce({ items: [{ Name: 'first' }], next: 'more' })
     .mockResolvedValueOnce(orders)
     .mockResolvedValueOnce(updated);
-  const { table, show } = renderPage();
-  await screen.findByRole('link', { name: 'first' });
+  const rendered = renderPage();
+  const { page, table, show } = rendered;
+  await waitForBus(table, 'first');
   fireEvent.click(required(table.findPagination()?.findNextPageButton()).getElement());
-  await screen.findByRole('link', { name: 'orders' });
-  await confirmOrdersDelete(table);
-  await screen.findByRole('link', { name: 'replacement' });
+  await waitForBus(table, 'orders');
+  await confirmOrdersDelete(rendered);
+  await waitForBus(table, 'replacement');
   expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(3);
   expectRead('', 'more');
   expect(table.findSelectedRows()).toHaveLength(0);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(page.findModal()).toBeNull();
   const result = show.mock.calls[0]?.[0][0];
   expect(result?.type).toBe('success');
   expect(render(<>{result?.content}</>).container).toHaveTextContent('Event bus orders deleted.');
@@ -304,37 +329,71 @@ it.each([
     )
     .mockResolvedValueOnce(updated);
 
-  const { table, client, show } = renderPage();
-  await screen.findByRole('link', { name: 'orders' });
+  const rendered = renderPage();
+  const { page, table, client, show } = rendered;
+  await waitForBus(table, 'orders');
   const earlier = client.refetchQueries({ queryKey: ['events', 'buses'] });
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-  await confirmOrdersDelete(table);
+  await confirmOrdersDelete(rendered);
   if (order === 'before')
     await act(async () => {
       settleOld();
       await earlier;
     });
   await act(async () => finishDelete());
-  await screen.findByRole('link', { name: 'replacement' });
+  await waitForBus(table, 'replacement');
   if (order === 'after')
     await act(async () => {
       settleOld();
       await earlier;
     });
-  expect(screen.getByRole('link', { name: 'replacement' })).toBeVisible();
-  expect(screen.queryByRole('link', { name: 'orders' })).toBeNull();
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(busLink(table, 'replacement')?.getElement()).toBeVisible();
+  expect(busLink(table, 'orders')).toBeUndefined();
+  expect(page.findModal()).toBeNull();
   expect(show).toHaveBeenCalledOnce();
   expect(render(<>{show.mock.calls[0]?.[0][0].content}</>).container).toHaveTextContent('Event bus orders deleted.');
 });
 
 it('keeps the delete result visible when the new list request fails', async () => {
   read.mockResolvedValueOnce(orders).mockRejectedValueOnce(listFailure);
-  const { table, show } = renderPage();
-  await screen.findByRole('link', { name: 'orders' });
-  await confirmOrdersDelete(table);
-  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
-  expect(screen.queryByRole('dialog')).toBeNull();
+  const rendered = renderPage();
+  const { page, table, show } = rendered;
+  await waitForBus(table, 'orders');
+  await confirmOrdersDelete(rendered);
+  await waitFor(() => expect(table.findEmptySlot()?.findButton()?.getElement()).toHaveAccessibleName('Retry'));
+  expect(page.findModal()).toBeNull();
   expect(show).toHaveBeenCalledOnce();
   expect(render(<>{show.mock.calls[0]?.[0][0].content}</>).container).toHaveTextContent('Event bus orders deleted.');
+});
+
+it('reopens Delete after a 501 and sends nothing when the name is entered again', async () => {
+  const operation = 'DeleteEventBus';
+  vi.mocked(deleteEventBus).mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  read.mockResolvedValueOnce(orders);
+  const rendered = renderPage();
+  const { page, table, show } = rendered;
+  await waitForBus(table, 'orders');
+  select(table, 'orders');
+  const first = await openOrdersDelete(rendered);
+  fireEvent.change(first.input.getElement(), { target: { value: 'orders' } });
+  first.deleteBus.click();
+  await waitFor(() =>
+    expect(first.dialog.findContent().findAlert()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+  );
+  expect(first.dialog.findContent().findAlert()?.getElement()).toHaveTextContent(operation);
+  expect(first.input.getElement()).toHaveValue('orders');
+  expect(first.deleteBus.getElement()).toBeDisabled();
+  first.cancel.click();
+  expect(page.findModal()).toBeNull();
+  expect(action(table).getElement()).toBeEnabled();
+
+  const reopened = await openOrdersDelete(rendered);
+  const alert = reopened.dialog.findContent().findAlert()?.getElement();
+  expect(alert).toHaveTextContent('Not implemented by the emulator');
+  expect(alert).toHaveTextContent(operation);
+  fireEvent.change(reopened.input.getElement(), { target: { value: 'orders' } });
+  expect(reopened.deleteBus.getElement()).toBeDisabled();
+  reopened.deleteBus.click();
+  expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
+  expect(show).not.toHaveBeenCalled();
 });

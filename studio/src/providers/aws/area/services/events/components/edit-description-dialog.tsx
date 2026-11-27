@@ -17,6 +17,7 @@ interface EditDescriptionDialogProps {
   endpoint: string;
   name: string;
   description: string;
+  writeUnavailable?: boolean;
   onUnavailable: () => void;
   onSaved: () => void;
   onDismiss: () => void;
@@ -26,6 +27,7 @@ export function EditDescriptionDialog({
   endpoint,
   name,
   description,
+  writeUnavailable = false,
   onUnavailable,
   onSaved,
   onDismiss,
@@ -36,8 +38,9 @@ export function EditDescriptionDialog({
   const [draft, setDraft] = useState(description);
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [refusal, setRefusal] = useState<RequestFailure>();
   const operation = BUS_SETTINGS_OPERATIONS.update;
+  const failure: RequestFailure | undefined = writeUnavailable ? { kind: 'not-implemented', operation } : refusal;
   const unavailable = failure?.kind === 'not-implemented';
   const feedback = failure && actionFailureItem(failure, operation, endpoint);
 
@@ -56,13 +59,13 @@ export function EditDescriptionDialog({
     const signal = pageSignal();
     busy.current = true;
     setPending(true);
-    setFailure(undefined);
+    setRefusal(undefined);
     try {
       await updateBusDescription(endpoint, name, draft, signal);
     } catch (error) {
       if (signal.aborted) return;
       const refusal = failureOf(error, operation);
-      setFailure(refusal);
+      setRefusal(refusal);
       if (refusal.kind === 'not-implemented') onUnavailable();
       busy.current = false;
       setPending(false);
