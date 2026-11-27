@@ -280,12 +280,14 @@ export function UpgradeVersionField({
           options={[keep, ...options]}
           selectedOption={value === undefined ? keep : selectedOption(options, value.version)}
           triggerVariant="option"
+          statusType={read.loading ? 'loading' : 'finished'}
+          loadingText="Checking engine versions"
           onLoadItems={() => setOpened(true)}
           onChange={({ detail }) => {
             onChange(read.data?.find((target) => target.version === detail.selectedOption.value));
           }}
         />
-        <FieldReadStatus connection={connection} thing="engine versions" {...read} />
+        <FieldReadStatus connection={connection} thing="engine versions" failure={read.failure} retry={read.retry} />
       </SpaceBetween>
     </FormField>
   );

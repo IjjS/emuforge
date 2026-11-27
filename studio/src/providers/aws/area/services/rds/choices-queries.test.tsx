@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as area from '../../components/security-group-choices';
 import { usePagedChoices, type ChoiceSource } from '../../components/use-paged-choices';
 import * as api from './choices-api';
-import { engineVersionChoices, groupChoices, subnetGroupChoices, useOrderableRows } from './choices-queries';
+import {
+  engineVersionChoices,
+  groupChoices,
+  subnetGroupChoices,
+  useOrderableRows,
+  useSubnetGroupPlacement,
+} from './choices-queries';
 
 // The sources over `choices-api.ts`, whose calls the case answers (`choices-api.test.ts` proves the calls), read
 // through the area's paged choices as a field reads them.
@@ -178,4 +184,18 @@ describe('reads of orderable rows', () => {
       description: 'Private subnets',
     });
   });
+});
+
+it('uses the default VPC for an empty subnet group on create or restore', async () => {
+  vi.mocked(api.findSubnetGroup).mockResolvedValueOnce({ name: 'default', vpcId: 'vpc-unattached' });
+  vi.mocked(api.readDefaultVpcId).mockResolvedValueOnce('vpc-real-default');
+  const hook = renderHook(
+    ({ group }: { group?: api.SubnetGroupChoice }) => useSubnetGroupPlacement(ENDPOINT, group, 'default', true),
+    { wrapper, initialProps: {} },
+  );
+  await waitFor(() => expect(hook.result.current.data).toBe('vpc-real-default'));
+  expect(hook.result.current.zones).toBeUndefined();
+  hook.rerender({ group: { name: 'app', vpcId: 'vpc-app', zones: ['us-east-1a'] } });
+  expect(hook.result.current).toMatchObject({ data: 'vpc-app', zones: ['us-east-1a'] });
+  expect(api.readDefaultVpcId).toHaveBeenCalledTimes(1);
 });
