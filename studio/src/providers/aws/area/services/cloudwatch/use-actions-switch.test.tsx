@@ -1,6 +1,5 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../lib/aws/request';
@@ -59,9 +58,8 @@ function expectResult(show: ReturnType<typeof open>['show'], type: FlashItem['ty
   expect(show).toHaveBeenCalledOnce();
   const item = show.mock.calls[0]?.[0][0];
   expect(item?.type).toBe(type);
-  const content = document.createElement('div');
-  content.innerHTML = renderToStaticMarkup(<>{item?.content}</>);
-  expect(content.textContent).toBe(text);
+  const { container } = render(<>{item?.content}</>);
+  expect(container.textContent).toBe(text);
 }
 
 it.each([
@@ -135,7 +133,7 @@ it('reports a 501 and marks the operation unavailable', async () => {
 });
 
 it('does not send a second write while writing or awaiting confirmation', async () => {
-  const written = deferred<void>();
+  const written = deferred<undefined>();
   const reread = deferred<ReturnType<typeof answer>>();
   write.mockReturnValueOnce(written.promise);
   const { result, refreshAlarm, show } = open(true);

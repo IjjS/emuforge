@@ -42,16 +42,13 @@ function open(currentState: StateValue = 'OK') {
       onDismiss={onDismiss}
     />,
   );
-  const modal = page.findModal()!;
-  return {
-    onSet,
-    onUnavailable,
-    onDismiss,
-    state: modal.findSelect()!,
-    reason: modal.findTextarea()!,
-    submit: modal.findFooter()!.findAllButtons()[1]!,
-    cancel: modal.findFooter()!.findAllButtons()[0]!,
-  };
+  const modal = page.findModal();
+  if (!modal) throw new Error('Set state dialog missing');
+  const state = modal.findContent().findSelect();
+  const reason = modal.findContent().findTextarea();
+  const [cancel, submit] = modal.findFooter()?.findAllButtons() ?? [];
+  if (!state || !reason || !submit || !cancel) throw new Error('Set state controls missing');
+  return { onSet, onUnavailable, onDismiss, state, reason, submit, cancel };
 }
 
 it.each<StateValue>(['OK', 'ALARM', 'INSUFFICIENT_DATA'])(

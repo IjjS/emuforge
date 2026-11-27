@@ -106,12 +106,15 @@ function open() {
 
 async function openState() {
   fireEvent.click(await screen.findByRole('button', { name: 'Set state' }));
-  return page.findModal()!;
+  const modal = page.findModal();
+  if (!modal) throw new Error('Set state dialog missing');
+  return modal;
 }
 
 async function setState() {
   const modal = await openState();
-  const select = modal.findSelect()!;
+  const select = modal.findContent().findSelect();
+  if (!select) throw new Error('State choice missing');
   select.openDropdown();
   select.selectOptionByValue('ALARM');
   modal.findFooter()?.findAllButtons()[1]?.click();
@@ -126,9 +129,20 @@ function findFlashContent() {
   );
 }
 
-async function refreshAlarm() {
-  const buttons = await screen.findAllByRole('button', { name: 'Refresh' });
-  fireEvent.click(buttons[0]!);
+function summaryValue(label: string) {
+  return page
+    .findContentLayout()
+    ?.findContent()
+    .findKeyValuePairs()
+    ?.findItems()
+    .find((pair) => pair.findLabel()?.getElement().textContent === label)
+    ?.findValue();
+}
+
+function refreshAlarm() {
+  const button = page.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton();
+  if (!button) throw new Error('Alarm refresh control missing');
+  button.click();
 }
 
 async function expectHistory(type: string, summary: string) {
@@ -204,7 +218,7 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
     expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
   } else {
     expect(await screen.findByText('Set by hand in EmuForge Studio')).toBeVisible();
-    expect(page.findStatusIndicator()?.getElement()).toHaveTextContent('In alarm');
+    expect(summaryValue('State')?.findStatusIndicator()?.getElement()).toHaveTextContent('In alarm');
   }
   if (order === 'alarm first') {
     expect(findFlashContent()).toEqual([stateResult]);
@@ -253,7 +267,7 @@ it.each(['history first', 'alarm first', 'history fails'])('keeps the actions re
     expect(findFlashContent()).toEqual([]);
   }
   await act(async () => freshAlarm.resolve(alarm(false)));
-  expect(await screen.findByText('Off', { exact: true })).toBeVisible();
+  await waitFor(() => expect(summaryValue('Actions')?.getElement().textContent).toBe('Off'));
   await waitFor(() => expect(findFlashContent()).toEqual([actionsResult]));
   if (order === 'alarm first') {
     await act(async () => freshHistory.resolve(historyPage('Configuration', 'Actions disabled')));
@@ -264,21 +278,21 @@ it.each(['history first', 'alarm first', 'history fails'])('keeps the actions re
         new RequestError({ kind: 'access-denied', operation: 'DescribeAlarmHistory', message: 'History refused' }),
       ),
     );
-    expect(await screen.findByText('History refused')).toBeVisible();
+    await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('History refused'));
   }
   expect(findFlashContent()).toEqual([actionsResult]);
-  expect(screen.getByText('Off', { exact: true })).toBeVisible();
+  expect(summaryValue('Actions')?.getElement().textContent).toBe('Off');
 });
 
 it.each(['before', 'after'])('drops the older alarm read when it answers %s the switch read', async (order) => {
   const old = deferred<Alarm>();
   const fresh = deferred<Alarm>();
-  const written = deferred<void>();
+  const written = deferred<undefined>();
   read.mockResolvedValueOnce(alarm(true)).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
   changeActions.mockReturnValueOnce(written.promise);
   open();
   const button = await screen.findByRole('button', { name: 'Turn actions off' });
-  await refreshAlarm();
+  refreshAlarm();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   const oldSignal = read.mock.calls[1]?.[2];
   fireEvent.click(button);
@@ -290,14 +304,14 @@ it.each(['before', 'after'])('drops the older alarm read when it answers %s the 
     expect(findFlashContent()).toEqual([]);
   }
   await act(async () => fresh.resolve(alarm(false)));
-  expect(await screen.findByText('Off', { exact: true })).toBeVisible();
+  await waitFor(() => expect(summaryValue('Actions')?.getElement().textContent).toBe('Off'));
   if (order === 'after') await act(async () => old.resolve(alarm(true)));
-  expect(screen.getByText('Off', { exact: true })).toBeVisible();
+  expect(summaryValue('Actions')?.getElement().textContent).toBe('Off');
   expect(findFlashContent()).toEqual([actionsResult]);
 });
 
 it.each(['dialog open', 'switch pending'])('resets controls on a different name with the first %s', async (mode) => {
-  const written = deferred<void>();
+  const written = deferred<undefined>();
   changeActions.mockReturnValueOnce(written.promise);
   read.mockImplementation(async (_engine, alarmName) => alarm(alarmName === name, 'metric', alarmName));
   const follow = open();
@@ -314,7 +328,7 @@ it.each(['dialog open', 'switch pending'])('resets controls on a different name 
     expect(changeActions.mock.calls[0]?.[3].aborted).toBe(true);
     await act(async () => written.resolve(undefined));
   }
-  expect(screen.getByText('Off', { exact: true })).toBeVisible();
+  expect(summaryValue('Actions')?.getElement().textContent).toBe('Off');
   expect(findFlashContent()).toEqual([]);
   expect(read).toHaveBeenCalledTimes(2);
 });
@@ -345,14 +359,14 @@ it('keeps the 501 visible and reopens Set state with confirmation unavailable', 
   open();
   await setState();
   await waitFor(() =>
-    expect(page.findModal()?.findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+    expect(page.findModal()?.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(
       'Not implemented by the emulator',
     ),
   );
   page.findModal()?.findFooter()?.findAllButtons()[0]?.click();
   expect(screen.getByText('Not implemented by the emulator (SetAlarmState).')).toBeVisible();
   const second = await openState();
-  expect(second.findAlert()?.getElement()).toHaveTextContent('501 Not Implemented for SetAlarmState');
+  expect(second.findContent().findAlert()?.getElement()).toHaveTextContent('501 Not Implemented for SetAlarmState');
   const confirm = second.findFooter()?.findAllButtons()[1];
   expect(confirm?.isDisabled()).toBe(true);
   confirm?.click();
