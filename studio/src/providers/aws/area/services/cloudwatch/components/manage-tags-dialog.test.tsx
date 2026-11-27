@@ -176,7 +176,7 @@ it('keeps the draft and reads again when the removal is refused', async () => {
   await waitFor(() => {
     expect(edit.content.findAlert()?.find('[role="group"]')?.getElement()).toHaveFocus();
     expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent(
-      'UntagResource failed ValidationError: Tag change refused.',
+      'UntagResource failed ValidationException: Tag change refused.',
     );
   });
   expect(edit.field(1, 1)).toHaveValue('b');
