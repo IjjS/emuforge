@@ -1,0 +1,165 @@
+import Alert from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import { useRef, useState } from 'react';
+
+import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaModal } from '../../../components/area-modal';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { actionFailureItem, ReadFailure, readFailureState } from '../../../components/failure-states';
+import { tagChanges, tagsToRecord, validateTags } from '../../../components/tags';
+import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import {
+  BUS_SETTINGS_OPERATIONS as OPERATIONS,
+  PartialTagSaveError,
+  saveBusTags,
+  type TagWriteOperation,
+} from '../bus-settings-api';
+import type { useResourceTags } from '../queries';
+import { TagEditor, type TagEditorRef } from './tag-editor';
+
+interface ManageTagsDialogProps {
+  connection: AreaConnection;
+  endpoint: string;
+  arn: string;
+  initialTags: Record<string, string>;
+  tags: ReturnType<typeof useResourceTags>;
+  unavailable: ReadonlySet<TagWriteOperation>;
+  onUnavailable: (operation: TagWriteOperation) => void;
+  onSaved: () => void;
+  onDismiss: () => void;
+}
+
+export function ManageTagsDialog({
+  connection,
+  endpoint,
+  arn,
+  initialTags,
+  tags,
+  unavailable,
+  onUnavailable,
+  onSaved,
+  onDismiss,
+}: ManageTagsDialogProps) {
+  const pageSignal = usePageSignal();
+  const busy = useRef(false);
+  const editor = useRef<TagEditorRef>(null);
+  const [draft, setDraft] = useState(() => Object.entries(initialTags).map(([key, value]) => ({ key, value })));
+  const [tried, setTried] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<{ operation: TagWriteOperation; reason: RequestFailure }>();
+  const [partial, setPartial] = useState<string>();
+  const changes = tags.value === undefined ? undefined : tagChanges(tags.value, tagsToRecord(draft));
+  const removing = Boolean(changes?.remove.length);
+  const putting = changes !== undefined && Object.keys(changes.put).length > 0;
+  const unsupported =
+    removing && unavailable.has(OPERATIONS.untag)
+      ? OPERATIONS.untag
+      : putting && unavailable.has(OPERATIONS.tag)
+        ? OPERATIONS.tag
+        : undefined;
+  const shownFailure =
+    unsupported === undefined
+      ? failure
+      : { operation: unsupported, reason: { kind: 'not-implemented' as const, operation: unsupported } };
+  const feedback = shownFailure && actionFailureItem(shownFailure.reason, shownFailure.operation, endpoint);
+  const readFailure = tags.failure && readFailureState(tags.failure, connection, 'event bus tags');
+
+  async function handleSave() {
+    if (busy.current || changes === undefined || unsupported !== undefined) return;
+
+    setTried(true);
+    const validation = validateTags(draft);
+    const firstInvalid = validation.rows.findIndex(({ key, value }) => key !== undefined || value !== undefined);
+    if (firstInvalid >= 0) {
+      editor.current?.focus(firstInvalid, validation.rows[firstInvalid]?.key === undefined ? 'value' : 'key');
+      return;
+    }
+    if (validation.limit !== undefined) return;
+    if (!removing && !putting) {
+      onDismiss();
+      return;
+    }
+
+    const signal = pageSignal();
+    busy.current = true;
+    setPending(true);
+    setFailure(undefined);
+    setPartial(undefined);
+    try {
+      await saveBusTags(endpoint, arn, changes, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      const operation = error instanceof PartialTagSaveError || !removing ? OPERATIONS.tag : OPERATIONS.untag;
+      const reason = failureOf(error instanceof PartialTagSaveError ? error.cause : error, operation);
+      setFailure({ operation, reason });
+      if (reason.kind === 'not-implemented') onUnavailable(operation);
+      if (error instanceof PartialTagSaveError) setPartial(error.message);
+      tags.refresh();
+      busy.current = false;
+      setPending(false);
+      return;
+    }
+    if (!signal.aborted) onSaved();
+  }
+
+  function handleDismiss() {
+    if (!busy.current) onDismiss();
+  }
+
+  return (
+    <AreaModal
+      visible
+      header="Manage tags"
+      closeAriaLabel="Close dialog"
+      onDismiss={handleDismiss}
+      footer={
+        <Box float="right">
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button variant="link" disabled={pending} onClick={handleDismiss}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={pending}
+              disabled={changes === undefined || unsupported !== undefined}
+              onClick={() => void handleSave()}
+            >
+              Save
+            </Button>
+          </SpaceBetween>
+        </Box>
+      }
+    >
+      <SpaceBetween size="m">
+        {partial && <Alert type="warning">{partial}</Alert>}
+        {feedback && (
+          <div role="alert">
+            <Alert type={feedback.type} header={feedback.header}>
+              {(shownFailure.reason.kind === 'engine-did-not-answer' ||
+                shownFailure.reason.kind === 'emulator-did-not-answer') &&
+                `${shownFailure.operation} failed. `}
+              {feedback.content}
+            </Alert>
+          </div>
+        )}
+        {tags.loading && <StatusIndicator type="loading">Reading tags again</StatusIndicator>}
+        {readFailure && (
+          <div role="alert">
+            <Box variant="strong">The tags could not be read again.</Box>
+            <ReadFailure state={readFailure} onRetry={tags.refresh} />
+          </div>
+        )}
+        <TagEditor
+          ref={editor}
+          tags={draft}
+          errors={tried ? validateTags(draft) : undefined}
+          disabled={pending}
+          onChange={setDraft}
+        />
+      </SpaceBetween>
+    </AreaModal>
+  );
+}
