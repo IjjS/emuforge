@@ -641,6 +641,35 @@ describe('security groups on a standalone DB instance', () => {
     expect(onSave).toHaveBeenLastCalledWith({ subnetGroup: 'second', securityGroupIds: ['sg-b'] });
   });
 
+  it('restores the starting group after choosing a replacement in another VPC and reverting the subnet group', async () => {
+    const onSave = open({ ...INSTANCE, securityGroups: [{ id: 'sg-a' }] });
+    await opened();
+    await waitFor(() => expect(groupNames()).toEqual(['Group A']));
+
+    await choose('DB subnet group', 'second');
+    expect(groupNames()).toEqual([]);
+    expect(screen.getByText('Choose security groups of vpc-b')).toBeInTheDocument();
+    expect(save()).toBeDisabled();
+
+    const groups = groupField();
+    groups.openDropdown();
+    await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-b')).not.toBeNull());
+    groups.selectOptionByValue('sg-b');
+    groups.closeDropdown();
+    expect(groupNames()).toEqual(['Group B']);
+    expect(save()).toBeEnabled();
+
+    await choose('DB subnet group', 'default');
+    expect(groupNames()).toEqual(['Group A']);
+    expect(screen.queryByText('Choose security groups of vpc-a')).toBeNull();
+    expect(save()).toBeDisabled();
+
+    fireEvent.click(protection());
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
+  });
+
   it.each(['other', 'not-implemented'] as const)(
     'allows independent saves after a group read failure (%s)',
     async (kind) => {
