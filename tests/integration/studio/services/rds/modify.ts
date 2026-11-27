@@ -21,7 +21,8 @@ export async function openModify(page: Page) {
     chooseClass: (value: string) => chooseOption(page.locator('#rds-modify-field-class'), value),
     storage: input('storage'),
     password: input('password'),
-    protection: page.locator(modal.findCheckbox().findNativeInput().toSelector()),
+    // A toggle since issue 651; the standalone dialog has "Multi-AZ" beside it.
+    protection: dialog.getByRole('switch', { name: 'Deletion protection', exact: true }),
     save: page.locator(wrapper.findButton('#rds-modify-save').toSelector()),
     cancel: page.locator(wrapper.findButton('#rds-modify-cancel').toSelector()),
     failure: page.locator(modal.findAlert().findContent().toSelector()),

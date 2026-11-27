@@ -279,6 +279,14 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
   const subnetGroup = () => field(main, 'DB subnet group - optional');
   const groups = () => field(main, 'Security groups - optional');
   const submit = () => button(main, CREATE_INSTANCE);
+  /**
+   * "Create DB instance" once the form has settled: the form sends nothing while the emulator's classes for the
+   * engine and version are being read, and the class field can be opened once they are.
+   */
+  const send = async () => {
+    await expect(triggerOf(instanceClass()), 'the classes are read').toBeEnabled({ timeout: 20_000 });
+    await submit().click(ACTION);
+  };
   /** S2 with the identifier, a master user name and a password entered. */
   const formWith = async (id: string, userName: string) => {
     await open(page, CREATE_INSTANCE_PATH, CREATE_INSTANCE);
@@ -318,7 +326,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       await database().fill('webdb', ACTION);
       await chooseOption(subnetGroup(), 'default');
       await chooseInMultiselect(groups(), group, `${p}-sg`);
-      await submit().click(ACTION);
+      await send();
       await expect(page).toHaveURL(addressOf(instancePath(`${p}-web`)), { timeout: 30_000 });
       await expectFlash(page, 'success', `Creating DB instance ${p}-web`);
       await expectValueIs(page, 'Status', 'available');
@@ -358,7 +366,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       await formWith(`${p}-bare`, 'bareadmin');
       await radio(main, 'mysql').click(ACTION);
       await expect(radio(main, 'mysql'), '"MySQL" chosen').toBeChecked();
-      await submit().click(ACTION);
+      await send();
       await expect(page).toHaveURL(addressOf(instancePath(`${p}-bare`)), { timeout: 30_000 });
       await expectValueIs(page, 'Status', 'available');
       const reported = await instanceDirect(ctx, port, `${p}-bare`);
@@ -374,7 +382,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       const direct = await refusal({ DBInstanceIdentifier: x });
       expect(direct.code, "the emulator's code, directly").toBe('DBInstanceAlreadyExists');
       await formWith(x, 'heldadmin');
-      await submit().click(ACTION);
+      await send();
       await expect(alertWith(main, 'DBInstanceAlreadyExists'), 'the refusal in the form').toBeVisible({
         timeout: 20_000,
       });
@@ -414,7 +422,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       await identifier().fill(`1${p}`, ACTION);
       await user().fill('badadmin', ACTION);
       await secret().fill('Abc1234', ACTION);
-      await submit().click(ACTION);
+      await send();
       await expect(errorOf(field(main, 'DB instance identifier')), `"${IDENTIFIER_BEGINS}"`).toHaveText(
         IDENTIFIER_BEGINS,
       );

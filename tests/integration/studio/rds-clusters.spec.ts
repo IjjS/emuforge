@@ -109,6 +109,16 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
   const clusterIdentifier = () => field(main, CLUSTER_ID).getByRole('textbox');
   const instanceIdentifier = () => field(main, 'DB instance identifier').getByRole('textbox');
   const instanceClass = () => field(main, 'DB instance class');
+  /**
+   * "Create DB cluster" once the form has settled: the form sends nothing while the emulator's storage types for the
+   * engine and version are being read, which "Storage type" says until they are.
+   */
+  const sendCluster = async () => {
+    await expect(field(main, 'Storage type').getByText('Checking Storage type'), 'the storage types are read').toHaveCount(0, {
+      timeout: 20_000,
+    });
+    await button(main, CREATE_CLUSTER).click(ACTION);
+  };
   const user = () => field(main, 'Master user name').getByRole('textbox');
   // A password field has no role of a text box.
   const secret = () => field(main, 'Master password').locator('input:not([type="checkbox"])');
@@ -127,7 +137,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
       await user().fill('auradmin', ACTION);
       await secret().fill(password, ACTION);
       await database().fill('aurdb', ACTION);
-      await button(main, CREATE_CLUSTER).click(ACTION);
+      await sendCluster();
       await expect(page).toHaveURL(addressOf(clusterPath(aur)), { timeout: 30_000 });
       await expectFlash(page, 'success', `Creating DB cluster ${aur}`);
       await expectValueIs(page, 'Status', 'available');
@@ -158,7 +168,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
       await clusterIdentifier().fill(held.id, ACTION);
       await user().fill('heldadmin', ACTION);
       await secret().fill(password, ACTION);
-      await button(main, CREATE_CLUSTER).click(ACTION);
+      await sendCluster();
       await expect(alertWith(main, 'DBClusterAlreadyExistsFault'), 'the refusal in the form').toBeVisible({
         timeout: 20_000,
       });
@@ -179,6 +189,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
       await expect(main, 'the description names the cluster').toContainText(aur);
       await instanceIdentifier().fill(first, ACTION);
       await expect(triggerOf(instanceClass()), 'the class as the choice stands').toContainText(MEMBER_CLASS);
+      await expect(triggerOf(instanceClass()), 'the classes are read').toBeEnabled({ timeout: 20_000 });
       await button(main, ADD_INSTANCE).click(ACTION);
       await expect(page).toHaveURL(addressOf(clusterPath(aur)), { timeout: 30_000 });
       await expectFlash(page, 'success', `Creating DB instance ${first}`);
