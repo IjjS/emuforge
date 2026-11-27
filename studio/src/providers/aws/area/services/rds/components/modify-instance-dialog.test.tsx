@@ -522,7 +522,7 @@ describe('choices for a standalone DB instance', () => {
       const startingRows = held<typeof ROWS>();
       vi.mocked(choices.readOrderableRows)
         .mockResolvedValueOnce(ROWS)
-        .mockResolvedValueOnce([{ DBInstanceClass: 'db.other', StorageType: 'gp3' }])
+        .mockResolvedValueOnce([{ DBInstanceClass: 'db.upgrade', StorageType: 'gp3' }])
         .mockReturnValueOnce(startingRows.promise);
       const onSave = open();
       await opened();
@@ -530,7 +530,7 @@ describe('choices for a standalone DB instance', () => {
       await choose('Engine version', '17.9');
       expect(await screen.findByText('Choose a class for 17.9')).toBeInTheDocument();
       if (replace) {
-        await choose('DB instance class', 'db.other');
+        await choose('DB instance class', 'db.upgrade');
         await choose('Storage type', 'gp3');
       }
       await choose('Engine version', '');
