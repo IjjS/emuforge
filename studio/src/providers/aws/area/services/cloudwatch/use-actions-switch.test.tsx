@@ -2,7 +2,7 @@ import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { RequestError } from '../../../../../lib/aws/request';
+import { requestFailure, RequestError } from '../../../../../lib/aws/request';
 import { PageFlashContext, type FlashItem, type FlashResult } from '../../components/page-flash';
 import type { Alarm } from './alarm';
 import { setAlarmActions } from './try-api';
@@ -106,17 +106,33 @@ it('announces that the change is unconfirmed on a failed read and stays quiet wh
   );
 });
 
-it('reports a refusal without starting either read', async () => {
-  write.mockRejectedValueOnce(
+it.each([
+  [
+    'without a code',
     new RequestError({
       kind: 'access-denied',
       operation: 'EnableAlarmActions',
       message: 'Actions cannot be enabled.',
     }),
-  );
+    'EnableAlarmActions was refused: Actions cannot be enabled.',
+  ],
+  [
+    'with a code',
+    new RequestError(
+      requestFailure('EnableAlarmActions', {
+        Code: 'AccessDeniedException',
+        message: 'Actions cannot be enabled.',
+        $metadata: { httpStatusCode: 403 },
+      }),
+    ),
+    'EnableAlarmActions was refused: Actions cannot be enabled. (AccessDeniedException)',
+  ],
+])('reports an access refusal %s without starting either read', async (_case, refusal, message) => {
+  write.mockRejectedValueOnce(refusal);
   const { toggle, refreshAlarm, refreshHistory, show } = open(false);
   await toggle();
-  expectResult(show, 'error', 'EnableAlarmActions was refused: Actions cannot be enabled.');
+  expectResult(show, 'error', message);
+  expect(show.mock.calls[0]?.[0][0].header).toBe('Access denied');
   expect(refreshAlarm).not.toHaveBeenCalled();
   expect(refreshHistory).not.toHaveBeenCalled();
 });

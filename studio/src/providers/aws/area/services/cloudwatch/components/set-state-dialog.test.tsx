@@ -4,7 +4,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { RequestError } from '../../../../../../lib/aws/request';
+import { requestFailure, RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
 import { setAlarmState } from '../try-api';
 import { SetStateDialog } from './set-state-dialog';
@@ -108,25 +108,39 @@ it('requires a state and between 1 and 1023 reason characters', async () => {
   expect(send).toHaveBeenCalledExactlyOnceWith(endpoint, name, 'ALARM', valid, expect.any(AbortSignal));
 });
 
-it('keeps the chosen state and reason on refusal and names the operation and code', async () => {
-  send.mockRejectedValueOnce(
-    new RequestError({ kind: 'other', operation: 'SetAlarmState', code: 'ResourceNotFound', message: 'Alarm is gone' }),
-  );
-  const { modal, state, reason, submit, onSet } = await open();
-  state.openDropdown();
-  state.selectOptionByValue('INSUFFICIENT_DATA');
-  reason.setTextareaValue('Try again later');
-  submit.click();
-  await waitFor(() =>
-    expect(modal.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent('SetAlarmState failed'),
-  );
-  expect(modal.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
-    'ResourceNotFound: Alarm is gone',
-  );
-  expect(state.findTrigger().getElement()).toHaveTextContent('Insufficient data');
-  expect(reason.getTextareaValue()).toBe('Try again later');
-  expect(onSet).not.toHaveBeenCalled();
-});
+it.each([
+  ['ResourceNotFound', 404, 'Alarm is gone', 'SetAlarmState failed', 'ResourceNotFound: Alarm is gone'],
+  [
+    'AccessDeniedException',
+    403,
+    'Changing the alarm state is denied.',
+    'Access denied',
+    'SetAlarmState was refused: Changing the alarm state is denied. (AccessDeniedException)',
+  ],
+])(
+  'keeps the chosen state and reason on a %s refusal and shows the operation and code',
+  async (code, status, message, header, content) => {
+    send.mockRejectedValueOnce(
+      new RequestError(
+        requestFailure('SetAlarmState', {
+          Code: code,
+          message,
+          $metadata: { httpStatusCode: status },
+        }),
+      ),
+    );
+    const { modal, state, reason, submit, onSet } = await open();
+    state.openDropdown();
+    state.selectOptionByValue('INSUFFICIENT_DATA');
+    reason.setTextareaValue('Try again later');
+    submit.click();
+    await waitFor(() => expect(modal.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(header));
+    expect(modal.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(content);
+    expect(state.findTrigger().getElement()).toHaveTextContent('Insufficient data');
+    expect(reason.getTextareaValue()).toBe('Try again later');
+    expect(onSet).not.toHaveBeenCalled();
+  },
+);
 
 it('reports a 501 and leaves the confirmation disabled', async () => {
   send.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'SetAlarmState' }));
