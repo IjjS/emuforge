@@ -14,11 +14,12 @@ import type { SecurityGroupChoice } from '../../../components/security-group-cho
 import { ChoiceSelect, optional } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { failureOf } from '../../../components/use-token-listing';
+import type { ChoiceSource } from '../../../components/use-paged-choices';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
 import { useOrderableRows, useSubnetGroup, type ChoiceRead } from '../choices-queries';
-import { failoverTargetChoices, readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
+import { readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
 import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
 import { afterParent, canSave, changes, draftField, editField, NOT_IN_LIST } from '../modify-draft';
 import { storageTypes } from '../orderable';
@@ -352,7 +353,7 @@ function ClusterStorageType({
 }
 
 type FailoverTarget = Awaited<ReturnType<typeof readFailoverTargets>>[number];
-type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure };
+type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure; loading?: boolean };
 const NO_READER = 'Failover requires a reader DB instance in this cluster.';
 
 function FailoverDialog({
@@ -370,34 +371,48 @@ function FailoverDialog({
     operation: OPERATIONS.describeDBInstances,
     read: (at, signal) => readFailoverTargets(at, cluster.id, signal),
   });
-  // An empty answer retires older data even if closing the picker cancels the new read.
   const [latest, setLatest] = useState<TargetRead>();
-  const [refreshing, setRefreshing] = useState<AbortSignal>();
+  const targetRead = useRef<AbortController>(null);
+  useEffect(() => () => targetRead.current?.abort(), []);
   const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
   const [targetError, setTargetError] = useState<string>();
   const targets = latest === undefined ? initial.value : latest.targets;
   const failure = latest === undefined ? initial.failure : latest.failure;
-  const loading = refreshing !== undefined || (latest === undefined && initial.loading);
+  const loading = latest === undefined ? initial.loading : latest.loading === true;
   const selected = targets?.find(({ id }) => id === target?.id);
   if (!loading && targets !== undefined && target !== undefined && selected === undefined) {
     setTargetError(`${target.id} is no longer a reader of this DB cluster.`);
     setTarget(undefined);
   }
 
-  const source = failoverTargetChoices(endpoint, cluster.id, async (at, id, signal) => {
-    setRefreshing(signal);
+  const handleTargetOpen = () => {
+    targetRead.current?.abort();
+    setLatest({ loading: true });
+  };
+  const readPickerTargets = async (at: string) => {
+    handleTargetOpen();
+    // The dialog still needs this answer after the picker closes.
+    const controller = new AbortController();
+    targetRead.current = controller;
+    const { signal } = controller;
     try {
-      const fresh = await readFailoverTargets(at, id, signal);
+      const fresh = await readFailoverTargets(at, cluster.id, signal);
       signal.throwIfAborted();
       setLatest({ targets: fresh });
-      return fresh;
+      return { items: fresh };
     } catch (error) {
       if (!signal.aborted) setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
       throw error;
-    } finally {
-      setRefreshing((current) => (current === signal ? undefined : current));
     }
-  });
+  };
+  const source: ChoiceSource<FailoverTarget> = {
+    endpoint,
+    key: RDS_KEYS.choices('failover-targets', cluster.id),
+    operation: OPERATIONS.describeDBInstances,
+    readAgainOnOpen: true,
+    read: readPickerTargets,
+    optionOf: ({ id: value, description }) => ({ value, label: value, ...optional({ description }) }),
+  };
   return (
     <OperationDialog
       header="Fail over DB cluster"
@@ -426,7 +441,7 @@ function FailoverDialog({
             none="No reader DB instances"
             value={selected ?? target}
             invalid={targetError !== undefined}
-            onOpen={() => setLatest({})}
+            onOpen={handleTargetOpen}
             onChange={(choice) => {
               setTarget(choice);
               setTargetError(undefined);

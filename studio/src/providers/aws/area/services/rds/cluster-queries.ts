@@ -6,7 +6,6 @@ import {
   readSecurityGroupsById,
   type SecurityGroupChoice,
 } from '../../components/security-group-choices';
-import type { ChoiceSource } from '../../components/use-paged-choices';
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { failureOf, noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
 import { OPERATIONS, type DbInstance } from './api';
@@ -270,25 +269,6 @@ export async function readFailoverTargets(
     const description = [instance?.instanceClass, instance?.zone].filter(Boolean).join(' · ');
     return description === '' ? { id: reader } : { id: reader, description };
   });
-}
-
-export function failoverTargetChoices(
-  endpoint: string | undefined,
-  id: string,
-  read: (endpoint: string, id: string, signal: AbortSignal) => Promise<FailoverTarget[]>,
-): ChoiceSource<FailoverTarget> {
-  return {
-    endpoint,
-    key: RDS_KEYS.choices('failover-targets', id),
-    operation: OPERATIONS.describeDBInstances,
-    readAgainOnOpen: true,
-    read: async (at, _text, _marker, signal) => ({ items: await read(at, id, signal) }),
-    optionOf: ({ id: value, description }) => ({
-      value,
-      label: value,
-      ...(description === undefined ? {} : { description }),
-    }),
-  };
 }
 
 export function useClusterSecurityGroups(
