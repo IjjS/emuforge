@@ -1,5 +1,6 @@
 import type { OrderableDBInstanceOption } from '@aws-sdk/client-rds';
 import { useQuery } from '@tanstack/react-query';
+import { useId } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { securityGroupChoices, type SecurityGroupChoice } from '../../components/security-group-choices';
@@ -86,8 +87,9 @@ function useChoiceRead<T>(
   read: (endpoint: string, signal: AbortSignal) => Promise<T>,
   enabled = true,
 ): ChoiceRead<T> {
+  const mount = useId();
   const query = useQuery({
-    queryKey: [...key, endpoint],
+    queryKey: [...key, endpoint, mount],
     queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : read(endpoint, signal)),
     enabled: enabled && endpoint !== undefined,
     staleTime: 0,
@@ -144,16 +146,17 @@ export function useDefaultVersions(
   });
 }
 
-export function upgradeVersionChoices(
+export function useUpgradeTargets(
   endpoint: string | undefined,
   engine: string,
   version: string,
-): ChoiceSource<UpgradeTarget> {
-  return {
-    key: RDS_KEYS.choices('upgrade-versions', engine, version),
+  opened: boolean,
+): ChoiceRead<UpgradeTarget[]> {
+  return useChoiceRead(
     endpoint,
-    operation: CHOICE_OPERATIONS.describeDBEngineVersions,
-    read: async (at, _text, _marker, signal) => {
+    RDS_KEYS.choices('upgrade-versions', engine, version),
+    CHOICE_OPERATIONS.describeDBEngineVersions,
+    async (at, signal) => {
       const targets = await readUpgradeTargets(at, engine, version, signal);
       const versions: EngineVersionChoice[] = [];
       let marker: string | undefined;
@@ -162,14 +165,10 @@ export function upgradeVersionChoices(
         versions.push(...page.choices);
         marker = page.marker;
       } while (marker !== undefined);
-      return { items: availableUpgradeTargets(targets, versions) };
+      return availableUpgradeTargets(targets, versions);
     },
-    optionOf: (target) => ({
-      value: target.version,
-      label: target.version,
-      description: target.major ? 'Major upgrade' : 'Minor upgrade',
-    }),
-  };
+    opened,
+  );
 }
 
 export function useSubnetGroup(

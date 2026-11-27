@@ -1,25 +1,65 @@
 import type { OrderableDBInstanceOption } from '@aws-sdk/client-rds';
+import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import FormField from '@cloudscape-design/components/form-field';
-import Input from '@cloudscape-design/components/input';
+import Input, { type InputProps } from '@cloudscape-design/components/input';
+import Link from '@cloudscape-design/components/link';
 import Multiselect from '@cloudscape-design/components/multiselect';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import { useState, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { ChoiceSelect, optional } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { readFailureState } from '../../../components/failure-states';
 import { kmsKeyChoices, type KmsKeyChoice } from '../../../components/kms-key-choices';
 import type { ZonesRead } from '../../../components/use-availability-zones';
+import { useFollow } from '../../../components/use-follow';
 import type { UpgradeTarget } from '../choices-api';
-import { upgradeVersionChoices, type ChoiceRead } from '../choices-queries';
+import { useUpgradeTargets, type ChoiceRead } from '../choices-queries';
 import { iopsConstraint, requiresIops } from '../form';
 import { NOT_IN_LIST } from '../modify-draft';
 import { instanceClasses, storageTypes, type StorageTypeChoice } from '../orderable';
 
 type RowsRead = ChoiceRead<OrderableDBInstanceOption[]>;
+
+function FieldReadFailure({
+  connection,
+  thing,
+  failure,
+  retry,
+}: {
+  connection: AreaConnection;
+  thing: string;
+  failure: RequestFailure;
+  retry: () => void;
+}) {
+  const handleFollow = useFollow();
+  const state = readFailureState(failure, connection, thing);
+  const detail =
+    failure.kind === 'not-implemented'
+      ? `The emulator answered 501 Not Implemented for ${failure.operation}.`
+      : state.detail;
+  return (
+    <SpaceBetween size="xxs">
+      <StatusIndicator type={state.type}>{state.first}</StatusIndicator>
+      {detail !== undefined && <Box variant="p">{detail}</Box>}
+      {state.recovery && (
+        <Link href="/" onFollow={handleFollow}>
+          Connection status
+        </Link>
+      )}
+      {failure.kind !== 'not-implemented' && (
+        <Button variant="inline-link" formAction="none" onClick={retry}>
+          Retry
+        </Button>
+      )}
+    </SpaceBetween>
+  );
+}
 
 export function FieldReadStatus({
   connection,
@@ -35,7 +75,7 @@ export function FieldReadStatus({
   loading?: boolean | undefined;
 }) {
   if (failure !== undefined) {
-    return <ReadFailure state={readFailureState(failure, connection, thing)} onRetry={retry} />;
+    return <FieldReadFailure connection={connection} thing={thing} failure={failure} retry={retry} />;
   }
   return loading === true ? <StatusIndicator type="loading">Checking {thing}</StatusIndicator> : null;
 }
@@ -46,6 +86,7 @@ interface ListedFieldProps {
   onChange: (value: string | undefined) => void;
   error?: string | undefined;
   missing?: boolean | undefined;
+  selectRef?: Ref<SelectProps.Ref> | undefined;
 }
 
 function selectedOption(
@@ -79,6 +120,7 @@ export function InstanceClassField({
   onChange,
   error,
   missing,
+  selectRef,
 }: OrderableFieldProps & { engine: string; version: string | undefined }) {
   const label = 'DB instance class';
   const failure = defaultFailure ?? rows.failure;
@@ -97,6 +139,7 @@ export function InstanceClassField({
     <FormField label={label} errorText={error}>
       <SpaceBetween size="xs">
         <Select
+          ref={selectRef}
           ariaLabel={label}
           options={options}
           selectedOption={selectedOption(options, value, missing)}
@@ -149,6 +192,7 @@ export function StorageTypeField({
   onChange,
   error,
   missing,
+  selectRef,
 }: OrderableFieldProps & {
   instanceClass?: string | undefined;
   mode: 'instance-create' | 'instance-modify' | 'cluster-create' | 'cluster-modify';
@@ -180,6 +224,7 @@ export function StorageTypeField({
     <FormField label={label} errorText={error}>
       <SpaceBetween size="xs">
         <Select
+          ref={selectRef}
           ariaLabel={label}
           options={choices}
           selectedOption={locked ? null : chosen}
@@ -218,18 +263,30 @@ export function UpgradeVersionField({
   value: UpgradeTarget | undefined;
   onChange: (choice: UpgradeTarget | undefined) => void;
 }) {
+  const [opened, setOpened] = useState(false);
+  const read = useUpgradeTargets(connection.engineOrigin, engine, version, opened);
+  const keep = { value: '', label: `Keep ${version}`, description: 'No version is sent.' };
+  const options = (read.data ?? []).map((target) => ({
+    value: target.version,
+    label: target.version,
+    description: target.major ? 'Major upgrade' : 'Minor upgrade',
+  }));
+
   return (
     <FormField label="Engine version">
-      <ChoiceSelect
-        key={`${engine}/${version}`}
-        connection={connection}
-        source={upgradeVersionChoices(connection.engineOrigin, engine, version)}
-        things="engine versions"
-        fixed={`Keep ${version}`}
-        fixedDescription="No version is sent."
-        value={value}
-        onChange={onChange}
-      />
+      <SpaceBetween size="xs">
+        <Select
+          ariaLabel="Engine version"
+          options={[keep, ...options]}
+          selectedOption={value === undefined ? keep : selectedOption(options, value.version)}
+          triggerVariant="option"
+          onLoadItems={() => setOpened(true)}
+          onChange={({ detail }) => {
+            onChange(read.data?.find((target) => target.version === detail.selectedOption.value));
+          }}
+        />
+        <FieldReadStatus connection={connection} thing="engine versions" {...read} />
+      </SpaceBetween>
     </FormField>
   );
 }
@@ -239,17 +296,20 @@ export function IopsField({
   value,
   onChange,
   error,
+  inputRef,
 }: {
   storageType: StorageTypeChoice | undefined;
   value: string;
   onChange: (value: string) => void;
   error?: string | undefined;
+  inputRef?: Ref<InputProps.Ref> | undefined;
 }) {
   if (storageType === undefined || !requiresIops(storageType.type)) return null;
 
   return (
     <FormField label="Provisioned IOPS" constraintText={iopsConstraint(storageType)} errorText={error}>
       <Input
+        ref={inputRef}
         value={value}
         invalid={error !== undefined}
         inputMode="numeric"
@@ -267,9 +327,9 @@ interface ZoneProps {
 }
 
 function zoneOptions(zones: ZoneProps['zones'], zoneRead: ZonesRead): SelectProps.Option[] {
-  if (zoneRead.failure !== undefined) return [];
-
-  const byName = new Map(zoneRead.zoneDetails?.map((zone) => [zone.name, zone.id]));
+  const byName = new Map(
+    zoneRead.failure === undefined ? zoneRead.zoneDetails?.map((zone) => [zone.name, zone.id]) : [],
+  );
   return (zones ?? []).map((zone) => ({ value: zone, label: zone, ...optional({ description: byName.get(zone) }) }));
 }
 

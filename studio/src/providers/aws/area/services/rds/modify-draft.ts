@@ -62,11 +62,11 @@ export function sameSecurityGroups(
   return left.length === right.length && left.every(({ id }) => right.some((group) => group.id === id));
 }
 
-export function afterSubnetGroup<P>(
-  groups: DraftField<readonly SecurityGroupChoice[]>,
+export function afterSubnetGroup<P, Group extends SecurityGroupChoice>(
+  groups: DraftField<readonly Group[]>,
   subnetGroup: DraftField<P>,
   vpcId: string | undefined,
-): DraftField<readonly SecurityGroupChoice[]> {
+): DraftField<readonly Group[]> {
   if (!changed(subnetGroup)) {
     if (groups.cleared !== undefined) return editField(groups, groups.start);
     if (!changed(groups)) return groups;

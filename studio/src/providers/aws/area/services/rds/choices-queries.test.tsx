@@ -126,17 +126,23 @@ describe('reads of orderable rows', () => {
   });
 
   it('ignores an answer for a pair that is no longer selected', async () => {
-    const first = Promise.withResolvers<typeof postgres>();
-    const second = Promise.withResolvers<typeof mysql>();
-    readRows.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    let resolveFirst: (rows: typeof postgres) => void = () => undefined;
+    let resolveSecond: (rows: typeof mysql) => void = () => undefined;
+    const first = new Promise<typeof postgres>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<typeof mysql>((resolve) => {
+      resolveSecond = resolve;
+    });
+    readRows.mockReturnValueOnce(first).mockReturnValueOnce(second);
     const hook = readPair();
     await waitFor(() => expect(readRows).toHaveBeenCalledTimes(1));
     hook.rerender({ engine: 'mysql', version: '8.4.7' });
     await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
-    first.resolve(postgres);
-    await act(() => first.promise.then(() => undefined));
+    resolveFirst(postgres);
+    await act(() => first.then(() => undefined));
     expect(hook.result.current.data).toBeUndefined();
-    second.resolve(mysql);
+    resolveSecond(mysql);
     await waitFor(() => expect(hook.result.current.data).toEqual(mysql));
   });
 

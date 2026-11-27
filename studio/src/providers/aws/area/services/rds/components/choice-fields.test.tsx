@@ -229,10 +229,9 @@ describe('engine upgrades and zones', () => {
     else vi.mocked(api.listEngineVersionChoices).mockRejectedValueOnce(failure);
     open(<UpgradeVersionField {...blank} engine="postgres" version="16.4" />);
     select().openDropdown();
-    await waitFor(() =>
-      expect(select().findDropdown().getElement()).toHaveTextContent('Not implemented by the emulator'),
-    );
-    expect(select().findDropdown().getElement()).toHaveTextContent(versionOperation);
+    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(screen.getByText(/501 Not Implemented for DescribeDBEngineVersions/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(trigger()).toHaveTextContent('Keep 16.4');
   });
 
@@ -248,7 +247,8 @@ describe('engine upgrades and zones', () => {
     expect(screen.getByText(/501 Not Implemented for DescribeAvailabilityZones/)).toBeVisible();
     expect(trigger()).toHaveTextContent('No preference');
     select().openDropdown();
-    expect(labels()).toEqual(['No preference']);
+    expect(labels()).toEqual(['No preference', ...zones]);
+    expect(option('us-east-1b')).not.toHaveTextContent('use1-az2');
   });
 
   it('lists only subnet group zones with IDs and displays No preference when disabled', () => {
