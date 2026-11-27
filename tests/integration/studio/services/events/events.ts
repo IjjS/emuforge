@@ -883,10 +883,16 @@ export function alerts(scope: Locator): Locator {
 
 /** Waits until one alert of `scope` holds every text of `texts`. */
 export async function expectAlert(scope: Locator, ...texts: string[]): Promise<void> {
+  // A reason of the emulator's may hold a line break, which the alert draws as a space: both are read with every
+  // run of white space as one space.
+  const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const wanted = texts.map(norm);
   await expect
     .poll(
-      async () => (await alerts(scope).allInnerTexts()).filter((shown) => texts.every((text) => shown.includes(text))).length,
-      { message: `one alert holding ${texts.map((t) => `"${t}"`).join(', ')}`, timeout: 15_000 },
+      async () =>
+        (await alerts(scope).allInnerTexts()).map(norm).filter((shown) => wanted.every((text) => shown.includes(text)))
+          .length,
+      { message: `one alert holding ${wanted.map((t) => `"${t}"`).join(', ')}`, timeout: 15_000 },
     )
     .toBe(1);
 }
@@ -907,6 +913,18 @@ export async function confirmWith(page: Page, name: string, action: string): Pro
 /** The text `text`, whole, inside a container of the page's content (a state in the place of the data). */
 export function stateShown(page: Page, text: string): Locator {
   return page.getByRole('main').locator(CONTAINER).getByText(text, { exact: true });
+}
+
+/**
+ * The text `text`, whole, in the place of a page's data when the page holds a field too: inside a container of the
+ * page's content that holds no form field (the field says the same text as its error).
+ */
+export function stateBesideFields(page: Page, text: string): Locator {
+  return page
+    .getByRole('main')
+    .locator(CONTAINER)
+    .filter({ hasNot: page.locator(FORM_FIELD) })
+    .getByText(text, { exact: true });
 }
 
 /**

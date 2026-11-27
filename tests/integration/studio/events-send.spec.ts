@@ -38,7 +38,7 @@ import {
   SEND_EVENTS_PATH,
   sendScreen,
   shownEventIds,
-  stateShown,
+  stateBesideFields,
   tableTitled,
   withBus,
 } from './services/events/events';
@@ -166,7 +166,7 @@ test('studio.events-bus-from-the-address-must-be-in-the-emulator', async ({ ctx,
   /** Waits until Rules says `text` against the address's bus, in the bus field and in the place of the rules. */
   const expectNoBus = async (text: string) => {
     await expect(fieldError(busField(page)), 'what the bus field says').toHaveText(text, { timeout: 15_000 });
-    await expect(stateShown(page, text), 'the same text in the place of the rules').toBeVisible();
+    await expect(stateBesideFields(page, text), 'the same text in the place of the rules').toBeVisible();
     await expect(rules, 'no rule is listed').toHaveCount(0);
   };
 
