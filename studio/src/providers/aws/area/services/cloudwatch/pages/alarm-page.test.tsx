@@ -79,19 +79,24 @@ function open(address = alarmPath(name), result: AreaConnection['result'] = CONN
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const layout = createWrapper(container).findContentLayout();
-  if (!layout) throw new Error('Alarm layout missing');
+  function layout() {
+    const current = createWrapper(container).findContentLayout();
+    if (!current) throw new Error('Alarm layout missing');
+    return current;
+  }
   return {
-    layout,
+    get layout() {
+      return layout();
+    },
     resources,
     follow: (next: string) => {
       if (!navigate) throw new Error('Navigation missing');
       void navigate(next);
     },
-    header: () => layout.findHeader()?.findHeader(),
-    tables: () => layout.findContent().findAllTables(),
+    header: () => layout().findHeader()?.findHeader(),
+    tables: () => layout().findContent().findAllTables(),
     sectionHeadings: () =>
-      layout
+      layout()
         .findContent()
         .findAllHeaders()
         .map((header) => header.findHeadingText().getElement().textContent),
