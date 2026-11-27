@@ -1,12 +1,14 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
+import { AreaFlash, FlashAnnouncer } from '../../../components/area-flash';
 import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
+import { useAreaFlash } from '../../../components/use-area-flash';
 import { getEventBus, listEventBuses, type EventBusRead } from '../bus-api';
 import { putEvent } from '../send-api';
 import { SendEventsPage } from './send-events-page';
@@ -41,21 +43,45 @@ beforeEach(() => {
   vi.mocked(listEventBuses).mockResolvedValue({ items: [{ Name: 'orders' }] });
 });
 
+const path = '/aws/events/send-events';
+
+function PageWithFlash({ onShow }: { onShow: (result: FlashResult) => void }) {
+  const flash = useAreaFlash(path, 1, true);
+  return (
+    <>
+      <div data-testid="area-flash-announcement">
+        <FlashAnnouncer announcement={flash.announcement} />
+      </div>
+      {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
+      <PageFlashContext.Provider
+        value={{
+          ...flash.pageFlash,
+          show(result) {
+            onShow(result);
+            flash.pageFlash.show(result);
+          },
+        }}
+      >
+        <SendEventsPage connection={{ engineOrigin: endpoint, result: undefined }} />
+      </PageFlashContext.Provider>
+    </>
+  );
+}
+
 function renderPage(query = '') {
   const resources = vi.fn();
   const show = vi.fn<(result: FlashResult) => void>();
-  const { container } = render(
-    <MemoryRouter initialEntries={['/aws/events/send-events' + query]}>
+  const { container, getByTestId } = render(
+    <MemoryRouter initialEntries={[path + query]}>
       <QueryClientProvider client={new QueryClient()}>
         <PageResourcesContext.Provider value={resources}>
-          <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
-            <SendEventsPage connection={{ engineOrigin: endpoint, result: undefined }} />
-          </PageFlashContext.Provider>
+          <PageWithFlash onShow={show} />
         </PageResourcesContext.Provider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const layout = createWrapper(container).findContentLayout();
+  const wrapper = createWrapper(container);
+  const layout = wrapper.findContentLayout();
   const content = layout?.findContent();
   const form = content?.findForm();
   const select = content?.findSelect();
@@ -92,8 +118,14 @@ function renderPage(query = '') {
   }
   return {
     layout,
-    form,
     content,
+    successes: () =>
+      wrapper
+        .findFlashbar()
+        ?.findItemsByType('success')
+        .map((item) => item.findContent()?.getElement().textContent) ?? [],
+    announcement: within(getByTestId('area-flash-announcement')).getByRole('status'),
+    inlineReceipt: () => form.findActions()?.findStatusIndicator(),
     select,
     button,
     busField,
@@ -108,12 +140,6 @@ function renderPage(query = '') {
     fill,
     expectFilled,
   };
-}
-
-function flashText(show: ReturnType<typeof renderPage>['show']) {
-  const item = show.mock.lastCall?.[0][0];
-  expect(item?.type).toBe('success');
-  return render(<div>{item?.content}</div>).container.textContent;
 }
 
 it('opens with the addressed bus, an empty JSON object, the routing description and the notice word', async () => {
@@ -141,10 +167,13 @@ it('checks the bus again and shows each accepted ID in one flash and beside Send
   expect(read).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
   expect(send).toHaveBeenCalledExactlyOnceWith(endpoint, { ...event, EventBusName: 'orders' }, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledBefore(send);
-  expect(flashText(page.show)).toBe('The emulator accepted the event for orders. Event ID event-1.');
   await waitFor(() => {
-    const receipt = page.form.findActions()?.find('[aria-hidden="true"]')?.findStatusIndicator();
-    expect(receipt?.getElement().textContent).toBe('The emulator accepted the event for orders. Event ID event-1.');
+    const receipt = page.inlineReceipt()?.getElement();
+    const text = 'The emulator accepted the event for orders. Event ID event-1.';
+    expect(page.successes()).toContain(text);
+    expect(receipt?.textContent).toBe(text);
+    expect(receipt?.parentElement).toHaveAttribute('aria-hidden', 'true');
+    expect(page.announcement.textContent).toBe(`Success ${text}`);
   });
   expect(page.select.findTrigger().getElement().textContent).toBe('orders');
   page.expectFilled();
@@ -160,10 +189,13 @@ it('checks the bus again and shows each accepted ID in one flash and beside Send
     { ...event, EventBusName: 'orders', Source: 'warehouse' },
     expect.any(AbortSignal),
   );
-  expect(flashText(page.show)).toBe('The emulator accepted the event for orders. Event ID event-2.');
   await waitFor(() => {
-    const receipt = page.form.findActions()?.find('[aria-hidden="true"]')?.findStatusIndicator();
-    expect(receipt?.getElement().textContent).toBe('The emulator accepted the event for orders. Event ID event-2.');
+    const receipt = page.inlineReceipt()?.getElement();
+    const text = 'The emulator accepted the event for orders. Event ID event-2.';
+    expect(page.successes()).toContain(text);
+    expect(receipt?.textContent).toBe(text);
+    expect(receipt?.parentElement).toHaveAttribute('aria-hidden', 'true');
+    expect(page.announcement.textContent).toBe(`Success ${text}`);
   });
 });
 
@@ -178,7 +210,7 @@ it.each([
     Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: reveal });
     const measure = Element.prototype.getBoundingClientRect;
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-      if (this.getAttribute('aria-hidden') === 'true' && this.textContent?.includes('Event ID event-1.')) {
+      if (this.getAttribute('aria-hidden') === 'true') {
         return new DOMRect(0, window.innerHeight + distanceFromBottom, 250, 40);
       }
       return measure.call(this);
@@ -193,11 +225,9 @@ it.each([
         fireEvent.click(button);
       });
 
-      const receipt = page.form.findActions()?.find('[aria-hidden="true"]');
-      expect(receipt?.findStatusIndicator()?.getElement().textContent).toBe(
-        'The emulator accepted the event for default. Event ID event-1.',
-      );
-      const receiptScrolls = reveal.mock.contexts.filter((element) => element === receipt?.getElement());
+      const receipt = page.inlineReceipt()?.getElement();
+      expect(receipt?.textContent).toBe('The emulator accepted the event for default. Event ID event-1.');
+      const receiptScrolls = reveal.mock.contexts.filter((element) => element === receipt?.parentElement);
       expect(receiptScrolls).toHaveLength(shouldReveal ? 1 : 0);
       expect(button).toHaveFocus();
       page.expectFilled();
