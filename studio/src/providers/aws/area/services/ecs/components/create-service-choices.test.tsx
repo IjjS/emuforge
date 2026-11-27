@@ -428,6 +428,46 @@ it('loads a group on the selected VPC continuation', async () => {
   expect(readGroups).toHaveBeenCalledWith('vpc-1', 'groups-2');
 });
 
+it('distinguishes security group options and sends the chosen group ID', async () => {
+  const identity = 'dev\\u0020\\u0020group';
+  readGroups.mockResolvedValue({
+    items: [
+      { ...groupA, name: 'dev group' },
+      { ...groupB, name: 'dev  group' },
+    ],
+  });
+  answers.mockImplementation((operation, input) =>
+    operation === 'CreateService' ? { service: { serviceName: 'entered' } } : normal(operation, input),
+  );
+  await open();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Service name' }), { target: { value: 'entered' } });
+  await choose(FAMILY, 'web');
+  await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2'));
+  await choose(SUBNETS, subnetA.id);
+
+  const picker = multi(GROUPS);
+  openDropdown(picker);
+  const dropdown = picker.findDropdown();
+  await waitFor(() => {
+    expect(dropdown.findOptionByValue(groupA.id)?.getElement()).toHaveTextContent('dev group');
+    expect(dropdown.findOptionByValue(groupB.id)?.getElement()).toHaveTextContent(identity);
+  });
+  await choose(GROUPS, groupB.id);
+  expect(picker.findTokens().map((token) => token.findLabel().getElement().textContent)).toEqual([identity]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create service' }));
+  await waitFor(() =>
+    expect(answers).toHaveBeenCalledWith(
+      'CreateService',
+      expect.objectContaining({
+        networkConfiguration: expect.objectContaining({
+          awsvpcConfiguration: expect.objectContaining({ securityGroups: [groupB.id] }),
+        }),
+      }),
+    ),
+  );
+});
+
 it('keeps groups until the last subnet is removed and scopes new choices to the new VPC', async () => {
   await open();
   await choose(SUBNETS, 'subnet-a');

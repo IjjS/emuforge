@@ -210,6 +210,30 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the VPC list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = vpc('vpc-b', 'p664 a b');
+    const doubleSpace = vpc('vpc-c', 'p664 a  b');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, DEFAULT] } });
+    open();
+
+    const selectedName = await screen.findByRole('radio', { name: identity });
+    expect(screen.getByRole('radio', { name: 'p664 a b' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: DEFAULT.id })).toBeInTheDocument();
+    expect(rows()).toContainEqual(DEFAULT_ROW);
+    const name = screen.getByText('p664 a  b', exactText);
+    expect(name.closest('tr')).toBe(selectedName.closest('tr'));
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    selectRow(identity);
+    fireEvent.click(action('Delete'));
+    const deletion = await screen.findByRole('dialog', { name: 'Delete VPC?' });
+    expect(within(deletion).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletion)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per VPC with name ("-" without one), VPC ID, state, IPv4 CIDR and Yes or No under "Default"; the ID links to the VPC', async () => {
     answer({ '|': { items: [APP, DEFAULT] } });
     const router = open('/aws/vpc');

@@ -12,6 +12,7 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -19,14 +20,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { EventMessage } from '../components/event-message';
 import { PutEventsForm } from '../components/put-events-form';
-import {
-  LINE_BREAK,
-  LOG_GROUPS_PATH,
-  logGroupPath,
-  nameFromSegment,
-  streamNameForDisplay,
-  streamNameLabel,
-} from '../format';
+import { LINE_BREAK, LOG_GROUPS_PATH, logGroupPath, nameFromSegment, streamNameForDisplay } from '../format';
 import { useStreamEvents } from '../use-stream-events';
 
 const STANDARD_CLASS = 'The emulator reads and searches log events only in log groups of the Standard class.';
@@ -186,11 +180,10 @@ export function LogStreamPage({ connection, params }: ScreenPageProps) {
       >
         {LINE_BREAK.test(stream) ? (
           <span style={{ whiteSpace: 'pre-wrap' }}>
-            <ValueText kind="name" value={displayName} />{' '}
-            <ValueText kind="name" value={`(${streamNameLabel(stream)})`} />
+            <NameText name={stream} display={displayName} />
           </span>
         ) : (
-          <ValueText kind="name" value={displayName} />
+          <NameText name={stream} display={displayName} />
         )}
       </Header>
       <Container header={<Header variant="h2">Log events</Header>}>{body}</Container>

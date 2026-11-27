@@ -7,9 +7,9 @@ import { useSearchParams } from 'react-router';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
-import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_BUCKET, NO_SUCH_KEY, OPERATIONS, type ObjectHead } from '../api';
 import { actionFailure } from '../components/action-failure';
@@ -275,7 +275,7 @@ function ObjectView({ bucket, objectKey, connection }: ObjectViewProps) {
           </SpaceBetween>
         }
       >
-        <ValueText kind="name" value={keyName(objectKey)} />
+        <NameText name={keyName(objectKey)} />
       </Header>
       {failure !== undefined && <BucketReadFailure view={failure} onRetry={handleRetry} />}
       {failure === undefined && lookup.value === undefined && <ObjectLoading />}

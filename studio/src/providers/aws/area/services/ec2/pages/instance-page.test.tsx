@@ -451,6 +451,31 @@ describe("an instance's page", () => {
     });
   });
 
+  it('draws repeated spaces in the key pair and group links and gives each its exact identity', async () => {
+    const keyName = 'dev  key';
+    const groupName = 'dev  group';
+    const keyIdentity = 'dev\\u0020\\u0020key';
+    const groupIdentity = 'dev\\u0020\\u0020group';
+    holding(full({ keyName, groups: [{ id: 'sg-1', name: groupName }] }));
+    open(pathOf('i-0full'));
+
+    const key = await screen.findByRole('link', { name: keyIdentity });
+    expect(key.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${keyName} (${keyIdentity})`);
+    const group = within(tableOf('Security groups').element).getByRole('link', { name: groupIdentity });
+    expect(group.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${groupName} (${groupIdentity})`);
+    expect(group).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-1');
+  });
+
+  it('draws repeated spaces in the instance heading and names it by the Name tag identity', async () => {
+    const name = 'dev  instance';
+    const identity = 'dev\\u0020\\u0020instance';
+    holding(full({ tags: [{ key: 'Name', value: name }] }));
+    open(pathOf('i-0full'));
+
+    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    expect(heading.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+  });
+
   it('links a reported block device to its volume from the instance view', async () => {
     holding(full());
     vi.mocked(getVolume).mockResolvedValue({

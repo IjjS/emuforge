@@ -134,6 +134,19 @@ it.each([
   ]);
 });
 
+it('shows the stored two-space name in the heading and gives it the exact accessible identity', async () => {
+  const identity = 'a\\u0020\\u0020b';
+  read.mockResolvedValueOnce(page([]));
+  renderPage(CONNECTED, '/aws/logs/log-groups/group/%2Fapp%23group/stream/a%20%20b');
+
+  const heading = screen.getByRole('heading', { level: 1 });
+  expect(heading).toHaveAccessibleName(identity);
+  const name = heading.querySelector('[aria-hidden="true"]');
+  expect(name).toBeVisible();
+  expect(name?.textContent).toBe(`a  b (${identity})`);
+  await waitFor(() => expect(emptyStream()).toBeVisible());
+});
+
 it.each([
   ['%250A', '\n', '\\n'],
   ['%250D', '\r', '\\r'],
@@ -150,9 +163,11 @@ it.each([
     );
 
     const heading = createWrapper(container).findHeader()?.findHeadingText();
-    expect(heading?.getElement().closest('h1')).toHaveAccessibleName(`multiline\nworker (multiline${escaped}worker)`);
+    expect(heading?.getElement().closest('h1')).toHaveAccessibleName(`multiline${escaped}worker`);
     const name = heading?.find('span[style]')?.getElement();
-    expect(name?.textContent).toBe(`multiline\nworker (multiline${escaped}worker)`);
+    expect(name?.querySelector('[aria-hidden="true"]')?.textContent).toBe(
+      `multiline\nworker (multiline${escaped}worker)`,
+    );
     expect(name).toHaveStyle({ whiteSpace: 'pre-wrap' });
     await waitFor(() => expect(emptyStream()).toBeVisible());
     expect(read).toHaveBeenCalledWith(

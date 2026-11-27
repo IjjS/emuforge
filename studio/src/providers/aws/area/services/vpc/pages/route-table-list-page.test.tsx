@@ -218,6 +218,30 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the route table list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = routeTable('rtb-b', 'p664 a b');
+    const doubleSpace = routeTable('rtb-c', 'p664 a  b');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, MAIN] } });
+    open();
+
+    const selectedName = await screen.findByRole('radio', { name: identity });
+    expect(screen.getByRole('radio', { name: 'p664 a b' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: MAIN.id })).toBeInTheDocument();
+    expect(rows()).toContainEqual(MAIN_ROW);
+    const name = screen.getByText('p664 a  b', exactText);
+    expect(name.closest('tr')).toBe(selectedName.closest('tr'));
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    selectRow(identity);
+    fireEvent.click(action('Delete'));
+    const deletion = await screen.findByRole('dialog', { name: 'Delete route table?' });
+    expect(within(deletion).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletion)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per table with name, route table ID (to its page), VPC ID (to the VPC), "Main" Yes or No and the associated subnets', async () => {
     answer({ '|': { items: [APP, MAIN] } });
     const router = open();

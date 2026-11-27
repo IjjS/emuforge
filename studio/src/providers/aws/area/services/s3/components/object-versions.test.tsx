@@ -224,10 +224,9 @@ async function toggleVersions() {
 function selection(id: string, etag?: string) {
   const list = main().findTable();
   for (let index = 1; index <= (list?.findRows().length ?? 0); index += 1) {
-    const versionNames =
-      list?.findBodyCell(index, 3)?.findAll('.aws-area-value-name') ??
-      list?.findBodyCell(index, 2)?.findAll('.aws-area-value-name').slice(1);
-    const [version, tag] = versionNames ?? [];
+    const narrowDetails = list?.findBodyCell(index, 2)?.findSpaceBetween()?.getElement().lastElementChild;
+    const versionDetails = list?.findBodyCell(index, 3) ?? (narrowDetails ? createWrapper(narrowDetails) : undefined);
+    const [version, tag] = versionDetails?.findAll('.aws-area-value-name') ?? [];
     if (version?.getElement().textContent === id && (etag === undefined || tag?.getElement().textContent === etag)) {
       const control = list?.findRowSelectionArea(index)?.find('input[type="radio"]')?.getElement();
       if (control !== undefined) return { control, index };
@@ -364,14 +363,14 @@ it.each([
       key: 'logs/line\rbreak.csv',
       indicator: 'CR at character 10',
       cellCue: 'Carriage return at character 10',
-      spoken: 'logs/line \\r (carriage return) break.csv',
+      spoken: 'logs/line\\rbreak.csv',
     },
     {
       id: 'lf',
       key: 'logs/line\nbreak.csv',
       indicator: 'LF at character 10',
       cellCue: 'Line feed at character 10',
-      spoken: 'logs/line \\n (line feed) break.csv',
+      spoken: 'logs/line\\nbreak.csv',
     },
     { id: 'space', key: 'logs/line break.csv', spoken: 'logs/line break.csv' },
     {
@@ -387,22 +386,26 @@ it.each([
     {
       id: 'literal-r',
       key: 'logs/line\\rbreak.csv',
-      spoken: 'logs/line \\\\ (literal backslash) rbreak.csv',
+      spoken: 'logs/line\\\\rbreak.csv',
     },
     {
       id: 'literal-n',
       key: 'logs/line\\nbreak.csv',
-      spoken: 'logs/line \\\\ (literal backslash) nbreak.csv',
+      spoken: 'logs/line\\\\nbreak.csv',
     },
     {
       id: 'literal-label',
       key: 'logs/line (carriage return) break.csv',
       spoken: 'logs/line (carriage return) break.csv',
     },
-  ];
+    { id: 'one-space', key: 'a b', spoken: 'a b' },
+    { id: 'two-spaces', key: 'a  b', spoken: 'a\\u0020\\u0020b' },
+    { id: 'literal-space', key: 'a\\u0020b', spoken: 'a\\\\u0020b' },
+    { id: 'space-and-percent', key: 'archive 100%.txt', spoken: 'archive 100%.txt' },
+  ] satisfies Array<{ id: string; key: string; spoken: string; indicator?: string; cellCue?: string }>;
   engine.readHistory = () => history(keys.map(({ id, key }) => row(id, false, 'Version', key)).join(''));
   engine.getVersion = () => refusal(404, 'NoSuchVersion', 'The version is unavailable.');
-  open();
+  open('/aws/s3/buckets/alpha');
   await toggleVersions();
 
   const nativeSelection = required(window.getSelection());
@@ -412,6 +415,12 @@ it.each([
     const value = required(cell.find('.aws-area-value-name')).getElement();
     expect(value).toBeVisible();
     expect(value.textContent).toBe(key);
+    if (cellCue !== undefined || id === 'two-spaces') {
+      expect(value.parentElement?.textContent).toBe(key + ' (' + spoken + ')');
+    }
+    if (key.includes('\\')) {
+      expect(value.parentElement?.textContent).toBe(key);
+    }
     const range = document.createRange();
     range.selectNodeContents(value);
     nativeSelection.removeAllRanges();
@@ -424,7 +433,7 @@ it.each([
     if (indicator !== undefined) expect(indicatorElement).toHaveStyle({ userSelect: 'none' });
     if (cellCue !== undefined || id === 'space') {
       // jsdom retains control whitespace and may omit the separator around the CSS block note.
-      const keyName = 'logs/line\\s+break\\.csv';
+      const keyName = cellCue === undefined ? 'logs/line\\s+break\\.csv' : spoken.replace(/[.\\]/g, '\\$&');
       const cue = cellCue === undefined ? '' : `\\s*${cellCue}`;
       const metadata = narrow ? ` Type: Version · Latest: No Version ID: ${id}` : '';
       expect(cell.getElement()).toHaveAccessibleName(new RegExp(`^${keyName}${cue}${metadata}$`));
@@ -438,6 +447,20 @@ it.each([
   await select('cr');
   fireEvent.click(action('Download'));
   await waitFor(() => expect(engine.versionDownloads).toEqual(['cr']));
+});
+
+it('distinguishes a tab from a space followed by a tab when version metadata is identical', async () => {
+  engine.readHistory = () => history(row('same', true, 'Version', 'a\tb') + row('same', true, 'Version', 'a \tb'));
+  open('/aws/s3/buckets/alpha');
+  await toggleVersions();
+
+  const withoutSpace = await screen.findByRole('radio', {
+    name: 'Select a\\tb version same, Type: Version, Latest: Yes',
+  });
+  const withSpace = screen.getByRole('radio', { name: 'Select a \\tb version same, Type: Version, Latest: Yes' });
+  fireEvent.click(withSpace);
+  expect(withSpace).toBeChecked();
+  expect(withoutSpace).not.toBeChecked();
 });
 
 it('selects a different ID of the same key on the next page and returns to the ordinary listing of the folder', async () => {
