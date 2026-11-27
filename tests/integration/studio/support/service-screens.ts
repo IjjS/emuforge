@@ -136,3 +136,26 @@ export function headerHeading(page: Page): Locator {
 export function modalDialog(page: Page): Locator {
   return page.locator(createWrapper().findModal().toSelector()).filter({ visible: true }).locator('xpath=descendant-or-self::*[@role="dialog"]');
 }
+
+/**
+ * In the Cloudscape table whose root is `table`: the cell under column `column` (1 the first, the selection column
+ * counted) of the one data row that holds `control`. The rows and the cell are found with Cloudscape's selectors;
+ * `control` is a link, a button or a selection control found by role and name.
+ */
+export async function cellOfRowWith(table: Locator, control: Locator, column: number): Promise<Locator> {
+  const below = (selector: { toSelector(): string }) =>
+    selector
+      .toSelector()
+      .replace(/^body /, '')
+      .replace(/^\[class\*="awsui_root_\w+"\] /, '');
+  const rows = table.locator(below(createWrapper().findTable().findRows()));
+  const row = rows.filter({ has: control });
+  await row.waitFor({ state: 'visible', timeout: 15_000 });
+  const count = await rows.count();
+  for (let i = 0; i < count; i++) {
+    if ((await rows.nth(i).filter({ has: control }).count()) === 1) {
+      return table.locator(below(createWrapper().findTable().findBodyCell(i + 1, column)));
+    }
+  }
+  throw new Error('the table holds no row with the control asked for');
+}

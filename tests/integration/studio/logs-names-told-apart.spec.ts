@@ -12,7 +12,7 @@ import { expect, startStack, test } from './support';
 import { crumbs } from './support/aws-area';
 import { ACTION, addressOf, titleOf } from './support/frame';
 import { Lines } from './support/lines';
-import { checkPrefix, drawnText, headerHeading, modalDialog, twoSpaceIdentity } from './support/service-screens';
+import { cellOfRowWith, checkPrefix, drawnText, headerHeading, modalDialog, twoSpaceIdentity } from './support/service-screens';
 import {
   answered,
   choiceOf,
@@ -70,8 +70,8 @@ test('studio.logs-streams-that-differ-by-spaces-are-told-apart', async ({ ctx, p
       await expect(s.streamLink(identity), `the link named "${identity}"`).toHaveCount(1);
       await expect(s.streamRadio(one), `the selection control named "${one}"`).toHaveCount(1);
       await expect(s.streamRadio(identity), `the selection control named "${identity}"`).toHaveCount(1);
-      const link = page.getByRole('link', { name: identity, exact: true });
-      const cell = rowsIn(s.streamTable).filter({ has: link }).locator('td, th').filter({ has: link });
+      // Column 1 is the selection control's, column 2 the stream's name.
+      const cell = await cellOfRowWith(s.streamTable, page.getByRole('link', { name: identity, exact: true }), 2);
       expect(await drawnText(cell), "the two-space row's name as drawn").toBe(`${two} (${identity})`);
     },
   );
