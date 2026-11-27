@@ -99,8 +99,10 @@ it('shows the chosen API identity and finds that API by typing its stored name',
   await user.type(input.getElement(), 'a  b');
 
   const dropdown = select.findDropdown();
-  await waitFor(() => expect(dropdown.findOptionByValue(api.id)?.getElement()).toHaveTextContent(identity));
-  expect(dropdown.findOptionByValue('api-1')).toBeNull();
+  await waitFor(() => {
+    expect(dropdown.findOptionByValue('api-1')).toBeNull();
+    expect(dropdown.findOptionByValue(api.id)?.getElement()).toHaveTextContent(identity);
+  });
   const option = dropdown.findOptionByValue(api.id);
   if (!option) throw new Error('Missing matching API');
   await user.click(option.getElement());

@@ -189,8 +189,8 @@ it('distinguishes REST API names and selection controls when the names differ by
   const link = await screen.findByRole('link', { name: identity });
   expect(link).toHaveAttribute('href', '/aws/apigateway/apis/rest/rest2');
   expect(screen.getByRole('link', { name: 'a b' })).toHaveAttribute('href', '/aws/apigateway/apis/rest/api-shared');
-  expect(screen.getByRole('radio', { name: `API selection Select ${identity} (REST)` })).toBeInTheDocument();
-  expect(screen.getByRole('radio', { name: 'API selection Select a b (REST)' })).toBeInTheDocument();
+  expect(screen.getByRole('radio', { name: `Select ${identity} (REST)` })).toBeInTheDocument();
+  expect(screen.getByRole('radio', { name: 'Select a b (REST)' })).toBeInTheDocument();
   expect(within(link).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
   expect(within(link).getByText(`(${identity})`)).toBeVisible();
 });

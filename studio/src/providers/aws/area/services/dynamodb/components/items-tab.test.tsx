@@ -68,8 +68,8 @@ it('distinguishes sort keys with repeated spaces in the cells, opening buttons, 
 
   const button = await screen.findByRole('button', { name: twoSpaceKey });
   expect(screen.getByRole('button', { name: singleSpaceKey })).toBeInTheDocument();
-  expect(screen.getByRole('checkbox', { name: `Item selection Select ${singleSpaceKey}` })).toBeInTheDocument();
-  expect(screen.getByRole('checkbox', { name: `Item selection Select ${twoSpaceKey}` })).toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: `Select ${singleSpaceKey}` })).toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: `Select ${twoSpaceKey}` })).toBeInTheDocument();
   const row = button.closest('tr');
   if (!row) throw new Error('Missing row for the two-space key');
   const cell = within(row).getByRole('cell', { name: 'S a\\u0020\\u0020b' });
