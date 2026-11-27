@@ -305,8 +305,8 @@ it('shows every conflict, keeps changed entries, adopts untouched ones and allow
 
   const alert = page.wrapper.findAlert();
   expect(alert?.findHeader()?.getElement().textContent).toBe('This alarm changed while you were editing it');
-  expect(alert?.findContent().getElement()).toHaveTextContent('Threshold is now 8');
-  expect(alert?.findContent().getElement()).toHaveTextContent('Evaluation periods is now 3');
+  expect(alert?.findContent().getElement()).toHaveTextContent('Threshold (now 8)');
+  expect(alert?.findContent().getElement()).toHaveTextContent('Evaluation periods (now 3)');
   expect(input(page, 'Threshold').getInputValue()).toBe('7');
   expect(input(page, 'Evaluation periods').getInputValue()).toBe('4');
   expect(description(page)).toBe('outside');

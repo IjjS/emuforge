@@ -177,7 +177,7 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
               <ul>
                 {result.fields.map((field) => (
                   <li key={field}>
-                    {FIELD_LABELS[field]} is now {conflictValue(field, now)}
+                    {FIELD_LABELS[field]} (now {conflictValue(field, now)})
                   </li>
                 ))}
               </ul>
