@@ -16,7 +16,7 @@ export function draftField<T>(start: T, equal?: DraftField<T>['equal']): DraftFi
 }
 
 export function editField<T>(field: DraftField<T>, value: T): DraftField<T> {
-  return { ...draftField(field.start, field.equal), value, cleared: undefined, missing: false };
+  return { ...field, value, cleared: undefined, missing: false };
 }
 
 export function changed<T>(field: DraftField<T>): boolean {
@@ -63,6 +63,7 @@ export function sameSecurityGroups(
 }
 
 interface SecurityGroupDraft<Group> extends DraftField<readonly Group[]> {
+  // An empty list records that the subnet change required a replacement without displacing a starting group.
   removedBySubnetGroup?: readonly string[];
 }
 
@@ -71,21 +72,31 @@ export function afterSubnetGroup<P, Group extends SecurityGroupChoice>(
   subnetGroup: DraftField<P>,
   vpcId: string | undefined,
 ): SecurityGroupDraft<Group> {
-  if (!changed(subnetGroup)) {
-    if (groups.cleared !== undefined || groups.removedBySubnetGroup?.length) return editField(groups, groups.start);
-    if (!changed(groups)) return groups;
+  const subnetChanged = changed(subnetGroup);
+  const startingIds = new Set(groups.start.map(({ id }) => id));
+  if (!subnetChanged && groups.removedBySubnetGroup !== undefined) {
+    const replacements = groups.value.filter(({ id }) => !startingIds.has(id));
+    if (vpcId === undefined && replacements.length > 0) return groups;
+    const restored = [...groups.start, ...replacements.filter((group) => group.vpcId === vpcId)];
+    return editField(draftField(groups.start, groups.equal), restored);
   }
-  if (vpcId === undefined) return groups;
+  if (vpcId === undefined || (!subnetChanged && !changed(groups))) return groups;
 
-  const remaining = groups.value.filter((group) => group.vpcId === vpcId);
-  const removed = groups.value.filter(
-    (group) => group.vpcId !== vpcId && groups.start.some((start) => start.id === group.id),
+  const remaining = groups.value.filter(
+    (group) => group.vpcId === vpcId || (!subnetChanged && startingIds.has(group.id)),
   );
   const field = {
     ...editField(groups, remaining),
-    removedBySubnetGroup: [...(groups.removedBySubnetGroup ?? []), ...removed.map(({ id }) => id)],
+    cleared: remaining.length === 0 ? `Choose security groups of ${vpcId}` : undefined,
   };
-  return remaining.length === 0 ? { ...field, cleared: `Choose security groups of ${vpcId}` } : field;
+  if (!subnetChanged) return field;
+
+  const displaced = groups.value.filter((group) => group.vpcId !== vpcId && startingIds.has(group.id));
+  if (displaced.length === 0 && remaining.length > 0) return field;
+  return {
+    ...field,
+    removedBySubnetGroup: [...new Set([...(groups.removedBySubnetGroup ?? []), ...displaced.map(({ id }) => id)])],
+  };
 }
 
 export function versionChange(target: UpgradeTarget | undefined): {

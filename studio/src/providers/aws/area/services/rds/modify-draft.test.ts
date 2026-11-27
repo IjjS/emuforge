@@ -114,6 +114,49 @@ describe('a modify draft', () => {
     expect(changes(draft)).toEqual({ identifier: 'renamed' });
   });
 
+  it.each([false, true])(
+    'restores the starting selection after a replacement in another VPC (rename: %s)',
+    (rename) => {
+      const groupA = { id: 'sg-a', vpcId: 'vpc-a' };
+      const groupB = { id: 'sg-b', vpcId: 'vpc-b' };
+      const groups = draftField<readonly (typeof groupA)[]>([groupA], sameSecurityGroups);
+      const subnetA = draftField('subnet-group-a');
+      const subnetB = editField(subnetA, 'subnet-group-b');
+      const pruned = afterSubnetGroup(groups, subnetB, 'vpc-b');
+      expect(pruned).toMatchObject({ value: [], cleared: 'Choose security groups of vpc-b' });
+
+      const replaced = editField(pruned, [groupB]);
+      expect(replaced.value).toEqual([groupB]);
+      expect(replaced.cleared).toBeUndefined();
+      const restoredSubnet = editField(subnetB, subnetA.start);
+      const restored = afterSubnetGroup(replaced, restoredSubnet, 'vpc-a');
+      const draft = {
+        subnetGroup: restoredSubnet,
+        groups: restored,
+        identifier: rename ? editField(identifier, 'renamed') : identifier,
+      };
+      expect(restored.value).toEqual([groupA]);
+      expect(restored.cleared).toBeUndefined();
+      expect(canSave(draft, undefined, [])).toBe(rename);
+      expect(changes(draft)).toEqual(rename ? { identifier: 'renamed' } : {});
+    },
+  );
+
+  it('keeps an explicit replacement that belongs to the restored subnet group’s VPC', () => {
+    const starting = { id: 'sg-outside', vpcId: 'vpc-outside' };
+    const replacement = { id: 'sg-replacement', vpcId: 'vpc-shared' };
+    const groups = draftField<readonly (typeof starting)[]>([starting], sameSecurityGroups);
+    const subnetA = draftField('subnet-group-a');
+    const subnetB = editField(subnetA, 'subnet-group-b');
+    const pruned = afterSubnetGroup(groups, subnetB, 'vpc-shared');
+    const restored = afterSubnetGroup(editField(pruned, [replacement]), subnetA, 'vpc-shared');
+    const refreshed = afterSubnetGroup(restored, subnetA, 'vpc-shared');
+
+    expect(refreshed.value).toEqual([starting, replacement]);
+    expect(refreshed.cleared).toBeUndefined();
+    expect(changes({ subnetGroup: subnetA, groups: refreshed })).toEqual({ groups: [starting, replacement] });
+  });
+
   it('compares security group selections by id independently of read metadata and list order', () => {
     const groups = draftField([{ id: 'sg-one' }, { id: 'sg-two' }], sameSecurityGroups);
     expect(changes({ groups: editField(groups, [{ id: 'sg-two', name: 'two' }, { id: 'sg-one' }]) })).toEqual({});
