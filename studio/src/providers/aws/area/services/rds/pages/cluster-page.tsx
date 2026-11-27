@@ -31,7 +31,7 @@ import type { DbInstance } from '../api';
 import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
 import { CLUSTER_ACTIONS, clusterActionResult, type ClusterAction, type ClusterOperation } from '../cluster-operations';
-import { useClusterDelete, useClusterRound, type MembersRead } from '../cluster-queries';
+import { useClusterDelete, useClusterRound, type ClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
 import { ClusterOperationControls } from '../components/cluster-operations';
 import { TakeSnapshotAction } from '../components/cluster-snapshot-dialogs';
@@ -40,7 +40,7 @@ import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
 import { isAurora } from '../status';
-import { addInstanceHref, CLUSTERS_PATH, CLUSTERS_WORD, engineText, instanceHref, NONE } from '../format';
+import { addInstanceHref, clusterHref, CLUSTERS_PATH, CLUSTERS_WORD, engineText, instanceHref, NONE } from '../format';
 
 // A DB cluster's page, S6 (issue 573, design task 4): read by `DBClusterIdentifier`, so an identifier the emulator
 // does not hold is "DB cluster not found", with its DB instances read by the filter `db-cluster-id` in the same round.
@@ -333,7 +333,11 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
   const inFlight = useRef(false);
   const [unavailable, setUnavailable] = useState<ReadonlySet<ClusterAction>>(() => new Set());
   const reading = useClusterRound(connection.engineOrigin, id);
-  const { value: round, failure, refresh, fetching, retryMembers, operate } = reading;
+  const [renaming, setRenaming] = useState<{ id: string; round: ClusterRound }>();
+  const keepingOldPage = renaming?.id === id;
+  const { refresh, fetching, retryMembers, operate } = reading;
+  const round = keepingOldPage ? renaming.round : reading.value;
+  const failure = keepingOldPage ? undefined : reading.failure;
   const cluster = round?.cluster.found === true ? round.cluster.cluster : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB cluster');
 
@@ -399,13 +403,24 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
     const signal = pageSignal();
     inFlight.current = true;
     setPending(true);
+    if (action.kind === 'modify' && action.changes.newIdentifier !== undefined && round !== undefined) {
+      // A read of the old identifier can report it missing before the write's answer arrives.
+      setRenaming({ id, round });
+    }
     try {
-      await operate(target, action, signal);
+      const updatedId = await operate(target, action, signal);
       if (!signal.aborted) {
-        flash.show([{ type: 'success', content: clusterActionResult(action.kind, target) }]);
+        const result = [{ type: 'success', content: clusterActionResult(action.kind, updatedId) }] as const;
+        if (updatedId === target) {
+          setRenaming(undefined);
+          flash.show(result);
+        } else {
+          flash.handOver(clusterHref(updatedId), result);
+        }
       }
     } catch (error) {
       if (signal.aborted) return 'discard-draft';
+      setRenaming(undefined);
       const { label, operation } = CLUSTER_ACTIONS[action.kind];
       const failure = failureOf(error, operation);
       const subject = `${label} DB cluster ${target}`;
@@ -481,6 +496,7 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
                 {cluster !== undefined && isAurora(cluster.engine) && (
                   <ClusterOperationControls
                     cluster={cluster}
+                    connection={connection}
                     pending={pending}
                     reading={fetching}
                     unavailable={unavailable}

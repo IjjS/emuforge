@@ -12,7 +12,6 @@ import type { SecurityGroupChoice } from '../../../components/security-group-cho
 import * as api from '../choices-api';
 import type { EngineVersionChoice, SubnetGroupChoice } from '../choices-api';
 import {
-  ClassField,
   DatabaseNameField,
   EngineField,
   EngineVersionField,
@@ -60,7 +59,6 @@ const CONNECTION: AreaConnection = {
 
 interface Errors {
   identifier?: string;
-  instanceClass?: string;
   storage?: string;
   user?: string;
   password?: string;
@@ -81,7 +79,6 @@ function Fields({
   const [groups, setGroups] = useState<SecurityGroupChoice[]>([]);
   const [values, setValues] = useState({
     identifier: '',
-    instanceClass: '',
     storage: '',
     user: '',
     password: '',
@@ -99,7 +96,6 @@ function Fields({
         onChange={set('identifier')}
       />
       <EngineVersionField engine={engine} connection={CONNECTION} value={version} onChange={setVersion} />
-      <ClassField value={values.instanceClass} error={errors.instanceClass} onChange={set('instanceClass')} />
       <StorageField value={values.storage} error={errors.storage} onChange={set('storage')} />
       <MasterUserNameField engine={engine} value={values.user} error={errors.user} onChange={set('user')} />
       <MasterPasswordField what={what} value={values.password} error={errors.password} onChange={set('password')} />
@@ -171,9 +167,6 @@ describe('the create fields', () => {
     expect(text(field('DB instance identifier').findConstraint()?.getElement())).toBe(
       '1 to 63 characters: letters, digits and hyphens. It begins with a letter, does not end with a hyphen and has no two hyphens in a row. Stored in lower case.',
     );
-    expect(text(field('DB instance class').findDescription()?.getElement())).toBe(
-      'As the API names it, for example db.t3.micro.',
-    );
     expect(text(field('Allocated storage (GiB)').findConstraint()?.getElement())).toBe(
       'A whole number from 20 to 65536.',
     );
@@ -198,7 +191,6 @@ describe('the create fields', () => {
     open({
       errors: {
         identifier: 'An identifier begins with a letter.',
-        instanceClass: 'Enter a class.',
         storage: 'Enter the storage.',
         user: 'A master user name can have up to 16 characters.',
         password: 'A master password has at least 8 characters.',
@@ -208,7 +200,6 @@ describe('the create fields', () => {
     });
     expect(text(field('DB instance identifier').findError()?.getElement())).toBe('An identifier begins with a letter.');
     expect(text(field('DB instance identifier').findConstraint()?.getElement())).toContain('Stored in lower case.');
-    expect(text(field('DB instance class').findError()?.getElement())).toBe('Enter a class.');
     expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toBe('Enter the storage.');
     expect(text(field('Allocated storage (GiB)').findConstraint()?.getElement())).toBe(
       'A whole number from 20 to 65536.',

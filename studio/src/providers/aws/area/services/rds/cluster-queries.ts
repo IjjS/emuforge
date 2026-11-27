@@ -1,6 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 
+import {
+  DESCRIBE_SECURITY_GROUPS,
+  readSecurityGroupsById,
+  type SecurityGroupChoice,
+} from '../../components/security-group-choices';
+import type { ChoiceSource } from '../../components/use-paged-choices';
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { failureOf, noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
 import { OPERATIONS, type DbInstance } from './api';
@@ -16,7 +22,7 @@ import {
   type DbCluster,
   type NewMember,
 } from './cluster-api';
-import type { ClusterOperation } from './cluster-operations';
+import { clusterReaders, type ClusterOperation } from './cluster-operations';
 import { RDS_KEYS, useRdsRead, type RdsRead } from './queries';
 import { isInProgress, READ_AGAIN_MS } from './status';
 
@@ -70,7 +76,7 @@ export interface ClusterReading extends RdsRead<ClusterRound> {
   fetching: boolean;
   /** Reads the round again, keeping what is shown until it answers. */
   retryMembers: () => void;
-  operate: (id: string, action: ClusterOperation, signal: AbortSignal) => Promise<void>;
+  operate: (id: string, action: ClusterOperation, signal: AbortSignal) => Promise<string>;
 }
 
 type LifecycleStatus = 'available' | 'stopped';
@@ -222,17 +228,77 @@ function useClusterOperation(endpoint: string | undefined, trackLifecycle: (stat
       if (endpoint === undefined) {
         noEndpoint();
       }
-      await operateCluster(endpoint, id, action, signal);
+      const updatedId = await operateCluster(endpoint, id, action, signal);
       const detail = { queryKey: RDS_KEYS.cluster(id) };
       // A read already in flight may have started before the operation was accepted.
-      await client.cancelQueries(detail);
+      const members = { queryKey: RDS_KEYS.members(id) };
+      if (updatedId === id) {
+        await client.cancelQueries(detail);
+      } else {
+        await Promise.all([client.cancelQueries(detail), client.cancelQueries(members)]);
+        void client.invalidateQueries({ ...detail, refetchType: 'none' });
+        void client.invalidateQueries({ ...members, refetchType: 'none' });
+        void client.invalidateQueries({ queryKey: RDS_KEYS.members(updatedId) });
+      }
       if (!signal.aborted && (action.kind === 'stop' || action.kind === 'start')) {
         trackLifecycle(action.kind === 'stop' ? 'stopped' : 'available');
       }
-      for (const queryKey of [detail.queryKey, RDS_KEYS.clusters(), RDS_KEYS.instances()]) {
+      for (const queryKey of [RDS_KEYS.cluster(updatedId), RDS_KEYS.clusters(), RDS_KEYS.instances()]) {
         void client.invalidateQueries({ queryKey });
       }
+      return updatedId;
     },
     [client, endpoint, trackLifecycle],
   );
+}
+
+interface FailoverTarget {
+  id: string;
+  description?: string;
+}
+
+export async function readFailoverTargets(
+  endpoint: string,
+  id: string,
+  signal: AbortSignal,
+): Promise<FailoverTarget[]> {
+  const [cluster, instances] = await Promise.all([getCluster(endpoint, id, signal), listMembers(endpoint, id, signal)]);
+  if (!cluster.found) return [];
+
+  return clusterReaders(cluster.cluster).map((reader) => {
+    const instance = instances.find((member) => member.id === reader);
+    const description = [instance?.instanceClass, instance?.zone].filter(Boolean).join(' · ');
+    return description === '' ? { id: reader } : { id: reader, description };
+  });
+}
+
+export function failoverTargetChoices(
+  endpoint: string | undefined,
+  id: string,
+  read: (endpoint: string, id: string, signal: AbortSignal) => Promise<FailoverTarget[]>,
+): ChoiceSource<FailoverTarget> {
+  return {
+    endpoint,
+    key: RDS_KEYS.choices('failover-targets', id),
+    operation: OPERATIONS.describeDBInstances,
+    readAgainOnOpen: true,
+    read: async (at, _text, _marker, signal) => ({ items: await read(at, id, signal) }),
+    optionOf: ({ id: value, description }) => ({
+      value,
+      label: value,
+      ...(description === undefined ? {} : { description }),
+    }),
+  };
+}
+
+export function useClusterSecurityGroups(
+  endpoint: string | undefined,
+  ids: readonly string[],
+): RdsRead<SecurityGroupChoice[]> {
+  return useRdsRead({
+    key: RDS_KEYS.choices('cluster-security-groups', ...ids),
+    endpoint,
+    operation: DESCRIBE_SECURITY_GROUPS,
+    read: (at, signal) => readSecurityGroupsById(at, ids, signal),
+  });
 }

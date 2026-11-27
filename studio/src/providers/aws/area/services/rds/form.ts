@@ -33,13 +33,6 @@ export function identifierError(value: string): string | undefined {
   return undefined;
 }
 
-export const CLASS_DESCRIPTION = 'As the API names it, for example db.t3.micro.';
-
-/** A DB instance class: given, and otherwise as the API names it. */
-export function classError(value: string): string | undefined {
-  return value === '' ? 'Enter a class.' : undefined;
-}
-
 export const STORAGE_MIN = 20;
 export const STORAGE_MAX = 65536;
 export const STORAGE_CONSTRAINT = 'A whole number from 20 to 65536.';
