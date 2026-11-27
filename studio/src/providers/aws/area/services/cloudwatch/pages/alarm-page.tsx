@@ -58,8 +58,8 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
   const read = useAlarm(connection.engineOrigin, name);
   const alarm = read.value;
   const history = useAlarmHistory(connection.engineOrigin, alarm?.data.AlarmName);
-  const tags = useAlarmTags(connection.engineOrigin, alarm?.data.AlarmArn);
   const arn = alarm?.data.AlarmArn;
+  const tags = useAlarmTags(connection.engineOrigin, tagDialog?.arn ?? arn);
   const canManageTags = engineOrigin !== undefined && arn !== undefined && tags.value !== undefined;
   const actions = useActionsSwitch({
     endpoint: engineOrigin,

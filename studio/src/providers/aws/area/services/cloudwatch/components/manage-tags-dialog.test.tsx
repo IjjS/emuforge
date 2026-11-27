@@ -186,6 +186,23 @@ it('keeps the draft and reads again when the removal is refused', async () => {
   expect(sent).toEqual([untag]);
 });
 
+it('shows the service code, operation and reason under the shared access-denied heading', async () => {
+  const reason = 'This session cannot remove tags.';
+  const sent = writes(Response.json({ __type: 'AccessDenied', message: reason }, { status: 403 }));
+  refresh.mockResolvedValue({ value: initial });
+  const edit = await open();
+  edit.replaceA();
+  fireEvent.click(edit.save);
+  await waitFor(() => {
+    const alert = required(edit.content.findAlert(), 'Tag refusal alert');
+    expect(alert.findHeader()?.getElement()).toHaveTextContent('Access denied');
+    expect(alert.findContent().getElement()).toHaveTextContent(`UntagResource was refused: ${reason} (AccessDenied)`);
+    expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent('AccessDenied');
+  });
+  expect(edit.field(2, 1)).toHaveValue('c');
+  expect(sent).toEqual([untag]);
+});
+
 it('keeps outside additions and retries only the outstanding addition after a partial save', async () => {
   const reason = 'a CloudWatch resource can be associated with at most 50 tags; got 51';
   const sent = writes(

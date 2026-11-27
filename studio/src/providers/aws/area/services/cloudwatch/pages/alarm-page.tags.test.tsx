@@ -265,3 +265,46 @@ it('keeps the dialog mounted when rereading tags after a refused save fails', as
   expect(dialog.modal.findContent().findAlert()?.getElement()).toHaveTextContent('Tag change refused.');
   expect(dialog.save).toBeDisabled();
 });
+
+it('retries the dialog’s tag read with its ARN after an in-flight alarm refresh fails', async () => {
+  const alarmRefresh = deferred<Awaited<ReturnType<typeof readAlarm>>>();
+  open();
+  await waitFor(() => expect(manageButton()).toBeEnabled());
+  vi.mocked(readAlarm).mockReturnValueOnce(alarmRefresh.promise);
+  tags
+    .mockResolvedValueOnce(initial)
+    .mockRejectedValueOnce(new Error('Tag read failed'))
+    .mockResolvedValueOnce(initial);
+  save.mockRejectedValueOnce(refuse(TAG_RESOURCE, 400));
+  const layout = required(page.findContentLayout(), 'Alarm detail layout');
+  const refresh = required(layout.findHeader()?.findHeader()?.findActions()?.findButton(), 'Page refresh button');
+  expect(refresh.getElement()).toHaveAccessibleName('Refresh');
+  fireEvent.click(refresh.getElement());
+  await waitFor(() => expect(tags).toHaveBeenCalledTimes(2));
+
+  const dialog = await manage();
+  fireEvent.change(dialog.value, { target: { value: 'draft value' } });
+  await act(async () =>
+    alarmRefresh.reject(new RequestError({ kind: 'other', operation: 'DescribeAlarms', code: 'AlarmReadFailed' })),
+  );
+  await waitFor(() =>
+    expect(layout.findContent().findStatusIndicator()?.getElement()).toHaveTextContent('The alarm could not be read'),
+  );
+  expect(dialog.value).toHaveValue('draft value');
+  fireEvent.click(dialog.save);
+
+  const retry = await waitFor(() => {
+    const alert = required(dialog.modal.findContent().findAllAlerts()[1], 'Tag read failure');
+    expect(alert.findContent().getElement()).toHaveTextContent('The tags could not be read again.');
+    return required(alert.findActionSlot()?.findButton(), 'Retry button');
+  });
+  expect(tags).toHaveBeenNthCalledWith(3, engine, arn(name), expect.any(AbortSignal));
+  expect(dialog.save).toBeDisabled();
+  expect(dialog.value).toHaveValue('draft value');
+
+  fireEvent.click(retry.getElement());
+  await waitFor(() => expect(dialog.save).toBeEnabled());
+  expect(tags).toHaveBeenNthCalledWith(4, engine, arn(name), expect.any(AbortSignal));
+  expect(dialog.value).toHaveValue('draft value');
+  expect(save).toHaveBeenCalledOnce();
+});
