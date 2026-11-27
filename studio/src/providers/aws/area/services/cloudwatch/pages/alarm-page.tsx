@@ -1,6 +1,6 @@
 import type { StateValue, Tag } from '@aws-sdk/client-cloudwatch';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
@@ -47,6 +47,10 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
   const follow = useFollow();
   const flash = usePageFlash();
   const historySection = useRef<HTMLElement>(null);
+  const deleteButton = useRef<ButtonProps.Ref>(null);
+  const setStateButton = useRef<ButtonProps.Ref>(null);
+  const manageTagsButton = useRef<ButtonProps.Ref>(null);
+  const dismissedTrigger = useRef<ButtonProps.Ref>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
   const [stateDialog, setStateDialog] = useState<{ currentState: StateValue | undefined }>();
@@ -75,6 +79,17 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
   useEffect(() => {
     announce(message);
   }, [announce, message]);
+
+  useEffect(() => {
+    const trigger = dismissedTrigger.current;
+    dismissedTrigger.current = null;
+    trigger?.focus();
+  }, [deleteOpen, stateDialog, tagDialog]);
+
+  const dismissDialog = (trigger: ButtonProps.Ref | null, close: () => void) => {
+    dismissedTrigger.current = trigger;
+    close();
+  };
 
   const handleRefresh = () => {
     void read.refresh();
@@ -158,6 +173,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
                 <Button iconName="refresh" ariaLabel="Refresh" disabled={actions.pending} onClick={handleRefresh} />
                 {alarm !== undefined && (
                   <Button
+                    ref={setStateButton}
                     disabled={engineOrigin === undefined || alarm.type === 'log' || actions.pending}
                     disabledReason={
                       alarm.type === 'log' ? 'The emulator does not set the state of a log alarm.' : undefined
@@ -184,7 +200,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
                   </Button>
                 )}
                 {alarm !== undefined && (
-                  <Button disabled={engineOrigin === undefined} onClick={() => setDeleteOpen(true)}>
+                  <Button ref={deleteButton} disabled={engineOrigin === undefined} onClick={() => setDeleteOpen(true)}>
                     Delete
                   </Button>
                 )}
@@ -213,6 +229,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           <AlarmTags
             connection={connection}
             tags={tags}
+            manageButtonRef={manageTagsButton}
             manage={{
               enabled: canManageTags,
               unavailable: tagUnavailable,
@@ -245,7 +262,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           unavailable={deleteUnavailable}
           onUnavailable={() => setDeleteUnavailable(true)}
           onDeleted={handleDeleted}
-          onDismiss={() => setDeleteOpen(false)}
+          onDismiss={() => dismissDialog(deleteButton.current, () => setDeleteOpen(false))}
         />
       )}
       {stateDialog !== undefined && name !== undefined && engineOrigin !== undefined && (
@@ -256,7 +273,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           unavailable={stateUnavailable}
           onUnavailable={() => setStateUnavailable(true)}
           onSet={handleStateSet}
-          onDismiss={() => setStateDialog(undefined)}
+          onDismiss={() => dismissDialog(setStateButton.current, () => setStateDialog(undefined))}
         />
       )}
       {tagDialog !== undefined && engineOrigin !== undefined && (
@@ -269,7 +286,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           unavailable={tagUnavailable}
           onUnavailable={(operation) => setTagUnavailable((known) => new Set([...known, operation]))}
           onSaved={handleTagsSaved}
-          onDismiss={() => setTagDialog(undefined)}
+          onDismiss={() => dismissDialog(manageTagsButton.current, () => setTagDialog(undefined))}
         />
       )}
       {announcement}

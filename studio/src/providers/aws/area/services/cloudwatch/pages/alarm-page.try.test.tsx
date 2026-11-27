@@ -106,8 +106,19 @@ function open(alarmName = name) {
   };
 }
 
+function setStateControl() {
+  const actions = page.findContentLayout()?.findHeader()?.findHeader()?.findActions();
+  const control = actions
+    ?.findAllButtons()
+    .find((item) => item.findTextRegion()?.getElement().textContent === 'Set state');
+  if (!control) throw new Error('Set state button missing');
+  return control.getElement();
+}
+
 async function openState() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Set state' }));
+  const trigger = await waitFor(setStateControl);
+  trigger.focus();
+  fireEvent.click(trigger);
   await screen.findByRole('dialog');
   const modal = page.findModal();
   if (!modal) throw new Error('Set state dialog missing');
@@ -423,27 +434,40 @@ it('keeps a switch that answered 501 in the header, unavailable', async () => {
   expect(read).toHaveBeenCalledOnce();
 });
 
-it('keeps the 501 visible and reopens Set state with confirmation unavailable', async () => {
-  changeState.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'SetAlarmState' }));
-  open();
-  await setState();
-  await waitFor(() =>
-    expect(page.findModal()?.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(
-      'Not implemented by the emulator',
-    ),
-  );
-  page.findModal()?.findFooter()?.findAllButtons()[0]?.click();
-  const description = page.findContentLayout()?.findHeader()?.findHeader()?.findDescription();
-  expect(description?.getElement()).toBeVisible();
-  expect(description?.getElement().textContent).toBe('Not implemented by the emulator (SetAlarmState).');
-  const second = await openState();
-  expect(second.findContent().findAlert()?.getElement()).toHaveTextContent('501 Not Implemented for SetAlarmState');
-  const confirm = second.findFooter()?.findAllButtons()[1];
-  expect(confirm?.isDisabled()).toBe(true);
-  confirm?.click();
-  expect(changeState).toHaveBeenCalledOnce();
-  expect(read).toHaveBeenCalledOnce();
-});
+it.each(['Cancel', 'Escape'])(
+  'keeps the 501 visible and reopens Set state after %s with confirmation unavailable',
+  async (method) => {
+    changeState.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'SetAlarmState' }));
+    open();
+    await setState();
+    await waitFor(() =>
+      expect(page.findModal()?.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+        'Not implemented by the emulator',
+      ),
+    );
+    const first = page.findModal();
+    if (method === 'Escape') {
+      const alert = first?.findContent().findAlert()?.find('[role="group"]')?.getElement();
+      if (!alert) throw new Error('Set state refusal focus target is missing');
+      expect(alert).toHaveFocus();
+      fireEvent.keyDown(alert, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    } else {
+      first?.findFooter()?.findAllButtons()[0]?.click();
+    }
+    expect(page.findModal()).toBeNull();
+    expect(setStateControl()).toHaveFocus();
+    const description = page.findContentLayout()?.findHeader()?.findHeader()?.findDescription();
+    expect(description?.getElement()).toBeVisible();
+    expect(description?.getElement().textContent).toBe('Not implemented by the emulator (SetAlarmState).');
+    const second = await openState();
+    expect(second.findContent().findAlert()?.getElement()).toHaveTextContent('501 Not Implemented for SetAlarmState');
+    const confirm = second.findFooter()?.findAllButtons()[1];
+    expect(confirm?.isDisabled()).toBe(true);
+    confirm?.click();
+    expect(changeState).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledOnce();
+  },
+);
 
 it('keeps the new first history page and its token when the earlier request answers late', async () => {
   const old = deferred<TokenPage<AlarmHistoryItem>>();

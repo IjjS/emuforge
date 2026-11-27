@@ -1,8 +1,9 @@
 import type { Tag } from '@aws-sdk/client-cloudwatch';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
+import type { Ref } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState } from '../../../components/failure-states';
@@ -20,10 +21,12 @@ export function AlarmTags({
   connection,
   tags,
   manage,
+  manageButtonRef,
 }: {
   connection: AreaConnection;
   tags: ReturnType<typeof useAlarmTags>;
   manage?: { enabled: boolean; unavailable: ReadonlySet<TagOperation>; open: () => void };
+  manageButtonRef?: Ref<ButtonProps.Ref>;
 }) {
   const failure = tags.failure && readFailureState(tags.failure, connection, 'tags');
   return (
@@ -38,7 +41,7 @@ export function AlarmTags({
           }
           actions={
             manage && (
-              <Button disabled={!manage.enabled} onClick={manage.open}>
+              <Button ref={manageButtonRef} disabled={!manage.enabled} onClick={manage.open}>
                 Manage tags
               </Button>
             )
