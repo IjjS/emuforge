@@ -1,5 +1,4 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import FormFieldWrapper from '@cloudscape-design/components/test-utils/dom/form-field';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -42,15 +41,17 @@ function open(initial = emptyMetric()) {
 }
 
 function field(label: string) {
-  const found = PAGE.findAll(FormFieldWrapper.rootSelector)
-    .map((node) => new FormFieldWrapper(node.getElement()))
-    .find((wrapper) => wrapper.findLabel()?.getElement().textContent === label);
+  const found = PAGE.findAllFormFields().find((wrapper) => wrapper.findLabel()?.getElement().textContent === label);
   if (!found) throw new Error(`No field named ${label}`);
   return found;
 }
 
+function control(label: string) {
+  return createWrapper(field(label).getElement());
+}
+
 function select(label: string) {
-  const found = field(label).findSelect();
+  const found = control(label).findSelect();
   if (!found) throw new Error(`No select named ${label}`);
   return found;
 }
@@ -154,11 +155,11 @@ it('switches to text with the chosen values and clears the choices when switched
   await pick('Metric name', 'Jobs');
   await pick('Dimensions', dimensionSetKey(host));
   toggle?.findNativeInput().click();
-  expect(field('Namespace').findInput()?.getInputValue()).toBe('App');
-  expect(field('Metric name').findInput()?.getInputValue()).toBe('Jobs');
+  expect(control('Namespace').findInput()?.getInputValue()).toBe('App');
+  expect(control('Metric name').findInput()?.getInputValue()).toBe('Jobs');
   const row = PAGE.findAttributeEditor()?.findRow(1);
-  expect(row?.findField(1)?.findInput()?.getInputValue()).toBe('Host');
-  expect(row?.findField(2)?.findInput()?.getInputValue()).toBe('a');
+  expect(createWrapper(row?.findField(1)?.getElement()).findInput()?.getInputValue()).toBe('Host');
+  expect(createWrapper(row?.findField(2)?.getElement()).findInput()?.getInputValue()).toBe('a');
   toggle?.findNativeInput().click();
   expect(form).toEqual(emptyMetric());
   expect(select('Namespace').findTrigger().getElement()).toHaveTextContent('Choose a namespace');
@@ -175,8 +176,8 @@ it('opens a listed metric in its choices with the original values', async () => 
 it('opens a metric absent from its listing in the text fields with the switch on', async () => {
   open({ namespace: 'App', name: 'Before-data', dimensions: host });
   await waitFor(() => expect(PAGE.findToggle()?.findNativeInput().getElement()).toBeChecked());
-  expect(field('Namespace').findInput()?.getInputValue()).toBe('App');
-  expect(field('Metric name').findInput()?.getInputValue()).toBe('Before-data');
+  expect(control('Namespace').findInput()?.getInputValue()).toBe('App');
+  expect(control('Metric name').findInput()?.getInputValue()).toBe('Before-data');
 });
 
 it.each([

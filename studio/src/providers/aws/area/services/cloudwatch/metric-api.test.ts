@@ -14,8 +14,8 @@ const zone = { Name: 'Zone', Value: 'b' };
 beforeEach(() => {
   requests.length = 0;
   answer.mockReset();
-  vi.spyOn(CloudWatchClient.prototype, 'send').mockImplementation(async (command: ListMetricsCommand) => {
-    expect(command).toBeInstanceOf(ListMetricsCommand);
+  vi.spyOn(CloudWatchClient.prototype, 'send').mockImplementation(async (command) => {
+    if (!(command instanceof ListMetricsCommand)) throw new Error('Expected ListMetricsCommand');
     requests.push(command.input);
     return answer();
   });

@@ -1,6 +1,4 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import ButtonWrapper from '@cloudscape-design/components/test-utils/dom/button';
-import FormFieldWrapper from '@cloudscape-design/components/test-utils/dom/form-field';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
@@ -55,9 +53,7 @@ function open({ start = newAlarmForm(), ...props }: Partial<AlarmFormProps> & { 
 }
 
 function findField(label: string) {
-  return PAGE.findAll(FormFieldWrapper.rootSelector)
-    .map((node) => new FormFieldWrapper(node.getElement()))
-    .find((wrapper) => wrapper.findLabel()?.getElement().textContent === label);
+  return PAGE.findAllFormFields().find((wrapper) => wrapper.findLabel()?.getElement().textContent === label);
 }
 
 function field(label: string) {
@@ -66,16 +62,18 @@ function field(label: string) {
   return found;
 }
 
+function control(label: string) {
+  return createWrapper(field(label).getElement());
+}
+
 function button(label: string) {
-  const found = PAGE.findAll(ButtonWrapper.rootSelector)
-    .map((node) => new ButtonWrapper(node.getElement()))
-    .find((wrapper) => wrapper.findTextRegion()?.getElement().textContent === label);
+  const found = PAGE.findAllButtons().find((wrapper) => wrapper.findTextRegion()?.getElement().textContent === label);
   if (!found) throw new Error(`No button named ${label}`);
   return found;
 }
 
 function expectOptions(label: string, expected: Record<string, [string, string]>) {
-  const select = field(label).findSelect();
+  const select = control(label).findSelect();
   select?.openDropdown();
   expect(select?.findDropdown().findOptions()).toHaveLength(Object.keys(expected).length);
   for (const [value, [title, description]] of Object.entries(expected)) {
@@ -105,9 +103,9 @@ const periodOptions = Object.fromEntries(
 
 it('renders the create fields and the name rule before submit', () => {
   open();
-  expect(field('Name').findInput()?.getInputValue()).toBe('');
+  expect(control('Name').findInput()?.getInputValue()).toBe('');
   expect(field('Name').findConstraint()?.getElement()).toHaveTextContent(NAME_RULE);
-  expect(field('Description').findTextarea()?.getTextareaValue()).toBe('');
+  expect(control('Description').findTextarea()?.getTextareaValue()).toBe('');
   for (const label of [
     'Namespace',
     'Metric name',
@@ -117,12 +115,12 @@ it('renders the create fields and the name rule before submit', () => {
     'Comparison',
     'Missing data treatment',
   ]) {
-    expect(field(label).findSelect()).not.toBeNull();
+    expect(control(label).findSelect()).not.toBeNull();
   }
   for (const label of ['Threshold', 'Data points to alarm', 'Evaluation periods'])
-    expect(field(label).findInput()).not.toBeNull();
+    expect(control(label).findInput()).not.toBeNull();
   expect(PAGE.findCheckbox()?.findNativeInput().getElement()).toBeChecked();
-  for (const label of ['In alarm', 'OK', 'Insufficient data']) expect(field(label).findMultiselect()).not.toBeNull();
+  for (const label of ['In alarm', 'OK', 'Insufficient data']) expect(control(label).findMultiselect()).not.toBeNull();
 });
 
 it('describes the eight periods and includes a stored period when editing', () => {
@@ -136,7 +134,7 @@ it('shows the edit name as text and describes the additional period', () => {
   const view = renderEdit(start);
   expect(findField('Name')).toBeUndefined();
   expect(view.container).toHaveTextContent(start.name, { normalizeWhitespace: false });
-  expect(field('Period').findSelect()?.findTrigger().getElement()).toHaveTextContent('2 minutes');
+  expect(control('Period').findSelect()?.findTrigger().getElement()).toHaveTextContent('2 minutes');
   expectOptions('Period', { ...periodOptions, 120: ['2 minutes', 'The statistic is calculated over each 2 minutes.'] });
 });
 
@@ -200,16 +198,16 @@ it.each(['create', 'edit'] as const)(
 it('shows every invalid field and focuses the first, then reports the complete valid form once', async () => {
   const { submitted } = open();
   button('Create alarm').click();
-  expect(field('Name').findInput()?.findNativeInput().getElement()).toHaveFocus();
+  expect(control('Name').findInput()?.findNativeInput().getElement()).toHaveFocus();
   for (const label of ['Name', 'Namespace', 'Metric name', 'Dimensions', 'Threshold']) {
     expect(field(label).findError()?.getElement()).not.toHaveTextContent(/^$/);
   }
   expect(submitted).not.toHaveBeenCalled();
-  field('Name').findInput()?.setInputValue('queue alarm');
+  control('Name').findInput()?.setInputValue('queue alarm');
   PAGE.findToggle()?.findNativeInput().click();
-  field('Namespace').findInput()?.setInputValue('App');
-  field('Metric name').findInput()?.setInputValue('Jobs');
-  field('Threshold').findInput()?.setInputValue('0.25');
+  control('Namespace').findInput()?.setInputValue('App');
+  control('Metric name').findInput()?.setInputValue('Jobs');
+  control('Threshold').findInput()?.setInputValue('0.25');
   await act(async () => button('Create alarm').click());
   expect(submitted).toHaveBeenCalledExactlyOnceWith({
     ...newAlarmForm(),
@@ -241,7 +239,7 @@ it('shows the operation and refusal, keeps the entries, and blocks a second subm
   expect(PAGE.findAlert()?.findContent().getElement()).toHaveTextContent(
     'InvalidParameterValue: Unsupported statistic',
   );
-  expect(field('Description').findTextarea()?.getTextareaValue()).toBe('Old description');
+  expect(control('Description').findTextarea()?.getTextareaValue()).toBe('Old description');
   const submitButton = button('Create alarm');
   submitButton.click();
   expect(submitButton.findLoadingIndicator()).not.toBeNull();
@@ -253,8 +251,8 @@ it('shows the operation and refusal, keeps the entries, and blocks a second subm
 it('cancels immediately for unchanged entries or an entry typed and cleared again', () => {
   const { cancelled } = open();
   button('Cancel').click();
-  field('Name').findInput()?.setInputValue('temporary');
-  field('Name').findInput()?.setInputValue('');
+  control('Name').findInput()?.setInputValue('temporary');
+  control('Name').findInput()?.setInputValue('');
   button('Cancel').click();
   expect(PAGE.findModal()).toBeNull();
   expect(cancelled).toHaveBeenCalledTimes(2);
@@ -262,7 +260,7 @@ it('cancels immediately for unchanged entries or an entry typed and cleared agai
 
 it('confirms a changed form, keeps the entries on Keep editing, and reports Discard', async () => {
   const { cancelled } = open();
-  field('Name').findInput()?.setInputValue('keep me');
+  control('Name').findInput()?.setInputValue('keep me');
   button('Cancel').click();
   await waitFor(() =>
     expect(PAGE.findModal()?.findHeader().getElement()).toHaveTextContent('Discard what you entered?'),
@@ -270,7 +268,7 @@ it('confirms a changed form, keeps the entries on Keep editing, and reports Disc
   expect(cancelled).not.toHaveBeenCalled();
   button('Keep editing').click();
   expect(PAGE.findModal()).toBeNull();
-  expect(field('Name').findInput()?.getInputValue()).toBe('keep me');
+  expect(control('Name').findInput()?.getInputValue()).toBe('keep me');
   button('Cancel').click();
   await waitFor(() => expect(PAGE.findModal()?.isVisible()).toBe(true));
   button('Discard').click();

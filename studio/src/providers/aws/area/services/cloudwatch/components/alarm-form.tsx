@@ -40,16 +40,16 @@ import { StatisticField } from './statistic-field';
 
 const PERIODS = [10, 30, 60, 300, 900, 3600, 21600, 86400];
 
-const COMPARISON_DESCRIPTIONS = [
-  'In alarm when the value is above the threshold.',
-  'In alarm when the value is at or above the threshold.',
-  'In alarm when the value is below the threshold.',
-  'In alarm when the value is at or below the threshold.',
-];
-const COMPARISONS = FIXED_COMPARISONS.map((value, index) => ({
+const COMPARISON_DESCRIPTIONS: Record<AlarmFormValues['comparison'], string> = {
+  GreaterThanThreshold: 'In alarm when the value is above the threshold.',
+  GreaterThanOrEqualToThreshold: 'In alarm when the value is at or above the threshold.',
+  LessThanThreshold: 'In alarm when the value is below the threshold.',
+  LessThanOrEqualToThreshold: 'In alarm when the value is at or below the threshold.',
+};
+const COMPARISONS = FIXED_COMPARISONS.map((value) => ({
   value,
   label: comparisonText(value),
-  description: COMPARISON_DESCRIPTIONS[index],
+  description: COMPARISON_DESCRIPTIONS[value],
 }));
 
 const MISSING_DATA: { value: MissingData; label: string; description: string }[] = [
