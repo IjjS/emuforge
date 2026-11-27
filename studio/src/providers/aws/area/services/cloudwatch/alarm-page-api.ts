@@ -16,6 +16,8 @@ const HISTORY_TYPES: Record<HistoryItemType, string> = {
   ConfigurationUpdate: 'Configuration',
   StateUpdate: 'State',
   Action: 'Action',
+  AlarmContributorStateUpdate: 'State',
+  AlarmContributorAction: 'Action',
 };
 
 export interface AlarmHistoryItem {
