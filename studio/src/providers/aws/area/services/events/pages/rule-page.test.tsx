@@ -1,14 +1,16 @@
 import type { RuleState, Target } from '@aws-sdk/client-eventbridge';
+import Button from '@cloudscape-design/components/button';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
-import { useRef } from 'react';
-import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import { StrictMode, useRef, useState } from 'react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaLayout } from '../../../area-layout';
 import { AreaRootContext } from '../../../area-root';
-import { PageFlashContext } from '../../../components/page-flash';
+import { PageFlashContext, usePageFlash, type HandOverNote } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
 import { getRule, listRuleTargets, type RuleRead } from '../rule-api';
 import {
@@ -18,6 +20,8 @@ import {
   removeRuleTarget,
   setRuleEnabled,
 } from '../rule-change-api';
+import { rulePath } from '../format';
+import { putRuleTargets } from '../target-api';
 import { RulePage } from './rule-page';
 
 vi.mock('../rule-api', async (original) => ({
@@ -33,6 +37,34 @@ vi.mock('../rule-change-api', async (original) => ({
   setRuleEnabled: vi.fn(),
 }));
 
+vi.mock('../target-api', async (original) => ({
+  ...(await original<typeof import('../target-api')>()),
+  putRuleTargets: vi.fn(),
+}));
+vi.mock('../target-sources', async (original) => ({
+  ...(await original<typeof import('../target-sources')>()),
+  targetChoiceSource: (_kind: string, endpoint: string) => ({
+    key: ['topics'],
+    endpoint,
+    operation: 'ListTopics',
+    read: () => Promise.resolve({ items: [{ label: 'Orders', value: 'arn:topic', description: 'arn:topic' }] }),
+    optionOf: (resource: { value: string; label: string }) => resource,
+  }),
+}));
+
+vi.mock('../../../area-page', async (original) => {
+  const area = await original<typeof import('../../../area-page')>();
+  return {
+    ...area,
+    areaPage: (path: string) => {
+      if (path !== handOverPath) return area.areaPage(path);
+      const page = area.areaPage(destination);
+      if (page.kind !== 'screen') throw new Error('Expected the EventBridge rule screen');
+      return { ...page, screen: { ...page.screen, Page: HandOverSource } };
+    },
+  };
+});
+
 const operation = 'DescribeRule';
 const engineOrigin = 'http://127.0.0.1:8314';
 const arn = 'arn:aws:events:us-east-1:000000000000:rule/../.';
@@ -42,14 +74,18 @@ const readTargets = vi.mocked(listRuleTargets);
 const changeState = vi.mocked(setRuleEnabled);
 const remove = vi.mocked(removeRuleTarget);
 const drop = vi.mocked(deleteRule);
+const add = vi.mocked(putRuleTargets);
 
 beforeEach(() => {
   read.mockReset();
   changeState.mockReset();
   remove.mockReset();
   drop.mockReset();
+  add.mockReset().mockResolvedValue(undefined);
   readTargets.mockReset().mockResolvedValue([]);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function open() {
   const resources = vi.fn();
@@ -501,4 +537,275 @@ it.each(['ordinary', 'before', 'after'])('refreshes a partial removal behind the
   expect(alert).toHaveTextContent('topic Busy: Topic target refused');
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();
+});
+
+const addedTarget = { Id: 'delivery', Arn: 'arn:topic' };
+
+async function confirmAdd(page: Page) {
+  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(false));
+  fireEvent.click(headerButton(page, 'Add target'));
+  const dialog = await modal(page);
+  const input = dialog.findContent().findInput()?.findNativeInput().getElement();
+  if (!input) throw new Error('Expected target ID field');
+  fireEvent.change(input, { target: { value: addedTarget.Id } });
+  act(() => dialog.findContent().findSelect()?.openDropdown());
+  act(() => dialog.findContent().findSelect()?.selectOptionByValue('sns'));
+  const select = dialog.findContent().findAllSelects()[1];
+  act(() => select?.openDropdown());
+  await waitFor(() => expect(select?.findDropdown().findOptionByValue(addedTarget.Arn)).toBeTruthy());
+  act(() => select?.selectOptionByValue(addedTarget.Arn));
+  const confirm = dialog.findFooter()?.findAllButtons()[1];
+  if (!confirm) throw new Error('Expected Add target confirmation');
+  act(() => confirm.click());
+}
+
+it('offers Add target after reading fewer than five targets and opens its dialog', async () => {
+  const pending = deferred<Target[]>();
+  read.mockResolvedValue(found);
+  readTargets.mockReturnValueOnce(pending.promise);
+  const { page } = open();
+  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(true));
+  await act(async () => pending.resolve([queue]));
+  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(false));
+  fireEvent.click(headerButton(page, 'Add target'));
+  expect((await modal(page)).findHeader()?.getElement()).toHaveTextContent('Add target');
+});
+
+it('shows why Add target is unavailable after reading five targets', async () => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce(
+    Array.from({ length: 5 }, (_, i) => ({ Id: String(i), Arn: `arn:target:${String(i)}` })),
+  );
+  const { page } = open();
+  await waitFor(() =>
+    expect(headerButton(page, 'Add target')).toHaveAccessibleDescription('A rule holds at most 5 targets.'),
+  );
+  expect(headerAction(page, 'Add target').isDisabled()).toBe(true);
+});
+
+it('closes Add target, flashes the result and refreshes the targets', async () => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([addedTarget]);
+  const { page, show } = open();
+  await confirmAdd(page);
+  await waitFor(() => expect(page.findTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('delivery'));
+  expect(page.findModal()).toBeNull();
+  expect(flashText(show)).toBe('Target delivery added to ..');
+  expect(readTargets).toHaveBeenCalledTimes(3);
+});
+
+it.each(['before', 'after'])('ignores an old targets read answering %s the one started by adding', async (order) => {
+  const old = deferred<Target[]>();
+  const fresh = deferred<Target[]>();
+  read.mockResolvedValue(found);
+  readTargets
+    .mockResolvedValueOnce([queue])
+    .mockReturnValueOnce(old.promise)
+    .mockResolvedValueOnce([queue])
+    .mockReturnValueOnce(fresh.promise);
+  const { page, client, show } = open();
+  await waitFor(() => expect(page.findTable()?.findRows()).toHaveLength(1));
+  void client.refetchQueries({ queryKey: ['events', 'targets'] });
+  await waitFor(() => expect(readTargets).toHaveBeenCalledTimes(2));
+  await confirmAdd(page);
+  await waitFor(() => expect(readTargets).toHaveBeenCalledTimes(4));
+  if (order === 'before') await act(async () => old.resolve([queue]));
+  await act(async () => fresh.resolve([queue, addedTarget]));
+  await waitFor(() => expect(page.findTable()?.findBodyCell(2, 1)?.getElement()).toHaveTextContent('delivery'));
+  if (order === 'after') await act(async () => old.resolve([queue]));
+  expect(page.findTable()?.findRows()).toHaveLength(2);
+  expect(page.findModal()).toBeNull();
+  expect(flashText(show)).toBe('Target delivery added to ..');
+});
+
+it('shows the fresh read failure and Retry while keeping the addition result', async () => {
+  read.mockResolvedValue(found);
+  readTargets
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockRejectedValueOnce(refused('ListTargetsByRule', 'Refresh refused'));
+  const { page, show } = open();
+  await confirmAdd(page);
+  await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('Refresh refused'));
+  expect(page.findTable()?.findEmptySlot()?.findButton()?.getElement()).toHaveAccessibleName('Retry');
+  expect(page.findModal()).toBeNull();
+  expect(flashText(show)).toBe('Target delivery added to ..');
+});
+
+const handOverPath = '/aws/events/from-test';
+const destination = rulePath('..', '.');
+const warning = 'PutTargets was not implemented while creating the rule.';
+const matchingNote = { notImplemented: 'PutTargets', bus: '..', rule: '.' };
+let offeredNote: HandOverNote;
+const handOverText = 'Open the created rule';
+
+function HandOverSource() {
+  const flash = usePageFlash();
+  return (
+    <Button onClick={() => flash.handOver(destination, [{ type: 'warning', content: warning }], offeredNote)}>
+      {handOverText}
+    </Button>
+  );
+}
+
+function openFrame({
+  path = handOverPath,
+  strict = false,
+  note = matchingNote,
+}: {
+  path?: string;
+  strict?: boolean;
+  note?: HandOverNote;
+} = {}) {
+  vi.stubGlobal('matchMedia', () => ({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  }));
+  offeredNote = note;
+  const initialPath = path.split('?')[0];
+  const connection = {
+    engineOrigin,
+    result: {
+      kind: 'connected',
+      checkedAt: 1,
+      emulator: { port: 9327, endpoint: 'https://127.0.0.1:9327' },
+      target: 'earlier-target',
+    } as const,
+  };
+  function Frame({ generation }: { generation: number }) {
+    const { pathname } = useLocation();
+    const navigate = useNavigate();
+    const [last, setLast] = useState({ path: initialPath, visits: 0 });
+    const visits = last.visits + Number(pathname !== last.path);
+    if (pathname !== last.path) setLast({ path: pathname, visits });
+    return (
+      <>
+        <Button onClick={() => void navigate(rulePath('..', 'other'))}>Open another rule</Button>
+        <Button onClick={() => void navigate(destination)}>Open the original rule</Button>
+        <AreaLayout
+          headerSelector="#test-header"
+          connection={connection}
+          routeChanges={visits}
+          targetGeneration={generation}
+          onPageTitle={() => {}}
+          onContentTarget={() => {}}
+        />
+      </>
+    );
+  }
+  const client = new QueryClient();
+  const tree = (generation: number) => {
+    const element = (
+      <MemoryRouter initialEntries={[path]}>
+        <QueryClientProvider client={client}>
+          <Frame generation={generation} />
+        </QueryClientProvider>
+      </MemoryRouter>
+    );
+    return strict ? <StrictMode>{element}</StrictMode> : element;
+  };
+  const view = render(tree(0));
+  const ui = within(view.container);
+  return {
+    page: createWrapper(view.container),
+    ui,
+    handOver: () => fireEvent.click(ui.getByRole('button', { name: handOverText })),
+    changeTarget: () => view.rerender(tree(1)),
+  };
+}
+
+async function readyOffered(ui: ReturnType<typeof within>) {
+  await waitFor(() => expect(ui.getByRole('button', { name: 'Add target', exact: true })).toBeEnabled());
+}
+
+function expectUnavailable(ui: ReturnType<typeof within>) {
+  const control = ui.getByRole('button', { name: 'Add target', exact: true });
+  expect(control).toHaveAttribute('aria-disabled', 'true');
+  expect(control).toHaveAccessibleDescription('Not implemented by the emulator (PutTargets).');
+  return control;
+}
+
+it('keeps the hand-over refusal after reading again, dismissal and a later result', async () => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce([queue]).mockResolvedValueOnce([]);
+  remove.mockResolvedValueOnce(undefined);
+  const frame = openFrame();
+  frame.handOver();
+  const button = await waitFor(() => expectUnavailable(frame.ui));
+  await waitFor(() => expect(frame.page.findTable()?.findRows()).toHaveLength(1));
+  fireEvent.click(button);
+  expect(frame.page.findModal()).toBeNull();
+  expect(add).not.toHaveBeenCalled();
+  expect(frame.ui.getAllByText(warning).length).toBeGreaterThan(0);
+  fireEvent.click(frame.ui.getByRole('button', { name: 'Dismiss' }));
+  await waitFor(() => expect(frame.ui.queryByText(warning)).not.toBeInTheDocument());
+  expectUnavailable(frame.ui);
+  await confirmRemove(frame.page);
+  await waitFor(() => expect(frame.page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No targets'));
+  expectUnavailable(frame.ui);
+  expect(frame.page.findFlashbar()?.getElement()).toHaveTextContent('Target queue removed from ..');
+});
+
+it('keeps the handed refusal under StrictMode', async () => {
+  read.mockResolvedValue(found);
+  const frame = openFrame({ strict: true });
+  frame.handOver();
+  await waitFor(() => expectUnavailable(frame.ui));
+});
+
+it.each([
+  { ...matchingNote, bus: 'other' },
+  { ...matchingNote, rule: 'other' },
+])('offers Add target when the note names another resource %j', async (note) => {
+  read.mockResolvedValue(found);
+  const frame = openFrame({ note });
+  frame.handOver();
+  await readyOffered(frame.ui);
+});
+
+it.each([destination, `${destination}?not-implemented=PutTargets`])(
+  'offers Add target on a fresh load of %s',
+  async (path) => {
+    read.mockResolvedValue(found);
+    const frame = openFrame({ path });
+    await readyOffered(frame.ui);
+    expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+  },
+);
+
+it.each(['before', 'while'])(
+  'enables Add target and clears the warning when the target changes %s showing the rule',
+  async (timing) => {
+    read.mockResolvedValue(found);
+    const frame = openFrame();
+    if (timing === 'before') {
+      act(() => {
+        frame.handOver();
+        frame.changeTarget();
+      });
+    } else {
+      frame.handOver();
+      await waitFor(() => expectUnavailable(frame.ui));
+      expect(frame.ui.getAllByText(warning).length).toBeGreaterThan(0);
+      frame.changeTarget();
+    }
+    await readyOffered(frame.ui);
+    expect(frame.page.findFlashbar()).toBeNull();
+    expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+  },
+);
+
+it('offers Add target on a linked rule and on returning to the original rule', async () => {
+  read.mockResolvedValue(found);
+  const frame = openFrame();
+  frame.handOver();
+  await waitFor(() => expectUnavailable(frame.ui));
+  fireEvent.click(frame.ui.getByRole('button', { name: 'Open another rule' }));
+  await readyOffered(frame.ui);
+  fireEvent.click(frame.ui.getByRole('button', { name: 'Open the original rule' }));
+  await readyOffered(frame.ui);
+  expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
 });

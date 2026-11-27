@@ -8,16 +8,19 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { BUS_OPERATIONS, listEventBuses } from '../bus-api';
+import { BUS_DELETE_UNAVAILABLE, DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
+import { DeleteEventBusDialog } from '../components/delete-event-bus-dialog';
 import { busPath, CREATE_EVENT_BUS_PATH, CREATE_EVENT_BUS_TITLE, EVENT_BUSES_TITLE } from '../format';
 
 const NO_MORE = 'No more event buses.';
@@ -25,17 +28,36 @@ const NO_MORE = 'No more event buses.';
 export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connection'>) {
   useShowsResources('event buses');
   const handleFollow = useFollow();
+  const flash = usePageFlash();
+  const { engineOrigin } = connection;
   const [announcement, announce] = useAnnouncer();
   const [filterText, setFilterText] = useState('');
   const [prefix, setPrefix] = useState('');
+  const [selectedName, setSelectedName] = useState<string>();
+  const [deleteTarget, setDeleteTarget] = useState<string>();
+  const [deleteUnavailable, setDeleteUnavailable] = useState(false);
 
   const listing = useTokenListing({
     key: ['events', 'buses', prefix],
-    endpoint: connection.engineOrigin,
+    endpoint: engineOrigin,
     operation: BUS_OPERATIONS.listEventBuses,
     read: (endpoint, token, signal) => listEventBuses(endpoint, prefix, token, signal),
   });
+  const refreshAfterDelete = useRef(listing.refresh);
+  useLayoutEffect(() => {
+    refreshAfterDelete.current = listing.refresh;
+  }, [listing.refresh]);
+
   const rows = listing.items ?? [];
+  const selected = rows.find(({ Name }) => Name !== undefined && Name === selectedName);
+  const deleteReason =
+    selected?.Name === 'default' ? DEFAULT_BUS_DELETE_REASON : deleteUnavailable ? BUS_DELETE_UNAVAILABLE : undefined;
+  const canDelete =
+    selected?.Name !== undefined &&
+    engineOrigin !== undefined &&
+    deleteReason === undefined &&
+    deleteTarget === undefined &&
+    !listing.loading;
   const failure = listing.failure && readFailureState(listing.failure, connection, 'event bus list');
   const message = failure?.firstText ?? (listing.pastEnd ? NO_MORE : undefined);
 
@@ -81,6 +103,14 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
         variant="full-page"
         items={rows}
         trackBy="Name"
+        selectionType="single"
+        selectedItems={selected === undefined ? [] : [selected]}
+        onSelectionChange={({ detail }) => setSelectedName(detail.selectedItems[0]?.Name)}
+        isItemDisabled={({ Name }) => listing.loading || Name === undefined}
+        ariaLabels={{
+          selectionGroupLabel: 'Event bus selection',
+          itemSelectionLabel: (_, row) => row.Name ?? 'Unnamed event bus',
+        }}
         columnDefinitions={columns}
         wrapLines
         loading={listing.loading}
@@ -91,7 +121,24 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
             variant="awsui-h1-sticky"
             actions={
               <SpaceBetween size="xs" direction="horizontal">
-                <Button ariaLabel="Refresh" iconName="refresh" loading={listing.loading} onClick={listing.refresh} />
+                <Button
+                  ariaLabel="Refresh"
+                  iconName="refresh"
+                  loading={listing.loading}
+                  onClick={() => {
+                    setSelectedName(undefined);
+                    listing.refresh();
+                  }}
+                />
+                <Button
+                  disabled={!canDelete}
+                  disabledReason={deleteReason ?? (selected === undefined ? 'Select an event bus.' : undefined)}
+                  onClick={() => {
+                    if (canDelete) setDeleteTarget(selected.Name);
+                  }}
+                >
+                  Delete
+                </Button>
                 <Button variant="primary" href={CREATE_EVENT_BUS_PATH} onFollow={handleFollow}>
                   {CREATE_EVENT_BUS_TITLE}
                 </Button>
@@ -110,7 +157,12 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
               filteringText={filterText}
               filteringClearAriaLabel="Clear the name filter"
               onChange={({ detail }) => setFilterText(detail.filteringText)}
-              onDelayedChange={({ detail }) => setPrefix(detail.filteringText)}
+              onDelayedChange={({ detail }) => {
+                if (detail.filteringText !== prefix) {
+                  setSelectedName(undefined);
+                  setPrefix(detail.filteringText);
+                }
+              }}
             />
           </FormField>
         }
@@ -125,7 +177,10 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
               previousPageLabel: 'Previous page',
               pageLabel: (page) => `Page ${String(page)}`,
             }}
-            onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
+            onChange={({ detail }) => {
+              setSelectedName(undefined);
+              listing.goToPage(detail.currentPageIndex);
+            }}
           />
         }
         empty={
@@ -138,6 +193,29 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
           )
         }
       />
+      {engineOrigin !== undefined && deleteTarget !== undefined && (
+        <DeleteEventBusDialog
+          endpoint={engineOrigin}
+          name={deleteTarget}
+          onDismiss={() => setDeleteTarget(undefined)}
+          onUnavailable={() => setDeleteUnavailable(true)}
+          onDeleted={() => {
+            setDeleteTarget(undefined);
+            setSelectedName(undefined);
+            flash.show([
+              {
+                type: 'success',
+                content: (
+                  <>
+                    Event bus <ValueText kind="name" value={deleteTarget} /> deleted.
+                  </>
+                ),
+              },
+            ]);
+            refreshAfterDelete.current();
+          }}
+        />
+      )}
       {announcement}
     </>
   );

@@ -1,19 +1,28 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
+import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
+import { deleteEventBus } from '../bus-change-api';
 import { listEventBuses } from '../bus-api';
 import { EventBusListPage } from './event-bus-list-page';
 
 vi.mock('../bus-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bus-api')>()),
   listEventBuses: vi.fn(),
+}));
+
+vi.mock('../bus-change-api', async (original) => ({
+  ...(await original<typeof import('../bus-change-api')>()),
+  deleteEventBus: vi.fn(),
 }));
 
 const endpoint = 'http://127.0.0.1:8306';
@@ -24,22 +33,37 @@ const read = vi.mocked(listEventBuses);
 
 beforeEach(() => {
   read.mockReset();
+  vi.mocked(deleteEventBus).mockReset().mockResolvedValue(undefined);
 });
 
 function renderPage(result: AreaConnection['result'] = connected) {
   const resources = vi.fn();
+  const client = new QueryClient();
+  const show = vi.fn<(result: FlashResult) => void>();
+  function Area() {
+    const root = useRef<HTMLDivElement>(null);
+    return (
+      <AreaRootContext.Provider value={root}>
+        <div ref={root}>
+          <PageResourcesContext.Provider value={resources}>
+            <PageFlashContext.Provider value={{ show, handOver: vi.fn() }}>
+              <EventBusListPage connection={{ engineOrigin: endpoint, result }} />
+            </PageFlashContext.Provider>
+          </PageResourcesContext.Provider>
+        </div>
+      </AreaRootContext.Provider>
+    );
+  }
   const { container } = render(
     <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
-        <PageResourcesContext.Provider value={resources}>
-          <EventBusListPage connection={{ engineOrigin: endpoint, result }} />
-        </PageResourcesContext.Provider>
+      <QueryClientProvider client={client}>
+        <Area />
       </QueryClientProvider>
     </MemoryRouter>,
   );
   const table = createWrapper(container).findTable();
   if (!table) throw new Error('Expected the event bus table');
-  return { table, resources };
+  return { table, resources, show, client };
 }
 
 function required<T>(value: T | null | undefined): T {
@@ -159,4 +183,129 @@ it.each([
   const recovery = table.findEmptySlot()?.findLink()?.getElement();
   expect(recovery).toHaveAccessibleName('Connection status');
   expect(recovery).toHaveAttribute('href', '/');
+});
+
+const orders = { items: [{ Name: 'orders' }, { Name: 'default' }] };
+const updated = { items: [{ Name: 'replacement' }] };
+const listFailure = new RequestError({
+  kind: 'other',
+  operation,
+  code: 'ValidationException',
+  message: 'List refused',
+});
+
+function action() {
+  return screen.getByRole('button', { name: 'Delete' });
+}
+
+type BusTable = ReturnType<typeof renderPage>['table'];
+
+function select(table: BusTable, name: string) {
+  const link = screen.getByRole('link', { name });
+  const index = table.findRows().findIndex((row) => row.getElement().contains(link));
+  const radio = required(table.findRowSelectionArea(index + 1)?.find('input[type="radio"]'));
+  fireEvent.click(radio.getElement());
+}
+
+async function confirmOrdersDelete(table: BusTable) {
+  select(table, 'orders');
+  fireEvent.click(action());
+  const dialog = within(await screen.findByRole('dialog', { name: 'Delete event bus orders?' }));
+  fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'orders' } });
+  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+}
+
+it('enables Delete only for an eligible selected bus and explains why default is protected', async () => {
+  read.mockResolvedValueOnce(orders);
+  const { table } = renderPage();
+  await screen.findByRole('link', { name: 'default' });
+  expect(action()).toHaveAttribute('aria-disabled', 'true');
+  select(table, 'default');
+  expect(action()).toHaveAttribute('aria-disabled', 'true');
+  expect(action()).toHaveAccessibleDescription('The default event bus cannot be deleted.');
+  select(table, 'orders');
+  expect(action()).toBeEnabled();
+  expect(action()).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+it('reports a successful delete, clears selection, and rereads the shown page', async () => {
+  read
+    .mockResolvedValueOnce({ items: [{ Name: 'first' }], next: 'more' })
+    .mockResolvedValueOnce(orders)
+    .mockResolvedValueOnce(updated);
+  const { table, show } = renderPage();
+  await screen.findByRole('link', { name: 'first' });
+  fireEvent.click(required(table.findPagination()?.findNextPageButton()).getElement());
+  await screen.findByRole('link', { name: 'orders' });
+  await confirmOrdersDelete(table);
+  await screen.findByRole('link', { name: 'replacement' });
+  expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
+  expect(read).toHaveBeenCalledTimes(3);
+  expectRead('', 'more');
+  expect(table.findSelectedRows()).toHaveLength(0);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const result = show.mock.calls[0]?.[0][0];
+  expect(result?.type).toBe('success');
+  expect(render(<>{result?.content}</>).container).toHaveTextContent('Event bus orders deleted.');
+});
+
+it.each([
+  ['before', 'row'],
+  ['after', 'row'],
+  ['before', 'failure'],
+  ['after', 'failure'],
+] as const)('uses the post-delete read when the earlier read answers %s it with %s', async (order, staleOutcome) => {
+  let settleOld!: () => void;
+  let finishDelete!: () => void;
+  vi.mocked(deleteEventBus).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finishDelete = resolve;
+    }),
+  );
+  read
+    .mockResolvedValueOnce(orders)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settleOld = () => {
+            if (staleOutcome === 'failure') reject(listFailure);
+            else resolve(orders);
+          };
+        }),
+    )
+    .mockResolvedValueOnce(updated);
+
+  const { table, client, show } = renderPage();
+  await screen.findByRole('link', { name: 'orders' });
+  const earlier = client.refetchQueries({ queryKey: ['events', 'buses'] });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  await confirmOrdersDelete(table);
+  if (order === 'before')
+    await act(async () => {
+      settleOld();
+      await earlier;
+    });
+  await act(async () => finishDelete());
+  await screen.findByRole('link', { name: 'replacement' });
+  if (order === 'after')
+    await act(async () => {
+      settleOld();
+      await earlier;
+    });
+  expect(screen.getByRole('link', { name: 'replacement' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'orders' })).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(show).toHaveBeenCalledOnce();
+  expect(render(<>{show.mock.calls[0]?.[0][0].content}</>).container).toHaveTextContent('Event bus orders deleted.');
+});
+
+it('keeps the delete result visible when the new list request fails', async () => {
+  read.mockResolvedValueOnce(orders).mockRejectedValueOnce(listFailure);
+  const { table, show } = renderPage();
+  await screen.findByRole('link', { name: 'orders' });
+  await confirmOrdersDelete(table);
+  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(show).toHaveBeenCalledOnce();
+  expect(render(<>{show.mock.calls[0]?.[0][0].content}</>).container).toHaveTextContent('Event bus orders deleted.');
 });

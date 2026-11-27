@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -22,17 +23,26 @@ beforeEach(() => {
   read.mockReset();
 });
 
-function renderTable(result: AreaConnection['result'] = undefined) {
-  const { container } = render(
+type ListingOptions = Pick<ComponentProps<typeof RulesTable>, 'holdListing' | 'readsEnabled'>;
+
+function mountTable(options: ListingOptions = {}, result: AreaConnection['result'] = undefined) {
+  const client = new QueryClient();
+  const view = (props: ListingOptions) => (
     <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
-        <RulesTable connection={{ engineOrigin: endpoint, result }} bus=".." />
+      <QueryClientProvider client={client}>
+        <RulesTable connection={{ engineOrigin: endpoint, result }} bus=".." {...props} />
       </QueryClientProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
-  const table = createWrapper(container).findTable();
+  const rendered = render(view(options));
+  const page = createWrapper(rendered.container);
+  const table = page.findTable();
   if (!table) throw new Error('Expected the rules table');
-  return table;
+  return { table, page, client, update: (props: ListingOptions) => rendered.rerender(view(props)) };
+}
+
+function renderTable(result: AreaConnection['result'] = undefined) {
+  return mountTable({}, result).table;
 }
 
 it('shows one linked row per rule with state, trigger and description', async () => {
@@ -137,3 +147,73 @@ it.each(['not_started', 'connection_failed'] as const)(
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   },
 );
+
+it.each([
+  ['fails', new RequestError({ kind: 'not-implemented', operation }), 'Not implemented by the emulator'],
+  ['is empty', { items: [] }, 'No more rules.'],
+  ['has new rows', { items: [{ Name: 'later' }] }, ''],
+] as const)(
+  'holds the displayed page until released when an outstanding read %s',
+  async (_outcome, answer, message) => {
+    let finish!: () => void;
+    read.mockResolvedValueOnce({ items: [{ Name: 'visible' }], next: 'page2' }).mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finish = () => {
+            if (answer instanceof RequestError) reject(answer);
+            else resolve({ items: [...answer.items] });
+          };
+        }),
+    );
+    const { table, page, client, update } = mountTable();
+    const shownRule = () => table.findRows()[0]?.findLink()?.getElement().textContent;
+    const announcement = () => page.find('.aws-area-announcer')?.getElement().textContent;
+    await waitFor(() => expect(shownRule()).toBe('visible'));
+    const next = table.findPagination()?.findNextPageButton();
+    if (!next) throw new Error('Expected the next page control');
+    fireEvent.click(next.getElement());
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(table.findLoadingText()?.getElement()).toHaveTextContent(/^Loading rules$/);
+
+    update({ holdListing: true });
+    expect(shownRule()).toBe('visible');
+    expect(table.findLoadingText()).toBeNull();
+    await act(async () => finish());
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(shownRule()).toBe('visible');
+    expect(table.findEmptySlot()).toBeNull();
+    expect(announcement()).toBe('');
+
+    update({ holdListing: false });
+    if (message === '') {
+      await waitFor(() => expect(shownRule()).toBe('later'));
+    } else {
+      await waitFor(() => expect(table.findEmptySlot()?.getElement()).toHaveTextContent(message));
+      await waitFor(() => expect(announcement()).toBe(message));
+    }
+    expect(read).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('does not request rules on mount or refresh while reads are disabled', async () => {
+  read.mockResolvedValue({ items: [{ Name: 'visible' }] });
+  const { table, update } = mountTable({ readsEnabled: false });
+  const refresh = table.findHeaderSlot()?.findButton('[aria-label="Refresh"]');
+  if (!refresh) throw new Error('Expected the refresh control');
+
+  await act(async () => {
+    fireEvent.click(refresh.getElement());
+  });
+  expect(read).not.toHaveBeenCalled();
+
+  update({ readsEnabled: true });
+  await waitFor(() => expect(table.findRows()[0]?.findLink()?.getElement().textContent).toBe('visible'));
+  expect(read).toHaveBeenCalledTimes(1);
+
+  update({ holdListing: true, readsEnabled: false });
+  await act(async () => {
+    fireEvent.click(refresh.getElement());
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(table.findRows()[0]?.findLink()?.getElement().textContent).toBe('visible');
+});
