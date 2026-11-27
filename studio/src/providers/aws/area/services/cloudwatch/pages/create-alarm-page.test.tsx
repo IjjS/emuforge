@@ -10,22 +10,22 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext } from '../../../components/page-flash';
 import type { Alarm } from '../alarm';
 import { readAlarmHistory, readAlarmTags } from '../alarm-page-api';
-import { readAlarm } from '../alarms-api';
+import { listAlarms, readAlarm } from '../alarms-api';
 import { createAlarm } from '../create-api';
-import { listNamespaces } from '../metric-api';
 import { ALARMS_PATH, CREATE_ALARM_PATH, alarmPath } from '../paths';
+import { listTopics } from '../topic-api';
 import { CreateAlarmPage } from './create-alarm-page';
 
 vi.mock('../create-api', { spy: true });
 vi.mock('../alarms-api', { spy: true });
 vi.mock('../alarm-page-api', { spy: true });
-vi.mock('../metric-api', { spy: true });
+vi.mock('../topic-api', { spy: true });
 
 const create = vi.mocked(createAlarm);
 const read = vi.mocked(readAlarm);
 const history = vi.mocked(readAlarmHistory);
 const tags = vi.mocked(readAlarmTags);
-const namespaces = vi.mocked(listNamespaces);
+const topics = vi.mocked(listTopics);
 const engineOrigin = 'http://127.0.0.1:8322';
 const connection: AreaConnection = {
   engineOrigin,
@@ -58,9 +58,10 @@ function denied(operation: string, message: string) {
 beforeEach(() => {
   create.mockReset().mockResolvedValue('created');
   read.mockReset().mockResolvedValue(alarm);
+  vi.mocked(listAlarms).mockReset().mockResolvedValue({ items: [] });
   history.mockReset().mockResolvedValue(historyItems);
   tags.mockReset().mockResolvedValue(tagItems);
-  namespaces.mockReset().mockResolvedValue([]);
+  topics.mockReset().mockResolvedValue({ items: [] });
 });
 
 function open(inArea = false) {
@@ -199,16 +200,16 @@ it('keeps Create alarm visible and unavailable after PutMetricAlarm returns 501'
   expect(page.handOver).not.toHaveBeenCalled();
 });
 
-it.each(['answers', 'fails'])('keeps one hand-over when the pending metric choice later %s', async (outcome) => {
-  const choice = deferred<Awaited<ReturnType<typeof listNamespaces>>>();
+it.each(['answers', 'fails'])('keeps one hand-over when the pending topic choice later %s', async (outcome) => {
+  const choice = deferred<Awaited<ReturnType<typeof listTopics>>>();
   const saved = deferred<'created'>();
-  namespaces.mockReturnValue(choice.promise);
+  topics.mockReturnValue(choice.promise);
   create.mockReturnValue(saved.promise);
   const page = open(true);
-  createWrapper(field(page, 'Namespace').getElement()).findSelect()?.openDropdown();
-  await waitFor(() => expect(namespaces).toHaveBeenCalledTimes(1));
-
   enterAlarm(page);
+  createWrapper(field(page, 'In alarm').getElement()).findMultiselect()?.openDropdown();
+  await waitFor(() => expect(topics).toHaveBeenCalledTimes(1));
+
   await submit(page);
   expect(page.address()).toBe(CREATE_ALARM_PATH);
   await act(async () => saved.resolve('created'));
@@ -216,8 +217,8 @@ it.each(['answers', 'fails'])('keeps one hand-over when the pending metric choic
   expectFlash(page);
 
   await act(async () => {
-    if (outcome === 'answers') choice.resolve([{ name: 'App', metricCount: 1 }]);
-    else choice.reject(denied('ListMetrics', 'The choice failed.'));
+    if (outcome === 'answers') choice.resolve({ items: ['arn:aws:sns:us-east-1:000000000000:errors'] });
+    else choice.reject(denied('ListTopics', 'The choice failed.'));
   });
   expect(page.address()).toBe(destination);
   expectFlash(page);

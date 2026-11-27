@@ -1,6 +1,6 @@
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -24,7 +24,10 @@ export function CreateAlarmPage({ connection }: ScreenPageProps) {
   const [values, setValues] = useState(initialValues);
   const [failure, setFailure] = useState<RequestFailure>();
   const [existingName, setExistingName] = useState<string>();
-  const nameError = existingName === values.name ? `An alarm named ${values.name} already exists.` : undefined;
+  const fieldErrors = useMemo(
+    () => (existingName === values.name ? { name: `An alarm named ${values.name} already exists.` } : undefined),
+    [existingName, values.name],
+  );
 
   async function handleSubmit(submitted: AlarmFormValues) {
     setFailure(undefined);
@@ -38,7 +41,7 @@ export function CreateAlarmPage({ connection }: ScreenPageProps) {
     const signal = pageSignal();
     const { name } = submitted;
     try {
-      const result = await createAlarm(endpoint, alarmFormInput(submitted), signal);
+      const result = await createAlarm(endpoint, { ...alarmFormInput(submitted), AlarmName: name }, signal);
       if (signal.aborted) return;
       if (result === 'exists') {
         setExistingName(name);
@@ -69,7 +72,7 @@ export function CreateAlarmPage({ connection }: ScreenPageProps) {
         initialValues={initialValues}
         values={values}
         failure={failure}
-        fieldErrors={nameError === undefined ? undefined : { name: nameError }}
+        fieldErrors={fieldErrors}
         onChange={setValues}
         onSubmit={handleSubmit}
         onCancel={() => void navigate(ALARMS_PATH)}

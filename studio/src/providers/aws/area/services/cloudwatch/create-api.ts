@@ -7,7 +7,7 @@ export const PUT_METRIC_ALARM = 'PutMetricAlarm';
 
 export async function createAlarm(
   endpoint: string,
-  input: PutMetricAlarmCommandInput,
+  input: PutMetricAlarmCommandInput & { AlarmName: string },
   signal: AbortSignal,
 ): Promise<'created' | 'exists'> {
   if ((await readAlarm(endpoint, input.AlarmName, signal)) !== undefined) return 'exists';
