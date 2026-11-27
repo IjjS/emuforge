@@ -12,7 +12,7 @@ import { vpcChoices } from '../choices';
 import { useVpc } from '../queries';
 
 // The "VPC" field of S5, S8 and S14 (issue 574, requirement "A choice of a VPC" and "The VPC of `?vpc=`"): the area's
-// choice field over VPC's own source, read when it is first opened. Given the id of `?vpc=`, that VPC is read on its
+// choice field over VPC's own source, read on every opening. Given the id of `?vpc=`, that VPC is read on its
 // own by the filter `vpc-id`, whatever page of the choices it would be on, and the field cannot be changed until the
 // read answers: the VPC is chosen; an empty answer leaves the field unchosen and says the emulator holds no such VPC;
 // a failed read leaves it unchosen without that sentence. The form is never failed by this read.

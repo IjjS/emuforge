@@ -130,6 +130,7 @@ const NAME_RULE = 'Up to 256 characters. Stored as the Name tag.';
 const BLOCK_DESCRIPTION =
   "The emulator refuses a block outside the VPC's block and one that overlaps another subnet of the VPC.";
 const BLOCK_RULE = 'An IPv4 block in CIDR notation, from /16 to /28, such as 10.0.1.0/24.';
+const ZONE_ID = 'use1-az2';
 const ZONES = ['us-east-1a', 'us-east-1b', 'us-east-1c'];
 
 const VPC_X: network.VpcChoice = { id: 'vpc-x', name: 'app', cidr: '10.0.0.0/16', isDefault: false };
@@ -150,7 +151,10 @@ function created(id: string): api.Subnet {
 
 beforeEach(() => {
   vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_X, VPC_D] });
-  vi.mocked(availability.listAvailabilityZones).mockResolvedValue(ZONES);
+  vi.mocked(availability.listAvailabilityZones).mockImplementation(async (_endpoint, _signal, receiveDetails) => {
+    receiveDetails?.(ZONES.map((name) => (name === 'us-east-1b' ? { name, id: ZONE_ID } : { name })));
+    return ZONES;
+  });
   vi.mocked(changes.createSubnet).mockResolvedValue('subnet-0new');
   vi.mocked(api.getVpc).mockResolvedValue({
     found: true,
@@ -227,6 +231,12 @@ async function chooseZone(zone: string) {
   selectOf('Availability Zone - optional').selectOptionByValue(zone);
 }
 
+function addTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
+}
+
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: 'Create subnet' }));
 }
@@ -264,6 +274,27 @@ describe('Create subnet', () => {
     expect(api.getVpc).not.toHaveBeenCalled();
   });
 
+  it('describes the VPC and zone options and uses the chosen VPC block in the subnet constraint', async () => {
+    open();
+    await opened();
+    expect(constraintOf('IPv4 CIDR block')).toBe(BLOCK_RULE);
+
+    const vpcs = selectOf('VPC');
+    vpcs.openDropdown();
+    await waitFor(() => {
+      expect(text(vpcs.findDropdown().findOptionByValue('vpc-x')?.getElement())).toContain('10.0.0.0/16');
+    });
+    vpcs.selectOptionByValue('vpc-x');
+    expect(constraintOf('IPv4 CIDR block')).toBe('Inside 10.0.0.0/16, and not overlapping another subnet of the VPC.');
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading Availability Zones')).toBeNull();
+    });
+    const zones = selectOf('Availability Zone - optional');
+    zones.openDropdown();
+    expect(text(zones.findDropdown().findOptionByValue('us-east-1b')?.getElement())).toContain(ZONE_ID);
+  });
+
   it('with ?vpc= of a VPC the emulator holds → that VPC is chosen', async () => {
     open(`${CREATE_PATH}?vpc=vpc-x`);
     await opened();
@@ -276,9 +307,12 @@ describe('Create subnet', () => {
   it('the zones: "Loading Availability Zones", then "Chosen by the emulator" and the three zones', async () => {
     let answer: (zones: string[]) => void = () => undefined;
     vi.mocked(availability.listAvailabilityZones).mockImplementation(
-      () =>
+      (_endpoint, _signal, receiveDetails) =>
         new Promise((resolve) => {
-          answer = resolve;
+          answer = (zones) => {
+            receiveDetails?.(zones.map((name) => ({ name })));
+            resolve(zones);
+          };
         }),
     );
     open();
@@ -350,7 +384,28 @@ describe('Create subnet', () => {
     expect(changes.createSubnet).not.toHaveBeenCalled();
   });
 
-  it('every field filled → one create with the VPC, the name, the zone and the block; the new subnet\'s page with "Created subnet {id}"', async () => {
+  it('shows optional tags and rejects a Name row when the name field is filled', async () => {
+    open();
+    await opened();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
+    await chooseVpc();
+    type('IPv4 CIDR block', '10.0.1.0/24');
+    type('Name - optional', 'app');
+    addTag('Name', 'duplicate');
+    submit();
+    expect(await screen.findByText('This key is already used.')).toBeInTheDocument();
+    expect(changes.createSubnet).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding an added tag row', async () => {
+    open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
+  });
+
+  it('every field filled → one create with all entries; the new subnet\'s page with "Created subnet {id}"', async () => {
     const router = open();
     await opened();
     await chooseVpc();
@@ -366,6 +421,26 @@ describe('Create subnet', () => {
     expect(vi.mocked(changes.createSubnet).mock.calls[0]?.slice(0, 2)).toEqual([
       ENGINE,
       { vpcId: 'vpc-x', name: 'web', zone: 'us-east-1b', cidr: '10.0.1.0/24' },
+    ]);
+  });
+
+  it('a tag with the other fields → one create with all entries; the new subnet\'s page with "Created subnet {id}"', async () => {
+    const router = open();
+    await opened();
+    await chooseVpc();
+    type('Name - optional', 'web');
+    await chooseZone('us-east-1b');
+    type('IPv4 CIDR block', '10.0.1.0/24');
+    addTag('team', 'core');
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Created subnet subnet-0new')).toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe('/aws/vpc/subnets/subnet/subnet-0new');
+    expect(changes.createSubnet).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(changes.createSubnet).mock.calls[0]?.slice(0, 2)).toEqual([
+      ENGINE,
+      { vpcId: 'vpc-x', name: 'web', zone: 'us-east-1b', cidr: '10.0.1.0/24', tags: [{ key: 'team', value: 'core' }] },
     ]);
   });
 
