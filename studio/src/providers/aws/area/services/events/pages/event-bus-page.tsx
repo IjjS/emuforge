@@ -112,7 +112,13 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
         {bus !== undefined && (
           <>
             <BusDetails connection={connection} bus={bus} tags={shownTags} />
-            <RulesTable key={bus.Name ?? name} connection={connection} bus={bus.Name ?? name} />
+            <RulesTable
+              key={bus.Name ?? name}
+              connection={connection}
+              bus={bus.Name ?? name}
+              holdListing={deleting !== undefined}
+              readsEnabled={!leaving}
+            />
           </>
         )}
         {engineOrigin !== undefined && deleting !== undefined && (

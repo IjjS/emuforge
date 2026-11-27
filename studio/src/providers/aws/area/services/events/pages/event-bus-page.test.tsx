@@ -266,9 +266,13 @@ it.each(['before', 'after'] as const)(
     }
 
     function expectStablePage() {
-      expect(layout.findContent().getElement()).toHaveTextContent('Routes orders');
-      expect(layout.findContent().getElement()).toHaveTextContent('core');
-      expect(layout.findContent().getElement()).not.toHaveTextContent('Event bus not found');
+      const content = layout.findContent().getElement();
+      expect(content).toHaveTextContent('Routes orders');
+      expect(content).toHaveTextContent('core');
+      expect(content).toHaveTextContent('original-rule');
+      expect(content).not.toHaveTextContent('Event bus not found');
+      expect(content).not.toHaveTextContent('Event bus orders does not exist.');
+      expect(content).not.toHaveTextContent('The rule list could not be read');
       expect(dialog.getByRole('button', { name: 'Delete' })).toBeDisabled();
       expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     }
@@ -284,6 +288,10 @@ it.each(['before', 'after'] as const)(
       expectStablePage();
     }
     expectDeleteResult(handOver);
+    await act(async () => client.refetchQueries({ queryKey: ['events'] }));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(listResourceTags).toHaveBeenCalledTimes(2);
+    expect(listRules).toHaveBeenCalledTimes(2);
   },
 );
 

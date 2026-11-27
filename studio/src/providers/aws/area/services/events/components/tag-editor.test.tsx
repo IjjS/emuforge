@@ -34,7 +34,7 @@ it('disables adding a row at fifty tags and explains the limit', () => {
   const tags = Array.from({ length: MAX_TAGS }, (_, index) => ({ key: String(index), value: '' }));
   render(<TagEditor tags={tags} onChange={change} />);
   const add = screen.getByRole('button', { name: 'Add tag' });
-  expect(add).toBeDisabled();
+  expect(add).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByText('You can add up to 50 tags.')).toBeVisible();
   fireEvent.click(add);
   expect(change).not.toHaveBeenCalled();
