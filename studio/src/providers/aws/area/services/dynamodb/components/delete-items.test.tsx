@@ -436,9 +436,13 @@ describe('"Delete" and its dialog', () => {
     select(row);
     await openDialog();
 
-    expect(text(modal().findHeader().getElement())).toBe('Delete 1 item from orders?');
-    const list = within(modal().getElement()).getByRole('list');
-    expect(within(list).getByRole('listitem')).toHaveTextContent(KEY_TEXT(identity, 1));
+    const dialog = modal();
+    expect(dialog.getElement()).toHaveAccessibleName('Delete 1 item from orders?');
+    expect(text(dialog.findHeader().getElement())).toBe('Delete 1 item from orders?');
+    const list = within(dialog.findContent().getElement()).getByRole('list');
+    const entry = within(list).getByRole('listitem');
+    expect(entry).toBeVisible();
+    expect(entry.textContent).toBe(KEY_TEXT(identity, 1));
     expect(isDisabled(dialogButton('Delete'))).toBe(true);
     typeWord('delete');
     fireEvent.click(dialogButton('Delete'));
@@ -453,12 +457,15 @@ describe('"Delete" and its dialog', () => {
     select(3, 1);
     await openDialog();
 
-    expect(text(modal().findHeader().getElement())).toBe('Delete 2 items from orders?');
-    const list = within(modal().getElement()).getByRole('list');
-    expect(within(list).getAllByRole('listitem').map(text)).toEqual([
-      KEY_TEXT('a b', 1),
-      KEY_TEXT('a\\u0020\\u0020b', 1),
-    ]);
+    const dialog = modal();
+    expect(dialog.getElement()).toHaveAccessibleName('Delete 2 items from orders?');
+    expect(text(dialog.findHeader().getElement())).toBe('Delete 2 items from orders?');
+    const list = within(dialog.findContent().getElement()).getByRole('list');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((entry) => entry.textContent),
+    ).toEqual([KEY_TEXT('a b', 1), KEY_TEXT('a\\u0020\\u0020b', 1)]);
   });
 });
 

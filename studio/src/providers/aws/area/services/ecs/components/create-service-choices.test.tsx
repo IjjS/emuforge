@@ -449,11 +449,12 @@ it('distinguishes security group options and sends the chosen group ID', async (
   openDropdown(picker);
   const dropdown = picker.findDropdown();
   await waitFor(() => {
-    expect(dropdown.findOptionByValue(groupA.id)?.getElement()).toHaveTextContent('dev group');
-    expect(dropdown.findOptionByValue(groupB.id)?.getElement()).toHaveTextContent(identity);
+    expect(dropdown.findOptionByValue(groupA.id)?.findLabel().getElement().textContent).toBe('dev group');
+    expect(dropdown.findOptionByValue(groupB.id)?.findLabel().getElement().textContent).toBe(identity);
   });
   await choose(GROUPS, groupB.id);
   expect(picker.findTokens().map((token) => token.findLabel().getElement().textContent)).toEqual([identity]);
+  expect(picker.findToken(1)?.findDismiss()?.getElement()).toHaveAccessibleName(`Remove ${identity}`);
 
   fireEvent.click(screen.getByRole('button', { name: 'Create service' }));
   await waitFor(() =>

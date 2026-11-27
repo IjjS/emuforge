@@ -682,8 +682,14 @@ describe('the object page, its frame', () => {
     open('logs/a  b');
     await shown();
 
-    expect(h1()).toHaveAccessibleName('a\\u0020\\u0020b');
-    expect(h1().querySelector('[aria-hidden="true"]')?.textContent).toBe('a  b (a\\u0020\\u0020b)');
+    const heading = createWrapper(document.body)
+      .findAllHeaders()
+      .map((header) => header.findHeadingText())
+      .find((text) => text.getElement().closest('h1') !== null);
+    expect(heading?.getElement().closest('h1')).toHaveAccessibleName('a\\u0020\\u0020b');
+    const visibleName = heading?.find('[aria-hidden="true"]')?.getElement();
+    expect(visibleName).toBeVisible();
+    expect(visibleName?.textContent).toBe('a  b (a\\u0020\\u0020b)');
   });
 
   it('a key ending in "/": the h1 is the whole key, and "Download" is unavailable with "This key names a folder."', async () => {

@@ -1519,16 +1519,20 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     });
     const { wrapper } = open(path);
 
-    expect(breadcrumbs(wrapper).at(-2)).toEqual(['a\\nb', href]);
-    expect(screen.getByRole('link', { name: 'a\\nb' })).toHaveAttribute('href', href);
+    const crumb = wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks().at(-2)?.getElement();
+    expect(crumb?.textContent).toBe('a\\nb');
+    expect(crumb).toHaveAccessibleName('a\\nb');
+    expect(crumb).toHaveAttribute('href', href);
   });
 
   it('uses the exact identity for a two-space folder crumb without changing its address', () => {
     const href = thingPath('a  b');
     const { wrapper } = open(`${href}/edit`);
 
-    expect(breadcrumbs(wrapper).at(-2)).toEqual(['a\\u0020\\u0020b', href]);
-    expect(screen.getByRole('link', { name: 'a\\u0020\\u0020b' })).toHaveAttribute('href', href);
+    const crumb = wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks().at(-2)?.getElement();
+    expect(crumb?.textContent).toBe('a\\u0020\\u0020b');
+    expect(crumb).toHaveAccessibleName('a\\u0020\\u0020b');
+    expect(crumb).toHaveAttribute('href', href);
   });
 
   it('a name that holds /, ?, #, % and a space, each percent-encoded: shown decoded once, as text, in the h1 and the crumb', () => {

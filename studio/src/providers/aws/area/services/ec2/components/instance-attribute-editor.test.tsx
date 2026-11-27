@@ -277,7 +277,7 @@ describe('instance attribute editor', () => {
     const dialog = await edit(GROUPS);
     await selectBeta();
     expect(tokens()).toEqual([identity]);
-    expect(screen.getByRole('button', { name: `Remove ${identity}` })).toBeInTheDocument();
+    expect(groupField().findToken(1)?.findDismiss()?.getElement()).toHaveAccessibleName(`Remove ${identity}`);
 
     fireEvent.click(saveButton(dialog));
     await waitFor(() =>

@@ -258,7 +258,13 @@ describe("a VPC's page", () => {
     open();
     await loaded();
     const identity = String.raw`p664 a\u0020\u0020b`;
-    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    const heading = await waitFor(() => {
+      const headingText = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+      const title = headingText?.closest('h1');
+      if (title === undefined || title === null) throw new Error('Missing resource heading');
+      expect(title).toHaveAccessibleName(identity);
+      return title;
+    });
     const name = within(heading).getByText('p664 a  b', { normalizer: (value) => value });
     expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
   });
@@ -405,13 +411,18 @@ describe("a VPC's page", () => {
     open();
 
     await loaded();
-    const listing = within(section(table).getElement());
-    const link = await listing.findByRole('link', { name: id });
+    const listing = section(table);
+    const cell = await waitFor(() => {
+      const nameCell = listing.findBodyCell(2, 1)?.getElement();
+      if (nameCell === undefined) throw new Error('Missing Name cell');
+      return nameCell;
+    });
+    const link = listing.findBodyCell(2, 2)?.findLink()?.getElement();
+    expect(link).toHaveAccessibleName(id);
     expect(link).toHaveAttribute('href', href);
     const identity = String.raw`p664 a\u0020\u0020b`;
-    expect(listing.getByRole('cell', { name: 'p664 a b' })).toBeInTheDocument();
-    const cell = listing.getByRole('cell', { name: identity });
-    expect(cell.closest('tr')).toBe(link.closest('tr'));
+    expect(listing.findBodyCell(1, 1)?.getElement()).toHaveAccessibleName('p664 a b');
+    expect(cell).toHaveAccessibleName(identity);
     const name = within(cell).getByText('p664 a  b', { normalizer: (value) => value });
     expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
   });

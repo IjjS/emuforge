@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { assert, beforeEach, expect, it, vi } from 'vitest';
 
@@ -70,7 +70,8 @@ async function open(api: DeleteApiTarget) {
 
 it('names the API and enables Delete only for the exact name', async () => {
   const { modal, input, confirm } = await open(rest);
-  expect(screen.getByRole('dialog', { name: `Delete API ${rest.name}?` })).toBeInTheDocument();
+  expect(modal.getElement()).toHaveRole('dialog');
+  expect(modal.getElement()).toHaveAccessibleName(`Delete API ${rest.name}?`);
   expect(modal.findHeader().getElement()).toHaveTextContent(`Delete API ${rest.name}?`);
   expect(modal.findContent().getElement()).toHaveTextContent(
     'This removes the API with its resources, methods, routes and stages from the local emulator. It cannot be undone.',
@@ -90,7 +91,8 @@ it('shows the API identity while confirming its stored name and deleting its ID'
   vi.mocked(deleteApi).mockResolvedValue(undefined);
   const { modal, input, confirm } = await open(api);
   const identity = 'a\\u0020\\u0020b';
-  expect(screen.getByRole('dialog', { name: `Delete API ${identity}?` })).toBeInTheDocument();
+  expect(modal.getElement()).toHaveRole('dialog');
+  expect(modal.getElement()).toHaveAccessibleName(`Delete API ${identity}?`);
   const header = within(modal.findHeader().getElement());
   expect(header.getByText(api.name, { normalizer: (text) => text })).toBeVisible();
   expect(header.getByText(`(${identity})`)).toBeVisible();

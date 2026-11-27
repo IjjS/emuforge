@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -89,19 +89,22 @@ it('shows the chosen API identity and finds that API by typing its stored name',
     </QueryClientProvider>,
   );
   const identity = 'a\\u0020\\u0020b';
-  const trigger = screen.getByRole('button', { name: /API/ });
-  expect(trigger).toHaveTextContent(identity);
+  const select = createWrapper(container).findSelect();
+  if (!select) throw new Error('Missing API select');
+  const trigger = select.findTrigger().getElement();
+  expect(trigger).toHaveRole('button');
+  expect(trigger).toHaveAccessibleName(`API ${identity}`);
+  expect(trigger.textContent).toBe(identity);
   const user = userEvent.setup();
   await user.click(trigger);
-  const select = createWrapper(container).findSelect();
-  const input = select?.findFilteringInput()?.findNativeInput();
-  if (!select || !input) throw new Error('Missing API filter');
+  const input = select.findFilteringInput()?.findNativeInput();
+  if (!input) throw new Error('Missing API filter');
   await user.type(input.getElement(), 'a  b');
 
   const dropdown = select.findDropdown();
   await waitFor(() => {
     expect(dropdown.findOptionByValue('api-1')).toBeNull();
-    expect(dropdown.findOptionByValue(api.id)?.getElement()).toHaveTextContent(identity);
+    expect(dropdown.findOptionByValue(api.id)?.findLabel().getElement().textContent).toBe(identity);
   });
   const option = dropdown.findOptionByValue(api.id);
   if (!option) throw new Error('Missing matching API');
