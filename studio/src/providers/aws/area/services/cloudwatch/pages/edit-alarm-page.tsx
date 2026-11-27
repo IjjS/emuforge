@@ -152,7 +152,7 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
     if (
       field === 'datapointsToAlarm' &&
       initialValues.datapointsToAlarm === undefined &&
-      entries.datapointsToAlarm === entries.evaluationPeriods
+      entries.datapointsToAlarm === initialValues.evaluationPeriods
     ) {
       setValues({ ...entries, datapointsToAlarm: undefined });
     } else {

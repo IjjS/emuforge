@@ -177,9 +177,11 @@ export function AlarmForm<Values extends AlarmEditValues>({
 
   function validate(): AlarmFormErrors {
     const entries = { ...values, datapointsToAlarm };
+    const errors = validateAlarmFields(entries, mode);
+    if (values.datapointsToAlarm === undefined) delete errors.datapointsToAlarm;
     return {
       ...(mode === 'create' ? validateAlarmRelationships(entries) : {}),
-      ...validateAlarmFields(entries, mode),
+      ...errors,
       ...(rejectedNamePaste ? { name: NAME_RULE } : {}),
     };
   }
