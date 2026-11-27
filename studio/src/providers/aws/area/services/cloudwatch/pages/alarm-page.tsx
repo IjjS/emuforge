@@ -1,3 +1,4 @@
+import type { StateValue } from '@aws-sdk/client-cloudwatch';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
@@ -24,7 +25,11 @@ import { AlarmName } from '../components/alarm-name';
 import { AlarmSummary } from '../components/alarm-summary';
 import { AlarmTags } from '../components/alarm-tags';
 import { DeleteAlarmDialog } from '../components/delete-alarm-dialog';
+import { SetStateDialog } from '../components/set-state-dialog';
+import { alarmStateText } from '../format';
 import { alarmNameFromSearch, ALARMS_PATH, editAlarmPath } from '../paths';
+import { SET_ALARM_STATE } from '../try-api';
+import { useActionsSwitch } from '../use-actions-switch';
 
 export function AlarmPage({ connection }: ScreenPageProps) {
   useShowsResources('alarms');
@@ -38,12 +43,21 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
   const flash = usePageFlash();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
+  const [stateDialog, setStateDialog] = useState<{ currentState: StateValue | undefined }>();
+  const [stateUnavailable, setStateUnavailable] = useState(false);
   const { engineOrigin } = connection;
   const [announcement, announce] = useAnnouncer();
   const read = useAlarm(connection.engineOrigin, name);
   const alarm = read.value;
   const history = useAlarmHistory(connection.engineOrigin, alarm?.data.AlarmName);
   const tags = useAlarmTags(connection.engineOrigin, alarm?.data.AlarmArn);
+  const actions = useActionsSwitch({
+    endpoint: engineOrigin,
+    name,
+    actionsEnabled: alarm?.data.ActionsEnabled,
+    refreshAlarm: read.refresh,
+    refreshHistory: () => history.goToPage(1),
+  });
   const failure = read.failure && readFailureState(read.failure, connection, 'alarm');
   const missing = !read.loading && alarm === undefined && failure === undefined;
   const message = failure?.firstText ?? (missing ? 'Alarm not found' : '');
@@ -58,6 +72,23 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
       history.refresh();
       void tags.refresh();
     }
+  };
+
+  const handleStateSet = (state: StateValue) => {
+    if (name === undefined) return;
+    setStateDialog(undefined);
+    flash.show([
+      {
+        type: 'success',
+        content: (
+          <>
+            State of <AlarmName name={name} /> set to {alarmStateText(state)}.
+          </>
+        ),
+      },
+    ]);
+    void read.refresh();
+    history.goToPage(1);
   };
 
   const handleDeleted = (deletedName: string) => {
@@ -79,10 +110,32 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
       header={
         <Header
           variant="h1"
+          description={stateUnavailable ? `Not implemented by the emulator (${SET_ALARM_STATE}).` : undefined}
           actions={
             name !== undefined && (
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+                <Button iconName="refresh" ariaLabel="Refresh" disabled={actions.pending} onClick={handleRefresh} />
+                {alarm !== undefined && (
+                  <>
+                    <Button
+                      disabled={engineOrigin === undefined || alarm.type === 'log' || actions.pending}
+                      disabledReason={
+                        alarm.type === 'log' ? 'The emulator does not set the state of a log alarm.' : undefined
+                      }
+                      onClick={() => setStateDialog({ currentState: alarm.data.StateValue })}
+                    >
+                      Set state
+                    </Button>
+                    <Button
+                      disabled={engineOrigin === undefined || actions.pending || actions.unavailable}
+                      disabledReason={actions.disabledReason}
+                      loading={actions.pending}
+                      onClick={() => void actions.toggle()}
+                    >
+                      {actions.label}
+                    </Button>
+                  </>
+                )}
                 {alarm !== undefined && isEditableAlarm(alarm) && (
                   <Button href={editAlarmPath(name)} onFollow={follow}>
                     Edit
@@ -133,6 +186,17 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           onUnavailable={() => setDeleteUnavailable(true)}
           onDeleted={handleDeleted}
           onDismiss={() => setDeleteOpen(false)}
+        />
+      )}
+      {stateDialog !== undefined && name !== undefined && engineOrigin !== undefined && (
+        <SetStateDialog
+          endpoint={engineOrigin}
+          name={name}
+          currentState={stateDialog.currentState}
+          unavailable={stateUnavailable}
+          onUnavailable={() => setStateUnavailable(true)}
+          onSet={handleStateSet}
+          onDismiss={() => setStateDialog(undefined)}
         />
       )}
       {announcement}
