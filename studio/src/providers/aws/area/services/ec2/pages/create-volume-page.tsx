@@ -298,6 +298,7 @@ function CreateVolumeForm({
               <SpaceBetween size="l">
                 <Checkbox
                   checked={encrypted}
+                  description="The emulator reports the volume as encrypted."
                   disabled={pending}
                   onChange={({ detail }) => {
                     setEncrypted(detail.checked);
@@ -314,7 +315,7 @@ function CreateVolumeForm({
                       things="KMS keys"
                       ariaLabel="KMS key"
                       fixed="Chosen by the emulator"
-                      fixedDescription="The emulator encrypts the volume without a specified KMS key."
+                      fixedDescription="No key is sent. The emulator reports the volume as encrypted, with no key."
                       value={kmsKey}
                       held={pending ? 'Creating volume' : undefined}
                       onChange={setKmsKey}
