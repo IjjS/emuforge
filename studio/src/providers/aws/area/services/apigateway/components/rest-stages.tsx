@@ -3,7 +3,6 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -14,30 +13,12 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { usePageFlash } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
-import { refreshRestStages, useRestStages, useStageAddress } from '../rest-queries';
+import { restStageAddress } from '../rest-format';
+import { refreshRestStages, useRestStages } from '../rest-queries';
 import { useShowPart } from '../show-part';
 import { DeleteRestStageDialog } from './delete-rest-stage-dialog';
 import { DeployDialog } from './deploy-dialog';
 import { RequestReadFailure } from './request-read-failure';
-
-function StageAddress({
-  apiId,
-  stageName,
-  connection,
-  onRetry,
-}: {
-  apiId: string;
-  stageName: string;
-  connection: AreaConnection;
-  onRetry: () => void;
-}) {
-  const { data, failure, loading } = useStageAddress(apiId, stageName, connection.engineOrigin);
-  if (failure) {
-    return <RequestReadFailure failure={failure} connection={connection} thing="invoke URL" onRetry={onRetry} />;
-  }
-  if (data === undefined && loading) return <StatusIndicator type="loading">Loading invoke URL…</StatusIndicator>;
-  return <CopyValue label="Invoke URL" value={data} none="-" />;
-}
 
 export function RestStages({ apiId, connection }: { apiId: string; connection: AreaConnection }) {
   const client = useQueryClient();
@@ -149,12 +130,13 @@ export function RestStages({ apiId, connection }: { apiId: string; connection: A
             id: 'address',
             header: 'Invoke URL',
             minWidth: '28ch',
-            cell: (stage) =>
-              stage.stageName ? (
-                <StageAddress apiId={apiId} stageName={stage.stageName} connection={connection} onRetry={refresh} />
-              ) : (
-                '-'
-              ),
+            cell: (stage) => (
+              <CopyValue
+                label="Invoke URL"
+                value={restStageAddress(connection, apiId, stage.stageName)}
+                none={<ValueText kind="fixed" value="No local address" />}
+              />
+            ),
           },
         ]}
         empty={

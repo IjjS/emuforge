@@ -8,7 +8,6 @@ import {
   allowsApi,
   at,
   button,
-  cellOf,
   choose,
   chosenIn,
   createMethodPath,
@@ -20,7 +19,6 @@ import {
   expectExecutionLog,
   expectPairs,
   expectResult,
-  exportedAddress,
   fieldOf,
   fixture,
   lambdaUri,
@@ -36,6 +34,7 @@ import {
   resourcesPart,
   restApiPath,
   rootId,
+  shownStageAddress,
   sourceArn,
   studioStatementId,
   tableOf,
@@ -119,9 +118,10 @@ test('studio.apigateway-build-a-rest-api-with-a-mock-and-call-it', async ({ ctx,
     await expectResult(page, 'API deployed to stage dev.');
   };
   await deploy(() => textbox(dialogContent(page), 'Stage name').fill('dev'));
-  await expect(await cellOf(tableOf(page, 'Stages'), 'dev', 4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
+  // The request goes to the address read from the screen, not to one the check builds (issue 691).
+  const shown = await shownStageAddress(f, tableOf(page, 'Stages'), id, 'dev');
 
-  const hello = await f.callOutside(f.restStagePath(id, 'dev', '/hello'));
+  const hello = await f.callAddress(new URL(`${shown.href}/hello`));
   expect(hello).toMatchObject({ status: 200, body });
   const resources = await f.rest.getResources({ restApiId: id, limit: 500 });
   const helloId = resources.items!.find((resource) => resource.path === '/hello')!.id!;
@@ -235,7 +235,7 @@ test('studio.apigateway-create-method-refusals-leave-nothing-half-made', async (
   const target = await f.rest.createRestApi({ name: `${f.prefix}-target` });
   await putMockMethod(f.rest, target.id!, await rootId(f.rest, target.id!), 'GET', known);
   await f.rest.createDeployment({ restApiId: target.id!, stageName: 'dev' });
-  const address = await exportedAddress(f.rest, target.id!, 'dev');
+  const address = f.restStageAddress(target.id!, 'dev');
   for (const used of [address, `https://127.0.0.1:${String(f.port)}`]) expect(new URL(used).hostname).toBe('127.0.0.1');
 
   const get = { restApiId: id, resourceId: root, httpMethod: 'GET' };
