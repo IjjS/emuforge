@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError } from '../../../../../lib/aws/request';
-import { listEngineVersionChoices, listSubnetGroupChoices } from './choices-api';
+import {
+  findSubnetGroup,
+  listEngineVersionChoices,
+  listSubnetGroupChoices,
+  readDefaultVersion,
+  readOrderableRows,
+  readUpgradeTargets,
+} from './choices-api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and each request as it leaves the browser,
 // answered in RDS's query protocol (form in, XML out) as the emulator answers.
@@ -123,7 +130,7 @@ describe('the DB subnet groups', () => {
       ),
     );
     expect(await listSubnetGroupChoices(endpoint, undefined, signal())).toEqual({
-      choices: [{ name: 'default', description: 'default', vpcId: 'vpc-d' }, { name: 'bare' }],
+      choices: [{ name: 'bare' }, { name: 'default', description: 'default', vpcId: 'vpc-d' }],
       marker: 'g-2',
     });
     const [first] = engine.of('DescribeDBSubnetGroups');
@@ -161,4 +168,98 @@ describe('every call', () => {
       await expect(pending).rejects.toBe(reason);
     });
   }
+});
+
+describe('read orderable rows', () => {
+  const operation = 'DescribeOrderableDBInstanceOptions';
+  it('reads the full catalogue for a concrete engine and version, on the API markers', async () => {
+    engine.on(operation, ({ params }) => {
+      const next = params.get('Marker') === 'row-2';
+      const row = `<OrderableDBInstanceOption><DBInstanceClass>${next ? 'db.second' : 'db.first'}</DBInstanceClass><StorageType>gp2</StorageType><MinStorageSize>20</MinStorageSize></OrderableDBInstanceOption>`;
+      return ok(
+        operation,
+        `<OrderableDBInstanceOptions>${row}</OrderableDBInstanceOptions>${next ? '' : '<Marker>row-2</Marker>'}`,
+      );
+    });
+    expect(await readOrderableRows(endpoint, 'postgres', '18.3', signal())).toEqual([
+      { DBInstanceClass: 'db.first', StorageType: 'gp2', MinStorageSize: 20 },
+      { DBInstanceClass: 'db.second', StorageType: 'gp2', MinStorageSize: 20 },
+    ]);
+    expect(
+      engine
+        .of(operation)
+        .map(({ params }) => ['Engine', 'EngineVersion', 'MaxRecords', 'Marker'].map((key) => params.get(key))),
+    ).toEqual([
+      ['postgres', '18.3', '100', null],
+      ['postgres', '18.3', '100', 'row-2'],
+    ]);
+  });
+
+  it('makes no request without a version', async () => {
+    await expect(readOrderableRows(endpoint, 'postgres', undefined, signal())).resolves.toEqual([]);
+    expect(engine.sent).toEqual([]);
+  });
+});
+
+describe('default and upgrade versions', () => {
+  const operation = 'DescribeDBEngineVersions';
+
+  it('reads the engine default using DefaultOnly', async () => {
+    engine.on(operation, () =>
+      ok(
+        operation,
+        '<DBEngineVersions><DBEngineVersion><EngineVersion>18.3</EngineVersion></DBEngineVersion></DBEngineVersions>',
+      ),
+    );
+    await expect(readDefaultVersion(endpoint, 'postgres', signal())).resolves.toBe('18.3');
+    expect(engine.of(operation)[0]?.params.get('DefaultOnly')).toBe('true');
+    expect(engine.of(operation)[0]?.params.get('Engine')).toBe('postgres');
+  });
+
+  it('reads the upgrade targets of the starting version with their major flags', async () => {
+    engine.on(operation, () =>
+      ok(
+        operation,
+        '<DBEngineVersions><DBEngineVersion><EngineVersion>16.4</EngineVersion><ValidUpgradeTarget><UpgradeTarget><EngineVersion>16.13</EngineVersion><IsMajorVersionUpgrade>false</IsMajorVersionUpgrade></UpgradeTarget><UpgradeTarget><EngineVersion>17.9</EngineVersion><IsMajorVersionUpgrade>true</IsMajorVersionUpgrade></UpgradeTarget></ValidUpgradeTarget></DBEngineVersion></DBEngineVersions>',
+      ),
+    );
+    await expect(readUpgradeTargets(endpoint, 'postgres', '16.4', signal())).resolves.toEqual([
+      { version: '16.13', major: false },
+      { version: '17.9', major: true },
+    ]);
+    expect(engine.of(operation)[0]?.params.get('Engine')).toBe('postgres');
+    expect(engine.of(operation)[0]?.params.get('EngineVersion')).toBe('16.4');
+  });
+});
+
+describe('group placement', () => {
+  const operation = 'DescribeDBSubnetGroups';
+  const zone = (name: string) =>
+    `<Subnet><SubnetAvailabilityZone><Name>${name}</Name></SubnetAvailabilityZone></Subnet>`;
+  const group = (name: string) =>
+    `<DBSubnetGroup><DBSubnetGroupName>${name}</DBSubnetGroupName><VpcId>vpc-${name}</VpcId><Subnets>${zone('us-east-1b')}${zone('us-east-1a')}${zone('us-east-1b')}</Subnets></DBSubnetGroup>`;
+
+  it('includes the VPC and distinct zones, in group name order', async () => {
+    engine.on(operation, () => ok(operation, `<DBSubnetGroups>${group('b')}${group('a')}</DBSubnetGroups>`));
+    await expect(listSubnetGroupChoices(endpoint, undefined, signal())).resolves.toEqual({
+      choices: [
+        { name: 'a', vpcId: 'vpc-a', zones: ['us-east-1a', 'us-east-1b'] },
+        { name: 'b', vpcId: 'vpc-b', zones: ['us-east-1a', 'us-east-1b'] },
+      ],
+    });
+  });
+
+  it.each([
+    ['b', [null, 'b']],
+    ['missing', [null, 'b', 'c']],
+  ])('reads just enough pages to look for %s', async (name, markers) => {
+    engine.on(operation, ({ params }) => {
+      const current = params.get('Marker') ?? 'a';
+      const next = { a: '<Marker>b</Marker>', b: '<Marker>c</Marker>' }[current] ?? '';
+      return ok(operation, `<DBSubnetGroups>${group(current)}</DBSubnetGroups>${next}`);
+    });
+    const found = await findSubnetGroup(endpoint, name, signal());
+    expect(found?.name).toBe(name === 'b' ? 'b' : undefined);
+    expect(engine.of(operation).map(({ params }) => params.get('Marker'))).toEqual(markers);
+  });
 });

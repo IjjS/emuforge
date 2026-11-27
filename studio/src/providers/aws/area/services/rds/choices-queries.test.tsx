@@ -1,19 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as area from '../../components/security-group-choices';
 import { usePagedChoices, type ChoiceSource } from '../../components/use-paged-choices';
 import * as api from './choices-api';
-import { engineVersionChoices, groupChoices, subnetGroupChoices } from './choices-queries';
+import { engineVersionChoices, groupChoices, subnetGroupChoices, useOrderableRows } from './choices-queries';
 
 // The sources over `choices-api.ts`, whose calls the case answers (`choices-api.test.ts` proves the calls), read
 // through the area's paged choices as a field reads them.
 
 vi.mock('./choices-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('./choices-api')>();
-  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn() };
+  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn(), readOrderableRows: vi.fn() };
 });
 
 vi.mock('../../components/security-group-choices', async (importOriginal) => {
@@ -98,5 +98,78 @@ describe("RDS's choice sources", () => {
     expect(area.securityGroupChoices).toHaveBeenCalledWith(ENDPOINT);
     expect(source.key).toEqual(area.securityGroupChoicesKey(undefined));
     expect(source.operation).toBe('DescribeSecurityGroups');
+  });
+});
+
+describe('reads of orderable rows', () => {
+  const readRows = vi.mocked(api.readOrderableRows);
+  const postgres = [{ DBInstanceClass: 'db.postgres' }];
+  const mysql = [{ DBInstanceClass: 'db.mysql' }];
+
+  function readPair() {
+    return renderHook(({ engine, version }) => useOrderableRows(ENDPOINT, engine, version), {
+      wrapper,
+      initialProps: { engine: 'postgres', version: '18.3' },
+    });
+  }
+
+  it('reads each selected engine and version once', async () => {
+    readRows.mockResolvedValueOnce(postgres).mockResolvedValueOnce(mysql);
+    const hook = readPair();
+    await waitFor(() => expect(hook.result.current.data).toEqual(postgres));
+    hook.rerender({ engine: 'mysql', version: '8.4.7' });
+    await waitFor(() => expect(hook.result.current.data).toEqual(mysql));
+    expect(readRows.mock.calls.map((call) => call.slice(0, 3))).toEqual([
+      [ENDPOINT, 'postgres', '18.3'],
+      [ENDPOINT, 'mysql', '8.4.7'],
+    ]);
+  });
+
+  it('ignores an answer for a pair that is no longer selected', async () => {
+    const first = Promise.withResolvers<typeof postgres>();
+    const second = Promise.withResolvers<typeof mysql>();
+    readRows.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const hook = readPair();
+    await waitFor(() => expect(readRows).toHaveBeenCalledTimes(1));
+    hook.rerender({ engine: 'mysql', version: '8.4.7' });
+    await waitFor(() => expect(readRows).toHaveBeenCalledTimes(2));
+    first.resolve(postgres);
+    await act(() => first.promise.then(() => undefined));
+    expect(hook.result.current.data).toBeUndefined();
+    second.resolve(mysql);
+    await waitFor(() => expect(hook.result.current.data).toEqual(mysql));
+  });
+
+  it('reports a failed read and can retry it', async () => {
+    readRows.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(postgres);
+    const hook = readPair();
+    await waitFor(() =>
+      expect(hook.result.current.failure).toMatchObject({
+        operation: 'DescribeOrderableDBInstanceOptions',
+        kind: 'other',
+      }),
+    );
+    expect(hook.result.current.data).toBeUndefined();
+    act(() => hook.result.current.retry());
+    await waitFor(() => expect(hook.result.current.data).toEqual(postgres));
+    expect(readRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes held subnet groups and describes their VPC and zones', () => {
+    const source = subnetGroupChoices(ENDPOINT);
+    expect(source.readAgainOnOpen).toBe(true);
+    expect(
+      source.optionOf({
+        name: 'default',
+        vpcId: 'vpc-d',
+        zones: ['us-east-1a', 'us-east-1b'],
+        description: 'Private subnets',
+      }),
+    ).toEqual({
+      value: 'default',
+      label: 'default',
+      tags: ['vpc-d · us-east-1a · us-east-1b'],
+      description: 'Private subnets',
+    });
   });
 });
