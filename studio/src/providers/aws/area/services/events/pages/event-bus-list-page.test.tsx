@@ -195,11 +195,11 @@ const listFailure = new RequestError({
 });
 
 function action() {
-  return screen.getByRole('button', { name: 'Delete', exact: true });
+  return screen.getByRole('button', { name: 'Delete' });
 }
 
 function select(name: string) {
-  fireEvent.click(screen.getByRole('radio', { name: `Event bus selection ${name}`, exact: true }));
+  fireEvent.click(screen.getByRole('radio', { name: `Event bus selection ${name}` }));
 }
 
 async function confirmOrdersDelete() {
@@ -213,8 +213,8 @@ async function confirmOrdersDelete() {
 it('enables Delete only for an eligible selected bus and explains why default is protected', async () => {
   read.mockResolvedValueOnce(orders);
   renderPage();
-  await screen.findByRole('radio', { name: 'Event bus selection default', exact: true });
-  expect(action()).toBeDisabled();
+  await screen.findByRole('radio', { name: 'Event bus selection default' });
+  expect(action()).toHaveAttribute('aria-disabled', 'true');
   select('default');
   expect(action()).toHaveAttribute('aria-disabled', 'true');
   expect(action()).toHaveAccessibleDescription('The default event bus cannot be deleted.');
@@ -229,11 +229,11 @@ it('reports a successful delete, clears selection, and rereads the shown page', 
     .mockResolvedValueOnce(orders)
     .mockResolvedValueOnce(updated);
   const { table, show } = renderPage();
-  await screen.findByRole('radio', { name: 'Event bus selection first', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection first' });
   fireEvent.click(required(table.findPagination()?.findNextPageButton()).getElement());
-  await screen.findByRole('radio', { name: 'Event bus selection orders', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection orders' });
   await confirmOrdersDelete();
-  await screen.findByRole('radio', { name: 'Event bus selection replacement', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection replacement' });
   expect(deleteEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(3);
   expectRead('', 'more');
@@ -271,7 +271,7 @@ it.each([
     .mockResolvedValueOnce(updated);
 
   const { client, show } = renderPage();
-  await screen.findByRole('radio', { name: 'Event bus selection orders', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection orders' });
   const earlier = client.refetchQueries({ queryKey: ['events', 'buses'] });
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   await confirmOrdersDelete();
@@ -281,14 +281,14 @@ it.each([
       await earlier;
     });
   await act(async () => finishDelete());
-  await screen.findByRole('radio', { name: 'Event bus selection replacement', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection replacement' });
   if (order === 'after')
     await act(async () => {
       settleOld();
       await earlier;
     });
-  expect(screen.getByRole('radio', { name: 'Event bus selection replacement', exact: true })).toBeVisible();
-  expect(screen.queryByRole('radio', { name: 'Event bus selection orders', exact: true })).toBeNull();
+  expect(screen.getByRole('radio', { name: 'Event bus selection replacement' })).toBeVisible();
+  expect(screen.queryByRole('radio', { name: 'Event bus selection orders' })).toBeNull();
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(show).toHaveBeenCalledOnce();
   expect(render(<>{show.mock.calls[0]?.[0][0].content}</>).container).toHaveTextContent('Event bus orders deleted.');
@@ -297,7 +297,7 @@ it.each([
 it('keeps the delete result visible when the new list request fails', async () => {
   read.mockResolvedValueOnce(orders).mockRejectedValueOnce(listFailure);
   const { show } = renderPage();
-  await screen.findByRole('radio', { name: 'Event bus selection orders', exact: true });
+  await screen.findByRole('radio', { name: 'Event bus selection orders' });
   await confirmOrdersDelete();
   expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
   expect(screen.queryByRole('dialog')).toBeNull();

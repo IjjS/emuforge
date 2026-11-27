@@ -169,7 +169,7 @@ const loaded: EventBusRead = {
 };
 
 async function openDelete() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Delete', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   return within(await screen.findByRole('dialog', { name: 'Delete event bus orders?' }));
 }
 
@@ -189,7 +189,7 @@ function expectDeleteResult(handOver: ReturnType<typeof vi.fn<PageFlash['handOve
 it('explains why default cannot be deleted', async () => {
   read.mockResolvedValueOnce({ kind: 'found', bus: { Name: 'default' } });
   renderPage(undefined, 'default');
-  const action = await screen.findByRole('button', { name: 'Delete', exact: true });
+  const action = await screen.findByRole('button', { name: 'Delete' });
   expect(action).toHaveAttribute('aria-disabled', 'true');
   expect(action).toHaveAccessibleDescription('The default event bus cannot be deleted.');
   fireEvent.click(action);
@@ -304,8 +304,7 @@ it('shows the missing bus when an open delete dialog is dismissed without deleti
   });
   expect(layout.findContent().getElement()).not.toHaveTextContent('Event bus not found');
   fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-  await waitFor(() =>
-    expect(layout.findContent().findContainer()?.getElement()).toHaveTextContent('Event bus not found'),
-  );
+  expect(await screen.findByRole('link', { name: 'Event buses' })).toBeVisible();
+  expect(layout.findContent().findContainer()?.getElement()).toHaveTextContent('Event bus not found');
   expect(deleteEventBus).not.toHaveBeenCalled();
 });

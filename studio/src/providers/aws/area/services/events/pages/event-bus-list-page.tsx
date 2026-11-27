@@ -132,7 +132,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
                 />
                 <Button
                   disabled={!canDelete}
-                  disabledReason={deleteReason}
+                  disabledReason={deleteReason ?? (selected === undefined ? 'Select an event bus.' : undefined)}
                   onClick={() => {
                     if (canDelete) setDeleteTarget(selected.Name);
                   }}
