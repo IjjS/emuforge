@@ -61,7 +61,8 @@ function open() {
     return page.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === label);
   }
   function select(label: string) {
-    const found = field(label)?.findSelect();
+    const formField = field(label);
+    const found = formField && createWrapper(formField.getElement()).findSelect();
     if (!found) throw new Error(`Expected a select for ${label}`);
     return found;
   }
@@ -124,10 +125,12 @@ it('describes each input choice and opens the corresponding field', async () => 
   );
   expect(select.findDropdown().findOptionByValue('path')?.getElement()).toHaveTextContent('such as $.detail.');
   act(() => select.selectOptionByValue('constant'));
-  expect(form.field('JSON text')?.findTextarea()).toBeTruthy();
+  const json = form.field('JSON text');
+  expect(json && createWrapper(json.getElement()).findTextarea()).toBeTruthy();
   await form.choose('What the target receives', 'path');
   expect(form.field('JSON text')).toBeUndefined();
-  expect(form.field('JSON path')?.findInput()).toBeTruthy();
+  const path = form.field('JSON path');
+  expect(path && createWrapper(path.getElement()).findInput()).toBeTruthy();
 });
 
 function deferredArn() {

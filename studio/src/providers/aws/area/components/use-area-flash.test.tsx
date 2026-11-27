@@ -4,7 +4,7 @@ import { StrictMode, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 
 import { AreaFlash, FlashAnnouncer } from './area-flash';
-import { HandOverNoteContext, useHandOverNote, type FlashResult } from './page-flash';
+import { HandOverNoteContext, useHandOverNote, type FlashResult, type HandOverNote } from './page-flash';
 import { useAreaFlash, type AreaFlashState } from './use-area-flash';
 
 const navigate = vi.hoisted(() => vi.fn());
@@ -17,7 +17,7 @@ const warning: FlashResult = [{ type: 'warning', content: 'Operation unavailable
 
 function mount(strict = false) {
   let flash: AreaFlashState | undefined;
-  let mounted: string | null | boolean = null;
+  let mounted: HandOverNote[string] = null;
   function Page({ snapshot }: { snapshot: boolean }) {
     const current = useHandOverNote();
     const [initial] = useState(current);

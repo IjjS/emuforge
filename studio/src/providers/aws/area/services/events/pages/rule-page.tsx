@@ -23,7 +23,6 @@ import { TargetsTable } from '../components/targets-table';
 import { busFromParams, ruleFromParams, rulesPath, RULES_PATH } from '../format';
 import { useRule, useRuleTargets } from '../queries';
 import { RULE_CHANGE_OPERATIONS, setRuleEnabled } from '../rule-change-api';
-
 import { PUT_TARGETS } from '../target-api';
 import { MAX_TARGETS, TARGET_LIMIT_TEXT } from '../target-form';
 
@@ -35,11 +34,15 @@ function unavailableReason(operation: string) {
 }
 
 export function RulePage({ connection, params }: ScreenPageProps) {
+  const bus = busFromParams(params);
+  const name = ruleFromParams(params);
+  return <RuleView key={JSON.stringify([bus, name])} connection={connection} bus={bus} name={name} />;
+}
+
+function RuleView({ connection, bus, name }: { connection: ScreenPageProps['connection']; bus: string; name: string }) {
   useShowsResources('targets');
   const handleFollow = useFollow();
   const [announcement, announce] = useAnnouncer();
-  const bus = busFromParams(params);
-  const name = ruleFromParams(params);
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const note = useHandOverNote();

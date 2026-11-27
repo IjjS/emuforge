@@ -4,7 +4,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { StrictMode, useRef, useState } from 'react';
-import { MemoryRouter, useLocation } from 'react-router';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
@@ -571,7 +571,9 @@ it('offers Add target after reading fewer than five targets and opens its dialog
 
 it('shows why Add target is unavailable after reading five targets', async () => {
   read.mockResolvedValue(found);
-  readTargets.mockResolvedValueOnce(Array.from({ length: 5 }, (_, i) => ({ Id: String(i) })));
+  readTargets.mockResolvedValueOnce(
+    Array.from({ length: 5 }, (_, i) => ({ Id: String(i), Arn: `arn:target:${String(i)}` })),
+  );
   const { page } = open();
   await waitFor(() =>
     expect(headerAction(page, 'Add target').findDisabledReason()?.getElement()).toHaveTextContent(
@@ -657,21 +659,34 @@ function openFrame({
 } = {}) {
   offeredNote = note;
   const initialPath = path.split('?')[0];
-  const connection = { engineOrigin, result: undefined };
+  const connection = {
+    engineOrigin,
+    result: {
+      kind: 'connected',
+      checkedAt: 1,
+      emulator: { port: 9327, endpoint: 'https://127.0.0.1:9327' },
+      target: 'earlier-target',
+    } as const,
+  };
   function Frame({ generation }: { generation: number }) {
     const { pathname } = useLocation();
+    const navigate = useNavigate();
     const [last, setLast] = useState({ path: initialPath, visits: 0 });
     const visits = last.visits + Number(pathname !== last.path);
     if (pathname !== last.path) setLast({ path: pathname, visits });
     return (
-      <AreaLayout
-        headerSelector="#test-header"
-        connection={connection}
-        routeChanges={visits}
-        targetGeneration={generation}
-        onPageTitle={() => {}}
-        onContentTarget={() => {}}
-      />
+      <>
+        <Button onClick={() => void navigate(rulePath('..', 'other'))}>Open another rule</Button>
+        <Button onClick={() => void navigate(destination)}>Open the original rule</Button>
+        <AreaLayout
+          headerSelector="#test-header"
+          connection={connection}
+          routeChanges={visits}
+          targetGeneration={generation}
+          onPageTitle={() => {}}
+          onContentTarget={() => {}}
+        />
+      </>
     );
   }
   const client = new QueryClient();
@@ -775,3 +790,15 @@ it.each(['before', 'while'])(
     expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
   },
 );
+
+it('offers Add target on a linked rule and on returning to the original rule', async () => {
+  read.mockResolvedValue(found);
+  const frame = openFrame();
+  frame.handOver();
+  await waitFor(() => expectUnavailable(frame.ui));
+  fireEvent.click(frame.ui.getByRole('button', { name: 'Open another rule' }));
+  await readyOffered(frame.ui);
+  fireEvent.click(frame.ui.getByRole('button', { name: 'Open the original rule' }));
+  await readyOffered(frame.ui);
+  expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+});

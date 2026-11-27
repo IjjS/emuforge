@@ -31,7 +31,8 @@ export interface PageFlash {
    * Leads to `to`, an address of the area, and shows `result` on the page there after that one route change (R5.6).
    * If the next change of path goes anywhere else the result is dropped; once shown, it lasts as `show` says. `to` is
    * written as a crumb's address is (R4.6): a parameter's value percent-encoded once as one segment, so its path is
-   * the path the router then holds; a path written otherwise never matches the visit it leads to.
+   * the path the router then holds; a path written otherwise never matches the visit it leads to. If a note is given,
+   * it and the result belong to the emulator target generation that handed them over.
    */
   handOver: (to: string, result: FlashResult, note?: HandOverNote) => void;
 }

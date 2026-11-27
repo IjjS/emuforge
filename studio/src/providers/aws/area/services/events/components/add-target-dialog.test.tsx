@@ -100,7 +100,7 @@ it('rereads the rule targets before saving the single target and reports its ID'
 });
 
 it('refuses an ID already in use, at the ID field', async () => {
-  read.mockResolvedValueOnce([{ Id: 'delivery' }]);
+  read.mockResolvedValueOnce([{ Id: 'delivery', Arn: 'arn:existing' }]);
   const { dialog, input } = await openAndSubmit();
   await waitFor(() =>
     expect(dialog.findContent().findFormField()?.findError()?.getElement()).toHaveTextContent(
@@ -112,7 +112,7 @@ it('refuses an ID already in use, at the ID field', async () => {
 });
 
 it('refuses to write to a rule already at the target limit', async () => {
-  read.mockResolvedValueOnce(Array.from({ length: 5 }, (_, i) => ({ Id: String(i) })));
+  read.mockResolvedValueOnce(Array.from({ length: 5 }, (_, i) => ({ Id: String(i), Arn: `arn:target:${String(i)}` })));
   const { dialog } = await openAndSubmit();
   await waitFor(() =>
     expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent('A rule holds at most 5 targets.'),

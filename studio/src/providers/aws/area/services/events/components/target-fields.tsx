@@ -5,7 +5,7 @@ import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useEffect, useEffectEvent, useImperativeHandle, useRef, type Ref } from 'react';
+import { useEffect, useEffectEvent, useId, useImperativeHandle, useRef, type Ref } from 'react';
 
 import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -70,8 +70,9 @@ function QueueArnRead({
   onArn: (arn: string) => void;
 }) {
   const endpoint = connection.engineOrigin;
+  const readId = useId();
   const query = useQuery({
-    queryKey: ['events', TARGET_READS.queueArn, endpoint, url],
+    queryKey: ['events', TARGET_READS.queueArn, endpoint, url, readId],
     queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : getTargetQueueArn(endpoint, url, signal)),
     enabled: endpoint !== undefined,
     gcTime: 0,
@@ -125,6 +126,7 @@ export function TargetFields({ connection, draft, errors = {}, disabled = false,
       <FormField label="Target ID" constraintText={TARGET_ID_CONSTRAINT} errorText={errors.id}>
         <Input
           ref={id}
+          ariaRequired
           disabled={disabled}
           value={draft.id}
           onChange={({ detail }) => onChange((current) => ({ ...current, id: detail.value }))}
@@ -133,6 +135,7 @@ export function TargetFields({ connection, draft, errors = {}, disabled = false,
       <FormField label="Target kind" errorText={errors.kind}>
         <Select
           ref={kind}
+          ariaRequired
           disabled={disabled}
           options={KINDS}
           selectedOption={KINDS.find((option) => option.value === draft.kind) ?? null}
@@ -173,6 +176,7 @@ export function TargetFields({ connection, draft, errors = {}, disabled = false,
         <FormField label="Message group ID" description="Required for a FIFO queue." errorText={errors.messageGroupId}>
           <Input
             ref={messageGroupId}
+            ariaRequired
             disabled={disabled}
             value={draft.messageGroupId}
             onChange={({ detail }) => onChange((current) => ({ ...current, messageGroupId: detail.value }))}
@@ -204,6 +208,7 @@ export function TargetFields({ connection, draft, errors = {}, disabled = false,
         <FormField label="JSON path" errorText={errors.path}>
           <Input
             ref={path}
+            ariaRequired
             disabled={disabled}
             value={draft.path}
             onChange={({ detail }) => onChange((current) => ({ ...current, path: detail.value }))}
