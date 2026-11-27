@@ -99,7 +99,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
-      width: 'clamp(12ch, 34vw, 28ch)',
+      minWidth: 'clamp(12ch, 34vw, 28ch)',
       cell: ({ data }) =>
         data.AlarmName === undefined ? (
           '-'
