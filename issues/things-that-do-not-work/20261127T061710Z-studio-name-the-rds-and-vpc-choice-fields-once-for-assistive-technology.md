@@ -21,7 +21,8 @@ critique of issue 651 (`final`, P3). The fields named: "DB instance class" and "
 once, by its form field.
 
 The critique's second `final` found the same repetition in one EC2 field, "KMS key" of the create volume form
-(`studio/src/providers/aws/area/services/ec2/pages/create-volume-page.tsx:316`); it is this issue's as well.
+(`studio/src/providers/aws/area/services/ec2/pages/create-volume-page.tsx:316`); it is this issue's as well. The fourth `final` found it in the "Target DB instance" field of the RDS "Fail over" dialog
+(`studio/src/providers/aws/area/services/rds/components/cluster-operations.tsx:438`), which is this issue's too.
 
 ## Evidence
 
@@ -38,7 +39,7 @@ critique's accessibility tree dump is `output/crit-b/field-choices-final.json` i
 
 ## Expected
 
-- Each of the four controls, and the create volume form's "KMS key", has its label once in its accessible name.
+- Each of the four controls, the create volume form's "KMS key" and the fail over dialog's "Target DB instance", has its label once in its accessible name.
 - The chosen value of each is still exposed to assistive technology.
 
 ## Out of scope
