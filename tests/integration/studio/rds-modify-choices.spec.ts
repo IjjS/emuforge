@@ -1,17 +1,24 @@
 // RDS's modify dialogs choosing from what the emulator holds (test-criteria.md, issue 651, "Integration scenarios,
-// new"): `studio.rds-modify-instance-follows-its-parents`.
+// new"): `studio.rds-modify-instance-follows-its-parents` and
+// `studio.rds-modify-cluster-version-storage-and-groups`.
 //
 // The network (`RdsNetwork`) is made before the check's `RdsSeeded`, which removes the DB instances first. Options
 // are found by value (`support/form-choices.ts`); what a described option says is asserted on the option found.
 
 import { EnvError, expect, startStack, test } from './support';
-import { ACTION } from './support/frame';
+import { ACTION, addressOf } from './support/frame';
 import { chosenOf, openMultiselect, openSelect, triggerOf } from './support/form-choices';
 import { Lines } from './support/lines';
 import { RdsNetwork, rowDirect } from './services/rds/choices';
+import { clusterAction } from './services/rds/cluster-actions';
 import { expectModifyResult, openModify } from './services/rds/modify';
 import {
+  button,
+  clusterDirect,
+  clusterPath,
+  dialogOf,
   errorOf,
+  expectFlash,
   field,
   instanceDirect,
   instancePath,
@@ -19,6 +26,9 @@ import {
   rds,
   rdsPrefix,
   RdsSeeded,
+  reportsClusterStatus,
+  reportsNoCluster,
+  reportsNoInstance,
   runPassword,
 } from './services/rds/rds';
 
@@ -165,6 +175,135 @@ test('studio.rds-modify-instance-follows-its-parents', async ({ ctx, page }) => 
         [true, ODD_CLASS],
         'the protection and the class',
       );
+    },
+  );
+
+  lines.end();
+});
+
+test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page }) => {
+  test.setTimeout(480_000);
+  const { emulatorPort: port } = await startStack(ctx);
+  const lines = new Lines(ctx);
+  const p = rdsPrefix(ctx, 'rdsclmod');
+  const net = await RdsNetwork.make(ctx, port, p, 64);
+  const seeded = new RdsSeeded(ctx, port, p);
+  const k = `${p}-k`;
+  const k2 = `${p}-k2`;
+  const made = await rds(ctx, port, 'CreateDBCluster', {
+    DBClusterIdentifier: k, Engine: 'aurora-postgresql', EngineVersion: '16.4', DBSubnetGroupName: net.subnetGroup,
+    MasterUsername: 'clmodadmin', MasterUserPassword: runPassword(),
+  });
+  if (made.status !== 200 || !(await reportsClusterStatus(ctx, port, k, 'available'))) {
+    throw new EnvError(`the DB cluster ${k} was not made: ${String(made.status)} ${made.code ?? ''}`);
+  }
+  const member = (suffix: string) =>
+    seeded.instance({ id: `${k}${suffix}`, engine: 'aurora-postgresql', clusterId: k, instanceClass: 'db.r6g.large' });
+  const writer = await member('-w');
+  const reader = await member('-r');
+  const dialogField = (label: string) => field(dialogOf(page), label);
+  const save = () => button(dialogOf(page), 'Save changes');
+  const modify = async (id: string) => {
+    await open(page, clusterPath(id), id);
+    await clusterAction(page, 'modify');
+    await expect(dialogOf(page), 'the Modify dialog').toBeVisible();
+  };
+
+  await lines.line(
+    'S6, "Modify": "Engine version" offers 16.6 as "Minor upgrade" and no option 16.5; "Storage type" offers `aurora` and `aurora-iopt1`; "Security groups" offers `<p>-in`',
+    async () => {
+      await modify(k);
+      const versions = await openSelect(dialogField('Engine version'));
+      await versions.expectOption('16.6', 'Minor upgrade');
+      await versions.expectNone('16.5');
+      await versions.close();
+      const types = await openSelect(dialogField('Storage type'));
+      await types.expectOption('aurora');
+      await types.expectOption('aurora-iopt1');
+      await types.close();
+      const groups = await openMultiselect(dialogField('Security groups'));
+      await groups.type(p);
+      await groups.expectOption(net.inId, `${p}-in`);
+      await groups.close();
+    },
+  );
+
+  await lines.line(
+    '16.6, `aurora-iopt1` and `<p>-in` chosen, "Save" → "DB cluster <p>-k updated"; the emulator reports 16.6, `aurora-iopt1` and `<p>-in`',
+    async () => {
+      await modify(k);
+      await (await openSelect(dialogField('Engine version'))).choose('16.6');
+      await expect(triggerOf(dialogField('Engine version')), '16.6 chosen').toContainText('16.6');
+      await (await openSelect(dialogField('Storage type'))).choose('aurora-iopt1');
+      await expect(triggerOf(dialogField('Storage type')), 'the storage type chosen').toContainText('aurora-iopt1');
+      const groups = await openMultiselect(dialogField('Security groups'));
+      await groups.type(p);
+      await groups.choose(net.inId);
+      await groups.close();
+      await expect(chosenOf(dialogField('Security groups')).filter({ hasText: `${p}-in` }), '`<p>-in` chosen').toHaveCount(1);
+      await expect(save(), '"Save changes"').toBeEnabled({ timeout: 20_000 });
+      await save().click(ACTION);
+      await expectFlash(page, 'success', `DB cluster ${k} updated`);
+      await expect
+        .poll(
+          async () => {
+            const now = await clusterDirect(ctx, port, k);
+            return [now?.version, (await rowDirect(ctx, port, 'cluster', k))?.text('StorageType'), now?.groups.includes(net.inId)];
+          },
+          { message: 'the version, storage type and group, directly', timeout: 60_000 },
+        )
+        .toEqual(['16.6', 'aurora-iopt1', true]);
+    },
+  );
+
+  await lines.line(
+    '"Modify", the identifier `<p>-k2`, "Save" → the page of `<p>-k2` with the result; the emulator reports `<p>-k2` and no cluster `<p>-k`',
+    async () => {
+      await modify(k);
+      await dialogField('DB cluster identifier').getByRole('textbox').fill(k2, ACTION);
+      await expect(save(), '"Save changes"').toBeEnabled({ timeout: 20_000 });
+      await save().click(ACTION);
+      await expect(page).toHaveURL(addressOf(clusterPath(k2)), { timeout: 30_000 });
+      await expectFlash(page, 'success', `DB cluster ${k2} updated`);
+      await expect.poll(async () => (await clusterDirect(ctx, port, k2))?.id, { timeout: 60_000 }).toBe(k2);
+      expect(await clusterDirect(ctx, port, k), 'the cluster of the old identifier, directly').toBeNull();
+    },
+  );
+
+  await lines.line(
+    '"Fail over": the reader\'s option shows its class and its zone as the emulator reports them',
+    async () => {
+      const reported = await instanceDirect(ctx, port, reader);
+      expect([reported?.instanceClass, reported?.zone].every(Boolean), "the reader's class and zone, directly").toBe(true);
+      await open(page, clusterPath(k2), k2);
+      await clusterAction(page, 'failover');
+      const targets = await openSelect(dialogField('Target DB instance'));
+      await targets.expectOption(reader, reported!.instanceClass, reported!.zone!);
+      await targets.close();
+      await button(dialogOf(page), 'Cancel').click(ACTION);
+      await expect(dialogOf(page), 'the dialog after "Cancel"').toHaveCount(0);
+    },
+  );
+
+  await lines.line(
+    '"Modify" opened, the cluster\'s reader and writer and then the cluster deleted outside, the retention period changed, "Save" → the dialog closes and the page shows the emulator\'s refusal; the emulator reports no cluster `<p>-k2`',
+    async () => {
+      await modify(k2);
+      for (const id of [reader, writer]) {
+        await rds(ctx, port, 'DeleteDBInstance', { DBInstanceIdentifier: id, SkipFinalSnapshot: 'true' });
+      }
+      for (const id of [reader, writer]) expect(await reportsNoInstance(ctx, port, id), `no DB instance ${id}`).toBe(true);
+      await rds(ctx, port, 'DeleteDBCluster', { DBClusterIdentifier: k2, SkipFinalSnapshot: 'true' });
+      expect(await reportsNoCluster(ctx, port, k2), 'no DB cluster, directly').toBe(true);
+      const direct = await rds(ctx, port, 'ModifyDBCluster', {
+        DBClusterIdentifier: k2, BackupRetentionPeriod: '9', ApplyImmediately: 'true',
+      });
+      expect(direct.status, 'the status of the refused change, directly').not.toBe(200);
+      await dialogField('Backup retention period (days)').getByRole('textbox').fill('9', ACTION);
+      await save().click(ACTION);
+      await expect(dialogOf(page), 'the dialog closes').toHaveCount(0, { timeout: 20_000 });
+      await expectFlash(page, 'error', direct.code!, direct.message!);
+      expect(await clusterDirect(ctx, port, k2), 'the cluster, directly').toBeNull();
     },
   );
 
