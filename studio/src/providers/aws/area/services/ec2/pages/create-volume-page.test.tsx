@@ -444,16 +444,15 @@ describe('create volume', () => {
       new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
     );
     open();
+    await screen.findByText('Not implemented by the emulator');
     const zone = field('zone');
-    await waitFor(() =>
-      expect(zone.findConstraint()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
-    );
-    expect(zone.findConstraint()?.getElement()).toHaveTextContent(
+    expect(zone.findConstraint()?.getElement().textContent).toContain('Not implemented by the emulator');
+    expect(zone.findConstraint()?.getElement().textContent).toContain(
       'The emulator answered 501 Not Implemented for DescribeAvailabilityZones',
     );
-    expect(select().findTrigger().getElement()).toBeDisabled();
-    expect(formAction('Create volume').getElement()).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(select().isDisabled()).toBe(true);
+    expect(formAction('Create volume').getElement().hasAttribute('disabled')).toBe(true);
+    expect(screen.queryAllByRole('button', { name: 'Retry' }).length).toBe(0);
   });
 
   it('retries a failed zone read and offers the returned choices in order', async () => {
