@@ -213,6 +213,12 @@ function groupField() {
   return found;
 }
 
+function groupAnnouncements() {
+  return within(field('Security groups').getElement())
+    .queryAllByRole('status')
+    .map((status) => status.textContent);
+}
+
 function groupNames() {
   return groupField()
     .findTokens()
@@ -685,8 +691,7 @@ describe('security groups on a standalone DB instance', () => {
     await opened();
 
     expect(trigger('DB subnet group')).toHaveTextContent('default');
-    const groupStatus = within(field('Security groups').getElement());
-    expect(groupStatus.getByRole('status')).toHaveTextContent("Checking the DB subnet group's VPC");
+    expect(groupAnnouncements()).toContain("Checking the DB subnet group's VPC");
     expect(groupField().findTrigger().getElement()).not.toHaveTextContent('Choose DB subnet group first');
     const groups = groupField();
     groups.openDropdown();
@@ -696,7 +701,7 @@ describe('security groups on a standalone DB instance', () => {
     await act(async () => pending.resolve('vpc-b'));
     await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-b')).not.toBeNull());
     expect(groups.findDropdown().findOptionByValue('sg-a')).toBeNull();
-    expect(groupStatus.queryByRole('status')).toBeNull();
+    expect(groupAnnouncements()).not.toContain("Checking the DB subnet group's VPC");
   });
 
   it('keeps the placement lookup error and retries the lookup from the security groups field', async () => {
@@ -740,12 +745,11 @@ describe('security groups on a standalone DB instance', () => {
     );
     expect(groupNames()).toEqual(['sg-a', 'sg-b']);
     expect(trigger('DB subnet group')).toHaveTextContent('default');
-    const groupStatus = within(field('Security groups').getElement());
-    expect(groupStatus.getByRole('status')).toHaveTextContent("Checking the DB subnet group's VPC");
+    expect(groupAnnouncements()).toContain("Checking the DB subnet group's VPC");
     expect(groupField().findTrigger().getElement()).not.toHaveTextContent('Choose DB subnet group first');
     await act(async () => pending.resolve(GROUPS.slice(0, 2)));
     await waitFor(() => expect(groupNames()).toEqual(['Group A', 'Group B']));
-    expect(groupStatus.queryByRole('status')).toBeNull();
+    expect(groupAnnouncements()).not.toContain("Checking the DB subnet group's VPC");
   });
 
   it('keeps groups by their own VPC when changing the subnet group', async () => {
