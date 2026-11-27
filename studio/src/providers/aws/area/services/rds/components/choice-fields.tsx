@@ -147,6 +147,7 @@ export function InstanceClassField({
           placeholder="Choose a class"
           filteringType="auto"
           filteringAriaLabel="Find DB instance classes"
+          noMatch="No classes match"
           empty={
             version === undefined ? 'No DB instance classes' : `The emulator lists no class for ${engine} ${version}.`
           }

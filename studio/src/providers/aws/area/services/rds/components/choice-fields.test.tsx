@@ -142,6 +142,15 @@ describe('the orderable class and storage fields', () => {
     expect(select().findDropdown().getElement()).toHaveTextContent('The emulator lists no class for postgres 18.3.');
   });
 
+  it('shows no matches and offers no class for an unmatched filter', () => {
+    open(classField(rows));
+    select().openDropdown();
+    select().findFilteringInput()?.setInputValue('db.nosuch');
+    const dropdown = select().findDropdown();
+    expect(dropdown.getElement()).toHaveTextContent('No classes match');
+    expect(dropdown.findOptions()).toHaveLength(0);
+  });
+
   it('shows checking and a failure with retry, without offering a class', () => {
     const view = open(classField({ ...rows, data: undefined, loading: true }));
     expect(screen.getByText('Checking DB instance class')).toBeVisible();
