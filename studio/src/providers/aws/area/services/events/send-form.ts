@@ -19,9 +19,9 @@ function isJsonObject(text: string): boolean {
 
 export function validateSendForm({ source, detailType, detail }: SendForm): Partial<Record<keyof SendForm, string>> {
   const errors: Partial<Record<keyof SendForm, string>> = {};
-  if (source.trim() === '') errors.source = 'Enter a source.';
+  if (source === '') errors.source = 'Enter a source.';
   else if (source.startsWith('aws.')) errors.source = SOURCE_CONSTRAINT;
-  if (detailType.trim() === '') errors.detailType = 'Enter a detail type.';
+  if (detailType === '') errors.detailType = 'Enter a detail type.';
   if (!isJsonObject(detail)) errors.detail = DETAIL_CONSTRAINT;
   return errors;
 }

@@ -56,15 +56,17 @@ function renderPage(query = '') {
     </MemoryRouter>,
   );
   const layout = createWrapper(container).findContentLayout();
-  const form = layout?.findContent().findForm();
-  const select = form?.findSelect();
+  const content = layout?.findContent();
+  const form = content?.findForm();
+  const select = content?.findSelect();
   const button = form?.findActions()?.findButton();
-  const [busField, sourceField, typeField, detailField] = form?.findAllFormFields() ?? [];
-  const source = sourceField?.findInput()?.findNativeInput().getElement();
-  const type = typeField?.findInput()?.findNativeInput().getElement();
-  const text = detailField?.findTextarea()?.findNativeTextarea().getElement();
+  const [busField, sourceField, typeField, detailField] = content?.findAllFormFields() ?? [];
+  const source = sourceField?.findControl()?.findInput()?.findNativeInput().getElement();
+  const type = typeField?.findControl()?.findInput()?.findNativeInput().getElement();
+  const text = detailField?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
   if (
     !layout ||
+    !content ||
     !form ||
     !select ||
     !button ||
@@ -88,12 +90,9 @@ function renderPage(query = '') {
     expect(type).toHaveValue(event.DetailType);
     expect(text).toHaveValue(event.Detail);
   }
-  function errorRegion() {
-    return form?.findError();
-  }
   return {
     layout,
-    form,
+    content,
     select,
     button,
     busField,
@@ -107,7 +106,6 @@ function renderPage(query = '') {
     show,
     fill,
     expectFilled,
-    errorRegion,
   };
 }
 
@@ -184,8 +182,8 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     const page = renderPage();
     page.fill();
     page.button.click();
-    await waitFor(() => expect(page.errorRegion()?.findAlert()?.getElement()).toBeVisible());
-    const alert = page.errorRegion()?.findAlert();
+    await waitFor(() => expect(page.content.findAlert()?.getElement()).toBeVisible());
+    const alert = page.content.findAlert();
     expect(alert?.findHeader()?.getElement().textContent).toBe(`${operation} failed`);
     expect(alert?.findContent().getElement().textContent).toBe('ValidationException: Refused by the emulator');
     expect(send).toHaveBeenCalledTimes(operation === 'DescribeEventBus' ? 0 : 1);
@@ -200,7 +198,7 @@ it('shows the failed entry code and message without an acceptance flash', async 
   page.fill();
   page.button.click();
   await waitFor(() =>
-    expect(page.errorRegion()?.findAlert()?.findContent().getElement().textContent).toBe(
+    expect(page.content.findAlert()?.findContent().getElement().textContent).toBe(
       'The emulator did not accept the event: MalformedDetail: Detail is malformed.',
     ),
   );
@@ -218,11 +216,9 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     page.fill();
     page.button.click();
     await waitFor(() =>
-      expect(page.errorRegion()?.findAlert()?.findHeader()?.getElement().textContent).toBe(
-        'Not implemented by the emulator',
-      ),
+      expect(page.content.findAlert()?.findHeader()?.getElement().textContent).toBe('Not implemented by the emulator'),
     );
-    expect(page.errorRegion()?.findAlert()?.findContent().getElement().textContent).toBe(
+    expect(page.content.findAlert()?.findContent().getElement().textContent).toBe(
       `The emulator answered 501 Not Implemented for ${operation}.`,
     );
     expect(page.button.isDisabled()).toBe(operation === 'PutEvents');
@@ -236,7 +232,9 @@ it('shows a 501 at the bus field when the address read fails and offers Retry', 
   read.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'DescribeEventBus' }));
   const page = renderPage('?bus=orders');
   await waitFor(() =>
-    expect(page.busField.findStatusIndicator()?.getElement().textContent).toBe('Not implemented by the emulator'),
+    expect(page.busField.findSecondaryControl()?.findStatusIndicator()?.getElement().textContent).toBe(
+      'Not implemented by the emulator',
+    ),
   );
   expect(page.busField.getElement()).toHaveTextContent('DescribeEventBus');
   expect(page.select.findTrigger().getElement().textContent).toBe('Choose an event bus');
@@ -246,7 +244,7 @@ it('shows a 501 at the bus field when the address read fails and offers Retry', 
   expect(send).not.toHaveBeenCalled();
   expect(page.show).not.toHaveBeenCalled();
 
-  const retry = page.busField.findButton('button:not([aria-haspopup])');
+  const retry = page.busField.findSecondaryControl()?.findButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
   retry?.click();
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
@@ -301,10 +299,18 @@ it('uses the bus chosen from the list instead of an invalid address', async () =
 });
 
 it('keeps Send busy through both requests and ignores repeat presses', async () => {
-  const bus = Promise.withResolvers<EventBusRead>();
-  const outcome = Promise.withResolvers<Awaited<ReturnType<typeof putEvent>>>();
-  read.mockReturnValueOnce(bus.promise);
-  send.mockReturnValueOnce(outcome.promise);
+  let resolveBus!: (value: EventBusRead) => void;
+  let resolveSend!: (value: Awaited<ReturnType<typeof putEvent>>) => void;
+  read.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveBus = resolve;
+    }),
+  );
+  send.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveSend = resolve;
+    }),
+  );
   const page = renderPage();
   page.fill();
   page.button.click();
@@ -313,14 +319,14 @@ it('keeps Send busy through both requests and ignores repeat presses', async () 
   expect(read).toHaveBeenCalledExactlyOnceWith(endpoint, 'default', expect.any(AbortSignal));
   expect(send).not.toHaveBeenCalled();
 
-  await act(async () => bus.resolve(found('default')));
+  await act(async () => resolveBus(found('default')));
   expect(page.button.findLoadingIndicator()).not.toBeNull();
   page.button.click();
   expect(read).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(1);
   expect(page.show).not.toHaveBeenCalled();
 
-  await act(async () => outcome.resolve(accepted));
+  await act(async () => resolveSend(accepted));
   expect(page.show).toHaveBeenCalledTimes(1);
   expect(page.button.findLoadingIndicator()).toBeNull();
 });

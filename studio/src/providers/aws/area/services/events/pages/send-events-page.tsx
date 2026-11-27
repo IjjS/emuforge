@@ -156,13 +156,6 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
     >
       <form onSubmit={(event) => void handleSubmit(event)} noValidate>
         <Form
-          errorText={
-            notice && (
-              <Alert type={notice.type} header={notice.header}>
-                {notice.content}
-              </Alert>
-            )
-          }
           actions={
             <Button
               formAction="submit"
@@ -175,39 +168,46 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
             </Button>
           }
         >
-          <Container header={<Header variant="h2">Event details</Header>}>
-            <SpaceBetween size="l">
-              <BusSelect connection={connection} choice={choice} onChange={handleBusChange} />
-              <FormField label="Source" constraintText={SOURCE_CONSTRAINT} errorText={errors.source}>
-                <Input
-                  ref={sourceInput}
-                  value={form.source}
-                  invalid={errors.source !== undefined}
-                  disabled={pending}
-                  onChange={({ detail }) => setForm((current) => ({ ...current, source: detail.value }))}
-                />
-              </FormField>
-              <FormField label="Detail type" errorText={errors.detailType}>
-                <Input
-                  ref={typeInput}
-                  value={form.detailType}
-                  invalid={errors.detailType !== undefined}
-                  disabled={pending}
-                  onChange={({ detail }) => setForm((current) => ({ ...current, detailType: detail.value }))}
-                />
-              </FormField>
-              <FormField label="Detail" constraintText={DETAIL_CONSTRAINT} errorText={errors.detail} stretch>
-                <Textarea
-                  ref={detailInput}
-                  value={form.detail}
-                  rows={6}
-                  invalid={errors.detail !== undefined}
-                  disabled={pending}
-                  onChange={({ detail }) => setForm((current) => ({ ...current, detail: detail.value }))}
-                />
-              </FormField>
-            </SpaceBetween>
-          </Container>
+          <SpaceBetween size="l">
+            <Container header={<Header variant="h2">Event details</Header>}>
+              <SpaceBetween size="l">
+                <BusSelect connection={connection} choice={choice} onChange={handleBusChange} />
+                <FormField label="Source" constraintText={SOURCE_CONSTRAINT} errorText={errors.source}>
+                  <Input
+                    ref={sourceInput}
+                    value={form.source}
+                    invalid={errors.source !== undefined}
+                    disabled={pending}
+                    onChange={({ detail }) => setForm((current) => ({ ...current, source: detail.value }))}
+                  />
+                </FormField>
+                <FormField label="Detail type" errorText={errors.detailType}>
+                  <Input
+                    ref={typeInput}
+                    value={form.detailType}
+                    invalid={errors.detailType !== undefined}
+                    disabled={pending}
+                    onChange={({ detail }) => setForm((current) => ({ ...current, detailType: detail.value }))}
+                  />
+                </FormField>
+                <FormField label="Detail" constraintText={DETAIL_CONSTRAINT} errorText={errors.detail} stretch>
+                  <Textarea
+                    ref={detailInput}
+                    value={form.detail}
+                    rows={6}
+                    invalid={errors.detail !== undefined}
+                    disabled={pending}
+                    onChange={({ detail }) => setForm((current) => ({ ...current, detail: detail.value }))}
+                  />
+                </FormField>
+              </SpaceBetween>
+            </Container>
+            {notice && (
+              <Alert type={notice.type} header={notice.header}>
+                {notice.content}
+              </Alert>
+            )}
+          </SpaceBetween>
         </Form>
       </form>
     </ContentLayout>
