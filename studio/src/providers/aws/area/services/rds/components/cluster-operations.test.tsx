@@ -301,6 +301,48 @@ describe('modify a DB cluster', () => {
     expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 
+  it.each([
+    {
+      scenario: 'restores the starting type when the replacement is unavailable',
+      startingRows: ROWS.filter(({ StorageType }) => StorageType === 'aurora'),
+      expectedType: 'aurora',
+      expectedChanges: { deletionProtection: false },
+    },
+    {
+      scenario: 'keeps the replacement when it is still available',
+      startingRows: ROWS,
+      expectedType: 'aurora-iopt1',
+      expectedChanges: { deletionProtection: false, storageType: 'aurora-iopt1' },
+    },
+  ])('$scenario after reverting the version', async ({ startingRows, expectedType, expectedChanges }) => {
+    vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, _engine, version) =>
+      version === TARGET.version ? [{ StorageType: 'aurora-iopt1' }] : startingRows,
+    );
+    renderControls();
+    const modal = await open('modify');
+    const picker = select('Storage type');
+    const save = modal.getByRole('button', { name: 'Save changes' });
+    await waitFor(() => expect(picker.findTrigger().getElement()).toBeEnabled());
+
+    await pick('Engine version', TARGET.version);
+    expect(await modal.findByText(`Choose a storage type for ${TARGET.version}`)).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    await pick('Storage type', 'aurora-iopt1');
+    await pick('Engine version', '');
+
+    await waitFor(() => expect(picker.findTrigger().getElement()).toBeEnabled());
+    expect(field('Storage type').findError()).toBeNull();
+    picker.openDropdown();
+    const selected = picker.findDropdown().findOptionByValue(expectedType);
+    expect(selected?.getElement().closest('[role="option"]')).toHaveAttribute('aria-selected', 'true');
+    picker.closeDropdown();
+
+    fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('cluster-one', { kind: 'modify', changes: expectedChanges });
+  });
+
   it('keeps the starting version options when the target rows arrive after switching back', async () => {
     const late = deferredRows();
     vi.mocked(choices.readOrderableRows).mockImplementation((_at, _engine, version) =>
