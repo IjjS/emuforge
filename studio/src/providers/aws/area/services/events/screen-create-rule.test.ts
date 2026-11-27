@@ -20,3 +20,15 @@ it('opens the create screen below Rules and keeps a rule named create on its own
   if (rule.kind !== 'screen') throw new Error('Expected a rule screen');
   expect(rule.screen.Page).toBe(RulePage);
 });
+
+it.each([
+  ['bus=orders', '/aws/events/rules?bus=orders'],
+  ['bus=', '/aws/events/rules?bus='],
+])('returns to Rules with the original bus query %s', (query, href) => {
+  const page = areaPage('/aws/events/rules/create');
+  if (page.kind !== 'screen') throw new Error('Expected the create rule screen');
+  expect(screenCrumbs(page.screen, page.params, new URLSearchParams(query))).toEqual([
+    { text: 'Rules', href },
+    { text: 'Create rule' },
+  ]);
+});

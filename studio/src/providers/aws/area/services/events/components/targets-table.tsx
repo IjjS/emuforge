@@ -12,6 +12,9 @@ import { readFailureState, ReadFailure, useAnnouncer } from '../../../components
 import { ValueText } from '../../../components/value-text';
 import type { useRuleTargets } from '../queries';
 import { targetView } from '../target-view';
+import { useOverflowHint } from '../use-overflow-hint';
+
+const OVERFLOW_HINT = 'Scroll sideways to see target input, delivery details, and Remove.';
 
 function InputText({ text }: { text: string | undefined }) {
   return (
@@ -79,7 +82,7 @@ const columns: TableProps.ColumnDefinition<Target>[] = [
     minWidth: '28ch',
     cell: ({ Id }) => <ValueText kind="name" value={Id} none="-" />,
   },
-  { id: 'arn', header: 'ARN', cell: ({ Arn }) => <ValueText kind="address" value={Arn} none="-" /> },
+  { id: 'arn', header: 'ARN', minWidth: '32ch', cell: ({ Arn }) => <ValueText kind="address" value={Arn} none="-" /> },
   { id: 'input', header: 'Receives', cell: (target) => <TargetInput target={target} /> },
   { id: 'details', header: 'Details', cell: (target) => <TargetDetails target={target} /> },
 ];
@@ -93,6 +96,8 @@ interface TargetsTableProps {
 
 export function TargetsTable({ connection, targets, removeDisabledReason, onRemove }: TargetsTableProps) {
   const [announcement, announce] = useAnnouncer();
+  const items = targets.value ?? [];
+  const { tableSection, showOverflow } = useOverflowHint(!targets.loading && items.length > 0);
   const failure = targets.failure && readFailureState(targets.failure, connection, 'targets');
   const message = failure?.firstText ?? '';
 
@@ -119,10 +124,15 @@ export function TargetsTable({ connection, targets, removeDisabledReason, onRemo
   };
 
   return (
-    <>
+    <div ref={tableSection}>
       <Table
-        header={<Header variant="h2">Targets</Header>}
-        items={targets.value ?? []}
+        ariaLabels={{ tableLabel: showOverflow ? `Targets. ${OVERFLOW_HINT}` : 'Targets' }}
+        header={
+          <Header variant="h2" description={showOverflow ? OVERFLOW_HINT : undefined}>
+            Targets
+          </Header>
+        }
+        items={items}
         trackBy="Id"
         columnDefinitions={[...columns, actions]}
         wrapLines
@@ -139,6 +149,6 @@ export function TargetsTable({ connection, targets, removeDisabledReason, onRemo
         }
       />
       {announcement}
-    </>
+    </div>
   );
 }

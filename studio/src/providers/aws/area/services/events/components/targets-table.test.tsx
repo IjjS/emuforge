@@ -1,6 +1,6 @@
 import type { Target } from '@aws-sdk/client-eventbridge';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
 
@@ -81,6 +81,29 @@ it('lists all target kinds in response order and shows the inputs and optional d
 
 it('shows Loading targets while the read is pending', () => {
   expect(open({ loading: true }).table.findLoadingText()?.getElement().textContent).toBe('Loading targets');
+});
+
+it.each([
+  [900, 900, 'Targets'],
+  [348, 900, 'Targets. Scroll sideways to see target input, delivery details, and Remove.'],
+])('shows the scroll hint only when the targets table overflows (%d of %d)', (clientWidth, scrollWidth, label) => {
+  const client = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(clientWidth);
+  const scroll = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(scrollWidth);
+  try {
+    const { table } = open({ value: [{ Id: 'queue', Arn: queueArn }] });
+    expect(screen.getByRole('table', { name: label })).toBeVisible();
+    const description = table.findHeaderSlot()?.findHeader()?.findDescription();
+    if (clientWidth < scrollWidth) {
+      expect(description?.getElement()).toHaveTextContent(
+        'Scroll sideways to see target input, delivery details, and Remove.',
+      );
+    } else {
+      expect(description).toBeNull();
+    }
+  } finally {
+    client.mockRestore();
+    scroll.mockRestore();
+  }
 });
 
 it('shows No targets for an empty answer', () => {

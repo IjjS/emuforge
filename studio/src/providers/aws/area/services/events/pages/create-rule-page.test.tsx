@@ -152,7 +152,7 @@ function radio(value: string) {
 
 function fill() {
   enter('Rule name', 'route');
-  enter('Description', 'Routes orders');
+  enter('Description - optional', 'Routes orders');
   enter('Event pattern', pattern);
 }
 
@@ -180,6 +180,15 @@ it('opens with the bus from the address, a pattern, an enabled state and no targ
   expect(textbox('Rule name')).toHaveAccessibleDescription(
     '1 to 64 characters. Use letters, digits, periods, hyphens and underscores.',
   );
+  expect(textbox('Description - optional')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Targets - optional' })).toBeVisible();
+  expect(textbox('Event pattern')).toHaveValue('');
+  expect(textbox('Event pattern')).toHaveAccessibleDescription(
+    expect.stringContaining(
+      'List the source values you want to match in an array, such as {"source":["shop.checkout"]}',
+    ),
+  );
+  expect(textbox('Event pattern')).toHaveAccessibleDescription(expect.stringContaining('up to 2048 characters'));
   expect(screen.queryByRole('textbox', { name: 'Target ID' })).toBeNull();
   for (const [value, description] of [
     ['pattern', 'Runs for each event on the bus that matches the pattern.'],
@@ -201,6 +210,9 @@ it('offers both schedule kinds on default and returns to a pattern on another bu
   const page = open();
   expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^default$/);
   expect(radio('schedule')).toBeEnabled();
+  const trigger = screen.getByRole('radiogroup', { name: 'What starts the rule' });
+  const restriction = 'Schedules are available only on the default event bus.';
+  expect(screen.queryByText(restriction)).toBeNull();
   fireEvent.click(radio('schedule'));
   expect(radio('rate')).toBeChecked();
   expect(radio('rate')).toHaveAccessibleDescription(
@@ -215,8 +227,12 @@ it('offers both schedule kinds on default and returns to a pattern on another bu
   expect(screen.queryByRole('textbox', { name: 'Rate' })).toBeNull();
   await page.choose('Event bus', 'orders');
   expect(radio('schedule')).toBeDisabled();
+  expect(screen.getByText(restriction)).toBeVisible();
+  expect(trigger).toHaveAccessibleDescription(restriction);
   expect(radio('pattern')).toBeChecked();
   expect(textbox('Event pattern')).toBeVisible();
+  await page.choose('Event bus', 'default');
+  expect(screen.queryByText(restriction)).toBeNull();
 });
 
 it('shows the expressions for the rate currently entered', () => {
@@ -236,13 +252,18 @@ it('shows the expressions for the rate currently entered', () => {
 
 it('accepts up to five target rows and makes room when one is removed', () => {
   open();
-  for (let row = 0; row < 5; row += 1) click('Add target');
+  for (let row = 0; row < 5; row += 1) {
+    click('Add target');
+    expect(screen.getAllByRole('textbox', { name: 'Target ID' })[row]).toHaveFocus();
+  }
   expect(screen.getAllByRole('textbox', { name: 'Target ID' })).toHaveLength(5);
   expect(button('Add target')).toBeDisabled();
   expect(screen.getByText('A rule holds at most 5 targets.')).toBeVisible();
   click('Remove target 2');
   expect(screen.getAllByRole('textbox', { name: 'Target ID' })).toHaveLength(4);
   expect(button('Add target')).toBeEnabled();
+  click('Add target');
+  expect(screen.getAllByRole('textbox', { name: 'Target ID' })[4]).toHaveFocus();
 });
 
 it('reads the name before creating a rule without targets and hands over success', async () => {
@@ -339,7 +360,7 @@ it.each([
   expect(alert).toHaveTextContent(operation);
   expect(alert).toHaveTextContent(reason);
   expect(textbox('Rule name')).toHaveValue('route');
-  expect(textbox('Description')).toHaveValue('Routes orders');
+  expect(textbox('Description - optional')).toHaveValue('Routes orders');
   expect(textbox('Event pattern')).toHaveValue(pattern);
   expect(textbox('Target ID')).toHaveValue('first');
   expect(page.select('Topic').findTrigger().getElement()).toHaveTextContent(/^orders$/);
@@ -452,13 +473,13 @@ it('cancels an unchanged form directly to the chosen bus’s Rules', async () =>
 
 it.each(['field', 'choice', 'row'] as const)('asks before discarding a changed %s', async (change) => {
   open();
-  if (change === 'field') enter('Description', 'Routes orders');
+  if (change === 'field') enter('Description - optional', 'Routes orders');
   if (change === 'choice') fireEvent.click(radio('DISABLED'));
   if (change === 'row') click('Add target');
   click('Cancel');
   const dialog = () => screen.findByRole('dialog', { name: 'Discard what you entered?' });
   fireEvent.click(within(await dialog()).getByRole('button', { name: 'Keep editing' }));
-  if (change === 'field') expect(textbox('Description')).toHaveValue('Routes orders');
+  if (change === 'field') expect(textbox('Description - optional')).toHaveValue('Routes orders');
   if (change === 'choice') expect(radio('DISABLED')).toBeChecked();
   if (change === 'row') expect(textbox('Target ID')).toBeVisible();
   click('Cancel');
