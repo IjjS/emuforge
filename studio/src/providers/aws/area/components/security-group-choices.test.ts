@@ -10,6 +10,7 @@ import { ChoiceMultiselect } from './choice-multiselect';
 import type { AreaConnection } from './emulator-line';
 import {
   listSecurityGroupChoices,
+  readSecurityGroupsById,
   securityGroupChoices,
   securityGroupChoicesKey,
   type SecurityGroupChoice,
@@ -66,8 +67,8 @@ function groups(items: string[], next?: string): Answer {
   };
 }
 
-const item = (id: string, name?: string, vpc?: string) =>
-  `<item><groupId>${id}</groupId>${name === undefined ? '' : `<groupName>${name}</groupName>`}${vpc === undefined ? '' : `<vpcId>${vpc}</vpcId>`}</item>`;
+const item = (id: string, name?: string, vpc?: string, description?: string) =>
+  `<item><groupId>${id}</groupId>${name === undefined ? '' : `<groupName>${name}</groupName>`}${vpc === undefined ? '' : `<vpcId>${vpc}</vpcId>`}${description === undefined ? '' : `<groupDescription>${description}</groupDescription>`}</item>`;
 
 /** The filters a request sent, by name. */
 function filters(params: URLSearchParams | undefined): Record<string, string[]> {
@@ -134,6 +135,28 @@ describe('a page of security groups', () => {
     expect(filters(engine.sent[3]?.params)).toEqual({ 'group-name': ['*db*'] });
   });
 
+  it('reads two groups by the group-id filter and includes their descriptions and VPCs', async () => {
+    engine.handler = () =>
+      groups([item('sg-1', 'default', 'vpc-d', 'Default group'), item('sg-2', 'web', 'vpc-x', 'Public web')]);
+    expect(await readSecurityGroupsById(endpoint, ['sg-1', 'sg-2'], signal())).toEqual([
+      { id: 'sg-1', name: 'default', vpcId: 'vpc-d', description: 'Default group' },
+      { id: 'sg-2', name: 'web', vpcId: 'vpc-x', description: 'Public web' },
+    ]);
+    expect(engine.sent).toHaveLength(1);
+    const request = engine.sent[0];
+    expect(request?.action).toBe('DescribeSecurityGroups');
+    expect(filters(request?.params)).toEqual({ 'group-id': ['sg-1', 'sg-2'] });
+    expect(request?.params.has('GroupId.1')).toBe(false);
+  });
+
+  it('returns just the groups the emulator has and leaves unknown ids out', async () => {
+    engine.handler = () => groups([item('sg-1', 'default', 'vpc-d')]);
+    expect(await readSecurityGroupsById(endpoint, ['sg-1', 'sg-missing'], signal())).toEqual([
+      { id: 'sg-1', name: 'default', vpcId: 'vpc-d' },
+    ]);
+    expect(filters(engine.sent[0]?.params)).toEqual({ 'group-id': ['sg-1', 'sg-missing'] });
+  });
+
   it('a 501 → the "not implemented" kind with DescribeSecurityGroups', async () => {
     engine.handler = () => ({ status: 501, body: '' });
     const error: unknown = await listSecurityGroupChoices(endpoint, {}, undefined, signal()).then(
@@ -184,14 +207,20 @@ describe('the source', () => {
     expect(filters(engine.sent[1]?.params)).toEqual({ 'vpc-id': ['vpc-d'] });
   });
 
-  it("an option is the group's name with its ID and its VPC ID, and its ID in place of a name it does not have", () => {
+  it('an option describes the group by id and description, or just its id', () => {
     const { optionOf } = securityGroupChoices(endpoint);
-    expect(optionOf({ id: 'sg-1', name: 'default', vpcId: 'vpc-d' })).toEqual({
+    expect(optionOf({ id: 'sg-1', name: 'default', vpcId: 'vpc-d', description: 'Default group' })).toEqual({
       value: 'sg-1',
       label: 'default',
+      description: 'sg-1 · Default group',
       tags: ['sg-1', 'vpc-d'],
     });
-    expect(optionOf({ id: 'sg-2', vpcId: 'vpc-x' })).toEqual({ value: 'sg-2', label: 'sg-2', tags: ['sg-2', 'vpc-x'] });
+    expect(optionOf({ id: 'sg-2', vpcId: 'vpc-x' })).toEqual({
+      value: 'sg-2',
+      label: 'sg-2',
+      description: 'sg-2',
+      tags: ['sg-2', 'vpc-x'],
+    });
   });
 
   it('the groups are read again when the field is opened again, so a group made meanwhile is offered', async () => {

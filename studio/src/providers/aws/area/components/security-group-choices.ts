@@ -22,6 +22,7 @@ export interface SecurityGroupChoice {
   id: string;
   name?: string;
   vpcId?: string;
+  description?: string;
 }
 
 /** One page of security groups in the API's order, and its token when it gave one. */
@@ -34,6 +35,7 @@ export interface SecurityGroupPage {
 export interface SecurityGroupFilters {
   vpcId?: string | undefined;
   name?: string | undefined;
+  ids?: readonly string[] | undefined;
 }
 
 const clients = new Map<string, EC2Client>();
@@ -54,11 +56,12 @@ function text(value: unknown): string | undefined {
 /** One page of `DescribeSecurityGroups`: `MaxResults` 50, the token, `vpc-id` and `group-name` when given. */
 export async function listSecurityGroupChoices(
   endpoint: string,
-  { vpcId, name }: SecurityGroupFilters,
+  { vpcId, name, ids }: SecurityGroupFilters,
   token: string | undefined,
   signal: AbortSignal,
 ): Promise<SecurityGroupPage> {
   const filters: Filter[] = [
+    ...(ids === undefined || ids.length === 0 ? [] : [{ Name: 'group-id', Values: [...ids] }]),
     ...(vpcId === undefined || vpcId === '' ? [] : [{ Name: 'vpc-id', Values: [vpcId] }]),
     ...(name === undefined || name === '' ? [] : [{ Name: 'group-name', Values: [`*${name}*`] }]),
   ];
@@ -85,6 +88,10 @@ export async function listSecurityGroupChoices(
     if (groupName !== undefined) {
       choice.name = groupName;
     }
+    const description = text(group.Description);
+    if (description !== undefined) {
+      choice.description = description;
+    }
     const groupVpc = text(group.VpcId);
     if (groupVpc !== undefined) {
       choice.vpcId = groupVpc;
@@ -93,6 +100,24 @@ export async function listSecurityGroupChoices(
   });
   const nextToken = text(output.NextToken);
   return nextToken === undefined ? { choices } : { choices, nextToken };
+}
+
+/** Read existing groups by id. The emulator leaves unknown ids out of its answer to this filter. */
+export async function readSecurityGroupsById(
+  endpoint: string,
+  ids: readonly string[],
+  signal: AbortSignal,
+): Promise<SecurityGroupChoice[]> {
+  if (ids.length === 0) return [];
+
+  const groups: SecurityGroupChoice[] = [];
+  let token: string | undefined;
+  do {
+    const page = await listSecurityGroupChoices(endpoint, { ids }, token, signal);
+    groups.push(...page.choices);
+    token = page.nextToken;
+  } while (token !== undefined);
+  return groups;
 }
 
 /** The area's key of the security groups' choices of the VPC `vpcId`, or of every VPC's (`null`). */
@@ -124,6 +149,7 @@ export function securityGroupChoices(
     optionOf: (group) => ({
       value: group.id,
       label: group.name ?? group.id,
+      description: group.description === undefined ? group.id : `${group.id} · ${group.description}`,
       tags: group.vpcId === undefined ? [group.id] : [group.id, group.vpcId],
     }),
   };

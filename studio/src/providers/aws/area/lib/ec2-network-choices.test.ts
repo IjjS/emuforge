@@ -143,6 +143,21 @@ describe('the subnets', () => {
     ]);
   });
 
+  it('keeps the number of free addresses when the emulator supplies it', async () => {
+    engine.on('DescribeSubnets', () =>
+      page(
+        'DescribeSubnets',
+        'subnetSet',
+        '<item><subnetId>subnet-1</subnetId><availableIpAddressCount>251</availableIpAddressCount></item>' +
+          '<item><subnetId>subnet-2</subnetId></item>',
+      ),
+    );
+    expect((await listSubnetChoices(endpoint, undefined, signal())).choices).toEqual([
+      { id: 'subnet-1', availableIpAddressCount: 251 },
+      { id: 'subnet-2' },
+    ]);
+  });
+
   it('asked for a VPC → the filter vpc-id with its id, with the token; asked for none → no filter', async () => {
     engine.on('DescribeSubnets', () => page('DescribeSubnets', 'subnetSet', ''));
     await listSubnetChoices(endpoint, 'sub-t', signal(), 'vpc-1');

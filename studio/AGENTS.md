@@ -123,6 +123,7 @@ references/
   critique.md            how a screen is critiqued on the built app (the plan, crit)
   aws-area.md            the AWS screen policy, the emulator line and notice, Cloudscape in the area, the area in
                          Studio's frame, and what earlier critiques found: a unit with files under providers/aws/area/
+  create-forms.md        the choice and parameter rules: a unit that builds or changes an AWS create or modify form
   own-layer.md           the rules of Studio's own layer and "No leak either way": a unit with files in app/, ui/,
                          features/ or i18n/
   languages.md           the languages of Studio's own layer: a unit that adds or changes a text there, or a language

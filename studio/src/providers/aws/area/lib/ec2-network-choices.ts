@@ -27,6 +27,7 @@ export interface SubnetChoice {
   /** The value of its tag `Name`. */
   name?: string;
   zone?: string;
+  availableIpAddressCount?: number;
   cidr?: string;
   vpcId?: string;
 }
@@ -78,6 +79,7 @@ export async function listSubnetChoices(
             {
               name: nameOf(tagsOf(subnet.Tags)),
               zone: text(subnet.AvailabilityZone),
+              availableIpAddressCount: subnet.AvailableIpAddressCount,
               cidr: text(subnet.CidrBlock),
               vpcId: text(subnet.VpcId),
             },
