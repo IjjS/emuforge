@@ -167,6 +167,48 @@ it('checks the bus again and shows each accepted ID in one flash and beside Send
   });
 });
 
+it.each([
+  { distanceFromBottom: -72, shouldReveal: false },
+  { distanceFromBottom: 72, shouldReveal: true },
+])(
+  'reveals the receipt only when it is outside the viewport ($shouldReveal)',
+  async ({ distanceFromBottom, shouldReveal }) => {
+    const reveal = vi.fn();
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: reveal });
+    const measure = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.getAttribute('aria-hidden') === 'true' && this.textContent?.includes('Event ID event-1.')) {
+        return new DOMRect(0, window.innerHeight + distanceFromBottom, 250, 40);
+      }
+      return measure.call(this);
+    });
+
+    try {
+      const page = renderPage();
+      page.fill();
+      const button = page.button.getElement();
+      button.focus();
+      await act(async () => {
+        fireEvent.click(button);
+      });
+
+      const receipt = page.form.findActions()?.find('[aria-hidden="true"]');
+      expect(receipt?.findStatusIndicator()?.getElement().textContent).toBe(
+        'The emulator accepted the event for default. Event ID event-1.',
+      );
+      const receiptScrolls = reveal.mock.contexts.filter((element) => element === receipt?.getElement());
+      expect(receiptScrolls).toHaveLength(shouldReveal ? 1 : 0);
+      expect(button).toHaveFocus();
+      page.expectFilled();
+      expect(page.show).toHaveBeenCalledTimes(1);
+    } finally {
+      if (descriptor === undefined) Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+      else Object.defineProperty(Element.prototype, 'scrollIntoView', descriptor);
+    }
+  },
+);
+
 it('marks a bus deleted before send as missing and sends nothing', async () => {
   read.mockResolvedValueOnce(found('orders')).mockResolvedValueOnce({ kind: 'not-found' });
   const page = renderPage('?bus=orders');

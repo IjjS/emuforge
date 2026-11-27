@@ -9,7 +9,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useRef, useState, type FormEvent, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
@@ -50,11 +50,21 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
   const [unavailable, setUnavailable] = useState(false);
   const [receipt, setReceipt] = useState<ReactElement>();
   const [notice, setNotice] = useState<FlashItem>();
+  const receiptRef = useRef<HTMLDivElement>(null);
   const busy = useRef(false);
   const sourceInput = useRef<InputProps.Ref>(null);
   const typeInput = useRef<InputProps.Ref>(null);
   const detailInput = useRef<TextareaProps.Ref>(null);
   const errors = tried ? validateSendForm(form) : {};
+
+  useEffect(() => {
+    const element = receiptRef.current;
+    if (!receipt || !element) return;
+    const { top, bottom } = element.getBoundingClientRect();
+    if (top < 0 || bottom > window.innerHeight) {
+      element.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    }
+  }, [receipt]);
 
   function handleBusChange(name: string) {
     if (busy.current) return;
@@ -160,7 +170,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
             <SpaceBetween size="xs">
               {receipt && (
                 // The area's flash announces the receipt. This copy stays beside Send for sighted users.
-                <div aria-hidden="true">
+                <div ref={receiptRef} aria-hidden="true">
                   <StatusIndicator type="success">{receipt}</StatusIndicator>
                 </div>
               )}
