@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -184,12 +184,20 @@ function protection() {
 function field(label: string) {
   const found = PAGE.findAllFormFields().find((entry) => entry.findLabel()?.getElement().textContent === label);
   if (found === undefined) throw new Error(`Missing field: ${label}`);
-  return createWrapper(found.getElement());
+  return found;
+}
+
+function waitForFieldError(label: string, message: string) {
+  return waitFor(
+    () => expect(field(label).findError()?.getElement()).toHaveTextContent(message),
+    // Cloudscape's scoped selector temporarily adds an attribute to the field on every lookup.
+    { mutationObserverOptions: { subtree: true, childList: true, characterData: true } },
+  );
 }
 
 function select(label: string) {
-  const found = field(label).findSelect();
-  if (found === null) throw new Error(`Missing select: ${label}`);
+  const found = field(label).findControl()?.findSelect();
+  if (found == null) throw new Error(`Missing select: ${label}`);
   return found;
 }
 
@@ -208,9 +216,15 @@ async function choose(label: string, value: string) {
 }
 
 function groupField() {
-  const found = field('Security groups').findMultiselect();
-  if (found === null) throw new Error('Missing security groups');
+  const found = field('Security groups').findControl()?.findMultiselect();
+  if (found == null) throw new Error('Missing security groups');
   return found;
+}
+
+function groupAnnouncements() {
+  return within(field('Security groups').getElement())
+    .queryAllByRole('status')
+    .map((status) => status.textContent);
 }
 
 function groupNames() {
@@ -257,7 +271,7 @@ describe('Modify DB instance', () => {
     expect(trigger('Engine version')).toHaveTextContent('Keep 16.4');
     expect(trigger('Engine version')).toHaveTextContent('No version is sent.');
     expect(trigger('Storage type')).toHaveTextContent('io1');
-    expect(field('Provisioned IOPS').findInput()?.findNativeInput().getElement()).toHaveValue('3000');
+    expect(field('Provisioned IOPS').findControl()?.findInput()?.findNativeInput().getElement()).toHaveValue('3000');
     expect(screen.getByRole('checkbox', { name: 'Multi-AZ' })).toBeChecked();
     expect(trigger('DB subnet group')).toHaveTextContent('default');
     await waitFor(() => expect(groupNames()).toEqual(['Group A']));
@@ -452,7 +466,7 @@ describe('choices for a standalone DB instance', () => {
     expect(onSave).toHaveBeenLastCalledWith({ engineVersion: { version: '16.13', major: false } });
 
     await choose('Engine version', '17.9');
-    expect(await screen.findByText('Choose a class for 17.9')).toBeInTheDocument();
+    await waitForFieldError('DB instance class', 'Choose a class for 17.9');
     expect(save()).toBeDisabled();
     await choose('Engine version', '');
     await waitFor(() => expect(trigger('DB instance class')).toHaveTextContent('db.t3.micro'));
@@ -460,7 +474,7 @@ describe('choices for a standalone DB instance', () => {
     expect(save()).toBeDisabled();
 
     await choose('Engine version', '17.9');
-    await screen.findByText('Choose a class for 17.9');
+    await waitForFieldError('DB instance class', 'Choose a class for 17.9');
     await choose('DB instance class', 'db.t3.small');
     expect(trigger('Storage type')).toHaveTextContent('gp2');
     expect(save()).toBeEnabled();
@@ -496,7 +510,7 @@ describe('choices for a standalone DB instance', () => {
     open();
     await opened();
     await choose('DB instance class', 'db.other');
-    expect(screen.getByText('Choose a storage type for db.other')).toBeInTheDocument();
+    expect(field('Storage type').findError()?.getElement()).toHaveTextContent('Choose a storage type for db.other');
     expect(save()).toBeDisabled();
   });
 
@@ -504,7 +518,7 @@ describe('choices for a standalone DB instance', () => {
     const onSave = open();
     await opened();
     await choose('DB instance class', 'db.other');
-    expect(screen.getByText('Choose a storage type for db.other')).toBeInTheDocument();
+    expect(field('Storage type').findError()?.getElement()).toHaveTextContent('Choose a storage type for db.other');
     await choose('Storage type', 'gp3');
     await choose('DB instance class', 'db.t3.micro');
 
@@ -528,7 +542,7 @@ describe('choices for a standalone DB instance', () => {
       await opened();
       await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
       await choose('Engine version', '17.9');
-      expect(await screen.findByText('Choose a class for 17.9')).toBeInTheDocument();
+      await waitForFieldError('DB instance class', 'Choose a class for 17.9');
       if (replace) {
         await choose('DB instance class', 'db.upgrade');
         await choose('Storage type', 'gp3');
@@ -560,7 +574,7 @@ describe('choices for a standalone DB instance', () => {
     await opened();
     await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
     await choose('Engine version', '17.9');
-    expect(await screen.findByText('Choose a storage type for db.t3.micro')).toBeInTheDocument();
+    await waitForFieldError('Storage type', 'Choose a storage type for db.t3.micro');
     await choose('Engine version', '');
 
     const storageTrigger = select('Storage type').findTrigger();
@@ -577,17 +591,21 @@ describe('choices for a standalone DB instance', () => {
     const onSave = open();
     await opened();
     await choose('Storage type', 'io1');
-    expect(field('Allocated storage (GiB)').getElement()).toHaveTextContent('100 to 65536 GiB for io1.');
-    expect(screen.getByText('Enter the IOPS.')).toBeInTheDocument();
+    expect(field('Allocated storage (GiB)').findError()?.getElement()).toHaveTextContent('100 to 65536 GiB for io1.');
+    expect(field('Provisioned IOPS').findError()?.getElement()).toHaveTextContent('Enter the IOPS.');
     expect(save()).toBeDisabled();
     change('storage', '100');
-    const iops = field('Provisioned IOPS').findInput()?.findNativeInput().getElement() as HTMLInputElement;
+    const iops = field('Provisioned IOPS')
+      .findControl()
+      ?.findInput()
+      ?.findNativeInput()
+      .getElement() as HTMLInputElement;
     fireEvent.change(iops, { target: { value: '3000' } });
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     expect(onSave).toHaveBeenLastCalledWith({ storageType: 'io1', allocatedStorage: 100, iops: 3000 });
     change('storage', '20');
-    expect(screen.getByText('10 to 1000 IOPS for 20 GiB.')).toBeInTheDocument();
+    expect(field('Provisioned IOPS').findError()?.getElement()).toHaveTextContent('10 to 1000 IOPS for 20 GiB.');
     expect(save()).toBeDisabled();
   });
 
@@ -610,7 +628,11 @@ describe('choices for a standalone DB instance', () => {
       await opened();
       const classField = field('DB instance class').getElement();
       if (kind === 'not-implemented') {
-        await screen.findByText('Not implemented by the emulator');
+        await waitFor(() =>
+          expect(field('DB instance class').findControl()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Not implemented by the emulator',
+          ),
+        );
         expect(classField).toHaveTextContent(operation);
       } else {
         await screen.findByRole('button', { name: 'Retry' });
@@ -641,7 +663,9 @@ describe('choices for a standalone DB instance', () => {
     fireEvent.click(protection());
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledOnce();
-    expect(screen.getByText('The update was refused')).toBeInTheDocument();
+    expect(PAGE.findModal()?.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+      'The update was refused',
+    );
     expect(input('identifier')).toHaveValue('new-name');
     expect(input('storage')).toHaveValue('30');
     expect(input('password')).toHaveValue('DemoPass!234');
@@ -665,8 +689,8 @@ describe('security groups on a standalone DB instance', () => {
     await opened();
 
     expect(trigger('DB subnet group')).toHaveTextContent('default');
-    expect(screen.getByText("Checking the DB subnet group's VPC")).toHaveAttribute('role', 'status');
-    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    expect(groupAnnouncements()).toContain("Checking the DB subnet group's VPC");
+    expect(groupField().findTrigger().getElement()).not.toHaveTextContent('Choose DB subnet group first');
     const groups = groupField();
     groups.openDropdown();
     expect(groups.findTrigger().getElement()).toHaveAttribute('aria-expanded', 'true');
@@ -675,7 +699,7 @@ describe('security groups on a standalone DB instance', () => {
     await act(async () => pending.resolve('vpc-b'));
     await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-b')).not.toBeNull());
     expect(groups.findDropdown().findOptionByValue('sg-a')).toBeNull();
-    expect(screen.queryByText("Checking the DB subnet group's VPC")).not.toBeInTheDocument();
+    expect(groupAnnouncements()).not.toContain("Checking the DB subnet group's VPC");
   });
 
   it('keeps the placement lookup error and retries the lookup from the security groups field', async () => {
@@ -692,9 +716,13 @@ describe('security groups on a standalone DB instance', () => {
     open(emptySubnetGroup);
     await opened();
 
-    expect(await screen.findByText('The security groups could not be read')).toBeVisible();
-    expect(screen.getByText(/VPC lookup failed/)).toBeVisible();
-    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(field('Security groups').findControl()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+        'The security groups could not be read',
+      ),
+    );
+    expect(field('Security groups').findControl()?.getElement()).toHaveTextContent('VPC lookup failed');
+    expect(groupField().findTrigger().getElement()).not.toHaveTextContent('Choose DB subnet group first');
     expect(groupField().findTrigger().getElement()).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(groupField().findTrigger().getElement()).toBeEnabled());
@@ -715,11 +743,11 @@ describe('security groups on a standalone DB instance', () => {
     );
     expect(groupNames()).toEqual(['sg-a', 'sg-b']);
     expect(trigger('DB subnet group')).toHaveTextContent('default');
-    expect(screen.getByText("Checking the DB subnet group's VPC")).toHaveAttribute('role', 'status');
-    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    expect(groupAnnouncements()).toContain("Checking the DB subnet group's VPC");
+    expect(groupField().findTrigger().getElement()).not.toHaveTextContent('Choose DB subnet group first');
     await act(async () => pending.resolve(GROUPS.slice(0, 2)));
     await waitFor(() => expect(groupNames()).toEqual(['Group A', 'Group B']));
-    expect(screen.queryByText("Checking the DB subnet group's VPC")).not.toBeInTheDocument();
+    expect(groupAnnouncements()).not.toContain("Checking the DB subnet group's VPC");
   });
 
   it('keeps groups by their own VPC when changing the subnet group', async () => {
@@ -738,7 +766,7 @@ describe('security groups on a standalone DB instance', () => {
     await waitFor(() => expect(groupNames()).toEqual(['Group B', 'sg-missing']));
     await choose('DB subnet group', 'third');
     expect(groupNames()).toEqual([]);
-    expect(screen.getByText('Choose security groups of vpc-c')).toBeInTheDocument();
+    expect(field('Security groups').findError()?.getElement()).toHaveTextContent('Choose security groups of vpc-c');
     expect(save()).toBeDisabled();
     const groups = groupField();
     groups.openDropdown();
@@ -774,7 +802,7 @@ describe('security groups on a standalone DB instance', () => {
 
     await choose('DB subnet group', 'second');
     expect(groupNames()).toEqual([]);
-    expect(screen.getByText('Choose security groups of vpc-b')).toBeInTheDocument();
+    expect(field('Security groups').findError()?.getElement()).toHaveTextContent('Choose security groups of vpc-b');
     expect(save()).toBeDisabled();
 
     const groups = groupField();
@@ -787,7 +815,7 @@ describe('security groups on a standalone DB instance', () => {
 
     await choose('DB subnet group', 'default');
     expect(groupNames()).toEqual(['Group A']);
-    expect(screen.queryByText('Choose security groups of vpc-a')).toBeNull();
+    expect(field('Security groups').findError()).toBeNull();
     expect(save()).toBeDisabled();
 
     fireEvent.click(protection());
@@ -838,7 +866,11 @@ describe('security groups on a standalone DB instance', () => {
       const onSave = open(mixedGroups);
       await opened();
       if (kind === 'not-implemented') {
-        await screen.findByText('Not implemented by the emulator');
+        await waitFor(() =>
+          expect(field('Security groups').findControl()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Not implemented by the emulator',
+          ),
+        );
         expect(field('Security groups').getElement()).toHaveTextContent(security.DESCRIBE_SECURITY_GROUPS);
       } else {
         await screen.findByRole('button', { name: 'Retry' });
