@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { ChoiceSource } from '../../components/use-paged-choices';
-import { noEndpoint } from '../../components/use-token-listing';
+import { failureOf, noEndpoint } from '../../components/use-token-listing';
 import {
   listSubnetChoices,
   listVpcChoices,
@@ -17,6 +17,7 @@ import {
   listGroupChoices,
   listImageChoices,
   listInstanceTypeChoices,
+  listInstanceTypeOfferings,
   listKeyPairChoices,
   type GroupChoice,
   type ImageChoice,
@@ -25,94 +26,105 @@ import {
 } from './choices-api';
 import { EC2_KEYS } from './queries';
 
-// Where EC2's forms take their choices from (issue 553, design task 2): each list a source of the area's paged
-// choice field, read by its own reader a page of 50 at a time, under a key of `EC2_KEYS.choices` that holds what the
-// source filters by. The images', the instance types' and the groups' typed text is sent as their filter; the
-// subnets' and the VPCs' fields take none; the key pairs come in one answer and a typed text narrows it. The
-// security groups of the launch form are those of one VPC: the chosen subnet's, else the default VPC's, else every
-// group's.
-
 function tokenPage<T>(page: ChoicePage<T>) {
   return page.nextToken === undefined ? { items: page.choices } : { items: page.choices, next: page.nextToken };
 }
 
-/** The present values of `values`, in order. */
-function present(...values: (string | undefined)[]): string[] {
-  return values.filter((value): value is string => value !== undefined && value !== '');
+function described(...values: (string | undefined)[]) {
+  const description = values.filter(Boolean).join(' · ');
+  return description === '' ? {} : { description };
 }
 
-/** The images: each its name, with its ID, architecture and platform. */
 export function imageChoices(endpoint: string | undefined): ChoiceSource<ImageChoice> {
   return {
     key: EC2_KEYS.choices('images'),
     endpoint,
     operation: CHOICE_OPERATIONS.describeImages,
     filtering: 'sent',
+    readAgainOnOpen: true,
     read: async (at, text, token, signal) => tokenPage(await listImageChoices(at, text, token, signal)),
     optionOf: (image) => ({
       value: image.id,
       label: image.name ?? image.id,
-      tags: present(image.id, image.architecture, image.platform),
+      tags: [image.id],
+      ...described(image.architecture, image.description),
     }),
   };
 }
 
-/** The instance types: each the type, with its vCPUs, memory and architectures. */
-export function instanceTypeChoices(endpoint: string | undefined): ChoiceSource<InstanceTypeChoice> {
+/** Only the zone's offered types are returned, advancing past pages filtered to empty. */
+export function instanceTypeChoices(
+  endpoint: string | undefined,
+  zone?: string,
+  offerings?: ReadonlySet<string>,
+): ChoiceSource<InstanceTypeChoice> {
   return {
-    key: EC2_KEYS.choices('instance-types'),
+    key: EC2_KEYS.choices('instance-types', zone ?? null),
     endpoint,
     operation: CHOICE_OPERATIONS.describeInstanceTypes,
     filtering: 'sent',
-    read: async (at, text, token, signal) => tokenPage(await listInstanceTypeChoices(at, text, token, signal)),
+    ready: zone === undefined || offerings !== undefined,
+    read: async (at, text, token, signal) => {
+      if (offerings?.size === 0) return { items: [] };
+      let page = await listInstanceTypeChoices(at, text, token, signal);
+      if (offerings === undefined) return tokenPage(page);
+      while (true) {
+        const choices = page.choices.filter(({ type }) => offerings.has(type));
+        if (choices.length > 0 || page.nextToken === undefined) return tokenPage({ ...page, choices });
+        page = await listInstanceTypeChoices(at, text, page.nextToken, signal);
+      }
+    },
     optionOf: (info) => ({
       value: info.type,
       label: info.type,
-      tags: present(
-        info.vcpus === undefined ? undefined : `${String(info.vcpus)} vCPU${info.vcpus === 1 ? '' : 's'}`,
-        info.memoryMiB === undefined ? undefined : `${String(info.memoryMiB)} MiB`,
+      ...described(
+        info.vcpus === undefined ? undefined : `${String(info.vcpus)} vCPU`,
+        info.memoryMiB === undefined ? undefined : `${String(info.memoryMiB / 1024)} GiB`,
         info.architectures.join(', '),
       ),
     }),
   };
 }
 
-/** The subnets: each its ID, with its Availability Zone, CIDR block and VPC. The field takes no typed text. */
-export function subnetChoices(endpoint: string | undefined): ChoiceSource<SubnetChoice> {
+export function subnetChoices(endpoint: string | undefined, vpcId: string | undefined): ChoiceSource<SubnetChoice> {
   return {
-    key: EC2_KEYS.choices('subnets'),
+    key: EC2_KEYS.choices('subnets', vpcId ?? null),
     endpoint,
     operation: NETWORK_CHOICE_OPERATIONS.describeSubnets,
     filtering: 'none',
-    read: async (at, _text, token, signal) => tokenPage(await listSubnetChoices(at, token, signal)),
+    readAgainOnOpen: true,
+    read: async (at, _text, token, signal) => tokenPage(await listSubnetChoices(at, token, signal, vpcId)),
     optionOf: (subnet) => ({
       value: subnet.id,
       label: subnet.id,
-      tags: present(subnet.zone, subnet.cidr, subnet.vpcId),
+      ...described(
+        subnet.zone,
+        subnet.cidr,
+        subnet.availableIpAddressCount === undefined
+          ? undefined
+          : `${String(subnet.availableIpAddressCount)} free addresses`,
+      ),
     }),
   };
 }
 
-/** The VPCs: each its ID, with its CIDR block and whether it is the default. The field takes no typed text. */
 export function vpcChoices(endpoint: string | undefined): ChoiceSource<VpcChoice> {
   return {
     key: EC2_KEYS.choices('vpcs'),
     endpoint,
     operation: NETWORK_CHOICE_OPERATIONS.describeVpcs,
     filtering: 'none',
+    readAgainOnOpen: true,
     read: async (at, _text, token, signal) => tokenPage(await listVpcChoices(at, token, signal)),
     optionOf: (vpc) => ({
       value: vpc.id,
       label: vpc.id,
-      tags: present(vpc.cidr, vpc.isDefault ? 'Default' : undefined),
+      ...described(vpc.cidr),
+      ...(vpc.isDefault ? { tags: ['Default VPC'] } : {}),
     }),
   };
 }
 
-/**
- * The security groups of the VPC `vpcId`, or every group's when it is `undefined`: each its name, with its ID.
- * `ready` `false` keeps the field loading and asks nothing, while what it filters by is still read.
- */
 export function groupChoices(
   endpoint: string | undefined,
   vpcId: string | undefined,
@@ -124,6 +136,7 @@ export function groupChoices(
     operation: CHOICE_OPERATIONS.describeSecurityGroups,
     filtering: 'sent',
     ready,
+    readAgainOnOpen: true,
     read: async (at, text, token, signal) =>
       tokenPage(
         await listGroupChoices(
@@ -133,40 +146,29 @@ export function groupChoices(
           signal,
         ),
       ),
-    optionOf: (group) => ({ value: group.id, label: group.name ?? group.id, description: group.id }),
+    optionOf: (group) => ({
+      value: group.id,
+      label: group.name ?? group.id,
+      ...described(group.id, group.description),
+    }),
   };
 }
 
-/**
- * The key pairs, in one answer with no "more"; a typed text narrows what that answer holds. They are read again each
- * time the field is opened again.
- */
 export function keyPairChoices(endpoint: string | undefined): ChoiceSource<KeyPairChoice> {
   return {
     key: EC2_KEYS.choices('key-pairs'),
     endpoint,
     operation: CHOICE_OPERATIONS.describeKeyPairs,
     filtering: 'local',
-    // A key pair made in another tab ("Create key pair") is offered the next time the field is opened.
     readAgainOnOpen: true,
     read: async (at, _text, _token, signal) => ({ items: await listKeyPairChoices(at, signal) }),
-    optionOf: (pair) => ({ value: pair.name, label: pair.name }),
+    optionOf: (pair) => ({ value: pair.name, label: pair.name, ...described(pair.type) }),
   };
 }
 
-/** A number per mount, so a read of an earlier mount is never shown. */
 let mounts = 0;
 
-/** The default VPC as the launch form knows it. */
-export interface DefaultVpc {
-  /** Its ID; `undefined` when the emulator answered none, or the read failed. */
-  vpcId: string | undefined;
-  /** The read is answered or failed. */
-  settled: boolean;
-}
-
-/** The default VPC: `DescribeVpcs` with `is-default` `true`, read once on mount. A failure reads as none. */
-export function useDefaultVpc(endpoint: string | undefined): DefaultVpc {
+export function useDefaultVpc(endpoint: string | undefined) {
   const [mount] = useState(() => (mounts += 1));
   const query = useQuery({
     queryKey: [...EC2_KEYS.choices('default-vpc'), endpoint, mount],
@@ -177,29 +179,30 @@ export function useDefaultVpc(endpoint: string | undefined): DefaultVpc {
     gcTime: 0,
     retry: false,
   });
-  return { vpcId: query.isSuccess ? (query.data ?? undefined) : undefined, settled: query.isSuccess || query.isError };
-}
-
-/** The launch form's security groups: the VPC they are chosen in, and their source. */
-export interface LaunchGroups {
-  /** The VPC whose groups are offered; `undefined` for every group's. */
-  vpcId: string | undefined;
-  /** The VPC the groups would be of for a subnet of VPC `subnetVpcId`, or with no subnet (`undefined`). */
-  vpcFor: (subnetVpcId: string | undefined) => string | undefined;
-  source: ChoiceSource<GroupChoice>;
-}
-
-/**
- * The launch form's security groups: those of the chosen subnet's VPC `subnetVpcId`; with no subnet chosen, the
- * default VPC's once it is read, or every group's when it is none or its read failed.
- */
-export function useLaunchGroups(endpoint: string | undefined, subnetVpcId: string | undefined): LaunchGroups {
-  const defaultVpc = useDefaultVpc(endpoint);
-  const vpcFor = (subnet: string | undefined) => subnet ?? defaultVpc.vpcId;
-  const vpcId = vpcFor(subnetVpcId);
   return {
-    vpcId,
-    vpcFor,
-    source: groupChoices(endpoint, vpcId, subnetVpcId !== undefined || defaultVpc.settled),
+    vpc: query.data ?? undefined,
+    pending: query.isFetching,
+    failure: query.isError && !query.isFetching ? failureOf(query.error, CHOICE_OPERATIONS.describeVpcs) : undefined,
+    retry: () => void query.refetch(),
+  };
+}
+
+export function useInstanceTypeOfferings(endpoint: string | undefined, zone: string | undefined) {
+  const [mount] = useState(() => (mounts += 1));
+  const operation = CHOICE_OPERATIONS.describeInstanceTypeOfferings;
+  const query = useQuery({
+    queryKey: [...EC2_KEYS.choices('instance-type-offerings', zone), endpoint, mount],
+    queryFn: ({ signal }) =>
+      endpoint === undefined || zone === undefined ? noEndpoint() : listInstanceTypeOfferings(endpoint, zone, signal),
+    enabled: endpoint !== undefined && zone !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+  return {
+    types: query.isSuccess && !query.isFetching ? query.data : undefined,
+    pending: query.isFetching,
+    failure: query.isError && !query.isFetching ? failureOf(query.error, operation) : undefined,
+    retry: () => void query.refetch(),
   };
 }

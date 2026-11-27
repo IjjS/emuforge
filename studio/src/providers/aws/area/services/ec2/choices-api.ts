@@ -1,6 +1,7 @@
 import {
   DescribeImagesCommand,
   DescribeInstanceTypesCommand,
+  DescribeInstanceTypeOfferingsCommand,
   DescribeKeyPairsCommand,
   DescribeSecurityGroupsCommand,
   DescribeVpcsCommand,
@@ -8,7 +9,7 @@ import {
 } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text, withValues } from '../../lib/ec2-client';
-import { paged, pageOf, type ChoicePage } from '../../lib/ec2-network-choices';
+import { paged, pageOf, type ChoicePage, type VpcChoice } from '../../lib/ec2-network-choices';
 
 // The reads EC2's forms choose from (issue 553, design task 2): images, instance types and security groups a page
 // of 50 at a time by the API's own token, and key pairs in one answer; the VPCs and the subnets are the area's
@@ -21,6 +22,7 @@ import { paged, pageOf, type ChoicePage } from '../../lib/ec2-network-choices';
 export const CHOICE_OPERATIONS = {
   describeImages: 'DescribeImages',
   describeInstanceTypes: 'DescribeInstanceTypes',
+  describeInstanceTypeOfferings: 'DescribeInstanceTypeOfferings',
   describeVpcs: 'DescribeVpcs',
   describeSecurityGroups: 'DescribeSecurityGroups',
   describeKeyPairs: 'DescribeKeyPairs',
@@ -30,7 +32,7 @@ export interface ImageChoice {
   id: string;
   name?: string;
   architecture?: string;
-  platform?: string;
+  description?: string;
 }
 
 export interface InstanceTypeChoice {
@@ -43,10 +45,12 @@ export interface InstanceTypeChoice {
 export interface GroupChoice {
   id: string;
   name?: string;
+  description?: string;
 }
 
 export interface KeyPairChoice {
   name: string;
+  type?: string;
 }
 
 function number(value: unknown): number | undefined {
@@ -82,7 +86,7 @@ export async function listImageChoices(
             {
               name: text(image.Name),
               architecture: text(image.Architecture),
-              platform: text(image.PlatformDetails),
+              description: text(image.Description),
             },
           ),
         ];
@@ -124,8 +128,39 @@ export async function listInstanceTypeChoices(
   return pageOf(choices, output.NextToken);
 }
 
-/** The default VPC's ID: `DescribeVpcs` with the filter `is-default` `true`; `undefined` when it answers none. */
-export async function getDefaultVpc(endpoint: string, signal: AbortSignal): Promise<string | undefined> {
+/** The type names offered in one zone, across every page. */
+export async function listInstanceTypeOfferings(
+  endpoint: string,
+  zone: string,
+  signal: AbortSignal,
+): Promise<ReadonlySet<string>> {
+  const types = new Set<string>();
+  let token: string | undefined;
+  do {
+    const output = await sendEc2(
+      endpoint,
+      CHOICE_OPERATIONS.describeInstanceTypeOfferings,
+      (client, abortSignal) =>
+        client.send(
+          new DescribeInstanceTypeOfferingsCommand({
+            LocationType: 'availability-zone',
+            ...paged([{ Name: 'location', Values: [zone] }], token),
+          }),
+          { abortSignal },
+        ),
+      signal,
+    );
+    for (const offering of output.InstanceTypeOfferings ?? []) {
+      const type = text(offering.InstanceType);
+      if (type !== undefined) types.add(type);
+    }
+    token = text(output.NextToken);
+  } while (token !== undefined);
+  return types;
+}
+
+/** The default VPC: `DescribeVpcs` with the filter `is-default` `true`; `undefined` when it answers none. */
+export async function getDefaultVpc(endpoint: string, signal: AbortSignal): Promise<VpcChoice | undefined> {
   const output = await sendEc2(
     endpoint,
     CHOICE_OPERATIONS.describeVpcs,
@@ -136,7 +171,7 @@ export async function getDefaultVpc(endpoint: string, signal: AbortSignal): Prom
   for (const vpc of output.Vpcs ?? []) {
     const id = text(vpc.VpcId);
     if (id !== undefined) {
-      return id;
+      return withValues<VpcChoice>({ id, isDefault: true }, { cidr: text(vpc.CidrBlock) });
     }
   }
   return undefined;
@@ -167,7 +202,9 @@ export async function listGroupChoices(
   );
   const choices = (output.SecurityGroups ?? []).flatMap((group) => {
     const id = text(group.GroupId);
-    return id === undefined ? [] : [withValues<GroupChoice>({ id }, { name: text(group.GroupName) })];
+    return id === undefined
+      ? []
+      : [withValues<GroupChoice>({ id }, { name: text(group.GroupName), description: text(group.Description) })];
   });
   return pageOf(choices, output.NextToken);
 }
@@ -182,6 +219,6 @@ export async function listKeyPairChoices(endpoint: string, signal: AbortSignal):
   );
   return (output.KeyPairs ?? []).flatMap((pair) => {
     const name = text(pair.KeyName);
-    return name === undefined ? [] : [{ name }];
+    return name === undefined ? [] : [withValues<KeyPairChoice>({ name }, { type: text(pair.KeyType) })];
   });
 }

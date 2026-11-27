@@ -18,13 +18,13 @@ import {
 import { AreaModal } from '../../../components/area-modal';
 import { useChoiceField } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { actionFailureItem, readFailureState } from '../../../components/failure-states';
+import { actionFailureItem, ReadFailure, readFailureState } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
 import { ValueText } from '../../../components/value-text';
 import type { Instance } from '../api';
 import type { GroupChoice, InstanceTypeChoice } from '../choices-api';
-import { groupChoices, instanceTypeChoices } from '../choices-queries';
+import { groupChoices, instanceTypeChoices, useInstanceTypeOfferings } from '../choices-queries';
 import { MODIFY_INSTANCE_ATTRIBUTE, type InstanceAttributeChange } from '../instance-attribute-api';
 import type { InstanceAttributeWrites } from '../instance-attribute-queries';
 
@@ -64,23 +64,33 @@ function useAttributeChoices<T>({ source, connection, onUnsupported }: FieldProp
 }
 
 function TypeFields({
-  source,
+  zone,
   connection,
   pending,
   onUnsupported,
   current,
   children,
-}: FieldProps<InstanceTypeChoice> & {
+}: Omit<FieldProps<InstanceTypeChoice>, 'source'> & {
+  zone: string | undefined;
   current: string | undefined;
   children: (change: InstanceAttributeChange | undefined, field: ReactNode) => ReactNode;
 }) {
   const [selected, setSelected] = useState<InstanceTypeChoice>();
-  const { choices, items, options, props } = useAttributeChoices(
+  const offerings = useInstanceTypeOfferings(connection.engineOrigin, zone);
+  const source = instanceTypeChoices(connection.engineOrigin, zone, offerings.types);
+  const checking = zone !== undefined && offerings.types === undefined;
+  const failure = offerings.failure && readFailureState(offerings.failure, connection, 'instance types');
+  const { choices, fieldRef, items, options, props } = useAttributeChoices(
     { source, connection, pending, onUnsupported },
     'instance types',
   );
   const change =
-    !choices.loading && choices.failure === undefined && selected !== undefined && selected.type !== current
+    !checking &&
+    !choices.loading &&
+    choices.failure === undefined &&
+    selected !== undefined &&
+    selected.type !== current &&
+    (offerings.types?.has(selected.type) ?? true)
       ? ({ kind: 'type', type: selected.type } as const)
       : undefined;
   return children(
@@ -95,17 +105,30 @@ function TypeFields({
         )
       }
     >
-      <Select
-        {...props}
-        placeholder="Choose an instance type"
-        dropdownRole="dialog"
-        disabled={pending}
-        options={options}
-        selectedOption={selected === undefined ? null : source.optionOf(selected)}
-        onChange={({ detail }) => {
-          setSelected(items.find(({ type }) => type === detail.selectedOption.value));
-        }}
-      />
+      <div ref={fieldRef}>
+        <Select
+          {...props}
+          empty={zone === undefined || choices.text !== '' ? props.empty : `No instance types in ${zone}`}
+          placeholder="Choose an instance type"
+          dropdownRole="dialog"
+          disabled={pending || checking}
+          options={options}
+          selectedOption={selected === undefined ? null : source.optionOf(selected)}
+          onChange={({ detail }) => {
+            setSelected(items.find(({ type }) => type === detail.selectedOption.value));
+          }}
+        />
+      </div>
+      {offerings.pending && <StatusIndicator type="loading">Checking Instance type</StatusIndicator>}
+      {failure !== undefined &&
+        (offerings.failure?.kind === 'not-implemented' ? (
+          <SpaceBetween size="xxs">
+            <StatusIndicator type={failure.type}>{failure.first}</StatusIndicator>
+            <Box variant="small">The emulator answered 501 Not Implemented for {offerings.failure.operation}.</Box>
+          </SpaceBetween>
+        ) : (
+          <ReadFailure state={failure} onRetry={offerings.retry} />
+        ))}
     </FormField>,
   );
 }
@@ -122,36 +145,38 @@ function GroupFields({
   children: (change: InstanceAttributeChange | undefined, field: ReactNode) => ReactNode;
 }) {
   const [selected, setSelected] = useState(current);
-  const { choices, items, options, props } = useAttributeChoices(
+  const { choices, fieldRef, items, options, props } = useAttributeChoices(
     { source, connection, pending, onUnsupported },
     'security groups',
   );
   const ids = selected.map(({ id }) => id);
   const changed = ids.length !== current.length || current.some(({ id }) => !ids.includes(id));
   const change =
-    !choices.loading && choices.failure === undefined && choices.choices !== undefined && ids.length > 0 && changed
+    !choices.loading && choices.failure === undefined && ids.length > 0 && changed
       ? ({ kind: 'groups', groupIds: ids } as const)
       : undefined;
   return children(
     change,
     <FormField label="Security groups" constraintText="Select at least one security group.">
-      <Multiselect
-        {...props}
-        placeholder="Choose security groups"
-        disabled={pending}
-        options={options}
-        selectedOptions={selected.map(source.optionOf)}
-        deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
-        onChange={({ detail }) => {
-          const known = new Map([...selected, ...items].map((group) => [group.id, group]));
-          setSelected(
-            detail.selectedOptions.flatMap(({ value }) => {
-              const group = value === undefined ? undefined : known.get(value);
-              return group === undefined ? [] : [group];
-            }),
-          );
-        }}
-      />
+      <div ref={fieldRef}>
+        <Multiselect
+          {...props}
+          placeholder="Choose security groups"
+          disabled={pending}
+          options={options}
+          selectedOptions={selected.map(source.optionOf)}
+          deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
+          onChange={({ detail }) => {
+            const known = new Map([...selected, ...items].map((group) => [group.id, group]));
+            setSelected(
+              detail.selectedOptions.flatMap(({ value }) => {
+                const group = value === undefined ? undefined : known.get(value);
+                return group === undefined ? [] : [group];
+              }),
+            );
+          }}
+        />
+      </div>
     </FormField>,
   );
 }
@@ -325,7 +350,7 @@ function AttributeDialog({
   const fields = { connection, pending, onUnsupported };
   if (editor.kind === 'type') {
     return (
-      <TypeFields {...fields} current={instance.type} source={instanceTypeChoices(endpoint)}>
+      <TypeFields {...fields} current={instance.type} zone={instance.zone}>
         {renderDialog}
       </TypeFields>
     );

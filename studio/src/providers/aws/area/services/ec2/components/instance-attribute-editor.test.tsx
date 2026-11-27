@@ -8,7 +8,7 @@ import { RequestError, requestFailure } from '../../../../../../lib/aws/request'
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as instanceApi from '../api';
-import { listGroupChoices, listInstanceTypeChoices } from '../choices-api';
+import { listGroupChoices, listInstanceTypeChoices, listInstanceTypeOfferings } from '../choices-api';
 import { MODIFY_INSTANCE_ATTRIBUTE, modifyInstanceAttribute } from '../instance-attribute-api';
 import { EC2_KEYS } from '../queries';
 
@@ -22,6 +22,7 @@ vi.mock('../choices-api', async (original) => ({
   ...(await original<typeof import('../choices-api')>()),
   listGroupChoices: vi.fn(),
   listInstanceTypeChoices: vi.fn(),
+  listInstanceTypeOfferings: vi.fn(),
 }));
 
 vi.mock('../instance-attribute-api', async (original) => ({
@@ -40,6 +41,7 @@ const CORE: instanceApi.Instance = {
   id: 'i-561',
   state: 'stopped',
   type: 't3.micro',
+  zone: 'us-east-1b',
   volumes: [],
   tags: [],
   groups: [ALPHA, CHARLIE],
@@ -47,8 +49,8 @@ const CORE: instanceApi.Instance = {
 const TYPE = 'Change instance type';
 const GROUPS = 'Change security groups';
 const PROTECTION = 'Change termination protection';
-const LARGE = { type: 't3.large', architectures: [] };
-const BETA = { id: 'sg-b', name: 'beta' };
+const LARGE = { type: 't3.large', vcpus: 2, memoryMiB: 8192, architectures: ['x86_64'] };
+const BETA = { id: 'sg-b', name: 'beta', description: 'Web tier' };
 const PAGE = createWrapper(document.body);
 
 function renderEditor(instance = { ...CORE, vpcId: 'vpc-1' } as instanceApi.Instance) {
@@ -137,6 +139,7 @@ function tokens() {
 }
 
 async function selectLarge() {
+  await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
   typeField().openDropdown();
   await waitFor(() => expect(typeField().findDropdown().findOptionByValue(LARGE.type)).not.toBeNull());
   typeField().selectOptionByValue(LARGE.type);
@@ -171,6 +174,7 @@ beforeEach(() => {
   );
   vi.mocked(instanceApi.getTerminationProtection).mockResolvedValue(false);
   vi.mocked(listInstanceTypeChoices).mockResolvedValue({ choices: [LARGE] });
+  vi.mocked(listInstanceTypeOfferings).mockResolvedValue(new Set([CORE.type ?? '', LARGE.type]));
   vi.mocked(listGroupChoices).mockResolvedValue({ choices: [BETA] });
 });
 
@@ -184,6 +188,7 @@ describe('instance attribute editor', () => {
     renderEditor();
     const dialog = await edit(TYPE);
     expect(dialog.findContent().findFormField()?.findDescription()?.getElement()).toHaveTextContent('t3.micro');
+    await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
     typeField().openDropdown();
     await loadMore(typeField());
     await waitFor(() => expect(typeField().findDropdown().findOptionByValue(LARGE.type)).not.toBeNull());
@@ -196,6 +201,68 @@ describe('instance attribute editor', () => {
     await waitFor(() => expect(PAGE.findModal()).toBeNull());
     expect(pairValue('Type')?.getElement()).toHaveTextContent('t3.micro');
     expect(modifyInstanceAttribute).not.toHaveBeenCalled();
+  });
+
+  it('offers only the instance zone’s types and shows their specifications', async () => {
+    vi.mocked(listInstanceTypeOfferings).mockResolvedValue(new Set([LARGE.type]));
+    vi.mocked(listInstanceTypeChoices).mockResolvedValue({
+      choices: [LARGE, { type: 't4g.nano', architectures: ['arm64'] }],
+    });
+    renderEditor();
+    await edit(TYPE);
+    await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
+    expect(listInstanceTypeOfferings).toHaveBeenCalledWith(ENDPOINT, CORE.zone, expect.any(AbortSignal));
+    typeField().openDropdown();
+    const dropdown = typeField().findDropdown();
+    await waitFor(() =>
+      expect(dropdown.findOptionByValue(LARGE.type)?.getElement()).toHaveTextContent('2 vCPU · 8 GiB · x86_64'),
+    );
+    expect(dropdown.findOptionByValue('t4g.nano')).toBeNull();
+  });
+
+  it('reports an unsupported offerings read inside the editor and offers no type', async () => {
+    const operation = 'DescribeInstanceTypeOfferings';
+    vi.mocked(listInstanceTypeOfferings).mockRejectedValueOnce(
+      sdkRefusal(operation, 'NotImplemented', 'Unavailable', 501),
+    );
+    renderEditor();
+    const dialog = await edit(TYPE);
+    const content = within(dialog.findContent().getElement());
+    expect(await content.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(content.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
+    expect(typeField().findTrigger().getElement()).toBeDisabled();
+    expect(isDisabled(saveButton(dialog))).toBe(true);
+    expect(listInstanceTypeChoices).not.toHaveBeenCalled();
+    expect(content.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the new instance type and success result when a read started before save answers last', async () => {
+    const { client } = renderEditor();
+    const dialog = await enterDraft(TYPE);
+    let resolveOld: (value: instanceApi.InstanceRead) => void = () => undefined;
+    const old = new Promise<instanceApi.InstanceRead>((resolve) => {
+      resolveOld = resolve;
+    });
+    vi.mocked(instanceApi.getInstance)
+      .mockReturnValueOnce(old)
+      .mockResolvedValue({ found: true, instance: { ...CORE, vpcId: 'vpc-1', type: LARGE.type } });
+    const beforeSave = client.invalidateQueries({ queryKey: EC2_KEYS.instance(CORE.id) });
+    await waitFor(() => expect(instanceApi.getInstance).toHaveBeenCalledTimes(2));
+    fireEvent.click(saveButton(dialog));
+    expect(await screen.findByText('Instance type updated.')).toBeVisible();
+    await waitFor(() => expect(pairValue('Type')?.getElement()).toHaveTextContent(LARGE.type));
+    await act(async () => {
+      resolveOld({ found: true, instance: CORE });
+      await beforeSave;
+    });
+    expect(pairValue('Type')?.getElement()).toHaveTextContent(LARGE.type);
+    expect(screen.getByText('Instance type updated.')).toBeVisible();
+    expect(modifyInstanceAttribute).toHaveBeenCalledExactlyOnceWith(
+      ENDPOINT,
+      CORE.id,
+      { kind: 'type', type: LARGE.type },
+      expect.any(AbortSignal),
+    );
   });
 
   it('blocks an open type editor when a newer read says the instance is starting', async () => {
@@ -252,8 +319,9 @@ describe('instance attribute editor', () => {
     groupField().findToken(1)?.findDismiss().click();
     expect(tokens()).toEqual([]);
     expect(isDisabled(saveButton(dialog))).toBe(true);
-    await selectBeta();
     groupField().openDropdown();
+    await waitFor(() => expect(groupField().findDropdown().findOptionByValue(BETA.id)).not.toBeNull());
+    groupField().selectOptionByValue(BETA.id);
     await loadMore(groupField());
     await waitFor(() => expect(groupField().findDropdown().findOptionByValue('sg-c')).not.toBeNull());
     expect(listGroupChoices).toHaveBeenLastCalledWith(
@@ -280,6 +348,7 @@ describe('instance attribute editor', () => {
     groupField().openDropdown();
     await waitFor(() => expect(groupField().findDropdown().findOptionByValue(BETA.id)).not.toBeNull());
     expect(groupField().findDropdown().findOptionByValue('sg-x')).toBeNull();
+    expect(groupField().findDropdown().findOptionByValue(BETA.id)?.getElement()).toHaveTextContent('sg-b · Web tier');
     expect(listGroupChoices).toHaveBeenCalledWith(ENDPOINT, { vpcId: 'vpc-1' }, undefined, expect.any(AbortSignal));
   });
 
@@ -298,6 +367,7 @@ describe('instance attribute editor', () => {
     );
     renderEditor();
     const dialog = await edit(TYPE);
+    await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
     typeField().openDropdown();
     await waitFor(() => {
       expect(typeField().findStatusIndicator()?.getElement()).toHaveTextContent(
@@ -368,8 +438,10 @@ describe('instance attribute editor', () => {
     renderEditor();
     if (label !== PROTECTION) {
       await edit(label);
-      if (label === TYPE) typeField().openDropdown();
-      else groupField().openDropdown();
+      if (label === TYPE) {
+        await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
+        typeField().openDropdown();
+      } else groupField().openDropdown();
     }
     const action = await screen.findByRole('button', { name: label });
     const result =
