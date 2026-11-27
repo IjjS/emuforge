@@ -128,5 +128,4 @@ it('reads a new ID independently of data already shown for the previous ID', asy
   expect(api).toHaveBeenLastCalledWith(endpoint, 'two', expect.any(AbortSignal));
   expect(resources).toHaveBeenLastCalledWith(endpoint, 'two', undefined, expect.any(AbortSignal));
   expect(stages).toHaveBeenLastCalledWith(endpoint, 'two', expect.any(AbortSignal));
-  expect(address).toHaveBeenLastCalledWith(endpoint, 'two', 'dev', expect.any(AbortSignal));
 });

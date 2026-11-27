@@ -77,7 +77,7 @@ function open(activeConnection = connection) {
     </QueryClientProvider>
   );
   const { rerender } = render(app(activeConnection));
-  return Object.assign(user, { setConnection: (active: AreaConnection) => rerender(app(active)) });
+  return { user, setConnection: (active: AreaConnection) => rerender(app(active)) };
 }
 
 const root = () => createWrapper(document.body);
@@ -140,7 +140,7 @@ it('shows the two stage addresses as plain text with just one GetStages request'
     return Response.json({ item: stages });
   });
 
-  const user = open();
+  const { user } = open();
   await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
   expect(table()?.findHeaderSlot()?.getElement()).toHaveTextContent(
     'A stage serves the API as it was when last deployed. Deploy again after you change resources or methods.',
@@ -165,7 +165,7 @@ it('shows the two stage addresses as plain text with just one GetStages request'
 });
 
 it('copies exactly the invoke URL shown in the row and confirms the copy', async () => {
-  const user = open();
+  const { user } = open();
   await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
   const address = addressCell(2);
   assert(address);
@@ -314,7 +314,7 @@ it.each(readFailures())(
   'shows and retries the failed GetStages state after $first',
   async ({ failure, first, detail, connection, recovery }) => {
     readStages.mockRejectedValueOnce(new RequestError(failure));
-    const user = open(connection);
+    const { user, setConnection } = open(connection);
     await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent(detail));
     const empty = table()?.findEmptySlot()?.getElement();
     assert(empty);
@@ -323,7 +323,7 @@ it.each(readFailures())(
     await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
     if (connection.result?.kind !== 'connected') {
       expectNoAddresses();
-      user.setConnection(connectedAt(endpoint));
+      setConnection(connectedAt(endpoint));
     }
     expectAddresses(['dev', 'prod']);
   },
@@ -397,7 +397,7 @@ const changes = [
 ];
 
 it.each(changes)('shows the $action result and closes the dialog before refreshing stages', async (change) => {
-  const user = open();
+  const { user } = open();
   await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
   expect(stageAction('Delete')).toBeDisabled();
   const feedbackAtRead = () => ({
@@ -427,7 +427,7 @@ it.each(orderCases)(
     const staleStages = deferred<Stage[]>();
     const freshStages = deferred<Stage[]>();
     const readFreshStages = vi.fn(() => freshStages.promise);
-    const user = open();
+    const { user } = open();
     await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
     readStages.mockReturnValueOnce(staleStages.promise);
     await user.click(stageAction('Refresh'));

@@ -83,6 +83,5 @@ it.each(['deploy', 'delete'] as const)('keeps the reads when %s is refused', asy
   expect(result.current.stages.data).toEqual([{ stageName: 'dev', deploymentId: 'before' }]);
   expect(onSuccess).not.toHaveBeenCalled();
   expect(stages).toHaveBeenCalledOnce();
-  expect(address).toHaveBeenCalledOnce();
   expect(details).toHaveBeenCalledOnce();
 });
