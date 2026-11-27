@@ -203,14 +203,13 @@ async function chooseVpc(id: string) {
   await chooseOpenVpc(id);
 }
 
+function vpcOption(id: string) {
+  return screen.getByRole('option', { name: (name) => name.includes(id) });
+}
+
 async function chooseOpenVpc(id: string) {
-  const select = vpcSelect();
-  await waitFor(() => {
-    const option = select.findDropdown().findOptionByValue(id)?.getElement();
-    expect(option).toBeInTheDocument();
-    expect(option).not.toHaveAttribute('aria-disabled', 'true');
-  });
-  select.selectOptionByValue(id);
+  await waitFor(() => expect(vpcOption(id)).not.toHaveAttribute('aria-disabled', 'true'));
+  vpcSelect().selectOptionByValue(id);
 }
 
 function attachButton() {
@@ -554,8 +553,7 @@ describe('Attach internet gateway', () => {
   });
 
   const optionText = (id: string) => text(vpcSelect().findDropdown().findOptionByValue(id)?.getElement());
-  const optionDisabled = (id: string) =>
-    vpcSelect().findDropdown().findOptionByValue(id)?.getElement().getAttribute('aria-disabled') === 'true';
+  const optionDisabled = (id: string) => vpcOption(id).getAttribute('aria-disabled') === 'true';
 
   async function openChoices() {
     const select = vpcSelect();
