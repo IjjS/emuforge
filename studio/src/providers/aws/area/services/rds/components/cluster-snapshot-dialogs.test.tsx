@@ -131,12 +131,16 @@ const SECURITY_GROUPS = 'Security groups - optional';
 const ZONES = 'Availability Zones';
 
 async function choose(label: string, value: string) {
-  const field = label === SECURITY_GROUPS || label === ZONES ? multiselectIn(label) : selectIn(label);
-  await waitFor(() => expect(field.findTrigger().getElement()).toBeEnabled());
+  const multi = label === SECURITY_GROUPS || label === ZONES;
+  const field = await waitFor(() => {
+    const ready = multi ? multiselectIn(label) : selectIn(label);
+    expect(ready.findTrigger().getElement()).toBeEnabled();
+    return ready;
+  });
   field.openDropdown();
   await waitFor(() => expect(field.findDropdown().findOptionByValue(value)).not.toBeNull());
   field.selectOptionByValue(value);
-  if (label === SECURITY_GROUPS || label === ZONES) field.closeDropdown();
+  if (multi) field.closeDropdown();
 }
 
 function unsupported(operation: string) {

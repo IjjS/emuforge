@@ -179,11 +179,14 @@ const SECURITY_GROUPS = 'Security groups - optional';
 const ZONES = 'Availability Zones';
 
 async function choose(field: string, value: string) {
-  const wrapper = restoreField(field);
   const multi = field === SECURITY_GROUPS || field === ZONES;
-  const select = multi ? wrapper.findMultiselect() : wrapper.findSelect();
-  if (select === null) throw new Error(`Missing choice for ${field}.`);
-  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
+  const select = await waitFor(() => {
+    const wrapper = restoreField(field);
+    const ready = multi ? wrapper.findMultiselect() : wrapper.findSelect();
+    if (ready === null) throw new Error(`Missing choice for ${field}.`);
+    expect(ready.findTrigger().getElement()).toBeEnabled();
+    return ready;
+  });
   select.openDropdown();
   await waitFor(() => expect(select.findDropdown().findOptionByValue(value)).not.toBeNull());
   select.selectOptionByValue(value);
