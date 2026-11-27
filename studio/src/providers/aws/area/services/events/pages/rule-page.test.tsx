@@ -204,18 +204,19 @@ const refused = (operation: string, message: string) =>
 
 type Page = ReturnType<typeof createWrapper>;
 
-function headerAction(page: Page, name: string) {
-  const button = page
-    .findHeader()
-    ?.findActions()
-    ?.findAllButtons()
-    .find((candidate) => candidate.findTextRegion()?.getElement().textContent === name);
-  if (!button) throw new Error(`Expected header button ${name}`);
+const headerPositions = { switch: 0, add: 1, delete: 2 };
+const headerLabels = { switch: 'Disable', add: 'Add target', delete: 'Delete rule' };
+type HeaderAction = keyof typeof headerPositions;
+
+function headerAction(page: Page, action: HeaderAction, label = headerLabels[action]) {
+  const button = page.findHeader()?.findActions()?.findAllButtons()[headerPositions[action]];
+  if (!button) throw new Error(`Expected the ${action} header button`);
+  expect(button.findTextRegion()?.getElement().textContent).toBe(label);
   return button;
 }
 
-function headerButton(page: Page, name: string) {
-  return headerAction(page, name).getElement();
+function headerButton(page: Page, action: HeaderAction, label?: string) {
+  return headerAction(page, action, label).getElement();
 }
 
 async function modal(page: Page) {
@@ -227,8 +228,8 @@ async function modal(page: Page) {
 }
 
 async function openDelete(page: Page) {
-  await waitFor(() => expect(headerButton(page, 'Delete rule')).toBeEnabled());
-  fireEvent.click(headerButton(page, 'Delete rule'));
+  await waitFor(() => expect(headerButton(page, 'delete')).toBeEnabled());
+  fireEvent.click(headerButton(page, 'delete'));
   return modal(page);
 }
 
@@ -310,7 +311,7 @@ it.each([
 ] satisfies [RuleState, string][])('offers the correct switch action in %s', async (state, label) => {
   read.mockResolvedValue(ruleIn(state));
   const { page } = open();
-  await waitFor(() => expect(headerButton(page, label)).toBeEnabled());
+  await waitFor(() => expect(headerButton(page, 'switch', label)).toBeEnabled());
 });
 
 it.each([true, false])('reports the switch to enabled=%s and reads the rule again', async (enable) => {
@@ -320,15 +321,15 @@ it.each([true, false])('reports the switch to enabled=%s and reads the rule agai
     .mockResolvedValueOnce(ruleIn(enable ? 'DISABLED' : 'ENABLED'))
     .mockResolvedValueOnce(ruleIn(enable ? 'ENABLED' : 'DISABLED'));
   const { page, show } = open();
-  const button = await waitFor(() => headerButton(page, enable ? 'Enable' : 'Disable'));
+  const button = await waitFor(() => headerButton(page, 'switch', enable ? 'Enable' : 'Disable'));
   fireEvent.click(button);
-  const action = headerAction(page, enable ? 'Enable' : 'Disable');
+  const action = headerAction(page, 'switch', enable ? 'Enable' : 'Disable');
   expect(action.isDisabled()).toBe(true);
   expect(action.findLoadingIndicator()).not.toBeNull();
   expect(changeState).toHaveBeenCalledExactlyOnceWith(engineOrigin, '..', '.', enable, expect.any(AbortSignal));
 
   await act(async () => pending.resolve(undefined));
-  await waitFor(() => expect(headerButton(page, enable ? 'Disable' : 'Enable')).toBeEnabled());
+  await waitFor(() => expect(headerButton(page, 'switch', enable ? 'Disable' : 'Enable')).toBeEnabled());
   expect(flashText(show)).toBe(`Rule . ${enable ? 'enabled' : 'disabled'}.`);
   expect(read).toHaveBeenCalledTimes(2);
   expect(readTargets).toHaveBeenCalledOnce();
@@ -338,10 +339,10 @@ it('flashes a refused switch with its operation and keeps the rule state', async
   read.mockResolvedValue(ruleIn('ENABLED'));
   changeState.mockRejectedValueOnce(refused('DisableRule', 'Switch refused'));
   const { page, show } = open();
-  fireEvent.click(await waitFor(() => headerButton(page, 'Disable')));
+  fireEvent.click(await waitFor(() => headerButton(page, 'switch')));
   await waitFor(() => expect(show).toHaveBeenCalledOnce());
   expect(flashText(show)).toBe('DisableRule failedValidationException: Switch refused');
-  expect(headerButton(page, 'Disable')).toBeEnabled();
+  expect(headerButton(page, 'switch')).toBeEnabled();
   expect(read).toHaveBeenCalledOnce();
 });
 
@@ -354,13 +355,13 @@ it.each([
     read.mockResolvedValue(ruleIn(state));
     changeState.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: op }));
     const { page, show } = open();
-    fireEvent.click(await waitFor(() => headerButton(page, label)));
+    fireEvent.click(await waitFor(() => headerButton(page, 'switch', label)));
     await waitFor(() => expect(show).toHaveBeenCalledOnce());
     expect(flashText(show)).toContain(
       `Not implemented by the emulatorThe emulator answered 501 Not Implemented for ${op}.`,
     );
-    expect(headerButton(page, label)).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(headerButton(page, label));
+    expect(headerButton(page, 'switch', label)).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(headerButton(page, 'switch', label));
     expect(changeState).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledOnce();
   },
@@ -377,7 +378,7 @@ it.each([
   read.mockResolvedValueOnce(ruleIn('ENABLED')).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
   changeState.mockResolvedValueOnce(undefined);
   const { page, client, show } = open();
-  const disable = await waitFor(() => headerButton(page, 'Disable'));
+  const disable = await waitFor(() => headerButton(page, 'switch'));
   void client.refetchQueries({ queryKey: ['events', 'rule'] });
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   fireEvent.click(disable);
@@ -386,9 +387,9 @@ it.each([
     outcome === 'value' ? old.resolve(ruleIn('ENABLED')) : old.reject(refused(operation, 'Old refusal'));
   if (order === 'before') await act(async () => answerOld());
   await act(async () => fresh.resolve(ruleIn('DISABLED')));
-  await waitFor(() => expect(headerButton(page, 'Enable')).toBeEnabled());
+  await waitFor(() => expect(headerButton(page, 'switch', 'Enable')).toBeEnabled());
   if (order === 'after') await act(async () => answerOld());
-  expect(headerButton(page, 'Enable')).toBeEnabled();
+  expect(headerButton(page, 'switch', 'Enable')).toBeEnabled();
   expect(flashText(show)).toBe('Rule . disabled.');
 });
 
@@ -492,7 +493,7 @@ it('waits for targets then hands off a successful delete to Rules for this bus',
   readTargets.mockReturnValueOnce(targets.promise);
   drop.mockResolvedValueOnce(undefined);
   const { page, handOver, show } = open();
-  await waitFor(() => expect(headerButton(page, 'Delete rule')).toBeDisabled());
+  await waitFor(() => expect(headerButton(page, 'delete')).toBeDisabled());
   await act(async () => targets.resolve([queue]));
   confirmDelete(await openDelete(page));
   await waitFor(() => expect(handOver).toHaveBeenCalledOnce());
@@ -614,8 +615,8 @@ it.each(['ordinary', 'before', 'after'])('refreshes a partial removal behind the
 const addedTarget = { Id: 'delivery', Arn: 'arn:topic' };
 
 async function confirmAdd(page: Page) {
-  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(false));
-  fireEvent.click(headerButton(page, 'Add target'));
+  await waitFor(() => expect(headerAction(page, 'add').isDisabled()).toBe(false));
+  fireEvent.click(headerButton(page, 'add'));
   const dialog = await modal(page);
   const input = dialog.findContent().findInput()?.findNativeInput().getElement();
   if (!input) throw new Error('Expected target ID field');
@@ -637,10 +638,10 @@ it('offers Add target after reading fewer than five targets and opens its dialog
   read.mockResolvedValue(found);
   readTargets.mockReturnValueOnce(pending.promise);
   const { page } = open();
-  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(true));
+  await waitFor(() => expect(headerAction(page, 'add').isDisabled()).toBe(true));
   await act(async () => pending.resolve([queue]));
-  await waitFor(() => expect(headerAction(page, 'Add target').isDisabled()).toBe(false));
-  fireEvent.click(headerButton(page, 'Add target'));
+  await waitFor(() => expect(headerAction(page, 'add').isDisabled()).toBe(false));
+  fireEvent.click(headerButton(page, 'add'));
   expect((await modal(page)).findHeader()?.getElement()).toHaveTextContent('Add target');
 });
 
@@ -650,10 +651,8 @@ it('shows why Add target is unavailable after reading five targets', async () =>
     Array.from({ length: 5 }, (_, i) => ({ Id: String(i), Arn: `arn:target:${String(i)}` })),
   );
   const { page } = open();
-  await waitFor(() =>
-    expect(headerButton(page, 'Add target')).toHaveAccessibleDescription('A rule holds at most 5 targets.'),
-  );
-  expect(headerAction(page, 'Add target').isDisabled()).toBe(true);
+  await waitFor(() => expect(headerButton(page, 'add')).toHaveAccessibleDescription('A rule holds at most 5 targets.'));
+  expect(headerAction(page, 'add').isDisabled()).toBe(true);
 });
 
 it('closes Add target, flashes the result and refreshes the targets', async () => {
@@ -675,8 +674,8 @@ it('reopens Add target with its action unavailable after PutTargets answers 501 
   await waitFor(() => expectUnavailableDialog(dialog, 'PutTargets'));
   expect(dialog.findContent().findInput()?.findNativeInput().getElement()).toHaveValue(addedTarget.Id);
   cancelDialog(dialog);
-  await waitFor(() => expect(headerButton(page, 'Add target')).toBeEnabled());
-  fireEvent.click(headerButton(page, 'Add target'));
+  await waitFor(() => expect(headerButton(page, 'add')).toBeEnabled());
+  fireEvent.click(headerButton(page, 'add'));
   const reopened = await modal(page);
   fireEvent.click(expectUnavailableDialog(reopened, 'PutTargets').getElement());
   expect(readTargets).toHaveBeenCalledTimes(2);
@@ -734,6 +733,7 @@ function HandOverSource() {
   return (
     <button
       type="button"
+      data-testid="hand-over-rule"
       onClick={() => flash.handOver(destination, [{ type: 'warning', content: warning }], offeredNote)}
     >
       {handOverText}
@@ -776,10 +776,10 @@ function openFrame({
     if (pathname !== last.path) setLast({ path: pathname, visits });
     return (
       <>
-        <button type="button" onClick={() => void navigate(rulePath('..', 'other'))}>
+        <button type="button" data-testid="open-other-rule" onClick={() => void navigate(rulePath('..', 'other'))}>
           Open another rule
         </button>
-        <button type="button" onClick={() => void navigate(destination)}>
+        <button type="button" data-testid="open-original-rule" onClick={() => void navigate(destination)}>
           Open the original rule
         </button>
         <AreaLayout
@@ -809,17 +809,17 @@ function openFrame({
   return {
     page: createWrapper(view.container),
     ui,
-    handOver: () => fireEvent.click(ui.getByRole('button', { name: handOverText })),
+    handOver: () => fireEvent.click(ui.getByTestId('hand-over-rule')),
     changeTarget: () => view.rerender(tree(1)),
   };
 }
 
 async function readyOffered(page: Page) {
-  await waitFor(() => expect(headerButton(page, 'Add target')).toBeEnabled());
+  await waitFor(() => expect(headerButton(page, 'add')).toBeEnabled());
 }
 
 function expectUnavailable(page: Page) {
-  const control = headerButton(page, 'Add target');
+  const control = headerButton(page, 'add');
   expect(control).toHaveAttribute('aria-disabled', 'true');
   expect(control).toHaveAccessibleDescription('Not implemented by the emulator (PutTargets).');
   return control;
@@ -912,9 +912,9 @@ it('offers Add target on a linked rule and on returning to the original rule', a
   const frame = openFrame();
   frame.handOver();
   await waitFor(() => expectUnavailable(frame.page));
-  fireEvent.click(frame.ui.getByRole('button', { name: 'Open another rule' }));
+  fireEvent.click(frame.ui.getByTestId('open-other-rule'));
   await readyOffered(frame.page);
-  fireEvent.click(frame.ui.getByRole('button', { name: 'Open the original rule' }));
+  fireEvent.click(frame.ui.getByTestId('open-original-rule'));
   await readyOffered(frame.page);
   expectNoHandOverWarning(frame.page);
 });
