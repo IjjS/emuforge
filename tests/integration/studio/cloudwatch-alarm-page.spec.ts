@@ -10,9 +10,11 @@
 
 import { expect, startStack, test } from './support';
 import { expectPairs } from './support/aws-entries';
+import { EnvError } from './support/check';
 import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
+import { waitFor } from './support/wait';
 import {
   actionsText,
   actionsTurned,
@@ -36,6 +38,7 @@ import {
   field,
   flashItems,
   historyDirect,
+  historyRowOf,
   historyRows,
   historyTypeText,
   LOG_ALARM_STATE,
@@ -213,16 +216,29 @@ test('studio.cloudwatch-alarm-history-pages', async ({ ctx, page }) => {
   const p = checkPrefix(ctx, 'cw-history');
   const seeded = new CloudWatchSeeded(ctx, port, p);
   const name = await seeded.metricAlarm(`${p}-h`, { TreatMissingData: 'ignore' });
-  for (let i = 0; i < 26; i++) await seeded.setState(name, i % 2 === 0 ? 'ALARM' : 'OK', `set outside ${String(i)}`);
+  // The screen writes an item's time to the second, and the 26 changes repeat two summaries: a change is made in a
+  // later second than the change two before it, which reads the same, so no two rows of the history read alike.
+  const made: number[] = [];
+  for (let i = 0; i < 26; i++) {
+    const before = made[i - 2];
+    if (before !== undefined) {
+      const second = Math.floor(before / 1000);
+      const later = await waitFor(5_000, () => (Math.floor(Date.now() / 1000) > second ? true : undefined));
+      if (later === undefined) throw new EnvError('the clock did not reach the next second within 5 s');
+    }
+    await seeded.setState(name, i % 2 === 0 ? 'ALARM' : 'OK', `set outside ${String(i)}`);
+    made.push(Date.now());
+  }
 
   await lines.line(
     'Open its page → the history\'s first page holds 25 items, the newest first, the first of type "State"; its next page holds the older items and ends with the item of type "Configuration" that says the alarm was created',
     async () => {
       const s = alarmScreen(page);
-      const direct = (await historyDirect(ctx, port, name)).map((item) => ({
-        type: historyTypeText(item.HistoryItemType),
-        summary: (item.HistorySummary ?? '-').replace(/\s+/g, ' ').trim(),
-      }));
+      const direct = (await historyDirect(ctx, port, name)).map(historyRowOf);
+      expect(
+        new Set(direct.map((row) => JSON.stringify(row))).size,
+        'every history item, directly, reads unlike every other by its time, type and summary',
+      ).toBe(direct.length);
       expect(direct.length, 'more history items than one page of 25, directly').toBeGreaterThan(25);
       const oldest = direct.at(-1);
       expect(oldest?.type, 'the oldest item, directly, is the configuration item').toBe('Configuration');

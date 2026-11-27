@@ -36,6 +36,7 @@ import {
   CREATE_ALARM_PATH,
   enterMetric,
   errorOf,
+  expectShown,
   expectAlert,
   expectFlash,
   expectHeading,
@@ -77,13 +78,13 @@ test('studio.cloudwatch-create-alarm-on-a-listed-metric', async ({ ctx, page }) 
       await open(page, CREATE_ALARM_PATH, CREATE_ALARM);
       await chooseOption(form.namespace, other);
       await chooseOption(form.metricName, 'Depth');
-      await expect(selectOf(form.metricName), 'the metric chosen').toHaveText('Depth');
+      await expectShown(selectOf(form.metricName), ['Depth'], 'the metric chosen');
       await chooseOption(form.dimensions, NO_DIMENSION_SET);
-      await expect(selectOf(form.dimensions), 'the dimension set chosen').toHaveText('No dimensions');
+      await expectShown(selectOf(form.dimensions), ['No dimensions'], 'the dimension set chosen');
       await chooseOption(form.namespace, namespace);
 
-      await expect(selectOf(form.metricName), 'the metric name is empty again').toHaveText(CHOOSE_A_METRIC_NAME);
-      await expect(selectOf(form.dimensions), 'the dimensions are empty again').toHaveText(CHOOSE_A_METRIC_NAME_FIRST);
+      await expectShown(selectOf(form.metricName), [CHOOSE_A_METRIC_NAME], 'the metric name is empty again');
+      await expectShown(selectOf(form.dimensions), [CHOOSE_A_METRIC_NAME_FIRST], 'the dimensions are empty again');
       const before = { written: written(), nameChecked: nameChecked() };
       await form.create.click(ACTION);
       await expect(errorOf(form.metricName), 'the form asks for the metric name').toBeVisible();
@@ -281,9 +282,7 @@ test('studio.cloudwatch-create-refusals', async ({ ctx, page }) => {
     async () => {
       const form = await enter(page, taken, '9');
       await form.create.click(ACTION);
-      await expect(errorOf(form.nameField), 'what the form says under "Name"').toHaveText(alarmExists(taken), {
-        timeout: 15_000,
-      });
+      await expectShown(errorOf(form.nameField), [alarmExists(taken)], 'what the form says under "Name"');
       await expectFormStays(taken, '9');
       expect((await metricAlarmDirect(ctx, port, taken)).Threshold, 'the threshold of that alarm, directly').toBe(5);
     },
@@ -294,9 +293,7 @@ test('studio.cloudwatch-create-refusals', async ({ ctx, page }) => {
     async () => {
       const form = await enter(page, ruleName, '9');
       await form.create.click(ACTION);
-      await expect(errorOf(form.nameField), 'what the form says under "Name"').toHaveText(alarmExists(ruleName), {
-        timeout: 15_000,
-      });
+      await expectShown(errorOf(form.nameField), [alarmExists(ruleName)], 'what the form says under "Name"');
       await expectFormStays(ruleName, '9');
       const direct = await alarmDirect(ctx, port, ruleName);
       expect(

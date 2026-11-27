@@ -14,14 +14,7 @@ import { expectOneCurrent, navigationLink, navigationTree } from './support/aws-
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
 import { nothingChanged } from './support/no-screen-part';
-import {
-  clipboardText,
-  copiedText,
-  copyControl,
-  grantClipboard,
-  pairValueOf,
-  setClipboard,
-} from './support/screen-rules';
+import { clipboardText, copiedText, copyControl, grantClipboard, setClipboard } from './support/screen-rules';
 import { checkPrefix } from './support/service-screens';
 import {
   actionsText,
@@ -36,6 +29,7 @@ import {
   answered,
   chooseState,
   CloudWatchSeeded,
+  copyOf,
   CLOUDWATCH_PATH,
   confirmWith,
   CREATE_ALARM,
@@ -51,11 +45,13 @@ import {
   expectFlash,
   expectNameHeading,
   expectRows,
+  expectShown,
   finish,
   filterAlarms,
   LOG_QUERY,
   metricAlarmDirect,
   namesOf,
+  shownPairValues,
   NAVIGATION_HEADER,
   NO_ALARMS_MATCH,
   open,
@@ -195,11 +191,11 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
   const expectArn = async (name: string) => {
     const arn = (await metricAlarmDirect(ctx, port, name)).AlarmArn;
     await expect
-      .poll(async () => (await pairValueOf(page, 'ARN').count()) === 1 && (await pairValueOf(page, 'ARN').textContent()), {
-        message: `the ARN of ${JSON.stringify(name)} as the emulator reports it`,
+      .poll(() => shownPairValues(page, 'ARN'), {
+        message: `the one "ARN" of the page draws the ARN of ${JSON.stringify(name)} as the emulator reports it`,
         timeout: 15_000,
       })
-      .toBe(arn);
+      .toEqual([arn]);
   };
   /** Waits until the list shows the three names, character for character, in the emulator's order. */
   const expectListed = async (): Promise<string[]> => {
@@ -241,11 +237,9 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
       for (const name of names) {
         await openAlarm(page, name);
         await setClipboard(page, 'not the name');
-        await page.getByRole('main').getByRole('button', { name: copyControl('Name'), exact: true }).click(ACTION);
-        await expect(
-          page.getByText(copiedText('Name'), { exact: true }),
-          `"${copiedText('Name')}" for ${JSON.stringify(name)}`,
-        ).toBeVisible();
+        const copy = copyOf(page.getByRole('main'), copyControl('Name'));
+        await copy.button.click(ACTION);
+        await expectShown(copy.status, [copiedText('Name')], `what "Copy Name" says for ${JSON.stringify(name)}`);
         await expect.poll(() => clipboardText(page), { message: 'the clipboard holds the name', ...ACTION }).toBe(name);
       }
     },

@@ -29,6 +29,7 @@ import {
   dialogHeader,
   dialogOf,
   eventually,
+  expectShown,
   expectAlarms,
   expectAlert,
   expectFlash,
@@ -58,7 +59,7 @@ test('studio.cloudwatch-delete-alarm-from-the-list', async ({ ctx, page }) => {
       await expectAlarms(page, [del, stay]);
       await s.radio(del).check(ACTION);
       await s.del.click(ACTION);
-      await expect(dialogHeader(page), 'the dialog names the alarm').toHaveText(deleteHeading(del));
+      await expectShown(dialogHeader(page), [deleteHeading(del)], 'the dialog names the alarm');
       await answered(page, 'DeleteAlarms', () => confirmWith(page, 'delete', DELETE));
       await expectFlash(page, 'success', alarmDeleted(del));
       await expect(dialogOf(page), 'the dialog after the delete').toHaveCount(0);

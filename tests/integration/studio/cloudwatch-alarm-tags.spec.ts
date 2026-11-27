@@ -21,6 +21,7 @@ import {
   CloudWatchSeeded,
   cwOk,
   dialogOf,
+  expectShown,
   expectFlash,
   finish,
   flashItems,
@@ -154,14 +155,15 @@ test('studio.cloudwatch-tags-added-outside-are-kept', async ({ ctx, page }) => {
       await editor.value(50).fill('2', ACTION);
       await answered(page, 'TagResource', () => editor.save.click(ACTION));
 
-      await expect(alertContents(dialog), 'what the one alert of the dialog says of the save that stopped half-way').toHaveText(
+      await expectShown(
+        alertContents(dialog),
         [`${REMOVALS_SAVED} TagResource: ${refusal.message} (${refusal.code})`],
-        { timeout: 15_000 },
+        'what the one alert of the dialog says of the save that stopped half-way',
       );
       await expect(dialog, 'the dialog stays open').toBeVisible();
       await expect(dialog.getByRole('heading', { name: ADDED_OUTSIDE, exact: true }), `"${ADDED_OUTSIDE}"`).toBeVisible();
-      await expect(dialog.getByRole('term'), 'the keys listed as added outside').toHaveText(['x1']);
-      await expect(dialog.getByRole('definition'), 'the values listed as added outside').toHaveText(['outside']);
+      await expectShown(dialog.getByRole('term'), ['x1'], 'the keys listed as added outside');
+      await expectShown(dialog.getByRole('definition'), ['outside'], 'the values listed as added outside');
       await expect(flashItems(page, 'success'), 'no result says the tags were saved').toHaveCount(0);
 
       const held = await keys();

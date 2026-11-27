@@ -33,6 +33,7 @@ import {
   EDIT,
   EDIT_ALARM,
   editAlarmPath,
+  expectShown,
   expectAlarms,
   expectFlash,
   expectHeading,
@@ -115,14 +116,14 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
       await expect(form.periods, "the alarm's evaluation periods").toHaveValue('3');
       await expect(form.datapoints, 'the data points to alarm the alarm does not hold').toHaveValue('3');
       await expect(form.form.getByText(alarmWhen(3, 3), { exact: true }), `"${alarmWhen(3, 3)}"`).toBeVisible();
-      await expect(selectOf(form.missingData), 'the missing data treatment').toHaveText('Missing');
-      await expect(selectOf(form.statistic), "the alarm's statistic").toHaveText('Sum');
-      await expect(selectOf(form.period), "the alarm's period of 60 seconds").toHaveText('1 minute');
+      await expectShown(selectOf(form.missingData), ['Missing'], 'the missing data treatment');
+      await expectShown(selectOf(form.statistic), ['Sum'], "the alarm's statistic");
+      await expectShown(selectOf(form.period), ['1 minute'], "the alarm's period of 60 seconds");
       await expect(form.enableActions, "the alarm's actions are on").toBeChecked();
-      await expect(selectOf(form.comparison), "the alarm's comparison").toHaveText('Greater than');
+      await expectShown(selectOf(form.comparison), ['Greater than'], "the alarm's comparison");
       const token = tokenOf(form.inAlarm, 1);
-      await expect(token.description, 'the action listed under "In alarm"').toHaveText(action);
-      await expect(token.tags, 'what the form says of an action that is no topic').toHaveText([NOT_A_TOPIC]);
+      await expectShown(token.description, [action], 'the action listed under "In alarm"');
+      await expectShown(token.tags, [NOT_A_TOPIC], 'what the form says of an action that is no topic');
     },
   );
 
@@ -188,13 +189,12 @@ test('studio.cloudwatch-edit-meets-a-change-made-outside', async ({ ctx, page })
       await form.threshold.fill('7', ACTION);
       await form.save.click(ACTION);
 
-      await expect(alertHeaders(form.form), `the form says "${CHANGED_WHILE_EDITING}"`).toHaveText(
-        [CHANGED_WHILE_EDITING],
-        { timeout: 15_000 },
+      await expectShown(alertHeaders(form.form), [CHANGED_WHILE_EDITING], `the form says "${CHANGED_WHILE_EDITING}"`);
+      await expectShown(
+        alerts(form.form).getByRole('listitem'),
+        ['Threshold (now 8)'],
+        'the fields the form names as changed',
       );
-      await expect(alerts(form.form).getByRole('listitem'), 'the fields the form names as changed').toHaveText([
-        'Threshold (now 8)',
-      ]);
       await expect(page, 'the form stays').toHaveURL(addressOf(editAlarmPath(clash)));
       await expect(form.threshold, 'the threshold entered stays').toHaveValue('7');
       await expect(flashItems(page, 'success'), 'no result says the alarm was saved').toHaveCount(0);
@@ -218,9 +218,7 @@ test('studio.cloudwatch-edit-meets-a-change-made-outside', async ({ ctx, page })
       await form.threshold.fill('7', ACTION);
       await form.save.click(ACTION);
 
-      await expect(alertHeaders(form.form), `the form says "${ALARM_NOT_FOUND}"`).toHaveText([ALARM_NOT_FOUND], {
-        timeout: 15_000,
-      });
+      await expectShown(alertHeaders(form.form), [ALARM_NOT_FOUND], `the form says "${ALARM_NOT_FOUND}"`);
       await expect(page, 'the form stays').toHaveURL(addressOf(editAlarmPath(gone)));
       await expect(flashItems(page, 'success'), 'no result says the alarm was saved').toHaveCount(0);
       expect(namesOf(await alarmDirect(ctx, port, gone)), 'the alarms of that name, directly').toEqual([]);

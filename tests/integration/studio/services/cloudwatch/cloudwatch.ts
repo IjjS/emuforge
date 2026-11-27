@@ -19,6 +19,7 @@ import type { Locator, Page } from '@playwright/test';
 import { createdTopicArn, directPost, directSns, type DirectAnswer } from '../../support/aws-clients-general';
 import { EnvError, expect, type Ctx } from '../../support/check';
 import { ACTION } from '../../support/frame';
+import { creationDateText } from '../../support/service-screens';
 import type { Lines } from '../../support/lines';
 import { waitFor } from '../../support/wait';
 
@@ -634,6 +635,10 @@ const FIRST_PAIR = wrapper.findKeyValuePairs().findItems().get(1);
 const PAIR = rel(wrapper.findKeyValuePairs().findItems());
 const PAIR_LABEL = FIRST_PAIR.findLabel().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
 const PAIR_VALUE = FIRST_PAIR.findValue().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
+const COPY_ROOT = wrapper.findCopyToClipboard();
+/** A copy control (Cloudscape's `CopyToClipboard`), and what a press of it says, as a selector below the control. */
+const COPY = rel(COPY_ROOT);
+const COPY_STATUS = COPY_ROOT.findStatusText().toSelector().slice(COPY_ROOT.toSelector().length).trim();
 /** An option of a select or a multiselect by its value. */
 function optionByValue(value: string): string {
   return inside(wrapper.findSelect().findDropdown().findOptionByValue(value));
@@ -657,26 +662,72 @@ function editorRemove(row: number): string {
 
 const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
 
-/** A text as an element holds it and how its white space is drawn. */
+/**
+ * The text each element of `found` draws, character for character: its text nodes that are drawn (not under
+ * `display: none`, `visibility: hidden`, a zero opacity or a clipped-away box, and with a box of their own), joined
+ * in document order. A text that is in the page and not shown is no part of it, so a value hidden inside a shown
+ * row, pair, alert or flash reads as absent. White space is as written; nothing is folded.
+ */
+export async function shownTexts(found: Locator): Promise<string[]> {
+  return found.evaluateAll((els) => {
+    const hidden = (from: Element): boolean => {
+      for (let a: Element | null = from; a; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+        if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+        if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+        const box = a.getBoundingClientRect();
+        if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+      }
+      return false;
+    };
+    return els.map((el) => {
+      let text = '';
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const holder = node.parentElement;
+        if (holder === null || hidden(holder)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        if (range.getClientRects().length === 0) continue;
+        text += node.textContent ?? '';
+      }
+      return text;
+    });
+  });
+}
+
+/** Waits until the texts the elements of `found` draw, white space folded, are `want`, each whole, in that order. */
+export async function expectShown(found: Locator, want: string[], what: string, timeout = 15_000): Promise<void> {
+  await expect
+    .poll(async () => (await shownTexts(found)).map(norm), {
+      message: what,
+      timeout,
+    })
+    .toEqual(want.map(norm));
+}
+
+/** A text as an element draws it and how its white space is drawn. */
 export interface DrawnText {
-  /** The element's text content, whole: every character, white space as written. */
+  /** The text the element draws, whole: every character, white space as written (`shownTexts`). */
   text: string;
   /** The computed `white-space` of the element that holds the text's first characters. */
   whiteSpace: string;
 }
 
 /**
- * The text content of `element`, whole, and the computed `white-space` of the parent of its first text node. A name
- * is read so, never by an accessible name, which folds white space.
+ * The text `element` draws, whole, and the computed `white-space` of the parent of its first text node. A name is
+ * read so, never by an accessible name, which folds white space.
  */
 export async function drawnText(element: Locator): Promise<DrawnText> {
-  return element.evaluate((el) => {
+  const [text] = await shownTexts(element);
+  const whiteSpace = await element.evaluate((el) => {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let first: Node | null = walker.nextNode();
     while (first !== null && (first.textContent ?? '') === '') first = walker.nextNode();
-    const holder = first?.parentElement ?? el;
-    return { text: el.textContent ?? '', whiteSpace: getComputedStyle(holder).whiteSpace };
+    return getComputedStyle(first?.parentElement ?? el).whiteSpace;
   });
+  return { text: text ?? '', whiteSpace };
 }
 
 /** The heading text of the page's `h1`, found with Cloudscape's selector. */
@@ -731,7 +782,8 @@ function bodyCell(row: number, column: number): string {
 
 /**
  * The data rows of the table `table` as shown, each a record of its column headings' texts to its cells' texts (the
- * selection column has no heading and is left out), white space folded. Headings, rows and cells are found with
+ * selection column has no heading and is left out), white space folded: a cell's text is what the cell draws
+ * (`shownTexts`), so a value hidden inside a shown row reads as empty. Headings, rows and cells are found with
  * Cloudscape's selectors. A table that is loading, empty or failed has no data row; a row that is in the page and
  * not shown is an empty record, which no expectation of a text equals.
  */
@@ -745,7 +797,7 @@ export async function rowsOf(table: Locator): Promise<Record<string, string>[]> 
       await Promise.all(
         headers.map(async (header, c) => {
           if (header === '') return;
-          const [text] = await table.locator(bodyCell(r + 1, c + 1)).allTextContents();
+          const [text] = await shownTexts(table.locator(bodyCell(r + 1, c + 1)));
           if (text !== undefined) row[header] = norm(text);
         }),
       );
@@ -767,7 +819,7 @@ export async function expectRows<T>(
 
 /** Waits until `table` shows no data row and its empty state reads `text`. */
 export async function expectEmpty(table: Locator, text: string): Promise<void> {
-  await expect(table.locator(TABLE_EMPTY), `the table's empty state "${text}"`).toHaveText(text, { timeout: 15_000 });
+  await expectShown(table.locator(TABLE_EMPTY), [text], `the table's empty state "${text}"`);
   expect(await rowsOf(table), 'the rows beside the empty state').toEqual([]);
 }
 
@@ -777,8 +829,9 @@ export function flashItems(page: Page, type: 'success' | 'error' | 'info' | 'war
 }
 
 /**
- * Waits until one flash item of `type` that is shown, and no more, reads `sentence`, whole (white space folded); with `link`, the
- * item's content is the sentence followed by a link of that name and nothing else.
+ * Waits until one flash item of `type` that is shown, and no more, draws `sentence`, whole (white space folded; the
+ * content's drawn text, `shownTexts`); with `link`, the content is the sentence followed by a link of that name,
+ * shown, and nothing else.
  */
 export async function expectFlash(
   page: Page,
@@ -793,16 +846,16 @@ export async function expectFlash(
     return text.endsWith(link) && norm(text.slice(0, text.length - link.length)) === norm(sentence);
   };
   await expect
-    .poll(async () => (await contents.allTextContents()).filter(whole).length, {
+    .poll(async () => (await shownTexts(contents)).filter(whole).length, {
       message: `one ${type} flash reading "${sentence}"${link === undefined ? '' : ` with the link "${link}"`}`,
       timeout: 15_000,
     })
     .toBe(1);
   if (link !== undefined) {
     await expect(
-      flashItems(page, type).getByRole('link', { name: link, exact: true }),
+      flashItems(page, type).filter({ visible: true }).getByRole('link', { name: link, exact: true }),
       `the flash's link "${link}"`,
-    ).toHaveCount(1);
+    ).toBeVisible();
   }
 }
 
@@ -944,11 +997,11 @@ export function alertHeaders(scope: Locator): Locator {
 
 /**
  * Waits until `scope` (a dialog, a form) holds one alert and no more, its header reading `header` and its content
- * `content`, each whole.
+ * `content`, each whole and drawn (`expectShown`).
  */
 export async function expectAlert(scope: Locator, header: string, content: string): Promise<void> {
-  await expect(alertHeaders(scope), `the one alert is headed "${header}"`).toHaveText([header], { timeout: 15_000 });
-  await expect(alertContents(scope), `the alert "${header}" reads "${content}"`).toHaveText([content]);
+  await expectShown(alertHeaders(scope), [header], `the one alert is headed "${header}"`);
+  await expectShown(alertContents(scope), [content], `the alert "${header}" reads "${content}"`);
 }
 
 /** The open dialog: Cloudscape's modal that is shown (one that is closed stays in the page, hidden). */
@@ -1054,9 +1107,71 @@ export async function openAlarm(page: Page, name: string): Promise<void> {
   await open(page, alarmPath(name), name);
 }
 
-/** The rows of the history as shown: type and summary, in order. */
-export async function historyRows(page: Page): Promise<{ type: string; summary: string }[]> {
-  return (await rowsOf(alarmScreen(page).historyTable)).map((r) => ({ type: r.Type ?? '', summary: r.Summary ?? '' }));
+/** A history item as its row shows it. */
+export interface HistoryRow {
+  time: string;
+  type: string;
+  summary: string;
+}
+
+/** The rows of the history as shown: time, type and summary, in order. */
+export async function historyRows(page: Page): Promise<HistoryRow[]> {
+  return (await rowsOf(alarmScreen(page).historyTable)).map((r) => ({
+    time: r.Time ?? '',
+    type: r.Type ?? '',
+    summary: r.Summary ?? '',
+  }));
+}
+
+/**
+ * The row the history shows for the item `item` of a direct answer: its time as the screen writes it, to the second,
+ * in the zone of the machine the check and its browser run on ("October 30, 2026, 23:18:34 (UTC+09:00)"), the words
+ * of its type and its summary.
+ */
+export function historyRowOf(item: DirectHistoryItem): HistoryRow {
+  if (item.Timestamp === undefined) throw new EnvError('a history item of the direct answer has no Timestamp');
+  const ms = item.Timestamp * 1000;
+  const offsetMinutes = -new Date(ms).getTimezoneOffset();
+  const two = (n: number) => String(Math.trunc(n)).padStart(2, '0');
+  const size = Math.abs(offsetMinutes);
+  const label = `UTC${offsetMinutes < 0 ? '-' : '+'}${two(size / 60)}:${two(size % 60)}`;
+  return {
+    time: creationDateText(new Date(ms).toISOString(), {
+      offsetMinutes,
+      label,
+    }),
+    type: historyTypeText(item.HistoryItemType),
+    summary: norm(item.HistorySummary ?? '-'),
+  };
+}
+
+/**
+ * The values the alarm's page draws for the pairs labelled `label`, character for character. Pairs, labels and
+ * values are found with Cloudscape's key-value selectors, and the pair is told by its label's drawn text; a value
+ * that is in the page and not shown reads as empty.
+ */
+export async function shownPairValues(page: Page, label: string): Promise<string[]> {
+  const pairs = page.getByRole('main').locator(PAIR);
+  const [labels, values] = await Promise.all([
+    shownTexts(pairs.locator(PAIR_LABEL)),
+    shownTexts(pairs.locator(PAIR_VALUE)),
+  ]);
+  // Every pair has one label and one value, both in document order: the two lists run side by side.
+  if (labels.length !== values.length) return [];
+  return values.filter((_, at) => norm(labels[at] ?? '') === label);
+}
+
+/**
+ * The copy control of `scope` whose button is named `control`, found with Cloudscape's selectors: its button and
+ * what a press of it says.
+ */
+export function copyOf(scope: Locator, control: string) {
+  const button = scope.page().getByRole('button', { name: control, exact: true });
+  const root = scope.locator(COPY).filter({ has: button });
+  return {
+    button: root.getByRole('button', { name: control, exact: true }),
+    status: root.locator(COPY_STATUS),
+  };
 }
 
 /** The tags the alarm's page shows, sorted by key. */
@@ -1075,7 +1190,8 @@ export interface ShownPair {
 /**
  * The pairs the alarm's page shows that are no part of another pair's value, in order, each with its label and its
  * value: the value's text (white space folded), or, for a value that is itself a list of pairs, those pairs by
- * label. Pairs, labels and values are found with Cloudscape's selectors; a pair that is not shown is left out.
+ * label. Pairs, labels and values are found with Cloudscape's selectors; a pair that is not shown is left out, and
+ * a label's or a value's text is what it draws, so one hidden inside a shown pair reads as empty.
  */
 export async function shownPairs(page: Page): Promise<ShownPair[]> {
   return page
@@ -1083,7 +1199,32 @@ export async function shownPairs(page: Page): Promise<ShownPair[]> {
     .locator(PAIR)
     .evaluateAll(
       (els, selectors) => {
-        const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+        // As `shownTexts`: the text an element draws, here with its white space folded.
+        const hidden = (from: Element): boolean => {
+          for (let a: Element | null = from; a; a = a.parentElement) {
+            const cs = getComputedStyle(a);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+            if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+            if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+            const box = a.getBoundingClientRect();
+            if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+          }
+          return false;
+        };
+        const clean = (el: Element | null) => {
+          let text = '';
+          if (el === null) return text;
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const holder = node.parentElement;
+            if (holder === null || hidden(holder)) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            if (range.getClientRects().length === 0) continue;
+            text += node.textContent ?? '';
+          }
+          return text.replace(/\s+/g, ' ').trim();
+        };
         /** The nearest pair around `el`; `null` for a pair that is no part of another. */
         const around = (el: Element): Element | null => {
           const outer = els.filter((pair) => pair !== el && pair.contains(el));
@@ -1099,14 +1240,14 @@ export async function shownPairs(page: Page): Promise<ShownPair[]> {
             const value = below(pair, selectors.value);
             const nested = els.filter((other) => shown(other) && around(other) === pair);
             return {
-              label: clean(below(pair, selectors.label)?.textContent),
+              label: clean(below(pair, selectors.label)),
               value:
                 nested.length === 0
-                  ? clean(value?.textContent)
+                  ? clean(value)
                   : Object.fromEntries(
                       nested.map((other) => [
-                        clean(below(other, selectors.label)?.textContent),
-                        clean(below(other, selectors.value)?.textContent),
+                        clean(below(other, selectors.label)),
+                        clean(below(other, selectors.value)),
                       ]),
                     ),
             };
