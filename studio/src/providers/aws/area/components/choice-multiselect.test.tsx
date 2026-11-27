@@ -45,7 +45,7 @@ const SOURCE: ChoiceSource<Thing> = {
   }),
 };
 
-interface FieldOptions extends Pick<ChoiceMultiselectProps<Thing>, 'lockedBy' | 'none'> {
+interface FieldOptions extends Pick<ChoiceMultiselectProps<Thing>, 'fixed' | 'fixedDescription' | 'lockedBy' | 'none'> {
   readAgainOnOpen?: boolean;
 }
 
@@ -220,6 +220,28 @@ it('shows a disabled option and its reason without choosing it', async () => {
   expect(option).toHaveAccessibleDescription('Already used');
   field().selectOptionByValue('a');
   expect(latest).toEqual([]);
+});
+
+it('wraps the selected fixed description and retains it in the open list', async () => {
+  const description = 'The emulator uses its default security group in VPC vpc-0123456789abcdef0.';
+  read.mockResolvedValue({ items: [thing('a')] });
+  open({ fixed: 'Default security group', fixedDescription: description });
+  expect(tokens()).toEqual(['Default security group']);
+  expect(screen.getByText(description)).toHaveStyle({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
+
+  field().openDropdown();
+  await waitFor(() => expect(shown()).toEqual(['Default security group', 'a']));
+  const fixed = field().findDropdown().findOption(1);
+  expect(text(fixed?.getElement())).toContain(description);
+  field().selectOptionByValue('a');
+  expect(latest).toEqual([thing('a')]);
+  expect(tokens()).toEqual(['a']);
+  expect(screen.getAllByText(description)).toHaveLength(1);
+
+  field().selectOption(1);
+  expect(latest).toEqual([]);
+  expect(tokens()).toEqual(['Default security group']);
+  expect(screen.getAllByText(description)).toHaveLength(2);
 });
 
 it('reads a marked source again on reopen and keeps a chosen token from the earlier list', async () => {
