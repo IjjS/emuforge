@@ -56,3 +56,13 @@ it('meets the entry registry rules and lists Targets inside Rules', () => {
   expect(entryFaults([{ folder: 'events', groups: ENTRIES }], screens)).toEqual([]);
   expect(ENTRIES[0]?.entries.find(({ label }) => label === 'Targets')?.listedInside).toBe('/aws/events/rules');
 });
+
+it('shows Targets in a rule’s page under Rules', () => {
+  expect(ENTRIES[0]?.entries.find(({ label }) => label === 'Targets')?.shownIn).toEqual({
+    entry: '/aws/events/rules',
+    place: "a rule's page",
+  });
+  expect(
+    ENTRIES.flatMap(({ entries }) => entries.filter(({ shownIn }) => shownIn !== undefined)).map(({ label }) => label),
+  ).toEqual(['Targets']);
+});
