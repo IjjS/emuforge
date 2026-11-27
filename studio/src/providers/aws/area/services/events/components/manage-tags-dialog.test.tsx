@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -33,6 +33,8 @@ beforeEach(() => {
   listTags.mockResolvedValue(initial);
   write.mockResolvedValue(undefined);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 async function open(initialTags: Record<string, string> = initial) {
   const onSaved = vi.fn();
@@ -106,6 +108,14 @@ function editTags(editor: Editor) {
 
 function refusal(operation: TagWriteOperation) {
   return new RequestError({ kind: 'other', operation, code: 'ValidationException', message: 'Tags refused' });
+}
+
+function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  const promise = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 it('loads the existing tags and rejects an invalid row without writing', async () => {
@@ -198,6 +208,64 @@ it('shows a partial save and retries only the missing edits alongside outside ch
     { remove: [], put: { team: 'local' } },
     expect.any(AbortSignal),
   );
+});
+
+it('retries a partial removal when the reread finds the tag restored outside', async () => {
+  const openingTags = { a: 'original', b: 'untouched' };
+  const { saveBusTags: save } = await vi.importActual<typeof import('../bus-settings-api')>('../bus-settings-api');
+  write.mockImplementation(save);
+  listTags.mockResolvedValueOnce(openingTags).mockResolvedValueOnce({ a: 'restored outside', b: 'changed outside' });
+
+  const response = (body: unknown, status = 200) =>
+    Response.json(body, { status, headers: { 'content-type': 'application/x-amz-json-1.1' } });
+  const { promise: removalReply, resolve: finishRemoval } = deferredResponse();
+  const { promise: putReply, resolve: finishPut } = deferredResponse();
+  const answer = vi
+    .fn<() => Promise<Response>>()
+    .mockResolvedValueOnce(response({}))
+    .mockResolvedValueOnce(response({ __type: 'ValidationException', message: 'Tags refused' }, 400))
+    .mockReturnValueOnce(removalReply)
+    .mockReturnValueOnce(putReply);
+  const sent: { operation: string | undefined; body: unknown }[] = [];
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    if (new URL(request.url).pathname === '/__emuforge/session') {
+      return response({ token: 'emuforge-test-token' });
+    }
+    sent.push({
+      operation: request.headers.get('x-amz-target')?.split('.').at(-1),
+      body: (await request.json()) as unknown,
+    });
+    return answer();
+  });
+
+  const { modal, editor, save: saveButton, onSaved } = await open(openingTags);
+  editor.findRow(1)?.findRemoveButton()?.click();
+  editor.findAddButton().click();
+  change(editor, 2, 1, 'c');
+  change(editor, 2, 2, 'new');
+  saveButton.click();
+  await waitFor(() => {
+    expect(modal.findContent().findAlert()?.getElement()).toHaveTextContent('The removed tags were saved.');
+    expect(listTags).toHaveBeenCalledTimes(2);
+    expect(saveButton.getElement()).toBeEnabled();
+  });
+
+  const removal = { operation: 'UntagResource', body: { ResourceARN: arn, TagKeys: ['a'] } };
+  const put = { operation: 'TagResource', body: { ResourceARN: arn, Tags: [{ Key: 'c', Value: 'new' }] } };
+  expect(sent).toEqual([removal, put]);
+  expect(onSaved).not.toHaveBeenCalled();
+
+  saveButton.click();
+  await waitFor(() => expect(sent).toEqual([removal, put, removal]));
+  expect(onSaved).not.toHaveBeenCalled();
+
+  finishRemoval(response({}));
+  await waitFor(() => expect(sent).toEqual([removal, put, removal, put]));
+  expect(onSaved).not.toHaveBeenCalled();
+
+  finishPut(response({}));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
 });
 
 it('restores a partially removed tag with its original value before reporting success', async () => {
