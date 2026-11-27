@@ -359,8 +359,11 @@ describe('the key pairs list', () => {
 
     fireEvent.click(selection);
     fireEvent.click(action('Delete'));
-    const modal = PAGE.findModal();
-    if (!modal) throw new Error('Missing key pair delete dialog');
+    const modal = await waitFor(() => {
+      const shown = PAGE.findModal();
+      if (!shown) throw new Error('Missing key pair delete dialog');
+      return shown;
+    });
     expect(modal.getElement()).toHaveAccessibleName('Delete key pair?');
     const sentence = modal.findContent().find('p')?.getElement();
     expect(sentence?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);

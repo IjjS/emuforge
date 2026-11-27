@@ -252,8 +252,11 @@ describe('the security groups list', () => {
     expect(selection).toHaveAccessibleName(identity);
     fireEvent.click(selection);
     fireEvent.click(action('Delete'));
-    const modal = PAGE.findModal();
-    if (!modal) throw new Error('Missing security group delete dialog');
+    const modal = await waitFor(() => {
+      const shown = PAGE.findModal();
+      if (!shown) throw new Error('Missing security group delete dialog');
+      return shown;
+    });
     expect(modal.getElement()).toHaveAccessibleName('Delete security group?');
     const sentence = modal.findContent().find('p')?.getElement();
     expect(sentence?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
