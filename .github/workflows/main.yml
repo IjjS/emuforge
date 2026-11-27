@@ -21,10 +21,10 @@
 # repository is put into a `run:` line.
 #
 # Time, as the first trial run took it (run 43861083645, nothing cached): preparing 1.2 minutes, the engine
-# steps 0.6, the Studio steps 0.7, integration 8.7. The integration step took 22m 19s with every service selected
-# in run 44893383185, so its 45-minute bound is at least twice that measured time. The job has 80 minutes and
-# each other step of the nine has 15, so one hung step cannot use up the job's time. Every preparing step has
-# a bound too (10 for checkout and node), so that `full.yml` holds the same text for the steps it shares.
+# steps 0.6, the Studio steps 0.7, integration 8.7. The longest measured all-service integration step took
+# 25m 42s in run 45826367803. The 75-minute bound is more than twice that time and allows for the 35 checks
+# added since that run and two more services in development. The 110-minute job bound leaves 35 minutes for
+# the other steps. Each other check has a 15-minute bound, and every preparing step has its own bound.
 name: main
 
 on:
@@ -38,7 +38,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 80
+    timeout-minutes: 110
     env:
       AWS_EC2_METADATA_DISABLED: "true"
     steps:
@@ -167,6 +167,6 @@ jobs:
 
       - name: integration
         if: ${{ !cancelled() }}
-        timeout-minutes: 45
+        timeout-minutes: 75
         working-directory: tests/integration
         run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json
