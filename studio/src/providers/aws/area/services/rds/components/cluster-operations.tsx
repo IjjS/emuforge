@@ -20,7 +20,7 @@ import { ValueText } from '../../../components/value-text';
 import { useOrderableRows, useSubnetGroup, type ChoiceRead } from '../choices-queries';
 import { failoverTargetChoices, readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
 import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
-import { afterParent, canSave, changes, draftField, editField } from '../modify-draft';
+import { afterParent, canSave, changes, draftField, editField, NOT_IN_LIST } from '../modify-draft';
 import { storageTypes } from '../orderable';
 import { RDS_KEYS, useRdsRead } from '../queries';
 import { FieldReadStatus, UpgradeVersionField } from './choice-fields';
@@ -181,7 +181,8 @@ function ModifyDialog({
   }
 
   const placement = useSubnetGroup(endpoint, cluster.subnetGroup);
-  const startGroups = useClusterSecurityGroups(endpoint, cluster.securityGroups);
+  const groupIds = [...new Set([...cluster.securityGroups, ...(draft?.securityGroupIds ?? [])])];
+  const startGroups = useClusterSecurityGroups(endpoint, groupIds);
   const selectedGroups = groups.map((group) => startGroups.value?.find(({ id }) => id === group.id) ?? group);
   const missingIds =
     startGroups.value === undefined
@@ -233,23 +234,30 @@ function ModifyDialog({
             engine={engine}
             version={cluster.engineVersion}
             value={version}
-            onChange={setVersion}
+            onChange={(target) => {
+              setVersion(target);
+              if (target === undefined && storedType.cleared !== undefined) {
+                setStoredType(editField(storedType, storedType.start));
+              }
+            }}
           />
         )}
-        <SecurityGroupsField
-          connection={connection}
-          value={selectedGroups}
-          onChange={setGroups}
-          placement={{ data: placement.data?.vpcId, failure: placement.failure, retry: placement.retry }}
-          missingIds={missingIds}
-          required
-        />
-        <FieldReadStatus
-          connection={connection}
-          thing="security groups"
-          failure={startGroups.failure}
-          retry={startGroups.refresh}
-        />
+        <SpaceBetween size="xs">
+          <SecurityGroupsField
+            connection={connection}
+            value={selectedGroups}
+            onChange={setGroups}
+            placement={{ data: placement.data?.vpcId, failure: placement.failure, retry: placement.retry }}
+            missingIds={missingIds}
+            required
+          />
+          <FieldReadStatus
+            connection={connection}
+            thing="security groups"
+            failure={startGroups.failure}
+            retry={startGroups.refresh}
+          />
+        </SpaceBetween>
         <ClusterStorageType
           connection={connection}
           pending={pending}
@@ -315,7 +323,7 @@ function ClusterStorageType({
       : (options.find((option) => option.value === value.value) ?? {
           value: value.value,
           label: value.value,
-          ...optional({ description: value.missing ? "Not in the emulator's list" : undefined }),
+          ...optional({ description: value.missing ? NOT_IN_LIST : undefined }),
         });
   return (
     <FormField label="Storage type" errorText={value.cleared}>
@@ -343,7 +351,7 @@ function ClusterStorageType({
 }
 
 type FailoverTarget = Awaited<ReturnType<typeof readFailoverTargets>>[number];
-type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure; loading?: true };
+type TargetRead = { targets: FailoverTarget[] } | { failure: RequestFailure };
 const NO_READER = 'Failover requires a reader DB instance in this cluster.';
 
 function FailoverDialog({
@@ -362,25 +370,23 @@ function FailoverDialog({
     read: (at, signal) => readFailoverTargets(at, cluster.id, signal),
   });
   const [latest, setLatest] = useState<TargetRead>();
+  const [refreshing, setRefreshing] = useState<AbortSignal>();
   const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
-  const targets = latest === undefined ? initial.value : latest.targets;
-  const failure = latest === undefined ? initial.failure : latest.failure;
-  const loading = latest === undefined ? initial.loading : latest.loading === true;
+  const targets = latest === undefined ? initial.value : 'targets' in latest ? latest.targets : undefined;
+  const failure = latest === undefined ? initial.failure : 'failure' in latest ? latest.failure : undefined;
+  const loading = refreshing !== undefined || (latest === undefined && initial.loading);
   const source = failoverTargetChoices(endpoint, cluster.id, async (at, id, signal) => {
-    const pendingRead = { loading: true } as const;
-    setLatest(pendingRead);
+    setRefreshing(signal);
     try {
       const fresh = await readFailoverTargets(at, id, signal);
       signal.throwIfAborted();
       setLatest({ targets: fresh });
       return fresh;
     } catch (error) {
-      if (signal.aborted) {
-        setLatest((current) => (current === pendingRead ? undefined : current));
-      } else {
-        setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
-      }
+      if (!signal.aborted) setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
       throw error;
+    } finally {
+      setRefreshing((current) => (current === signal ? undefined : current));
     }
   });
   const selected = targets?.find(({ id }) => id === target?.id) ?? target;
@@ -393,7 +399,7 @@ function FailoverDialog({
       onDismiss={onDismiss}
       submitLabel="Fail over"
       pendingLabel="Requesting failover"
-      canSubmit={selected !== undefined && (targets?.length ?? 0) > 0}
+      canSubmit={!loading && selected !== undefined && (targets?.length ?? 0) > 0}
       onSubmit={() => {
         if (selected !== undefined) onFailover(selected.id);
       }}
@@ -411,11 +417,11 @@ function FailoverDialog({
             onChange={setTarget}
           />
           {loading && <Box nativeAttributes={{ role: 'status' }}>Loading DB instances</Box>}
-          {targets?.length === 0 && <Box variant="p">{NO_READER}</Box>}
+          {!loading && targets?.length === 0 && <Box variant="p">{NO_READER}</Box>}
           <FieldReadStatus
             connection={connection}
             thing="DB instances"
-            failure={failure}
+            failure={loading ? undefined : failure}
             retry={() => {
               setLatest(undefined);
               initial.refresh();

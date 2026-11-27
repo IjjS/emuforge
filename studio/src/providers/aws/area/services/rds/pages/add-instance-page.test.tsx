@@ -201,9 +201,10 @@ function picker(label: string) {
   return select;
 }
 
-function choose(label: string, value: string) {
+async function choose(label: string, value: string) {
   const select = picker(label);
   select.openDropdown();
+  await waitFor(() => expect(select.findDropdown().findOptionByValue(value)).not.toBeNull());
   select.selectOptionByValue(value);
 }
 
@@ -304,7 +305,7 @@ describe('"Add DB instance"', () => {
     const router = open(PATH);
     await formShown();
     type('DB instance identifier', 'App-Aur-1');
-    choose('Availability Zone', 'us-east-1a');
+    await choose('Availability Zone', 'us-east-1a');
     enterTag('env', 'dev');
     fireEvent.click(submit());
     await waitFor(() => {
@@ -332,7 +333,7 @@ describe('"Add DB instance"', () => {
     open(PATH);
     await formShown();
     type('DB instance identifier', 'maz-1');
-    choose('DB instance class', 'db.m5d.large');
+    await choose('DB instance class', 'db.m5d.large');
     fireEvent.click(submit());
     await waitFor(() => {
       expect(clusterApi.addInstance).toHaveBeenCalledTimes(1);
@@ -357,8 +358,8 @@ describe('"Add DB instance"', () => {
     const router = open(PATH);
     await formShown();
     type('DB instance identifier', 'app-aur-2');
-    choose('DB instance class', 'db.r6g.xlarge');
-    choose('Availability Zone', 'us-east-1a');
+    await choose('DB instance class', 'db.r6g.xlarge');
+    await choose('Availability Zone', 'us-east-1a');
     enterTag('owner', 'dev');
     fireEvent.click(submit());
     await waitFor(() => {
@@ -520,7 +521,7 @@ describe('"Add DB instance"', () => {
     answerCluster();
     const router = open(PATH);
     await formShown();
-    choose('DB instance class', 'db.r6g.xlarge');
+    await choose('DB instance class', 'db.r6g.xlarge');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     const dialog = await screen.findByRole('dialog');
     expect(text(dialog)).toContain('Discard what you entered?');
@@ -529,7 +530,7 @@ describe('"Add DB instance"', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(picker('DB instance class').findTrigger().getElement()).toHaveTextContent('db.r6g.xlarge');
-    choose('DB instance class', 'db.r6g.large');
+    await choose('DB instance class', 'db.r6g.large');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(CLUSTER_PATH);

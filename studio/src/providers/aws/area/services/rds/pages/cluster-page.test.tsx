@@ -12,6 +12,7 @@ import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
+import { RDS_KEYS } from '../queries';
 import * as choices from '../choices-api';
 import * as security from '../../../components/security-group-choices';
 import type { ClusterAction } from '../cluster-operations';
@@ -128,7 +129,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path = '/aws/rds') {
+function open(path = '/aws/rds', client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -136,7 +137,6 @@ function open(path = '/aws/rds') {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -988,7 +988,8 @@ describe('Aurora cluster operations', () => {
     'keeps the rename handover when the old read answers %s acceptance',
     async (order) => {
       answer(found());
-      const router = open(PATH);
+      const client = new QueryClient();
+      const router = open(PATH, client);
       await loaded();
       const operation = deferred<string>();
       vi.mocked(clusterApi.operateCluster).mockReturnValueOnce(operation.promise);
@@ -998,7 +999,9 @@ describe('Aurora cluster operations', () => {
       });
       fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
       const old = holdRound();
-      fireEvent.click(control('Refresh'));
+      act(() => {
+        void client.refetchQueries({ queryKey: RDS_KEYS.cluster('app-aur', 'round') });
+      });
       await waitFor(() => expect(clusterApi.getCluster).toHaveBeenCalledTimes(2));
       const answerOld = async () => {
         await act(async () => {
@@ -1022,7 +1025,8 @@ describe('Aurora cluster operations', () => {
     'ignores a pre-write round and commits the post-write round together after %s',
     async (kind) => {
       answer(found({ members: ROLES }), rowsAt());
-      open(PATH);
+      const client = new QueryClient();
+      open(PATH, client);
       await loaded();
       const operation = deferred<string>();
       vi.mocked(clusterApi.operateCluster).mockReturnValueOnce(operation.promise);
@@ -1035,7 +1039,9 @@ describe('Aurora cluster operations', () => {
       }
       const older = holdRound();
       const priorCalls = vi.mocked(clusterApi.getCluster).mock.calls.length;
-      fireEvent.click(control('Refresh'));
+      act(() => {
+        void client.refetchQueries({ queryKey: RDS_KEYS.cluster('app-aur', 'round') });
+      });
       await waitFor(() => expect(clusterApi.getCluster).toHaveBeenCalledTimes(priorCalls + 1));
       const newest = holdRound();
       await act(async () => operation.resolve('app-aur'));
