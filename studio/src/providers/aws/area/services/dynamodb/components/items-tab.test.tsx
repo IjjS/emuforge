@@ -1,8 +1,9 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -54,42 +55,67 @@ function InArea({ table }: { table: Table }) {
   );
 }
 
-function open(table: Table, items: Item[]) {
+async function open(table: Table, items: Item[]) {
   vi.mocked(readItems).mockResolvedValue({ items });
-  render(
+  const { container } = render(
     <QueryClientProvider client={new QueryClient()}>
       <InArea table={table} />
     </QueryClientProvider>,
   );
+  const itemsTable = createWrapper(container).findTable();
+  assert(itemsTable);
+  await waitFor(() => expect(itemsTable.findRows()).toHaveLength(items.length));
+  return itemsTable;
+}
+
+function itemButton(itemsTable: Awaited<ReturnType<typeof open>>, row: number) {
+  const button = itemsTable.findBodyCell(row, 2)?.findLink()?.getElement();
+  assert(button);
+  expect(button).toHaveRole('button');
+  return button;
 }
 
 it('distinguishes sort keys with repeated spaces in the cells, opening buttons, and selection controls', async () => {
-  open(sortedTable, [singleSpaceItem, twoSpaceItem]);
+  const itemsTable = await open(sortedTable, [singleSpaceItem, twoSpaceItem]);
 
-  const button = await screen.findByRole('button', { name: twoSpaceKey });
-  expect(screen.getByRole('button', { name: singleSpaceKey })).toBeInTheDocument();
-  expect(screen.getByRole('checkbox', { name: `Select ${singleSpaceKey}` })).toBeInTheDocument();
-  expect(screen.getByRole('checkbox', { name: `Select ${twoSpaceKey}` })).toBeInTheDocument();
-  const row = button.closest('tr');
-  if (!row) throw new Error('Missing row for the two-space key');
-  const cell = within(row).getByRole('cell', { name: 'S a\\u0020\\u0020b' });
+  for (const [row, key] of [
+    [1, singleSpaceKey],
+    [2, twoSpaceKey],
+  ] as const) {
+    expect(itemButton(itemsTable, row)).toHaveAccessibleName(key);
+    const checkbox = itemsTable.findRowSelectionArea(row)?.findCheckbox()?.findNativeInput().getElement();
+    expect(checkbox).toHaveRole('checkbox');
+    expect(checkbox).toHaveAccessibleName(`Select ${key}`);
+  }
+  const cell = itemsTable.findBodyCell(2, 3)?.getElement();
+  assert(cell);
+  expect(cell).toHaveRole('cell');
+  expect(cell).toHaveAccessibleName('S a\\u0020\\u0020b');
   expect(within(cell).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
   expect(within(cell).getByText('(a\\u0020\\u0020b)')).toBeVisible();
 });
 
 it('distinguishes a key containing literal escape notation from the key with repeated spaces', async () => {
-  open(table, [{ pk: { S: 'a b (a\\u0020\\u0020b)' } }, { pk: { S: 'a  b' } }]);
+  const itemsTable = await open(table, [{ pk: { S: 'a b (a\\u0020\\u0020b)' } }, { pk: { S: 'a  b' } }]);
 
-  expect(await screen.findByRole('button', { name: '{"pk":{"S":"a\\u0020\\u0020b"}}' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '{"pk":{"S":"a b (a\\\\\\\\u0020\\\\\\\\u0020b)"}}' })).toBeInTheDocument();
+  expect(itemButton(itemsTable, 2)).toHaveAccessibleName('{"pk":{"S":"a\\u0020\\u0020b"}}');
+  expect(itemButton(itemsTable, 1)).toHaveAccessibleName('{"pk":{"S":"a b (a\\\\\\\\u0020\\\\\\\\u0020b)"}}');
 });
 
 it('opens the editor for the item whose sort key has two spaces', async () => {
   vi.mocked(getItem).mockResolvedValue(twoSpaceItem);
-  open(sortedTable, [singleSpaceItem, twoSpaceItem]);
+  const itemsTable = await open(sortedTable, [singleSpaceItem, twoSpaceItem]);
 
-  await userEvent.click(await screen.findByRole('button', { name: twoSpaceKey }));
-  const editor = await screen.findByRole('dialog', { name: 'Edit item' });
+  const button = itemButton(itemsTable, 2);
+  expect(button).toHaveAccessibleName(twoSpaceKey);
+  await userEvent.click(button);
+  const editor = await waitFor(() => {
+    const modal = createWrapper(document.body).findModal();
+    assert(modal);
+    expect(modal.getElement()).toHaveRole('dialog');
+    expect(modal.getElement()).toHaveAccessibleName('Edit item');
+    return modal;
+  });
   expect(vi.mocked(getItem)).toHaveBeenCalledExactlyOnceWith(
     connection.engineOrigin,
     sortedTable.name,
@@ -97,13 +123,17 @@ it('opens the editor for the item whose sort key has two spaces', async () => {
     twoSpaceItem,
     expect.any(AbortSignal),
   );
-  const field = within(editor).getByRole<HTMLTextAreaElement>('textbox', { name: 'Item' });
+  const field = editor.findContent().findTextarea()?.findNativeTextarea().getElement();
+  assert(field);
+  expect(field).toHaveRole('textbox');
+  expect(field).toHaveAccessibleName('Item');
   expect(JSON.parse(field.value)).toEqual(twoSpaceItem);
 });
 
 it('draws a single key without hidden whitespace as the attribute type and value', async () => {
-  open(table, [{ pk: { S: 'a b' } }]);
+  const itemsTable = await open(table, [{ pk: { S: 'a b' } }]);
 
-  const button = await screen.findByRole('button', { name: '{"pk":{"S":"a b"}}' });
+  const button = itemButton(itemsTable, 1);
+  expect(button).toHaveAccessibleName('{"pk":{"S":"a b"}}');
   expect(button.textContent).toBe('S a b');
 });
