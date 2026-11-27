@@ -3,8 +3,8 @@
 //
 // - Direct calls: `directCloudWatch` of `support/aws-clients-general.ts` (AWS JSON 1.0 straight to the emulator,
 //   SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`). A refusal is read from its
-//   JSON `__type` and `message`, and its code from the header `x-amzn-query-error` when the emulator sends one (the
-//   code it gives a client of the service's earlier protocol, which is the one AWS's SDK reports); "the emulator's
+//   JSON `__type` and `message`, and its code from the header `x-amzn-query-error`, which the emulator sends to a
+//   request that carries `x-amzn-query-mode` as AWS's SDK's and `directCloudWatch`'s do; "the emulator's
 //   reason" or "code" a line asks for is that of a direct call that is refused the same way, compared with what
 //   the screen shows.
 // - `CloudWatchSeeded`: the alarms and topics a check makes, every one named under the check's prefix `<p>`. When
@@ -96,16 +96,22 @@ export async function refusalDirect(ctx: Ctx, port: number, operation: string, i
 }
 
 /**
- * The emulator's code for refusing `operation` with `input`, directly, of a refusal that may carry no reason. Fails
- * the check when the emulator does not refuse it with a code.
+ * The emulator's code for refusing `operation` with `input`, directly, of a refusal that carries no reason. Fails
+ * the check when the emulator does not refuse it with a code, or gives a reason (`refusalDirect` is for that one).
  */
 export async function refusalCodeDirect(ctx: Ctx, port: number, operation: string, input: object): Promise<string> {
   const answer = await cw(ctx, port, operation, input);
-  if (answer.status === 200 || answer.code === null) {
-    throw new Error(`direct ${operation} was not refused with a code: ${String(answer.status)} ${JSON.stringify(answer.json)}`);
+  if (answer.status === 200 || answer.code === null || (answer.message !== null && answer.message !== '')) {
+    throw new Error(`direct ${operation} was not refused with a code and no reason: ${String(answer.status)} ${JSON.stringify(answer.json)}`);
   }
-  return answer.message === null || answer.message === '' ? answer.code : `${answer.code}: ${answer.message}`;
+  return answer.code;
 }
+
+/**
+ * What AWS's SDK puts in the place of a refusal's reason when the emulator's answer has none, which a screen then
+ * shows after the code.
+ */
+export const NO_REASON = 'UnknownError';
 
 const ALARM_TYPES = ['CompositeAlarm', 'MetricAlarm', 'LogAlarm'];
 

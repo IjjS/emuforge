@@ -468,11 +468,16 @@ export function directLogs(ctx: Ctx, port: number, action: string, input: object
   });
 }
 
-/** A CloudWatch action (AWS JSON 1.0) with its JSON input, straight to the emulator (issue 70: the alarms' checks). */
+/**
+ * A CloudWatch action (AWS JSON 1.0) with its JSON input, straight to the emulator (issue 70: the alarms' checks). It
+ * carries `x-amzn-query-mode: true`, as AWS's SDK does for this service, so a refusal comes with the header
+ * `x-amzn-query-error` that holds the code the SDK reports.
+ */
 export function directCloudWatch(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
   return direct(ctx, port, 'monitoring', 'POST', '/', {}, JSON.stringify(input), {
     'content-type': 'application/x-amz-json-1.0',
     'x-amz-target': `GraniteServiceVersion20100801.${action}`,
+    'x-amzn-query-mode': 'true',
   });
 }
 

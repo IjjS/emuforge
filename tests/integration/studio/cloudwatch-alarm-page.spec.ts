@@ -23,6 +23,7 @@ import {
   answered,
   chooseOption,
   CloudWatchSeeded,
+  codeAndMessage,
   cwOk,
   DEFAULT_REASON,
   dialogOf,
@@ -41,6 +42,7 @@ import {
   metricAlarmDirect,
   namesOf,
   NO_ACTIONS,
+  NO_REASON,
   openAlarm,
   openAlarms,
   refusalCodeDirect,
@@ -319,7 +321,7 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
         dialog.getByRole('button', { name: SET_STATE, exact: true }).click(ACTION),
       );
 
-      await expectAlert(dialog, failed('SetAlarmState'), refused);
+      await expectAlert(dialog, failed('SetAlarmState'), codeAndMessage({ code: refused, message: NO_REASON }));
       await expect(dialog, 'the dialog stays open').toBeVisible();
       await expect(flashItems(page, 'success'), 'no result says the state was set').toHaveCount(0);
       expect(namesOf(await alarmDirect(ctx, port, name)), 'the alarms of that name, directly').toEqual([]);
