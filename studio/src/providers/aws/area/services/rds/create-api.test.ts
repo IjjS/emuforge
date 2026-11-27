@@ -150,6 +150,64 @@ describe('a DB instance', () => {
     }
   });
 
+  const instance = {
+    identifier: 'app-db',
+    engine: 'postgres',
+    instanceClass: 'db.t3.micro',
+    allocatedStorage: 100,
+    masterUsername: 'admin1',
+    masterPassword: PASSWORD,
+  };
+
+  it('serializes the selected storage type, IOPS, zone, encryption, protection and tags', async () => {
+    engine.on('CreateDBInstance', () => createdInstance('app-db'));
+    await createInstance(
+      endpoint,
+      {
+        ...instance,
+        storageType: 'io1',
+        iops: 3000,
+        availabilityZone: 'us-east-1a',
+        encrypted: true,
+        kmsKeyId: 'arn:aws:kms:us-east-1:000000000000:key/test',
+        deletionProtection: true,
+        tags: [{ key: 'project', value: 'studio' }],
+      },
+      signal(),
+    );
+
+    const sent = engine.of('CreateDBInstance')[0]?.params;
+    expect(sent?.get('StorageType')).toBe('io1');
+    expect(sent?.get('Iops')).toBe('3000');
+    expect(sent?.get('AvailabilityZone')).toBe('us-east-1a');
+    expect(sent?.get('StorageEncrypted')).toBe('true');
+    expect(sent?.get('KmsKeyId')).toBe('arn:aws:kms:us-east-1:000000000000:key/test');
+    expect(sent?.get('DeletionProtection')).toBe('true');
+    expect(sent?.get('Tags.Tag.1.Key')).toBe('project');
+    expect(sent?.get('Tags.Tag.1.Value')).toBe('studio');
+  });
+
+  it('omits unselected storage and key, and sends MultiAZ without a zone', async () => {
+    engine.on('CreateDBInstance', () => createdInstance('app-db'));
+    await createInstance(
+      endpoint,
+      {
+        ...instance,
+        multiAz: true,
+        availabilityZone: 'us-east-1a',
+        encrypted: true,
+      },
+      signal(),
+    );
+
+    const sent = engine.of('CreateDBInstance')[0]?.params;
+    expect(sent?.get('MultiAZ')).toBe('true');
+    expect(sent?.get('StorageEncrypted')).toBe('true');
+    for (const member of ['StorageType', 'Iops', 'AvailabilityZone', 'KmsKeyId']) {
+      expect(sent?.has(member)).toBe(false);
+    }
+  });
+
   it("with a version, a database name, a subnet group and two security groups → those too; the answer's identifier as the emulator gave it", async () => {
     engine.on('CreateDBInstance', () => createdInstance('app-db'));
     const id = await createInstance(
@@ -191,6 +249,36 @@ describe('a DB cluster', () => {
     expect(names(sent)).toEqual(['DBClusterIdentifier', 'Engine', 'MasterUserPassword', 'MasterUsername'].sort());
     expect(sent?.get('Engine')).toBe('aurora-postgresql');
     expect(sent?.get('MasterUserPassword')).toBe(PASSWORD);
+  });
+
+  it('serializes the selected zones, storage type, encryption, protection and tags', async () => {
+    engine.on('CreateDBCluster', () => createdCluster('aur-1'));
+    await createCluster(
+      endpoint,
+      {
+        identifier: 'aur-1',
+        engine: 'aurora-postgresql',
+        masterUsername: 'admin1',
+        masterPassword: PASSWORD,
+        availabilityZones: ['us-east-1a', 'us-east-1b'],
+        storageType: 'aurora-iopt1',
+        encrypted: true,
+        kmsKeyId: 'arn:aws:kms:us-east-1:000000000000:key/test',
+        deletionProtection: true,
+        tags: [{ key: 'project', value: 'studio' }],
+      },
+      signal(),
+    );
+
+    const sent = engine.of('CreateDBCluster')[0]?.params;
+    expect(sent?.get('AvailabilityZones.AvailabilityZone.1')).toBe('us-east-1a');
+    expect(sent?.get('AvailabilityZones.AvailabilityZone.2')).toBe('us-east-1b');
+    expect(sent?.get('StorageType')).toBe('aurora-iopt1');
+    expect(sent?.get('StorageEncrypted')).toBe('true');
+    expect(sent?.get('KmsKeyId')).toBe('arn:aws:kms:us-east-1:000000000000:key/test');
+    expect(sent?.get('DeletionProtection')).toBe('true');
+    expect(sent?.get('Tags.Tag.1.Key')).toBe('project');
+    expect(sent?.get('Tags.Tag.1.Value')).toBe('studio');
   });
 
   it("with the rest → EngineVersion, DatabaseName, DBSubnetGroupName, VpcSecurityGroupIds; the answer's identifier", async () => {
