@@ -87,6 +87,8 @@ const FULL = `<DBInstance>
   <PendingModifiedValues><MasterUserPassword>****</MasterUserPassword></PendingModifiedValues>
   <EngineVersion>18.3</EngineVersion>
   <StorageType>gp2</StorageType>
+  <Iops>3000</Iops>
+  <MultiAZ>false</MultiAZ>
   <DbiResourceId>db-ABC123</DbiResourceId>
   <DBInstanceArn>arn:aws:rds:us-east-1:000000000000:db:app-db</DBInstanceArn>
   <DeletionProtection>true</DeletionProtection>
@@ -186,6 +188,8 @@ describe('an instance', () => {
         dbName: 'app',
         allocatedStorage: 20,
         storageType: 'gp2',
+        iops: 3000,
+        multiAz: false,
         zone: 'us-east-1a',
         arn: 'arn:aws:rds:us-east-1:000000000000:db:app-db',
         resourceId: 'db-ABC123',
@@ -206,7 +210,17 @@ describe('an instance', () => {
     const read = await getInstance(endpoint, 'm-1', signal());
     const instance = read.found ? read.instance : undefined;
     expect(instance).toBeDefined();
-    for (const key of ['masterUsername', 'dbName', 'allocatedStorage', 'storageType', 'zone', 'arn', 'subnetGroup']) {
+    for (const key of [
+      'masterUsername',
+      'dbName',
+      'allocatedStorage',
+      'storageType',
+      'iops',
+      'multiAz',
+      'zone',
+      'arn',
+      'subnetGroup',
+    ]) {
       expect(instance && key in instance, key).toBe(false);
     }
   });

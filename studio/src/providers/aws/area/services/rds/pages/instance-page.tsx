@@ -321,13 +321,15 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const [editing, setEditing] = useState<DbInstance>();
+  const [renaming, setRenaming] = useState(false);
   const [modifyFailure, setModifyFailure] = useState<FlashItem>();
   const [modifyUnavailable, setModifyUnavailable] = useState(false);
   const [awaitingModifiedRead, setAwaitingModifiedRead] = useState(false);
   const reading = useInstance(connection.engineOrigin, id);
   const { value: read, failure, loading, refresh } = reading;
   if (awaitingModifiedRead && !loading) setAwaitingModifiedRead(false);
-  const instance = read?.found === true ? read.instance : undefined;
+  // The old identifier can disappear while the rename is waiting for its write response.
+  const instance = read?.found === true ? read.instance : renaming && read?.found === false ? editing : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB instance');
   // A member without sign-in values of its own reads its DB cluster's; that read never fails the page.
   const signInCluster =
@@ -413,6 +415,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
     inFlight.current = true;
     setPending(true);
     setModifyFailure(undefined);
+    setRenaming(changes.identifier !== undefined);
     try {
       const updatedId = await modify(editing, changes, signal);
       if (signal.aborted) return;
@@ -451,6 +454,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       if (!signal.aborted) {
         inFlight.current = false;
         setPending(false);
+        setRenaming(false);
       }
     }
   };
@@ -543,6 +547,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       </ContentLayout>
       {editing !== undefined && (
         <ModifyInstanceDialog
+          connection={connection}
           instance={editing}
           pending={pending}
           failure={modifyFailure}

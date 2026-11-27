@@ -79,6 +79,54 @@ describe('ModifyDBInstance', () => {
     expect(sent).toEqual([{ ...request, DBInstanceIdentifier: id, ...fields }]);
   });
 
+  it('sends changed choice members and omits an unrelated update and the minor upgrade flag', async () => {
+    await modifyInstance(
+      engineEndpoint(port),
+      'original-db',
+      {
+        instanceClass: 'db.t3.small',
+        engineVersion: { version: '16.13', major: false },
+        storageType: 'io1',
+        iops: 3000,
+        multiAz: false,
+        subnetGroup: 'private',
+        securityGroupIds: ['sg-1', 'sg-2'],
+      },
+      new AbortController().signal,
+    );
+    expect(sent).toEqual([
+      {
+        ...request,
+        DBInstanceIdentifier: 'original-db',
+        DBInstanceClass: 'db.t3.small',
+        EngineVersion: '16.13',
+        StorageType: 'io1',
+        Iops: '3000',
+        MultiAZ: 'false',
+        DBSubnetGroupName: 'private',
+        'VpcSecurityGroupIds.VpcSecurityGroupId.1': 'sg-1',
+        'VpcSecurityGroupIds.VpcSecurityGroupId.2': 'sg-2',
+      },
+    ]);
+  });
+
+  it('sends the major upgrade flag with a major target', async () => {
+    await modifyInstance(
+      engineEndpoint(port),
+      'original-db',
+      { engineVersion: { version: '17.9', major: true } },
+      new AbortController().signal,
+    );
+    expect(sent).toEqual([
+      {
+        ...request,
+        DBInstanceIdentifier: 'original-db',
+        EngineVersion: '17.9',
+        AllowMajorVersionUpgrade: 'true',
+      },
+    ]);
+  });
+
   it('U9 refuses an answer with no identifier', async () => {
     responseId = undefined;
     await expect(
