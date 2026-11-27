@@ -168,7 +168,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
                       Set state
                     </Button>
                     <Button
-                      disabled={engineOrigin === undefined || actions.pending || actions.unavailable}
+                      disabled={engineOrigin === undefined || actions.unavailable}
                       disabledReason={actions.disabledReason}
                       loading={actions.pending}
                       onClick={() => void actions.toggle()}

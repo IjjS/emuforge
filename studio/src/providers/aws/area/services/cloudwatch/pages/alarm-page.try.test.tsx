@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate, type NavigateFunction } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -374,6 +375,36 @@ it('shows Alarm not found without a result if confirmation finds the alarm gone'
   fireEvent.click(await screen.findByRole('button', { name: 'Turn actions off' }));
   expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
   expect(findFlashContent()).toEqual([]);
+});
+
+it.each([
+  ['Turn actions off', true, 'DisableAlarmActions'],
+  ['Turn actions on', false, 'EnableAlarmActions'],
+])('keeps focus on %s while pending and after refusal', async (label, enabled, operation) => {
+  const user = userEvent.setup();
+  const written = deferred<undefined>();
+  read.mockResolvedValueOnce(alarm(enabled));
+  changeActions.mockReturnValueOnce(written.promise);
+  open();
+  const button = await waitFor(() => {
+    const actions = page.findContentLayout()?.findHeader()?.findHeader()?.findActions();
+    const control = actions?.findAllButtons().find((item) => item.getElement().textContent?.trim() === label);
+    if (!control) throw new Error(`Missing ${label} button`);
+    return control.getElement();
+  });
+  button.focus();
+  await user.keyboard('{Enter}');
+  expect(button).toHaveFocus();
+  expect(button).toHaveAttribute('aria-disabled', 'true');
+  expect(button).not.toBeDisabled();
+  await user.keyboard('{Enter}');
+  expect(changeActions).toHaveBeenCalledExactlyOnceWith(engine, name, !enabled, expect.any(AbortSignal));
+  await act(async () =>
+    written.reject(new RequestError({ kind: 'access-denied', operation, message: 'The change was refused.' })),
+  );
+  expect(findFlashContent()).toEqual([`${operation} was refused: The change was refused.`]);
+  expect(button).toHaveFocus();
+  expect(button).not.toHaveAttribute('aria-disabled', 'true');
 });
 
 it('keeps a switch that answered 501 in the header, unavailable', async () => {

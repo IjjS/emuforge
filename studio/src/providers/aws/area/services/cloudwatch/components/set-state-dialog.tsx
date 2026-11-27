@@ -1,12 +1,12 @@
 import { StateValue } from '@aws-sdk/client-cloudwatch';
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { reportedServiceCode, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -47,6 +47,7 @@ export function SetStateDialog({
   const inFlight = useRef(false);
   const selectRef = useRef<SelectProps.Ref>(null);
   const reasonRef = useRef<TextareaProps.Ref>(null);
+  const failureRef = useRef<AlertProps.Ref>(null);
   const [state, setState] = useState<StateValue>();
   const [reason, setReason] = useState('Set by hand in EmuForge Studio');
   const [stateError, setStateError] = useState(false);
@@ -57,6 +58,10 @@ export function SetStateDialog({
   const disabled = shownFailure?.kind === 'not-implemented';
   const feedback = shownFailure && actionFailureItem(shownFailure, SET_ALARM_STATE, endpoint);
   const accessDeniedCode = shownFailure?.kind === 'access-denied' ? reportedServiceCode(shownFailure) : undefined;
+
+  useEffect(() => {
+    if (failure) failureRef.current?.focus();
+  }, [failure]);
 
   const handleDismiss = () => {
     if (!inFlight.current) onDismiss();
@@ -111,12 +116,7 @@ export function SetStateDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button
-              variant="primary"
-              disabled={disabled || pending}
-              loading={pending}
-              onClick={() => void handleConfirm()}
-            >
+            <Button variant="primary" disabled={disabled} loading={pending} onClick={() => void handleConfirm()}>
               Set state
             </Button>
           </SpaceBetween>
@@ -130,7 +130,7 @@ export function SetStateDialog({
         </Box>
         {feedback && (
           <div role="alert">
-            <Alert type={feedback.type} header={feedback.header}>
+            <Alert ref={failureRef} type={feedback.type} header={feedback.header}>
               {(shownFailure?.kind === 'emulator-did-not-answer' || shownFailure?.kind === 'engine-did-not-answer') &&
                 `${SET_ALARM_STATE} failed. `}
               {feedback.content}
