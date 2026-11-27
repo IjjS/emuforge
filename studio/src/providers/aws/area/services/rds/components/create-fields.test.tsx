@@ -355,6 +355,7 @@ describe('the create fields', () => {
     select.openDropdown();
     await waitFor(() => {
       expect(text(select.findDropdown().getElement())).toContain('Loading DB subnet groups');
+      expect(api.listSubnetGroupChoices).toHaveBeenCalledOnce();
     });
     answer({ choices: [{ name: 'default', description: 'the default group', vpcId: 'vpc-d' }] });
     await waitFor(() => {
