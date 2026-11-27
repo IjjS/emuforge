@@ -7,6 +7,7 @@ import {
   masterUserNameConstraint,
   masterUserNameError,
   passwordError,
+  storageConstraint,
   storageError,
 } from './form';
 
@@ -91,9 +92,11 @@ describe('storage and IOPS for an orderable type', () => {
 
   it('checks a type’s advertised range', () => {
     const gp3 = { type: 'gp3', minSize: 40, maxSize: 200 };
-    expect(storageError('39', gp3)).toBe('40 to 200 GiB for gp3.');
-    expect(storageError('201', gp3)).toBe('40 to 200 GiB for gp3.');
+    for (const value of ['39', '201', '40.5']) {
+      expect(storageError(value, gp3), value).toBe('The storage is a whole number from 40 to 200 for gp3.');
+    }
     expect(storageError('40', gp3)).toBeUndefined();
+    expect(storageConstraint(gp3)).toBe('40 to 200 GiB for gp3.');
   });
 
   it('requires IOPS for io1 and checks the row and size ranges', () => {
@@ -104,7 +107,7 @@ describe('storage and IOPS for an orderable type', () => {
   });
 
   it.each(['io1', 'io2'])('requires at least 100 GiB for %s', (type) => {
-    expect(storageError('99', { ...io1, type })).toBe(`100 to 500 GiB for ${type}.`);
+    expect(storageError('99', { ...io1, type })).toBe(`The storage is a whole number from 100 to 500 for ${type}.`);
     expect(storageError('100', { ...io1, type })).toBeUndefined();
   });
 });

@@ -44,7 +44,9 @@ export function storageError(value: string, choice?: StorageTypeChoice): string 
   }
   const [min, max] = storageBounds(choice);
   if (/^\d+$/.test(value) && Number(value) >= min && Number(value) <= max) return undefined;
-  return choice === undefined ? 'The storage is a whole number from 20 to 65536.' : storageConstraint(choice);
+  return choice === undefined
+    ? `The storage is a whole number from ${min} to ${max}.`
+    : `The storage is a whole number from ${min} to ${max} for ${choice.type}.`;
 }
 
 function storageBounds(choice: StorageTypeChoice | undefined): [number, number] {
