@@ -153,7 +153,9 @@ describe('ChoiceSelect', () => {
     const input = select().findFilteringInput();
     const native = input?.findNativeInput()?.getElement();
     if (!input || !native) throw new Error('no filtering input');
+    act(() => native.focus());
     input.setInputValue(twoSpaces.name);
+    expect(native).toHaveFocus();
     fireEvent.keyDown(native, { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 });
     fireEvent.keyDown(native, { key: 'Enter', code: 'Enter', keyCode: 13 });
 

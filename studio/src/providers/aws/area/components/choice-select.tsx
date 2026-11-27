@@ -75,7 +75,6 @@ interface FieldParts<T> {
     | 'filteringPlaceholder'
     | 'filteringAriaLabel'
     | 'onLoadItems'
-    | 'renderDropdownHeader'
     | 'renderDropdownFooter'
     | 'onFocus'
   >;
@@ -158,16 +157,22 @@ export function useChoiceField<T>(
         }
       },
       // Cloudscape publishes each input change to the dropdown renderer. onLoadItems is delayed for remote reads.
-      renderDropdownHeader: ({ filterText }) =>
-        filtering === 'local' && filterText !== text ? <LocalFilterText text={filterText} onChange={setText} /> : null,
-      renderDropdownFooter: () =>
-        more ? (
-          <Box padding={{ vertical: 'xs', horizontal: 's' }}>
-            <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
-              Load more
-            </Button>
-          </Box>
-        ) : null,
+      renderDropdownFooter: ({ filterText }) => {
+        const syncText = filtering === 'local' && filterText !== text;
+        if (!syncText && !more) return null;
+        return (
+          <>
+            {syncText && <LocalFilterText text={filterText} onChange={setText} />}
+            {more && (
+              <Box padding={{ vertical: 'xs', horizontal: 's' }}>
+                <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
+                  Load more
+                </Button>
+              </Box>
+            )}
+          </>
+        );
+      },
     },
   };
 }
