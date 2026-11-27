@@ -40,13 +40,17 @@ export function restStageAddress({ result }: AreaConnection, apiId: string, stag
   if (result?.kind !== 'connected' || !stageName) return undefined;
 
   const { endpoint } = result.emulator;
-  let hostname: string;
+  // Check the written literal before URL can normalize an abbreviated or encoded IPv4 host.
+  const host = /^https?:\/\/(\[[\da-f:.]+\]|127(?:\.\d{1,3}){3})(?::\d+)?(?=[/?#]|$)/i.exec(endpoint)?.[1];
+  if (host === undefined) return undefined;
+
   try {
-    hostname = new URL(endpoint).hostname;
+    const { hostname } = new URL(endpoint);
+    const loopback = host.startsWith('[') ? hostname === '[::1]' : hostname === host;
+    if (!loopback) return undefined;
   } catch {
     return undefined;
   }
-  if (hostname !== '[::1]' && !/^127(?:\.\d{1,3}){3}$/.test(hostname)) return undefined;
 
   return `${endpoint.replace(/\/+$/, '')}/_aws/execute-api/${apiId}/${stageName}`;
 }
