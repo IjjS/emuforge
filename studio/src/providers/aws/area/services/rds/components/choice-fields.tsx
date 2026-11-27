@@ -219,16 +219,17 @@ export function StorageTypeField({
         };
   const choices = fixed === undefined ? options : [fixed, ...options];
   const chosen = value === undefined && error === undefined ? (fixed ?? null) : selectedOption(options, value, missing);
+  const fixedDescription = !locked && chosen === fixed ? fixed.description : undefined;
 
   return (
-    <FormField label={label} errorText={error}>
+    <FormField label={label} description={fixedDescription} errorText={error}>
       <SpaceBetween size="xs">
         <Select
           ref={selectRef}
           ariaLabel={label}
           options={choices}
           selectedOption={locked ? null : chosen}
-          triggerVariant="option"
+          triggerVariant={fixedDescription === undefined ? 'option' : 'label'}
           placeholder={locked ? 'Choose DB instance class first' : 'Choose a storage type'}
           disabled={locked || (!cluster && rows.data === undefined)}
           invalid={error !== undefined}
@@ -364,15 +365,16 @@ export function ZoneField({
 }) {
   const label = 'Availability Zone';
   const options = props.placement?.failure === undefined ? zoneOptions(props.zones, props.zoneRead) : [];
+  const noPreference = disabled || value === undefined;
   return (
-    <FormField label={label}>
+    <FormField label={label} description={noPreference ? NO_ZONE.description : undefined}>
       <SpaceBetween size="xs">
         <Select
           ariaLabel={label}
           disabled={disabled}
           options={[NO_ZONE, ...options]}
-          selectedOption={disabled || value === undefined ? NO_ZONE : selectedOption(options, value)}
-          triggerVariant="option"
+          selectedOption={noPreference ? NO_ZONE : selectedOption(options, value)}
+          triggerVariant={noPreference ? 'label' : 'option'}
           onChange={({ detail }) => onChange(detail.selectedOption.value || undefined)}
         />
         <ZonesStatus {...props} />
