@@ -82,6 +82,22 @@ it('describes what is deleted and requires the exact stream name', async () => {
   expect(remove).not.toHaveBeenCalled();
 });
 
+it.each([
+  ['a  b', 'Delete log stream a\\u0020\\u0020b?'],
+  [' a', 'Delete log stream \\u0020a?'],
+  ['a b', 'Delete log stream a b?'],
+])('names the dialog for %j with a single accessible text node', async (stored, expected) => {
+  const { dialog, element } = await renderDialog(stored);
+  expect(element).toHaveAccessibleName(expected);
+  const heading = dialog.findHeader().findHeader()?.findHeadingText()?.getElement();
+  expect(heading?.closest('h2')).toHaveAccessibleName(expected);
+  const accessibleTitle = heading?.querySelector('.aws-area-name-identity');
+  expect(accessibleTitle?.childNodes).toHaveLength(1);
+  expect(accessibleTitle?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(accessibleTitle?.firstChild?.nodeValue).toBe(expected);
+  expect(heading?.querySelector('[aria-hidden="true"]')).toBeVisible();
+});
+
 it('shows and names the two-space stream and deletes it when both spaces are typed', async () => {
   const stored = 'a  b';
   const identity = 'a\\u0020\\u0020b';
@@ -91,7 +107,7 @@ it('shows and names the two-space stream and deletes it when both spaces are typ
   expect(element).toHaveAccessibleName(`Delete log stream ${identity}?`);
   const name = dialog.findHeader().findHeader()?.findHeadingText()?.find('[aria-hidden="true"]')?.getElement();
   expect(name).toBeVisible();
-  expect(name?.textContent).toBe(`${stored} (${identity})`);
+  expect(name?.textContent).toBe(`Delete log stream ${stored} (${identity})?`);
   fireEvent.change(field, { target: { value: stored } });
   expect(action).toBeEnabled();
   fireEvent.click(action);
@@ -123,7 +139,7 @@ it.each(terminators)(
     expect(element).toHaveAccessibleName(`Delete log stream first${escaped}second?`);
     const heading = dialog.findHeader().findHeader()?.findHeadingText();
     expect(heading?.find('[aria-hidden="true"]')?.getElement().textContent).toBe(
-      `first\nsecond (first${escaped}second)`,
+      `Delete log stream first\nsecond (first${escaped}second)?`,
     );
     expect(heading?.getElement()).toBeVisible();
     expect(heading?.find('span[style]')?.getElement()).toHaveStyle({ whiteSpace: 'pre-wrap' });

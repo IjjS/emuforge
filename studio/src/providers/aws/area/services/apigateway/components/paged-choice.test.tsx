@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { RequestError } from '../../../../../../lib/aws/request';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { apiChoices } from '../api-choices';
+import type { ApiRow } from '../apis-api';
 import { PagedChoice } from './paged-choice';
 
 const endpoint = 'http://127.0.0.1:9681';
@@ -59,6 +61,53 @@ async function open(
   await userEvent.click(select.findTrigger().getElement());
   return { ...test, onChange, dropdown: select.findDropdown(), select };
 }
+
+it('shows the chosen API identity and finds that API by typing its stored name', async () => {
+  const api: ApiRow = {
+    id: 'api-2',
+    name: 'a  b',
+    kind: 'REST',
+    description: undefined,
+    createdDate: undefined,
+    endpointTypes: [],
+  };
+  const source = {
+    ...apiChoices(endpoint, 'rest'),
+    read: vi.fn().mockResolvedValue({ items: [{ ...api, id: 'api-1', name: 'a b' }, api] }),
+  };
+  const onChange = vi.fn();
+  const { container } = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <PagedChoice
+        source={source}
+        value={api}
+        onChange={onChange}
+        connection={{ engineOrigin: endpoint, result: connected }}
+        things="APIs"
+        ariaLabel="API"
+      />
+    </QueryClientProvider>,
+  );
+  const identity = 'a\\u0020\\u0020b';
+  const trigger = screen.getByRole('button', { name: /API/ });
+  expect(trigger).toHaveTextContent(identity);
+  const user = userEvent.setup();
+  await user.click(trigger);
+  const select = createWrapper(container).findSelect();
+  const input = select?.findFilteringInput()?.findNativeInput();
+  if (!select || !input) throw new Error('Missing API filter');
+  await user.type(input.getElement(), 'a  b');
+
+  const dropdown = select.findDropdown();
+  await waitFor(() => {
+    expect(dropdown.findOptionByValue('api-1')).toBeNull();
+    expect(dropdown.findOptionByValue(api.id)?.getElement()).toHaveTextContent(identity);
+  });
+  const option = dropdown.findOptionByValue(api.id);
+  if (!option) throw new Error('Missing matching API');
+  await user.click(option.getElement());
+  expect(onChange).toHaveBeenCalledWith(api);
+});
 
 it('reads the current options on reopening while focus stays on the trigger', async () => {
   const read = vi.fn<ChoiceSource<typeof first>['read']>().mockResolvedValue(firstPage);
