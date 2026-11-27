@@ -238,7 +238,7 @@ it('wraps the selected fixed description and retains it in the open list', async
   expect(tokens()).toEqual(['a']);
   expect(screen.getAllByText(description)).toHaveLength(1);
 
-  fixed?.click();
+  field().selectOption(1);
   expect(latest).toEqual([]);
   expect(tokens()).toEqual(['Default security group']);
   expect(screen.getAllByText(description)).toHaveLength(2);
