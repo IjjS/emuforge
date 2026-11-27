@@ -129,7 +129,7 @@ function open(search = '') {
 }
 
 function textbox(name: string) {
-  return screen.getByRole('textbox', { name, exact: true });
+  return screen.getByRole('textbox', { name });
 }
 
 function enter(name: string, value: string) {
@@ -137,7 +137,7 @@ function enter(name: string, value: string) {
 }
 
 function button(name: string) {
-  return screen.getByRole('button', { name, exact: true });
+  return screen.getByRole('button', { name });
 }
 
 function click(name: string) {
@@ -391,6 +391,9 @@ it('shows a 501 bus read at the field with Retry and sends no rule read or write
   expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent('Choose an event bus');
   fill();
   click('Create rule');
+  expectUnsent();
+  click('Retry');
+  await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   expectUnsent();
 });
 

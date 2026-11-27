@@ -1,8 +1,11 @@
 import type { PutRuleCommandInput } from '@aws-sdk/client-eventbridge';
 
+import { busDescriptionError } from './bus-form';
+
+export { BUS_DESCRIPTION_RULE as RULE_DESCRIPTION_RULE } from './bus-form';
+
 export const CREATE_RULE_TITLE = 'Create rule';
 export const RULE_NAME_RULE = '1 to 64 characters. Use letters, digits, periods, hyphens and underscores.';
-export const RULE_DESCRIPTION_RULE = 'Up to 512 characters.';
 export const EVENT_PATTERN_RULE = 'Enter a JSON object of up to 2048 characters.';
 export const RATE_NUMBER_RULE = 'Enter a whole number of 1 or more.';
 
@@ -47,7 +50,7 @@ export function rateExpression(value: string, unit: RateUnit): string {
 }
 
 function validPattern(value: string): boolean {
-  if (value.length > 2048) return false;
+  if ([...value].length > 2048) return false;
   try {
     const json: unknown = JSON.parse(value);
     return json !== null && typeof json === 'object' && !Array.isArray(json);
@@ -61,7 +64,8 @@ export function validateRule(form: RuleForm): Partial<Record<RuleField, string>>
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(form.name)) {
     errors.name = form.name === '' ? 'Enter a rule name.' : RULE_NAME_RULE;
   }
-  if (form.description.length > 512) errors.description = RULE_DESCRIPTION_RULE;
+  const descriptionError = busDescriptionError(form.description);
+  if (descriptionError) errors.description = descriptionError;
   if (form.trigger === 'pattern') {
     if (!validPattern(form.pattern)) errors.pattern = EVENT_PATTERN_RULE;
   } else if (form.scheduleKind === 'rate') {

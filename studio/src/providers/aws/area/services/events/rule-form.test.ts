@@ -7,7 +7,6 @@ import {
   INITIAL_RULE_FORM,
   RATE_NUMBER_RULE,
   rateExpression,
-  RULE_DESCRIPTION_RULE,
   RULE_NAME_RULE,
   validateRule,
 } from './rule-form';
@@ -23,7 +22,10 @@ it('checks a rule name and description at their limits', () => {
   for (const name of ['.', '..', 'a-0_'.repeat(16)]) {
     expect(validateRule({ ...form, name })).toEqual({});
   }
-  expect(validateRule({ ...form, description: 'a'.repeat(513) }).description).toBe(RULE_DESCRIPTION_RULE);
+  expect(validateRule({ ...form, description: '🙂'.repeat(512) })).toEqual({});
+  expect(validateRule({ ...form, description: 'a'.repeat(513) }).description).toBe(
+    'Enter a description of up to 512 characters.',
+  );
 });
 
 it('accepts only a JSON object of up to 2048 characters', () => {

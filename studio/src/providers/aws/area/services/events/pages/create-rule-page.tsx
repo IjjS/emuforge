@@ -9,7 +9,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import RadioGroup from '@cloudscape-design/components/radio-group';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useRef, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -105,6 +105,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
   const navigate = useNavigate();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const submitId = useId();
   const [search] = useSearchParams();
   const addressBus = search.get('bus');
   const [selectedBus, setSelectedBus] = useState<string>();
@@ -151,7 +152,9 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (inFlight.current || unavailable || askDiscard) return;
+    // A Retry inside a choice can also submit the containing form.
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    if ((submitter && submitter.id !== submitId) || inFlight.current || unavailable || askDiscard) return;
     setTried(true);
     setFailure(undefined);
     if (bus === undefined) {
@@ -177,7 +180,8 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
         return;
       }
     }
-    const targets = rows.map(({ draft }) => buildTarget(draft)).filter((target) => target !== undefined);
+    const targets = rows.map(({ draft }) => buildTarget(draft));
+    if (!targets.every((target) => target !== undefined)) return;
     if (engineOrigin === undefined) {
       setFailure({ kind: 'engine-did-not-answer', operation: RULE_OPERATIONS.describeRule });
       return;
@@ -259,7 +263,13 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
               >
                 Cancel
               </Button>
-              <Button variant="primary" formAction="submit" loading={pending} disabled={unavailable}>
+              <Button
+                variant="primary"
+                formAction="submit"
+                loading={pending}
+                disabled={unavailable}
+                nativeButtonAttributes={{ id: submitId }}
+              >
                 {CREATE_RULE_TITLE}
               </Button>
             </SpaceBetween>
@@ -320,7 +330,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                   <RadioGroup
                     value={form.state}
                     items={STATES}
-                    disabled={pending}
+                    readOnly={pending}
                     onChange={({ detail }) => change({ state: detail.value === 'DISABLED' ? 'DISABLED' : 'ENABLED' })}
                   />
                 </FormField>
@@ -331,7 +341,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                 <FormField label="What starts the rule">
                   <RadioGroup
                     value={form.trigger}
-                    disabled={pending}
+                    readOnly={pending}
                     items={[
                       {
                         value: 'pattern',
@@ -371,7 +381,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                       <RadioGroup
                         value={form.scheduleKind}
                         items={SCHEDULE_KINDS}
-                        disabled={pending}
+                        readOnly={pending}
                         onChange={({ detail }) => change({ scheduleKind: detail.value === 'cron' ? 'cron' : 'rate' })}
                       />
                     </FormField>
@@ -390,7 +400,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                         <FormField label="Unit">
                           <RadioGroup
                             value={form.unit}
-                            disabled={pending}
+                            readOnly={pending}
                             items={RATE_UNITS.map((unit) => ({
                               ...unit,
                               ...(!errors.rate && { description: rateExpression(form.rate, unit.value) }),
