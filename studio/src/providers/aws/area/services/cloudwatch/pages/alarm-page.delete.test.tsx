@@ -142,7 +142,9 @@ function expectAlarmNotFound() {
 }
 
 async function openDelete() {
-  fireEvent.click(await waitFor(() => headerControl('Delete')));
+  const trigger = await waitFor(() => headerControl('Delete'));
+  trigger.focus();
+  fireEvent.click(trigger);
   return waitFor(() => {
     const modal = page.findModal();
     if (!modal?.isVisible()) throw new Error('Delete confirmation is missing');
@@ -248,6 +250,11 @@ it('stays on the alarm and reports nothing to the flash on refusal', async () =>
     expect(alert?.getElement().contains(document.activeElement)).toBe(true);
   });
   expect(modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
+  const focusedAlert = modal.findContent().findAlert()?.find('[role="group"]')?.getElement();
+  if (!focusedAlert) throw new Error('Delete refusal focus target is missing');
+  fireEvent.keyDown(focusedAlert, { key: 'Escape', code: 'Escape', keyCode: 27 });
+  expect(page.findModal()).toBeNull();
+  expect(headerControl('Delete')).toHaveFocus();
   expect(screen.getByLabelText('Address').textContent).toBe(alarmPath(name));
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();

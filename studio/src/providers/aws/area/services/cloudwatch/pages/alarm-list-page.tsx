@@ -1,6 +1,6 @@
 import type { StateValue } from '@aws-sdk/client-cloudwatch';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
@@ -11,7 +11,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -54,6 +54,8 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   const [selectedName, setSelectedName] = useState<string>();
   const [deleteName, setDeleteName] = useState<string>();
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
+  const deleteButton = useRef<ButtonProps.Ref>(null);
+  const restoreDeleteFocus = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const { engineOrigin } = connection;
   const { prefix, state, visit } = filters;
@@ -74,6 +76,11 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   useEffect(() => {
     announce(message);
   }, [announce, message]);
+  useEffect(() => {
+    if (deleteName !== undefined || !restoreDeleteFocus.current) return;
+    restoreDeleteFocus.current = false;
+    deleteButton.current?.focus();
+  }, [deleteName]);
   useEffect(() => {
     if (!listing.loading) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- The list's settlement ends explicit refresh feedback.
@@ -195,6 +202,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
                   </Button>
                 )}
                 <Button
+                  ref={deleteButton}
                   disabled={selected === undefined || engineOrigin === undefined}
                   onClick={() => setDeleteName(selectedName)}
                 >
@@ -284,7 +292,10 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
           unavailable={deleteUnavailable}
           onUnavailable={() => setDeleteUnavailable(true)}
           onDeleted={handleDeleted}
-          onDismiss={() => setDeleteName(undefined)}
+          onDismiss={() => {
+            restoreDeleteFocus.current = true;
+            setDeleteName(undefined);
+          }}
         />
       )}
       {announcement}

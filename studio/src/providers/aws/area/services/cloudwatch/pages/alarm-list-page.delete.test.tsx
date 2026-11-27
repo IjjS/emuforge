@@ -134,8 +134,10 @@ async function openDelete() {
   if (!selection) throw new Error('Alarm selection is missing');
   expect(selection).toHaveAccessibleName(name);
   fireEvent.click(selection);
-  expect(headerControl('Delete')).toBeEnabled();
-  fireEvent.click(headerControl('Delete'));
+  const trigger = headerControl('Delete');
+  expect(trigger).toBeEnabled();
+  trigger.focus();
+  fireEvent.click(trigger);
   const modal = await findDeleteModal();
   expect(modal.getElement()).toHaveAccessibleName(`Delete alarm ${name}?`);
   return modal;
@@ -192,8 +194,13 @@ it('keeps focus on the loading delete and focuses the refusal in the list dialog
   );
   const alert = modal.findContent().findAlert();
   expect(alert?.findContent().getElement()).toHaveTextContent('DeleteAlarms was refused: Delete was refused.');
-  expect(alert?.getElement().contains(document.activeElement)).toBe(true);
+  const focusedAlert = alert?.find('[role="group"]')?.getElement();
+  if (!focusedAlert) throw new Error('Delete refusal focus target is missing');
+  expect(focusedAlert).toHaveFocus();
   expect(modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
+  fireEvent.keyDown(focusedAlert, { key: 'Escape', code: 'Escape', keyCode: 27 });
+  expect(page.findModal()).toBeNull();
+  expect(headerControl('Delete')).toHaveFocus();
 });
 
 it('closes after deletion, reports success, and refreshes the shown page with no selection', async () => {

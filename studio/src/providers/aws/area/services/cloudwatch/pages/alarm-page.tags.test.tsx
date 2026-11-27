@@ -2,6 +2,7 @@ import type { Tag } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate, type NavigateFunction } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -127,7 +128,8 @@ async function manage() {
     expect(button).toBeEnabled();
     return required(button, 'Manage tags button');
   });
-  fireEvent.click(control);
+  control.focus();
+  await userEvent.keyboard('{Enter}');
   await screen.findByRole('dialog');
   const modal = required(page.findModal(), 'Tag dialog');
   const footer = required(modal.findFooter(), 'Dialog footer').findAllButtons();
@@ -136,6 +138,7 @@ async function manage() {
     required(row.findField(column)?.findControl()?.findInput(), label).findNativeInput().getElement();
   return {
     modal,
+    trigger: control,
     key: field(1, 'Tag key'),
     value: field(2, 'Tag value'),
     remove: required(row.findRemoveButton(), 'Remove tag button'),
@@ -307,4 +310,30 @@ it('retries the dialog’s tag read with its ARN after an in-flight alarm refres
   expect(tags).toHaveBeenNthCalledWith(4, engine, arn(name), expect.any(AbortSignal));
   expect(dialog.value).toHaveValue('draft value');
   expect(save).toHaveBeenCalledOnce();
+});
+
+it.each(['Escape', 'Close', 'Cancel'])('returns focus to Manage tags after Retry and %s', async (method) => {
+  tags.mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error('Tag read failed')).mockResolvedValue(initial);
+  save.mockRejectedValueOnce(refuse(TAG_RESOURCE, 400));
+  open();
+  const dialog = await manage();
+  fireEvent.change(dialog.value, { target: { value: 'draft value' } });
+  fireEvent.click(dialog.save);
+
+  const retry = await waitFor(() => {
+    const alert = required(dialog.modal.findContent().findAllAlerts()[1], 'Tag read refusal');
+    return required(alert.findActionSlot()?.findButton(), 'Retry button');
+  });
+  expect(retry.getElement()).toHaveFocus();
+  await userEvent.keyboard('{Enter}');
+  await waitFor(() => expect(dialog.save).toHaveFocus());
+  expect(dialog.value).toHaveValue('draft value');
+  expect(retry.getElement()).not.toBeInTheDocument();
+  expect(manageButton()).toBe(dialog.trigger);
+
+  if (method === 'Escape') fireEvent.keyDown(dialog.save, { key: 'Escape', code: 'Escape', keyCode: 27 });
+  else if (method === 'Close') dialog.modal.findDismissButton().click();
+  else dialog.cancel.click();
+  expect(page.findModal()).toBeNull();
+  expect(dialog.trigger).toHaveFocus();
 });
