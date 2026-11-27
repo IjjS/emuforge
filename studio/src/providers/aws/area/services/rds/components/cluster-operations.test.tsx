@@ -176,6 +176,14 @@ function deferredRows() {
 }
 
 describe('modify a DB cluster', () => {
+  it('explains what deletion protection does on the cluster', async () => {
+    renderControls();
+    const modal = await open('modify');
+    expect(modal.getByRole('checkbox', { name: 'Deletion protection' })).toHaveAccessibleDescription(
+      'While it is on, the emulator refuses to delete the DB cluster.',
+    );
+  });
+
   it('starts on the cluster values, reads starting groups by ID, and disables an unchanged save', async () => {
     renderControls();
     const modal = await open('modify');
@@ -360,6 +368,36 @@ describe('fail over a DB cluster', () => {
     expect(option('writer')).not.toBeNull();
     expect(api.getCluster).toHaveBeenCalledTimes(3);
     expect(api.listMembers).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears a selected reader promoted outside Studio and requires a reader from the refreshed list', async () => {
+    renderControls();
+    const modal = await open('failover');
+    const submit = modal.getByRole('button', { name: 'Fail over' });
+    await pick('Target DB instance', 'reader');
+    expect(submit).toBeEnabled();
+
+    vi.mocked(api.getCluster).mockResolvedValue(
+      found([
+        { id: 'writer', writer: false },
+        { id: 'reader', writer: true },
+      ]),
+    );
+    const picker = target();
+    picker.openDropdown();
+    const message = 'reader is no longer a reader of this DB cluster.';
+    expect(await modal.findByText(message)).toBeVisible();
+    expect(picker.findTrigger().getElement()).toHaveTextContent('Select a reader DB instance');
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(option('writer')).not.toBeNull());
+    picker.selectOptionByValue('writer');
+    expect(modal.queryByText(message)).not.toBeInTheDocument();
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'writer' });
   });
 
   it('reports a 501 from the members read at the target and holds the action', async () => {
