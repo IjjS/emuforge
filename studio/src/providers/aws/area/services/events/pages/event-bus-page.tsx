@@ -35,7 +35,8 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
     bus: DescribeEventBusResponse;
     tags: ReturnType<typeof useResourceTags>;
   }>();
-  const [descriptionDraft, setDescriptionDraft] = useState<string>();
+  const [editingDescription, setEditingDescription] = useState<DescribeEventBusResponse>();
+  const [refreshingDescription, setRefreshingDescription] = useState<DescribeEventBusResponse>();
   const [tagsDraft, setTagsDraft] = useState<{ arn: string; initial: Record<string, string> }>();
   const [descriptionUnavailable, setDescriptionUnavailable] = useState(false);
   const [tagWritesUnavailable, setTagWritesUnavailable] = useState<ReadonlySet<TagWriteOperation>>(() => new Set());
@@ -43,7 +44,8 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
   const read = useEventBus(engineOrigin, name, !leaving);
   const currentBus = read.value?.kind === 'found' ? read.value.bus : undefined;
-  const bus = deleting?.bus ?? currentBus;
+  if (refreshingDescription !== undefined && !read.loading) setRefreshingDescription(undefined);
+  const bus = deleting?.bus ?? currentBus ?? (read.loading ? refreshingDescription : undefined);
   const tags = useResourceTags(engineOrigin, bus?.Arn ?? '', Boolean(bus?.Arn) && !leaving);
   const shownTags = deleting?.tags ?? tags;
   const failure =
@@ -107,7 +109,7 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
       }
     >
       <SpaceBetween size="m">
-        {deleting === undefined && read.loading && (
+        {bus === undefined && read.loading && (
           <Container>
             <Box textAlign="center">
               <StatusIndicator type="loading">Loading event bus</StatusIndicator>
@@ -137,10 +139,11 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
               connection={connection}
               bus={bus}
               tags={shownTags}
+              detailsLoading={refreshingDescription !== undefined && read.loading}
               editDescriptionDisabled={!canEditDescription}
               editDescriptionReason={editDescriptionReason}
               onEditDescription={() => {
-                if (canEditDescription) setDescriptionDraft(currentBus.Description ?? '');
+                if (canEditDescription) setEditingDescription(currentBus);
               }}
               manageTagsDisabled={!canManageTags}
               manageTagsReason={manageTagsReason}
@@ -180,15 +183,15 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
             }}
           />
         )}
-        {engineOrigin !== undefined && descriptionDraft !== undefined && (
+        {engineOrigin !== undefined && editingDescription !== undefined && (
           <EditDescriptionDialog
             endpoint={engineOrigin}
             name={name}
-            description={descriptionDraft}
+            description={editingDescription.Description ?? ''}
             onUnavailable={() => setDescriptionUnavailable(true)}
-            onDismiss={() => setDescriptionDraft(undefined)}
+            onDismiss={() => setEditingDescription(undefined)}
             onSaved={() => {
-              setDescriptionDraft(undefined);
+              setEditingDescription(undefined);
               flash.show([
                 {
                   type: 'success',
@@ -199,6 +202,7 @@ export function EventBusPage({ connection, params }: ScreenPageProps) {
                   ),
                 },
               ]);
+              setRefreshingDescription(editingDescription);
               read.refresh();
             }}
           />

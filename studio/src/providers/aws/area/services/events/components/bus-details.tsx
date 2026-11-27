@@ -5,6 +5,7 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
 import { useEffect } from 'react';
 
@@ -19,6 +20,7 @@ interface BusDetailsProps {
   connection: AreaConnection;
   bus: DescribeEventBusResponse;
   tags: ReturnType<typeof useResourceTags>;
+  detailsLoading?: boolean;
   editDescriptionDisabled: boolean;
   editDescriptionReason: string | undefined;
   onEditDescription: () => void;
@@ -31,6 +33,7 @@ export function BusDetails({
   connection,
   bus,
   tags,
+  detailsLoading = false,
   editDescriptionDisabled,
   editDescriptionReason,
   onEditDescription,
@@ -67,60 +70,66 @@ export function BusDetails({
           </Header>
         }
       >
-        <SpaceBetween size="m">
-          <KeyValuePairs
-            items={[
-              { label: 'ARN', value: <CopyValue label="ARN" value={bus.Arn} none="-" /> },
-              { label: 'Description', value: <ValueText kind="text" value={bus.Description} none="-" /> },
-            ]}
-          />
-          <KeyValuePairs
-            columns={2}
-            items={[
-              {
-                label: 'Creation time',
-                value: <ValueText kind="fixed" value={creationDateText(bus.CreationTime)} />,
-              },
-              {
-                label: 'Last change',
-                value: <ValueText kind="fixed" value={creationDateText(bus.LastModifiedTime)} />,
-              },
-            ]}
-          />
-          {bus.KmsKeyIdentifier && (
-            <KeyValuePairs
-              items={[{ label: 'KMS key', value: <CopyValue label="KMS key" value={bus.KmsKeyIdentifier} /> }]}
-            />
-          )}
-          {deadLetterArn && (
+        {detailsLoading ? (
+          <Box textAlign="center">
+            <StatusIndicator type="loading">Loading event bus</StatusIndicator>
+          </Box>
+        ) : (
+          <SpaceBetween size="m">
             <KeyValuePairs
               items={[
+                { label: 'ARN', value: <CopyValue label="ARN" value={bus.Arn} none="-" /> },
+                { label: 'Description', value: <ValueText kind="text" value={bus.Description} none="-" /> },
+              ]}
+            />
+            <KeyValuePairs
+              columns={2}
+              items={[
                 {
-                  label: 'Dead-letter queue ARN',
-                  value: <CopyValue label="Dead-letter queue ARN" value={deadLetterArn} />,
+                  label: 'Creation time',
+                  value: <ValueText kind="fixed" value={creationDateText(bus.CreationTime)} />,
+                },
+                {
+                  label: 'Last change',
+                  value: <ValueText kind="fixed" value={creationDateText(bus.LastModifiedTime)} />,
                 },
               ]}
             />
-          )}
-          {bus.Policy && (
-            <KeyValuePairs
-              items={[
-                {
-                  label: 'Resource policy',
-                  value: (
-                    <Box
-                      variant="pre"
-                      margin={{ top: 'n', bottom: 'n' }}
-                      nativeAttributes={{ style: { whiteSpace: 'pre-wrap' } }}
-                    >
-                      <ValueText kind="text" value={bus.Policy} />
-                    </Box>
-                  ),
-                },
-              ]}
-            />
-          )}
-        </SpaceBetween>
+            {bus.KmsKeyIdentifier && (
+              <KeyValuePairs
+                items={[{ label: 'KMS key', value: <CopyValue label="KMS key" value={bus.KmsKeyIdentifier} /> }]}
+              />
+            )}
+            {deadLetterArn && (
+              <KeyValuePairs
+                items={[
+                  {
+                    label: 'Dead-letter queue ARN',
+                    value: <CopyValue label="Dead-letter queue ARN" value={deadLetterArn} />,
+                  },
+                ]}
+              />
+            )}
+            {bus.Policy && (
+              <KeyValuePairs
+                items={[
+                  {
+                    label: 'Resource policy',
+                    value: (
+                      <Box
+                        variant="pre"
+                        margin={{ top: 'n', bottom: 'n' }}
+                        nativeAttributes={{ style: { whiteSpace: 'pre-wrap' } }}
+                      >
+                        <ValueText kind="text" value={bus.Policy} />
+                      </Box>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </SpaceBetween>
+        )}
       </Container>
       <Table
         ariaLabels={{ tableLabel: 'Tags' }}

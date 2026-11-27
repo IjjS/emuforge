@@ -427,6 +427,23 @@ it('keeps Manage tags disabled until the tags are read', async () => {
   await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeEnabled());
 });
 
+it('refreshes the description without restarting the tags and rules reads', async () => {
+  const fresh = deferred<EventBusRead>();
+  read.mockResolvedValueOnce(loaded).mockReturnValueOnce(fresh.promise);
+  const page = renderPage(undefined, 'orders');
+  await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeEnabled());
+  await saveDescription(page);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(page.layout.findContent().findAllTables()).toHaveLength(2);
+  expect(descriptionText(page)).toBeUndefined();
+  expectSaved(page, 'Description of orders saved.');
+
+  await act(async () => fresh.resolve({ kind: 'found', bus: { ...loaded.bus, Description: 'Read after save' } }));
+  await waitFor(() => expect(descriptionText(page)).toBe('Read after save'));
+  expect(listResourceTags).toHaveBeenCalledOnce();
+  expect(listRules).toHaveBeenCalledOnce();
+});
+
 it.each([
   ['before', 'old description'],
   ['after', 'old description'],
