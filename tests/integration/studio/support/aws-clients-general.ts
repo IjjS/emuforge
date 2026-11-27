@@ -469,16 +469,17 @@ export function directLogs(ctx: Ctx, port: number, action: string, input: object
 }
 
 /**
- * A CloudWatch action (AWS JSON 1.0) with its JSON input, straight to the emulator (issue 70: the alarms' checks). It
- * carries `x-amzn-query-mode: true`, as AWS's SDK does for this service, so a refusal comes with the header
- * `x-amzn-query-error` that holds the code the SDK reports.
+ * `POST /` with `body` and `headers` straight to the emulator on `port`, signed for the signing name `service`: for
+ * a service's own support, which holds its protocol's target and headers itself (`services/<service>/`).
  */
-export function directCloudWatch(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
-  return direct(ctx, port, 'monitoring', 'POST', '/', {}, JSON.stringify(input), {
-    'content-type': 'application/x-amz-json-1.0',
-    'x-amz-target': `GraniteServiceVersion20100801.${action}`,
-    'x-amzn-query-mode': 'true',
-  });
+export function directPost(
+  ctx: Ctx,
+  port: number,
+  service: string,
+  body: string,
+  headers: Record<string, string>,
+): Promise<DirectAnswer> {
+  return direct(ctx, port, service, 'POST', '/', {}, body, headers);
 }
 
 /** An ECS action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 575: ECS's checks). */

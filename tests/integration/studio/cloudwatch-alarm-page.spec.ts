@@ -32,6 +32,7 @@ import {
   expectFlash,
   expectHeading,
   failed,
+  finish,
   field,
   flashItems,
   historyDirect,
@@ -45,6 +46,7 @@ import {
   NO_REASON,
   openAlarm,
   openAlarms,
+  refreshedUntil,
   refusalCodeDirect,
   SET_STATE,
   shownTags,
@@ -199,7 +201,7 @@ test('studio.cloudwatch-alarm-page-shows-each-type', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -240,7 +242,7 @@ test('studio.cloudwatch-alarm-history-pages', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -276,22 +278,20 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
       await expectPairs(page, { State: 'In alarm', 'State reason': DEFAULT_REASON });
 
       const executed = `Successfully executed action ${topic}`;
-      await expect(async () => {
-        // Each try reads the history again and waits for that read to be shown before it looks at the rows.
-        await answered(page, 'DescribeAlarmHistory', () => s.historyRefresh.click(ACTION));
-        await expect
-          .poll(
-            async () => {
-              const rows = await historyRows(page);
-              return {
-                state: rows.some((row) => row.type === 'State'),
-                action: rows.some((row) => row.type === 'Action' && row.summary === executed),
-              };
-            },
-            { message: `the history holds a "State" item and the "Action" item "${executed}"`, timeout: 5_000 },
-          )
-          .toEqual({ state: true, action: true });
-      }, 'the history, refreshed until it has them').toPass({ timeout: 60_000 });
+      await refreshedUntil(
+        page,
+        s.historyRefresh,
+        'DescribeAlarmHistory',
+        async () => {
+          const rows = await historyRows(page);
+          return {
+            state: rows.some((row) => row.type === 'State'),
+            action: rows.some((row) => row.type === 'Action' && row.summary === executed),
+          };
+        },
+        { state: true, action: true },
+        `the history, refreshed until it has them, holds a "State" item and the "Action" item "${executed}"`,
+      );
 
       const direct = await metricAlarmDirect(ctx, port, name);
       expect({ state: direct.StateValue, reason: direct.StateReason }, 'the state and its reason, directly').toEqual({
@@ -328,7 +328,7 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -385,5 +385,5 @@ test('studio.cloudwatch-actions-off-and-on', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

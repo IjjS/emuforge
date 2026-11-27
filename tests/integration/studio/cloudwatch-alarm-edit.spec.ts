@@ -9,7 +9,7 @@
 // `services/cloudwatch/cloudwatch.ts`.
 
 import { expect, startStack, test } from './support';
-import { expectPairs, pagePairs } from './support/aws-entries';
+import { expectPairs } from './support/aws-entries';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
@@ -22,7 +22,8 @@ import {
   alarmSaved,
   alarmScreen,
   alarmWhen,
-  alertHeaded,
+  alertHeaders,
+  alerts,
   answered,
   BACK_TO_ALARM,
   CANNOT_EDIT,
@@ -35,6 +36,7 @@ import {
   expectAlarms,
   expectFlash,
   expectHeading,
+  finish,
   flashItems,
   metricAlarmDirect,
   namesOf,
@@ -44,6 +46,7 @@ import {
   openAlarms,
   openEdit,
   selectOf,
+  shownPairs,
   tagsDirect,
   tokenOf,
 } from './services/cloudwatch/cloudwatch';
@@ -90,6 +93,11 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
     'Open it, press "Edit" → the form shows the name as text, the alarm\'s values, "3 out of 3", "Missing", and the action listed with "Not a topic in the emulator"',
     async () => {
       expect(await kept(), 'the alarm before the edit, directly').toEqual(before);
+      const direct = await metricAlarmDirect(ctx, port, name);
+      expect(
+        { period: direct.Period, actionsEnabled: direct.ActionsEnabled },
+        'the period and the actions of the alarm, directly',
+      ).toEqual({ period: 60, actionsEnabled: true });
       const form = alarmForm(page);
       await openAlarm(page, name);
       await alarmScreen(page).edit.click(ACTION);
@@ -109,6 +117,8 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
       await expect(form.form.getByText(alarmWhen(3, 3), { exact: true }), `"${alarmWhen(3, 3)}"`).toBeVisible();
       await expect(selectOf(form.missingData), 'the missing data treatment').toHaveText('Missing');
       await expect(selectOf(form.statistic), "the alarm's statistic").toHaveText('Sum');
+      await expect(selectOf(form.period), "the alarm's period of 60 seconds").toHaveText('1 minute');
+      await expect(form.enableActions, "the alarm's actions are on").toBeChecked();
       await expect(selectOf(form.comparison), "the alarm's comparison").toHaveText('Greater than');
       const token = tokenOf(form.inAlarm, 1);
       await expect(token.description, 'the action listed under "In alarm"').toHaveText(action);
@@ -132,7 +142,7 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -178,9 +188,11 @@ test('studio.cloudwatch-edit-meets-a-change-made-outside', async ({ ctx, page })
       await form.threshold.fill('7', ACTION);
       await form.save.click(ACTION);
 
-      const conflict = alertHeaded(form.main, CHANGED_WHILE_EDITING);
-      await expect(conflict, `the form says "${CHANGED_WHILE_EDITING}"`).toHaveCount(1, { timeout: 15_000 });
-      await expect(conflict.getByRole('listitem'), 'the fields the form names as changed').toHaveText([
+      await expect(alertHeaders(form.form), `the form says "${CHANGED_WHILE_EDITING}"`).toHaveText(
+        [CHANGED_WHILE_EDITING],
+        { timeout: 15_000 },
+      );
+      await expect(alerts(form.form).getByRole('listitem'), 'the fields the form names as changed').toHaveText([
         'Threshold (now 8)',
       ]);
       await expect(page, 'the form stays').toHaveURL(addressOf(editAlarmPath(clash)));
@@ -206,7 +218,7 @@ test('studio.cloudwatch-edit-meets-a-change-made-outside', async ({ ctx, page })
       await form.threshold.fill('7', ACTION);
       await form.save.click(ACTION);
 
-      await expect(alertHeaded(form.main, ALARM_NOT_FOUND), `the form says "${ALARM_NOT_FOUND}"`).toHaveCount(1, {
+      await expect(alertHeaders(form.form), `the form says "${ALARM_NOT_FOUND}"`).toHaveText([ALARM_NOT_FOUND], {
         timeout: 15_000,
       });
       await expect(page, 'the form stays').toHaveURL(addressOf(editAlarmPath(gone)));
@@ -215,7 +227,7 @@ test('studio.cloudwatch-edit-meets-a-change-made-outside', async ({ ctx, page })
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -260,13 +272,16 @@ test('studio.cloudwatch-alarms-studio-cannot-edit', async ({ ctx, page }) => {
     async () => {
       const s = alarmScreen(page);
       await openAlarm(page, math);
-      await expectPairs(page, {
-        Type: 'Metric math alarm',
-        e1: 'm1*2',
-        Namespace: seeded.namespace,
-        Metric: 'Errors',
-      });
-      expect((await pagePairs(page)).labels, 'the ids of the entries').toEqual(expect.arrayContaining(['m1', 'e1']));
+      await expectPairs(page, { Type: 'Metric math alarm' });
+      await expect
+        .poll(async () => (await shownPairs(page)).filter((pair) => ['m1', 'e1'].includes(pair.label)), {
+          message: 'each entry by its id: `m1` with its metric, `e1` with its expression',
+          timeout: 15_000,
+        })
+        .toEqual([
+          { label: 'm1', value: { Namespace: seeded.namespace, Metric: 'Errors', Dimensions: '-' } },
+          { label: 'e1', value: 'm1*2' },
+        ]);
       await expect(s.edit, 'no "Edit" that leads to a form').toHaveCount(0);
       await expect(s.button(EDIT), 'no "Edit" button').toHaveCount(0);
     },
@@ -291,5 +306,5 @@ test('studio.cloudwatch-alarms-studio-cannot-edit', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

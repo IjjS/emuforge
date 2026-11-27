@@ -33,6 +33,7 @@ import {
   expectAlert,
   expectFlash,
   failed,
+  finish,
   flashItems,
   namesOf,
   openAlarm,
@@ -69,7 +70,7 @@ test('studio.cloudwatch-delete-alarm-from-the-list', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -100,7 +101,7 @@ test('studio.cloudwatch-delete-alarm-from-its-page', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -136,5 +137,5 @@ test('studio.cloudwatch-delete-alarm-a-composite-names-is-refused', async ({ ctx
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

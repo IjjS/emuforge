@@ -1,33 +1,43 @@
 // The emulator side and the words of CloudWatch's alarm screens (test-criteria.md, issue 70), for the
 // `cloudwatch-*.spec.ts` checks.
 //
-// - Direct calls: `directCloudWatch` of `support/aws-clients-general.ts` (AWS JSON 1.0 straight to the emulator,
-//   SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`). A refusal is read from its
-//   JSON `__type` and `message`, and its code from the header `x-amzn-query-error`, which the emulator sends to a
-//   request that carries `x-amzn-query-mode` as AWS's SDK's and `directCloudWatch`'s do; "the emulator's
+// - Direct calls: `directCloudWatch` here, AWS JSON 1.0 through `directPost` of `support/aws-clients-general.ts`
+//   (straight to the emulator, SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`).
+//   A refusal is read from its JSON `__type` and `message`, and its code from the header `x-amzn-query-error`, which
+//   the emulator sends to a request that carries `x-amzn-query-mode` as AWS's SDK's does; "the emulator's
 //   reason" or "code" a line asks for is that of a direct call that is refused the same way, compared with what
 //   the screen shows.
 // - `CloudWatchSeeded`: the alarms and topics a check makes, every one named under the check's prefix `<p>`. When
 //   the check ends it deletes every alarm of the emulator whose name starts with `<p>`, those Studio's actions made
-//   included, composite alarms first, and the topics it made.
+//   included, composite alarms first, and the topics it made. A check ends with `finish`, which cleans up inside the
+//   check so that what could not be removed fails it.
 // - The screens' words (requirement.md) and readers of what a screen shows.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 
-import {
-  createdTopicArn,
-  directCloudWatch,
-  directSns,
-  type DirectAnswer,
-} from '../../support/aws-clients-general';
+import { createdTopicArn, directPost, directSns, type DirectAnswer } from '../../support/aws-clients-general';
 import { EnvError, expect, type Ctx } from '../../support/check';
 import { ACTION } from '../../support/frame';
+import type { Lines } from '../../support/lines';
 import { waitFor } from '../../support/wait';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Direct calls.
 // ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * A CloudWatch action (AWS JSON 1.0) with its JSON input, straight to the emulator. It carries
+ * `x-amzn-query-mode: true`, as AWS's SDK does for this service, so a refusal comes with the header
+ * `x-amzn-query-error` that holds the code the SDK reports.
+ */
+function directCloudWatch(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return directPost(ctx, port, 'monitoring', JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.0',
+    'x-amz-target': `GraniteServiceVersion20100801.${action}`,
+    'x-amzn-query-mode': 'true',
+  });
+}
 
 /**
  * A direct answer, parsed: its status, its JSON body (`{}` when empty), and for a refusal its type, its message and
@@ -378,10 +388,12 @@ export class CloudWatchSeeded {
   /**
    * Deletes every alarm of the emulator under the check's prefix, one name a call and the composite alarms first (a
    * composite alarm that names another keeps that one from being deleted), then the topics made here, then reads the
-   * prefix again. A refusal does not stop the rest; the alarms still there at the end are an error that names them,
-   * with what the emulator answered for each, and so is a topic that could not be deleted.
+   * prefix again. No step keeps the next from being tried: a read of the prefix that fails, a refusal and a call that
+   * did not get through are each noted, and the topics are deleted whatever became of the alarms. Whatever was
+   * noted, and each alarm still there at the end with what the emulator answered for it, is one error.
    */
-  async dispose(): Promise<void> {
+  async clean(): Promise<void> {
+    const problems: string[] = [];
     const refused = new Map<string, string>();
     const remove = async (name: string): Promise<void> => {
       try {
@@ -393,30 +405,68 @@ export class CloudWatchSeeded {
         refused.set(name, `DeleteAlarms: ${(e as Error).message}`);
       }
     };
-    const held = await alarmsDirect(this.ctx, this.port, this.prefix);
-    for (const alarm of [...held.composite, ...held.log, ...held.metric]) await remove(alarm.AlarmName);
-
-    const topicsLeft: string[] = [];
-    for (const arn of this.topics) {
-      const answer = await directSns(this.ctx, this.port, 'DeleteTopic', { TopicArn: arn });
-      if ('error' in answer || answer.status !== 200) {
-        topicsLeft.push(`${arn} (${'error' in answer ? answer.error : `DeleteTopic answered ${String(answer.status)}`})`);
-      }
+    try {
+      const held = await alarmsDirect(this.ctx, this.port, this.prefix);
+      for (const alarm of [...held.composite, ...held.log, ...held.metric]) await remove(alarm.AlarmName);
+    } catch (e) {
+      problems.push(`the alarms under ${this.prefix} could not be read for their removal: ${(e as Error).message}`);
     }
 
-    const left = namesOf(await alarmsDirect(this.ctx, this.port, this.prefix));
-    const problems = [
-      ...(left.length > 0
-        ? [
-            `the alarms under ${this.prefix} that could not be removed: ${left
-              .map((name) => `${JSON.stringify(name)} (${refused.get(name) ?? 'deleted with 200 and still reported'})`)
-              .join('; ')}`,
-          ]
-        : []),
-      ...(topicsLeft.length > 0 ? [`the topics that could not be removed: ${topicsLeft.join('; ')}`] : []),
-    ];
+    for (const arn of [...this.topics]) {
+      let problem: string | undefined;
+      try {
+        const answer = await directSns(this.ctx, this.port, 'DeleteTopic', { TopicArn: arn });
+        if ('error' in answer) problem = answer.error;
+        else if (answer.status !== 200) problem = `DeleteTopic answered ${String(answer.status)}`;
+      } catch (e) {
+        problem = (e as Error).message;
+      }
+      if (problem === undefined) this.topics.splice(this.topics.indexOf(arn), 1);
+      else problems.push(`the topic ${arn} could not be removed: ${problem}`);
+    }
+
+    try {
+      const left = namesOf(await alarmsDirect(this.ctx, this.port, this.prefix));
+      if (left.length > 0) {
+        problems.push(
+          `the alarms under ${this.prefix} that could not be removed: ${left
+            .map((name) => `${JSON.stringify(name)} (${refused.get(name) ?? 'deleted with 200 and still reported'})`)
+            .join('; ')}`,
+        );
+      }
+    } catch (e) {
+      problems.push(`the alarms under ${this.prefix} could not be read after their removal: ${(e as Error).message}`);
+    }
     if (problems.length > 0) throw new Error(problems.join('\n'));
   }
+
+  /**
+   * The cleanup of a check that did not reach its `finish` (a check that threw on its way): the same as `clean`. The
+   * fixture only logs what this throws, which is why a check that runs to its end cleans up through `finish`.
+   */
+  async dispose(): Promise<void> {
+    await this.clean();
+  }
+}
+
+/**
+ * Ends a check: removes what it made under its prefix (`CloudWatchSeeded.clean`), inside the check, then fails it
+ * when a criteria line failed or the cleanup left something behind, naming both.
+ */
+export async function finish(lines: Lines, seeded: CloudWatchSeeded): Promise<void> {
+  let cleanup: string | undefined;
+  try {
+    await seeded.clean();
+  } catch (e) {
+    if (e instanceof EnvError) throw e;
+    cleanup = `cleanup: ${(e as Error).message}`;
+  }
+  try {
+    lines.end();
+  } catch (e) {
+    throw cleanup === undefined ? e : new Error(`${(e as Error).message}\n${cleanup}`);
+  }
+  if (cleanup !== undefined) throw new Error(cleanup);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -565,7 +615,6 @@ const FIRST_FLASH = wrapper.findFlashbar().findItems().get(1);
 const FLASH_CONTENT = FIRST_FLASH.findContent().toSelector().slice(FIRST_FLASH.toSelector().length).trim();
 const CONTAINER = rel(wrapper.findContainer());
 const FORM_FIELD = rel(wrapper.findFormField());
-const FORM_FIELD_LABEL = inside(wrapper.findFormField().findLabel());
 const FORM_FIELD_ERROR = inside(wrapper.findFormField().findError());
 const SELECT = rel(wrapper.findSelect());
 const SELECT_TRIGGER = inside(wrapper.findSelect().findTrigger());
@@ -578,6 +627,13 @@ const TOGGLE = rel(wrapper.findToggle().findNativeInput());
 const INPUT = rel(wrapper.findInput().findNativeInput());
 const TEXTAREA = rel(wrapper.findTextarea().findNativeTextarea());
 const EDITOR_ROWS = rel(wrapper.findAttributeEditor().findRows());
+/** Every option of a select's open list, below the select's root. */
+const SELECT_OPTIONS = inside(wrapper.findSelect().findDropdown().findOptions());
+const FIRST_PAIR = wrapper.findKeyValuePairs().findItems().get(1);
+/** The pairs of a key-value list, and a pair's label and value as selectors below the pair. */
+const PAIR = rel(wrapper.findKeyValuePairs().findItems());
+const PAIR_LABEL = FIRST_PAIR.findLabel().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
+const PAIR_VALUE = FIRST_PAIR.findValue().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
 /** An option of a select or a multiselect by its value. */
 function optionByValue(value: string): string {
   return inside(wrapper.findSelect().findDropdown().findOptionByValue(value));
@@ -599,7 +655,6 @@ function editorRemove(row: number): string {
   return rel(wrapper.findAttributeEditor().findRow(row).findRemoveButton());
 }
 
-const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** A text as an element holds it and how its white space is drawn. */
@@ -629,17 +684,33 @@ export function pageHeading(page: Page): Locator {
   return page.locator(HEADING_TEXT).and(page.locator('h1 *')).first();
 }
 
-/** Waits until the page's `h1` reads `text`, character for character. */
+/** Waits until the page's `h1` is shown and reads `text`, character for character. */
 export async function expectHeading(page: Page, text: string, timeout = 15_000): Promise<void> {
   await expect
     .poll(
       async () => {
         const heading = pageHeading(page);
-        return (await heading.count()) === 0 ? null : (await drawnText(heading)).text;
+        return (await heading.count()) === 1 && (await heading.isVisible()) ? (await drawnText(heading)).text : null;
       },
       { message: `the h1 ${JSON.stringify(text)}`, timeout },
     )
     .toBe(text);
+}
+
+/**
+ * Waits until the page's `h1` is shown and holds the alarm name `name`, character for character, in an element
+ * that keeps white space (`pre-wrap`), so its repeated spaces and its line feeds are drawn.
+ */
+export async function expectNameHeading(page: Page, name: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const heading = pageHeading(page);
+        return (await heading.count()) === 1 && (await heading.isVisible()) ? drawnText(heading) : null;
+      },
+      { message: `the h1 ${JSON.stringify(name)}, its white space kept`, timeout: 15_000 },
+    )
+    .toEqual({ text: name, whiteSpace: 'pre-wrap' });
 }
 
 /** Opens `path` and waits for its `h1` `h1`, character for character. */
@@ -661,7 +732,8 @@ function bodyCell(row: number, column: number): string {
 /**
  * The data rows of the table `table` as shown, each a record of its column headings' texts to its cells' texts (the
  * selection column has no heading and is left out), white space folded. Headings, rows and cells are found with
- * Cloudscape's selectors. A table that is loading, empty or failed has no data row.
+ * Cloudscape's selectors. A table that is loading, empty or failed has no data row; a row that is in the page and
+ * not shown is an empty record, which no expectation of a text equals.
  */
 export async function rowsOf(table: Locator): Promise<Record<string, string>[]> {
   const headers = (await table.locator(TABLE_HEADERS).allTextContents()).map(norm);
@@ -669,6 +741,7 @@ export async function rowsOf(table: Locator): Promise<Record<string, string>[]> 
   return Promise.all(
     Array.from({ length: count }, async (_, r) => {
       const row: Record<string, string> = {};
+      if (!(await rowsIn(table).nth(r).isVisible())) return row;
       await Promise.all(
         headers.map(async (header, c) => {
           if (header === '') return;
@@ -704,7 +777,7 @@ export function flashItems(page: Page, type: 'success' | 'error' | 'info' | 'war
 }
 
 /**
- * Waits until one flash item of `type`, and no more, reads `sentence`, whole (white space folded); with `link`, the
+ * Waits until one flash item of `type` that is shown, and no more, reads `sentence`, whole (white space folded); with `link`, the
  * item's content is the sentence followed by a link of that name and nothing else.
  */
 export async function expectFlash(
@@ -713,7 +786,7 @@ export async function expectFlash(
   sentence: string,
   link?: string,
 ): Promise<void> {
-  const contents = flashItems(page, type).locator(FLASH_CONTENT);
+  const contents = flashItems(page, type).filter({ visible: true }).locator(FLASH_CONTENT);
   const whole = (shown: string) => {
     const text = norm(shown);
     if (link === undefined) return text === norm(sentence);
@@ -773,11 +846,14 @@ export function countSent(page: Page, operation: string): () => number {
   return () => sent;
 }
 
-/** The form field of `scope` labelled exactly `label`. */
+/**
+ * The form field of `scope` whose control is labelled exactly `label`: the field is found from its control, which
+ * the field's label names (an input, a text area, the trigger of a select or a multiselect).
+ */
 export function field(scope: Locator, label: string): Locator {
   return scope
     .locator(FORM_FIELD)
-    .filter({ has: scope.page().locator(FORM_FIELD_LABEL).filter({ hasText: new RegExp(`^${escaped(label)}$`) }) })
+    .filter({ has: scope.page().getByLabel(label, { exact: true }) })
     .last();
 }
 
@@ -808,17 +884,22 @@ export async function chooseOption(scope: Locator, value: string, find?: string)
 }
 
 /**
- * Opens the one select inside `scope`, waits until it offers the option of value `offered`, reads whether it offers
- * each value of `values`, and closes it again with nothing chosen.
+ * Opens the one select inside `scope`, waits until what it offers is the options of the values `values` and no
+ * other (each of them shown, and as many options as values), and closes it again with nothing chosen.
  */
-export async function offeredIn(scope: Locator, offered: string, values: string[]): Promise<Record<string, boolean>> {
+export async function expectOffered(scope: Locator, values: string[], what: string): Promise<void> {
   const select = await opened(scope);
-  await expect(select.locator(optionByValue(offered)), `the option ${offered}`).toBeVisible({ timeout: 20_000 });
-  const found: Record<string, boolean> = {};
-  for (const value of values) found[value] = (await select.locator(optionByValue(value)).count()) > 0;
+  await expect
+    .poll(
+      async () => ({
+        options: await select.locator(SELECT_OPTIONS).count(),
+        shown: await Promise.all(values.map((value) => select.locator(optionByValue(value)).isVisible())),
+      }),
+      { message: what, timeout: 20_000 },
+    )
+    .toEqual({ options: values.length, shown: values.map(() => true) });
   await select.page().keyboard.press('Escape');
   await expect(select.locator(SELECT_OPEN), 'the list after Escape').toHaveCount(0);
-  return found;
 }
 
 /** The select inside `scope`, for what it shows as chosen. */
@@ -856,18 +937,18 @@ export function alertContents(scope: Locator): Locator {
   return alerts(scope).locator(ALERT_CONTENT);
 }
 
-/** The alerts of `scope` whose header reads `header`, whole. */
-export function alertHeaded(scope: Locator, header: string): Locator {
-  return alerts(scope).filter({
-    has: scope.page().locator(ALERT_HEADER).filter({ hasText: new RegExp(`^${escaped(header)}$`) }),
-  });
+/** The headers of the alerts of `scope`, found with Cloudscape's selector. */
+export function alertHeaders(scope: Locator): Locator {
+  return alerts(scope).locator(ALERT_HEADER);
 }
 
-/** Waits until `scope` holds one alert whose header reads `header` and whose content reads `content`, each whole. */
+/**
+ * Waits until `scope` (a dialog, a form) holds one alert and no more, its header reading `header` and its content
+ * `content`, each whole.
+ */
 export async function expectAlert(scope: Locator, header: string, content: string): Promise<void> {
-  const alert = alertHeaded(scope, header);
-  await expect(alert, `one alert headed "${header}"`).toHaveCount(1, { timeout: 15_000 });
-  await expect(alert.locator(ALERT_CONTENT), `the alert "${header}" reads "${content}"`).toHaveText(content);
+  await expect(alertHeaders(scope), `the one alert is headed "${header}"`).toHaveText([header], { timeout: 15_000 });
+  await expect(alertContents(scope), `the alert "${header}" reads "${content}"`).toHaveText([content]);
 }
 
 /** The open dialog: Cloudscape's modal that is shown (one that is closed stays in the page, hidden). */
@@ -959,7 +1040,8 @@ export function alarmScreen(page: Page) {
     historyTable: history.locator(TABLE),
     historyRefresh: history.getByRole('button', { name: REFRESH, exact: true }),
     historyNext: history.locator(NEXT_PAGE),
-    tags: main.locator(TABLE).filter({ has: page.locator(HEADING_TEXT).filter({ hasText: /^Tags$/ }) }),
+    /** The table of the tags: the one that holds "Manage tags". */
+    tags: main.locator(TABLE).filter({ has: page.getByRole('button', { name: MANAGE_TAGS, exact: true }) }),
     /** "Alarm not found" in the place of the alarm, whatever heading holds it. */
     notFound: main.getByRole('heading', { name: ALARM_NOT_FOUND, exact: true }),
     /** The way back to Alarms from a page that has no alarm to show: the link in the page's own container. */
@@ -982,6 +1064,80 @@ export async function shownTags(page: Page): Promise<{ Key: string; Value: strin
   return (await rowsOf(alarmScreen(page).tags))
     .map((r) => ({ Key: r.Key ?? '', Value: r.Value ?? '' }))
     .sort((x, y) => (x.Key < y.Key ? -1 : 1));
+}
+
+/** A pair of a key-value list as shown: its label, and its value's text or, when the value is a list, its pairs. */
+export interface ShownPair {
+  label: string;
+  value: string | Record<string, string>;
+}
+
+/**
+ * The pairs the alarm's page shows that are no part of another pair's value, in order, each with its label and its
+ * value: the value's text (white space folded), or, for a value that is itself a list of pairs, those pairs by
+ * label. Pairs, labels and values are found with Cloudscape's selectors; a pair that is not shown is left out.
+ */
+export async function shownPairs(page: Page): Promise<ShownPair[]> {
+  return page
+    .getByRole('main')
+    .locator(PAIR)
+    .evaluateAll(
+      (els, selectors) => {
+        const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+        /** The nearest pair around `el`; `null` for a pair that is no part of another. */
+        const around = (el: Element): Element | null => {
+          const outer = els.filter((pair) => pair !== el && pair.contains(el));
+          return outer.find((pair) => outer.every((other) => other.contains(pair))) ?? null;
+        };
+        /** The label or value of `pair` itself, not of a pair inside its value. */
+        const below = (pair: Element, selector: string) =>
+          [...pair.querySelectorAll(selector)].find((el) => around(el) === pair) ?? null;
+        const shown = (el: Element) => (el as HTMLElement).getClientRects().length > 0;
+        return els
+          .filter((pair) => shown(pair) && around(pair) === null)
+          .map((pair) => {
+            const value = below(pair, selectors.value);
+            const nested = els.filter((other) => shown(other) && around(other) === pair);
+            return {
+              label: clean(below(pair, selectors.label)?.textContent),
+              value:
+                nested.length === 0
+                  ? clean(value?.textContent)
+                  : Object.fromEntries(
+                      nested.map((other) => [
+                        clean(below(other, selectors.label)?.textContent),
+                        clean(below(other, selectors.value)?.textContent),
+                      ]),
+                    ),
+            };
+          });
+      },
+      { label: PAIR_LABEL, value: PAIR_VALUE },
+    );
+}
+
+/**
+ * Presses `refresh` and waits for the page's answer to the `operation` it starts, then reads `read` once; repeated,
+ * each try a new read of the emulator, until what is read equals `want` or `timeout` runs out.
+ */
+export async function refreshedUntil<T>(
+  page: Page,
+  refresh: Locator,
+  operation: string,
+  read: () => Promise<T>,
+  want: T,
+  what: string,
+  timeout = 60_000,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await answered(page, operation, () => refresh.click(ACTION));
+        return read();
+      },
+      { message: what, timeout },
+    )
+    .toEqual(want);
 }
 
 /** The 1-based row of the open tag editor whose key reads `key`; fails the check when no row holds it. */
@@ -1010,7 +1166,6 @@ export function tagEditor(scope: Locator) {
 /** The parts of the alarm form (Create alarm and Edit alarm) a check acts on. */
 export function alarmForm(page: Page) {
   const main = page.getByRole('main');
-  const dimensions = field(main, 'Dimensions');
   return {
     main,
     /** The form itself, without the navigation and the crumbs around it. */
@@ -1021,13 +1176,16 @@ export function alarmForm(page: Page) {
     noDataYet: main.locator(TOGGLE),
     namespace: field(main, 'Namespace'),
     metricName: field(main, 'Metric name'),
-    dimensions,
-    /** With "Enter a metric that has no data yet" on: the typed namespace, metric name and dimensions. */
+    dimensions: field(main, 'Dimensions'),
+    /**
+     * With "Enter a metric that has no data yet" on: the typed namespace and metric name, and the dimensions in the
+     * form's one attribute editor.
+     */
     namespaceText: field(main, 'Namespace').locator(INPUT),
     metricNameText: field(main, 'Metric name').locator(INPUT),
-    addDimension: dimensions.getByRole('button', { name: 'Add dimension', exact: true }),
-    dimensionName: (row: number) => dimensions.locator(editorInput(row, 1)),
-    dimensionValue: (row: number) => dimensions.locator(editorInput(row, 2)),
+    addDimension: main.getByRole('button', { name: 'Add dimension', exact: true }),
+    dimensionName: (row: number) => main.locator(editorInput(row, 1)),
+    dimensionValue: (row: number) => main.locator(editorInput(row, 2)),
     statistic: field(main, 'Statistic'),
     extendedStatistic: field(main, 'Extended statistic').locator(INPUT),
     period: field(main, 'Period'),

@@ -22,6 +22,7 @@ import {
   cwOk,
   dialogOf,
   expectFlash,
+  finish,
   flashItems,
   MANAGE_TAGS,
   metricAlarmDirect,
@@ -115,7 +116,7 @@ test('studio.cloudwatch-manage-tags', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -153,10 +154,10 @@ test('studio.cloudwatch-tags-added-outside-are-kept', async ({ ctx, page }) => {
       await editor.value(50).fill('2', ACTION);
       await answered(page, 'TagResource', () => editor.save.click(ACTION));
 
-      await expect(
-        alertContents(dialog).filter({ hasText: REMOVALS_SAVED }),
-        'what the dialog says of the save that stopped half-way',
-      ).toHaveText(`${REMOVALS_SAVED} TagResource: ${refusal.message} (${refusal.code})`, { timeout: 15_000 });
+      await expect(alertContents(dialog), 'what the one alert of the dialog says of the save that stopped half-way').toHaveText(
+        [`${REMOVALS_SAVED} TagResource: ${refusal.message} (${refusal.code})`],
+        { timeout: 15_000 },
+      );
       await expect(dialog, 'the dialog stays open').toBeVisible();
       await expect(dialog.getByRole('heading', { name: ADDED_OUTSIDE, exact: true }), `"${ADDED_OUTSIDE}"`).toBeVisible();
       await expect(dialog.getByRole('term'), 'the keys listed as added outside').toHaveText(['x1']);
@@ -200,5 +201,5 @@ test('studio.cloudwatch-tags-added-outside-are-kept', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

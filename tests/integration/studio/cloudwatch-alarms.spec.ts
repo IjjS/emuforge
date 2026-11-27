@@ -49,8 +49,9 @@ import {
   expectAlarms,
   expectEmpty,
   expectFlash,
-  expectHeading,
+  expectNameHeading,
   expectRows,
+  finish,
   filterAlarms,
   LOG_QUERY,
   metricAlarmDirect,
@@ -61,7 +62,6 @@ import {
   openAlarm,
   openAlarms,
   openEdit,
-  pageHeading,
   rowsIn,
   rowsOf,
   waitState,
@@ -142,7 +142,7 @@ test('studio.cloudwatch-alarms-made-outside-are-listed', async ({ ctx, page }) =
     await expectEmpty(alarmList(page).table, NO_ALARMS_MATCH);
   });
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -169,7 +169,7 @@ test('studio.cloudwatch-alarm-list-pages', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -229,11 +229,7 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
         const at = (await expectListed()).indexOf(name);
         await alarmList(page).nameLink(at).click(ACTION);
         await expect(page, `the address of ${JSON.stringify(name)}`).toHaveURL(addressOf(alarmPath(name)));
-        await expectHeading(page, name);
-        expect(await drawnText(pageHeading(page)), `the heading of ${JSON.stringify(name)}`).toEqual({
-          text: name,
-          whiteSpace: 'pre-wrap',
-        });
+        await expectNameHeading(page, name);
         await expectArn(name);
       }
     },
@@ -261,7 +257,7 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
       await expectArn(name);
       await page.reload();
       await expect(page, `the address of ${JSON.stringify(name)} after the reload`).toHaveURL(addressOf(alarmPath(name)));
-      await expectHeading(page, name);
+      await expectNameHeading(page, name);
       await expectArn(name);
     }
   });
@@ -284,7 +280,7 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -294,7 +290,7 @@ test('studio.cloudwatch-missing-alarm-is-not-found', async ({ ctx, page }) => {
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'cw-none');
-  new CloudWatchSeeded(ctx, port, p);
+  const seeded = new CloudWatchSeeded(ctx, port, p);
   const name = `${p}-none`;
 
   await lines.line(
@@ -323,7 +319,7 @@ test('studio.cloudwatch-missing-alarm-is-not-found', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -415,5 +411,5 @@ test('studio.cloudwatch-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

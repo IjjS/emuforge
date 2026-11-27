@@ -12,13 +12,14 @@
 import type { Page } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
-import { expectPairs } from './support/aws-entries';
+import { expectPairs, pagePairs } from './support/aws-entries';
 import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import {
   alarmCreated,
   alarmDirect,
+  alarmsDirect,
   alarmExists,
   alarmForm,
   alarmPath,
@@ -39,11 +40,13 @@ import {
   expectFlash,
   expectHeading,
   failed,
+  finish,
   flashItems,
   metricAlarmDirect,
   namesOf,
-  offeredIn,
+  expectOffered,
   open,
+  refreshedUntil,
   refusalDirect,
   selectOf,
   type TypedMetric,
@@ -62,30 +65,38 @@ test('studio.cloudwatch-create-alarm-on-a-listed-metric', async ({ ctx, page }) 
   const topic = await seeded.topic(`${p}-topic`);
   const name = `${p}-new`;
   const dimensionSet = JSON.stringify([['Service', 'api']]);
+  /** The value of the choice of a metric listed without dimensions. */
+  const NO_DIMENSION_SET = JSON.stringify([]);
 
   await lines.line(
     'On Create alarm choose the namespace `<p>/other` and the metric `Depth`, then choose the namespace `<p>/ns` → the metric name and the dimensions are empty again, and pressing "Create alarm" asks for them and sends nothing; the metric names then offered are those of `<p>/ns`, `Latency` among them and `Depth` not',
     async () => {
       const form = alarmForm(page);
-      const sent = countSent(page, 'PutMetricAlarm');
+      const written = countSent(page, 'PutMetricAlarm');
+      const nameChecked = countSent(page, 'DescribeAlarms');
       await open(page, CREATE_ALARM_PATH, CREATE_ALARM);
       await chooseOption(form.namespace, other);
       await chooseOption(form.metricName, 'Depth');
       await expect(selectOf(form.metricName), 'the metric chosen').toHaveText('Depth');
+      await chooseOption(form.dimensions, NO_DIMENSION_SET);
+      await expect(selectOf(form.dimensions), 'the dimension set chosen').toHaveText('No dimensions');
       await chooseOption(form.namespace, namespace);
 
       await expect(selectOf(form.metricName), 'the metric name is empty again').toHaveText(CHOOSE_A_METRIC_NAME);
       await expect(selectOf(form.dimensions), 'the dimensions are empty again').toHaveText(CHOOSE_A_METRIC_NAME_FIRST);
+      const before = { written: written(), nameChecked: nameChecked() };
       await form.create.click(ACTION);
       await expect(errorOf(form.metricName), 'the form asks for the metric name').toBeVisible();
       await expect(errorOf(form.dimensions), 'the form asks for the dimensions').toBeVisible();
       await expect(page, 'the form stays').toHaveURL(addressOf(CREATE_ALARM_PATH));
-      expect(sent(), 'the `PutMetricAlarm` requests the page sent').toBe(0);
-
       expect(
-        await offeredIn(form.metricName, 'Latency', ['Latency', 'Depth']),
-        'the metric names offered for `<p>/ns`',
-      ).toEqual({ Latency: true, Depth: false });
+        { written: written(), nameChecked: nameChecked() },
+        'the `PutMetricAlarm` and the `DescribeAlarms` of the name the page sent, as before the press',
+      ).toEqual(before);
+      expect(namesOf(await alarmsDirect(ctx, port, p)), 'the alarms under the prefix, directly').toEqual([]);
+
+      // The check's own emulator holds one metric in `<p>/ns`: what is offered is `Latency` and nothing else.
+      await expectOffered(form.metricName, ['Latency'], 'the metric names offered for `<p>/ns`: `Latency` alone');
     },
   );
 
@@ -164,7 +175,7 @@ test('studio.cloudwatch-create-alarm-on-a-listed-metric', async ({ ctx, page }) 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -174,7 +185,7 @@ test('studio.cloudwatch-create-alarm-on-a-metric-with-no-data', async ({ ctx, pa
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'cw-later');
-  new CloudWatchSeeded(ctx, port, p);
+  const seeded = new CloudWatchSeeded(ctx, port, p);
   const namespace = `${p}/later`;
 
   /**
@@ -199,10 +210,14 @@ test('studio.cloudwatch-create-alarm-on-a-metric-with-no-data', async ({ ctx, pa
     await expectHeading(page, name);
     await expectFlash(page, 'success', alarmCreated(name));
     await expectPairs(page, { Namespace: namespace, Metric: 'Orders', Dimensions: 'Shop = one' });
-    await expect(async () => {
-      await alarmScreen(page).refresh.click(ACTION);
-      await expectPairs(page, { State: shown });
-    }, `the page, refreshed until it does, shows "${shown}"`).toPass({ timeout: 60_000 });
+    await refreshedUntil(
+      page,
+      alarmScreen(page).refresh,
+      'DescribeAlarms',
+      async () => (await pagePairs(page)).drawn.State ?? null,
+      shown,
+      `the page, refreshed until it does, shows "${shown}"`,
+    );
 
     const direct = await metricAlarmDirect(ctx, port, name);
     expect(
@@ -226,7 +241,7 @@ test('studio.cloudwatch-create-alarm-on-a-metric-with-no-data', async ({ ctx, pa
     () => createAndWait(`${p}-quiet`, 'notBreaching', 'OK', 'OK'),
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -310,12 +325,12 @@ test('studio.cloudwatch-create-refusals', async ({ ctx, page }) => {
       await form.extendedStatistic.fill('p101', ACTION);
       await answered(page, 'PutMetricAlarm', () => form.create.click(ACTION));
 
-      await expectAlert(form.main, failed('PutMetricAlarm'), codeAndMessage(refusal));
+      await expectAlert(form.form, failed('PutMetricAlarm'), codeAndMessage(refusal));
       await expectFormStays(name, '9');
       await expect(form.extendedStatistic, 'the statistic entered').toHaveValue('p101');
       expect(namesOf(await alarmDirect(ctx, port, name)), 'the alarms of that name, directly').toEqual([]);
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
