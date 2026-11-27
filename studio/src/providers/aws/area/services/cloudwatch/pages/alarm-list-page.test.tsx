@@ -214,7 +214,7 @@ it('starts the state filter from page one, combines filters, and clears the stat
   changePrefix(table, 'a-');
   await waitFor(() => expectRead({ prefix: 'a-', state: 'ALARM' }));
   select.openDropdown();
-  select.selectOption(1);
+  select.selectOptionByValue('');
   await waitFor(() => expectRead({ prefix: 'a-' }));
 });
 

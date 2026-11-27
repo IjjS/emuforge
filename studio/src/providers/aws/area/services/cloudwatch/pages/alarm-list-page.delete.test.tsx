@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -22,6 +22,7 @@ vi.mock('../delete-api', async (load) => ({
 }));
 
 const ENGINE = 'http://127.0.0.1:8310';
+const page = createWrapper();
 const EMULATOR = { port: 9310, endpoint: 'https://127.0.0.1:9310' };
 const CONNECTED = { kind: 'connected', checkedAt: 0, emulator: EMULATOR } as const;
 const read = vi.mocked(listAlarms);
@@ -79,35 +80,54 @@ function open() {
 
 const deleteControl = () => screen.getByRole('button', { name: 'Delete' });
 
+function findDeleteModal() {
+  return waitFor(() => {
+    const modal = page.findModal();
+    if (!modal?.isVisible()) throw new Error('Delete confirmation is missing');
+    return modal;
+  });
+}
+
 async function openDelete() {
   await screen.findByRole('link', { name });
   fireEvent.click(screen.getByRole('radio', { name }));
   expect(deleteControl()).toBeEnabled();
   fireEvent.click(deleteControl());
-  return screen.findByRole('dialog', { name: `Delete alarm ${name}?` });
+  const modal = await findDeleteModal();
+  expect(modal.getElement()).toHaveAccessibleName(`Delete alarm ${name}?`);
+  return modal;
 }
 
-function typeConfirmation(modal: HTMLElement) {
-  fireEvent.change(within(modal).getByRole('textbox', { name: 'To confirm, type delete.' }), {
-    target: { value: 'delete' },
-  });
+type DeleteModal = Awaited<ReturnType<typeof findDeleteModal>>;
+
+function modalButton(modal: DeleteModal, label: string) {
+  const button = modal
+    .findFooter()
+    ?.findAllButtons()
+    .find((item) => item.findTextRegion()?.getElement().textContent === label);
+  if (!button) throw new Error(`Delete confirmation button missing: ${label}`);
+  return button.getElement();
 }
 
-function confirm(modal: HTMLElement) {
-  typeConfirmation(modal);
-  fireEvent.click(within(modal).getByRole('button', { name: 'Delete' }));
+function confirm(modal: DeleteModal) {
+  const field = modal.findContent().findInput()?.findNativeInput().getElement();
+  if (!field) throw new Error('Delete confirmation field is missing');
+  expect(field).toHaveAccessibleName('To confirm, type delete.');
+  fireEvent.change(field, { target: { value: 'delete' } });
+  fireEvent.click(modalButton(modal, 'Delete'));
 }
 
 function expectDeleted() {
-  expect(createWrapper().findFlashbar()?.getElement()).toHaveTextContent(`Alarm ${name} deleted.`);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  const flash = page.findFlashbar()?.findItemsByType('success')[0]?.findContent();
+  expect(flash?.getElement().textContent).toBe(`Alarm ${name} deleted.`);
+  expect(page.findModal()).toBeNull();
 }
 
 it('requires one selected alarm and opens the confirmation for it', async () => {
   open();
   await screen.findByRole('link', { name });
   expect(deleteControl()).toBeDisabled();
-  expect(await openDelete()).toBeVisible();
+  expect((await openDelete()).getElement()).toBeVisible();
   expect(remove).not.toHaveBeenCalled();
 });
 
@@ -200,15 +220,25 @@ it('remembers a 501 and reopens the dialog with its confirmation disabled', asyn
   open();
   const first = await openDelete();
   confirm(first);
-  expect(await within(first).findByText('Not implemented by the emulator')).toBeVisible();
-  fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => {
+    const header = first.findContent().findAlert()?.findHeader()?.getElement();
+    expect(header).toBeVisible();
+    expect(header?.textContent).toBe('Not implemented by the emulator');
+  });
+  fireEvent.click(modalButton(first, 'Cancel'));
+  expect(page.findModal()).toBeNull();
   expect(deleteControl()).toBeEnabled();
   fireEvent.click(deleteControl());
-  const next = await screen.findByRole('dialog');
-  expect(within(next).getByText('Not implemented by the emulator')).toBeVisible();
-  expect(within(next).getByText(/501 Not Implemented for DeleteAlarms/)).toBeVisible();
+  const next = await findDeleteModal();
+  const alert = next.findContent().findAlert();
+  const header = alert?.findHeader()?.getElement();
+  const content = alert?.findContent().getElement();
+  expect(header).toBeVisible();
+  expect(header?.textContent).toBe('Not implemented by the emulator');
+  expect(content).toBeVisible();
+  expect(content).toHaveTextContent('501 Not Implemented for DeleteAlarms');
   confirm(next);
-  expect(within(next).getByRole('button', { name: 'Delete' })).toBeDisabled();
+  expect(modalButton(next, 'Delete')).toBeDisabled();
   expect(remove).toHaveBeenCalledTimes(1);
-  expect(createWrapper().findFlashbar()).toBeNull();
+  expect(page.findFlashbar()).toBeNull();
 });

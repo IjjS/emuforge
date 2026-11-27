@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,7 @@ vi.mock('../delete-api', async (load) => ({
 }));
 
 const remove = vi.mocked(deleteAlarm);
+const page = createWrapper();
 const endpoint = 'http://127.0.0.1:8310';
 const name = 'local-alarm';
 const dependent = new RequestError({
@@ -53,15 +55,22 @@ function open(alarmName = name) {
 }
 
 async function controls() {
-  const modal = await screen.findByRole('dialog');
-  const dialog = within(modal);
+  const modal = await waitFor(() => {
+    const dialog = page.findModal();
+    if (!dialog?.isVisible()) throw new Error('Delete confirmation is missing');
+    return dialog;
+  });
+  const field = modal.findContent().findInput()?.findNativeInput().getElement();
+  const buttons = modal.findFooter()?.findAllButtons();
+  const action = buttons?.find((button) => button.findTextRegion()?.getElement().textContent === 'Delete');
+  const cancel = buttons?.find((button) => button.findTextRegion()?.getElement().textContent === 'Cancel');
+  if (!field || !action || !cancel) throw new Error('Delete confirmation controls are missing');
   return {
     modal,
-    dialog,
-    field: dialog.getByRole('textbox', { name: 'To confirm, type delete.' }),
-    action: dialog.getByRole('button', { name: 'Delete' }),
-    cancel: dialog.getByRole('button', { name: 'Cancel' }),
-    close: dialog.getByRole('button', { name: 'Close dialog' }),
+    field,
+    action: action.getElement(),
+    cancel: cancel.getElement(),
+    close: modal.findDismissButton().getElement(),
   };
 }
 
@@ -75,9 +84,12 @@ function escape(field: HTMLElement) {
 
 it('names the alarm, explains the deletion, and requires the exact word delete', async () => {
   open();
-  const { modal, dialog, field, action } = await controls();
-  expect(modal).toHaveAccessibleName(`Delete alarm ${name}?`);
-  expect(dialog.getByText('The alarm is removed from your local emulator. This cannot be undone.')).toBeVisible();
+  const { modal, field, action } = await controls();
+  expect(modal.getElement()).toHaveAccessibleName(`Delete alarm ${name}?`);
+  const body = modal.findContent().findBox()?.getElement();
+  expect(body).toBeVisible();
+  expect(body?.textContent).toBe('The alarm is removed from your local emulator. This cannot be undone.');
+  expect(field).toHaveAccessibleName('To confirm, type delete.');
   expect(action).toBeDisabled();
   for (const value of ['Delete', ' delete', 'delete ']) {
     type(field, value);
@@ -92,7 +104,7 @@ it('keeps repeated spaces and a line feed in the name element', async () => {
   const exactName = 'alarm with  spaces\nand a new line';
   open(exactName);
   const { modal } = await controls();
-  const element = modal.querySelector('.aws-area-value-name');
+  const element = modal.findHeader().find('.aws-area-value-name')?.getElement();
   expect(element?.textContent).toBe(exactName);
   expect(element?.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
 });
@@ -112,20 +124,29 @@ it.each([
 ] as const)('shows a %s in the open confirmation', async (_, error, header) => {
   remove.mockRejectedValueOnce(error);
   const deleted = open();
-  const { dialog, field, action } = await controls();
+  const { modal, field, action } = await controls();
   type(field);
   fireEvent.click(action);
-  expect(await dialog.findByText(header)).toBeVisible();
+  const alert = await waitFor(() => {
+    const feedback = modal.findContent().findAlert();
+    if (!feedback) throw new Error('Delete confirmation alert is missing');
+    return feedback;
+  });
+  const heading = alert.findHeader()?.getElement();
+  const content = alert.findContent().getElement();
+  expect(heading).toBeVisible();
+  expect(heading?.textContent).toBe(header);
+  expect(content).toBeVisible();
   expect(field).toHaveValue('delete');
   expect(deleted).not.toHaveBeenCalled();
   if (error === dependent) {
-    expect(dialog.getByText(/A composite alarm depends on this alarm/)).toBeVisible();
+    expect(content).toHaveTextContent('A composite alarm depends on this alarm.');
     expect(action).toBeEnabled();
     await act(async () => fireEvent.click(action));
     expect(remove).toHaveBeenCalledTimes(2);
     expect(deleted).toHaveBeenCalledExactlyOnceWith(name);
   } else {
-    expect(dialog.getByText(/501 Not Implemented for DeleteAlarms/)).toBeVisible();
+    expect(content).toHaveTextContent('501 Not Implemented for DeleteAlarms');
     expect(action).toBeDisabled();
   }
 });
@@ -140,13 +161,14 @@ it.each([
 ] as const)('allows dismissal of %s with %s', async (error, method) => {
   remove.mockRejectedValueOnce(error);
   const deleted = open();
-  const { dialog, field, action } = await controls();
+  const { modal, field, action, cancel, close } = await controls();
   type(field);
   fireEvent.click(action);
-  await dialog.findByText(error === dependent ? 'DeleteAlarms failed' : 'Not implemented by the emulator');
+  const header = error === dependent ? 'DeleteAlarms failed' : 'Not implemented by the emulator';
+  await waitFor(() => expect(modal.findContent().findAlert()?.findHeader()?.getElement().textContent).toBe(header));
   if (method === 'Escape') escape(field);
-  else fireEvent.click(dialog.getByRole('button', { name: method }));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  else fireEvent.click(method === 'Cancel' ? cancel : close);
+  expect(page.findModal()).toBeNull();
   expect(deleted).not.toHaveBeenCalled();
 });
 
@@ -167,7 +189,7 @@ it('ignores confirmation and all dismissal controls while the request is pending
   fireEvent.click(cancel);
   fireEvent.click(close);
   escape(field);
-  expect(modal).toBeVisible();
+  expect(modal.getElement()).toBeVisible();
   expect(remove).toHaveBeenCalledTimes(1);
   expect(deleted).not.toHaveBeenCalled();
   await act(async () => finish());
