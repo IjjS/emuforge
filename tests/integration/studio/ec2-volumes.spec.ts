@@ -31,6 +31,7 @@ import {
   ownVolume,
   readVolume,
   seedStorage,
+  expectInstanceNotOffered,
   submitAttachment,
   volumePath,
   volumeTable,
@@ -135,9 +136,9 @@ test('studio.ec2-volume-refusals-preserve-storage', async ({ ctx, page }) => {
   await open(page, volumePath(id), id);
   const main = page.getByRole('main');
   await button(main, 'Attach volume').click(ACTION);
-  await submitAttachment(page, other!);
-  const alert = alertWith(dialogOf(page), 'InvalidVolume.ZoneMismatch');
-  await expect(alert).toContainText('InvalidVolume.ZoneMismatch');
+  // "Attach volume": the instance of the other zone is not offered in "Instance"; the emulator reports the volume
+  // `available` with no attachment (changed, issue 651).
+  await expectInstanceNotOffered(page, instance, other!);
   expect(await readVolume(ctx, port, id)).toMatchObject({ state: 'available', attachments: [] });
   await submitAttachment(page, instance);
   await expectAttached(page, id, instance);

@@ -271,7 +271,8 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   const image = () => field(main, 'Image');
   const type = () => field(main, 'Instance type');
   const keyPair = () => field(main, 'Key pair - optional');
-  const subnet = () => field(main, 'Subnet - optional');
+  const vpc = () => field(main, 'VPC');
+  const subnet = () => field(main, 'Subnet');
   const groups = () => field(main, 'Security groups - optional');
   const submit = () => button(main, LAUNCH);
   const chooseImageAndType = async () => {
@@ -287,7 +288,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   let first = '';
 
   await lines.line(
-    'S1, "Launch instance" → S2; the name `<prefix>-web`; in "Image" type a part of an image\'s name and choose it; in "Instance type" type `t3.mic` and choose `t3.micro`; choose the key pair, the default subnet of `us-east-1b` and, typing its name, G; "Launch instance" → S3 of a new instance with "Launched instance {id}"',
+    'S1, "Launch instance" → S2; the name `<prefix>-web`; in "Image" type a part of an image\'s name and choose it; in "Instance type" type `t3.mic` and choose `t3.micro`; choose the key pair, with the default VPC as "VPC" stands the default subnet of `us-east-1b` and, typing its name, G; "Launch instance" → S3 of a new instance with "Launched instance {id}" (changed, issue 651)',
     async () => {
       await open(page, INSTANCES_PATH, INSTANCES_H1);
       await main.getByRole('link', { name: LAUNCH, exact: true }).first().click(ACTION);
@@ -296,6 +297,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
       await name().fill(`${p}-web`, ACTION);
       await chooseImageAndType();
       await chooseOption(keyPair(), key);
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
       await chooseOption(subnet(), w.subnet['us-east-1b']!);
       await chooseInMultiselect(groups(), g, `${p}-g`);
       await submit().click(ACTION);
@@ -325,27 +327,32 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   );
 
   await lines.line(
-    'S2 with no subnet chosen, H\'s name typed in "Security groups" → "No security groups match"; with the second VPC\'s subnet chosen, the same text → H is offered',
+    'S2 with the default VPC as "VPC" stands, H\'s name typed in "Security groups" → "No security groups match"; with the second VPC chosen in "VPC", the same text → H is offered (changed, issue 651)',
     async () => {
       await open(page, LAUNCH_PATH, LAUNCH);
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
       await typeInMultiselect(groups(), `${p}-h`);
       const m = multiselectOf(groups());
       await expect(m.list, `"${NO_GROUPS_MATCH}"`).toContainText(NO_GROUPS_MATCH, { timeout: 20_000 });
       await expect(m.option(h), 'H among the default VPC\'s groups').toHaveCount(0);
       await page.keyboard.press('Escape');
-      await chooseOption(subnet(), other.subnetId);
+      await chooseOption(vpc(), other.vpcId);
       await typeInMultiselect(groups(), `${p}-h`);
       await expect(m.option(h), 'H among the second VPC\'s groups').toBeVisible({ timeout: 20_000 });
       await page.keyboard.press('Escape');
     },
   );
 
-  await lines.line("S2 with G chosen, then the second VPC's subnet chosen → no group is chosen any more", async () => {
-    await open(page, LAUNCH_PATH, LAUNCH);
-    await chooseInMultiselect(groups(), g, `${p}-g`);
-    await chooseOption(subnet(), other.subnetId);
-    await expect(multiselectOf(groups()).tokens, 'the chosen groups').toHaveCount(0);
-  });
+  await lines.line(
+    'S2 with G chosen, then the second VPC chosen in "VPC" → no group is chosen any more (changed, issue 651)',
+    async () => {
+      await open(page, LAUNCH_PATH, LAUNCH);
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
+      await chooseInMultiselect(groups(), g, `${p}-g`);
+      await chooseOption(vpc(), other.vpcId);
+      await expect(multiselectOf(groups()).tokens, 'the chosen groups').toHaveCount(0);
+    },
+  );
 
   await lines.line(
     'S2, the name `<prefix>-bare`, an image and a type only, "Launch instance" → S3; the emulator reports the instance with the group `default` and in the default subnet of `us-east-1a`',
