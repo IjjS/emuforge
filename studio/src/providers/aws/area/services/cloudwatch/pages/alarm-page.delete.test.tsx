@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -33,6 +33,7 @@ vi.mock('../delete-api', async (load) => ({
 }));
 
 const ENGINE = 'http://127.0.0.1:8310';
+const page = createWrapper();
 const connection = {
   engineOrigin: ENGINE,
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9310, endpoint: 'https://127.0.0.1:9310' } },
@@ -120,23 +121,50 @@ function open(alarmName = name, inLayout = false) {
 
 async function openDelete() {
   fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  return screen.findByRole('dialog');
+  return waitFor(() => {
+    const modal = page.findModal();
+    if (!modal?.isVisible()) throw new Error('Delete confirmation is missing');
+    return modal;
+  });
 }
 
-function confirm(modal: HTMLElement) {
-  const dialog = within(modal);
-  fireEvent.change(dialog.getByRole('textbox', { name: 'To confirm, type delete.' }), { target: { value: 'delete' } });
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
+type DeleteModal = Awaited<ReturnType<typeof openDelete>>;
+
+function modalButton(modal: DeleteModal, label: string) {
+  const button = modal
+    .findFooter()
+    ?.findAllButtons()
+    .find((item) => item.findTextRegion()?.getElement().textContent === label);
+  if (!button) throw new Error(`Delete confirmation button missing: ${label}`);
+  return button.getElement();
+}
+
+function confirmationField(modal: DeleteModal) {
+  return modal.findContent().findFormField()?.findInput()?.findNativeInput().getElement();
+}
+
+function confirm(modal: DeleteModal) {
+  const field = confirmationField(modal);
+  if (!field) throw new Error('Delete confirmation field is missing');
+  expect(field).toHaveAccessibleName('To confirm, type delete.');
+  fireEvent.change(field, { target: { value: 'delete' } });
+  fireEvent.click(modalButton(modal, 'Delete'));
+}
+
+function expectDeletedFlash(alarmName: string) {
+  const flash = page.findFlashbar()?.findItemsByType('success')[0]?.findContent();
+  expect(flash?.getElement().textContent).toBe(`Alarm ${alarmName} deleted.`);
+  return flash;
 }
 
 it('deletes the alarm named in the header and leads to Alarms with the result', async () => {
   open(name, true);
   const modal = await openDelete();
-  expect(modal).toHaveAccessibleName(`Delete alarm ${name}?`);
+  expect(modal.getElement()).toHaveAccessibleName(`Delete alarm ${name}?`);
   confirm(modal);
   await waitFor(() => expect(screen.getByLabelText('Address').textContent).toBe(ALARMS_PATH));
-  expect(createWrapper().findFlashbar()?.getElement()).toHaveTextContent(`Alarm ${name} deleted.`);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expectDeletedFlash(name);
+  expect(page.findModal()).toBeNull();
   expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(1);
 });
@@ -155,7 +183,7 @@ it.each(['before', 'after'])('hands over once when a read finds no alarm %s the 
   if (order === 'before') {
     await act(async () => reread.resolve(undefined));
     await waitFor(() => expect(screen.getByText('Alarm not found', { selector: 'h2' })).toBeVisible());
-    expect(modal).toBeVisible();
+    expect(modal.getElement()).toBeVisible();
     expect(handOver).not.toHaveBeenCalled();
   }
   await act(async () => deletion.resolve(undefined));
@@ -165,7 +193,7 @@ it.each(['before', 'after'])('hands over once when a read finds no alarm %s the 
   }
   expect(handOver).toHaveBeenCalledExactlyOnceWith(ALARMS_PATH, [{ type: 'success', content: expect.anything() }]);
   expect(show).not.toHaveBeenCalled();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(page.findModal()).toBeNull();
 });
 
 it('stays on the alarm and reports nothing to the flash on refusal', async () => {
@@ -180,8 +208,15 @@ it('stays on the alarm and reports nothing to the flash on refusal', async () =>
   const { handOver, show } = open();
   const modal = await openDelete();
   confirm(modal);
-  expect(await within(modal).findByText('DeleteAlarms failed')).toBeVisible();
-  expect(within(modal).getByText(/A composite alarm depends on it/)).toBeVisible();
+  await waitFor(() => {
+    const alert = modal.findContent().findAlert();
+    const header = alert?.findHeader()?.getElement();
+    const content = alert?.findContent().getElement();
+    expect(header).toBeVisible();
+    expect(header?.textContent).toBe('DeleteAlarms failed');
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent('A composite alarm depends on it.');
+  });
   expect(screen.getByLabelText('Address').textContent).toBe(alarmPath(name));
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();
@@ -192,13 +227,23 @@ it('remembers a 501 and reopens the dialog with its confirmation disabled', asyn
   const { handOver, show } = open();
   const first = await openDelete();
   confirm(first);
-  expect(await within(first).findByText('Not implemented by the emulator')).toBeVisible();
-  fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => {
+    const header = first.findContent().findAlert()?.findHeader()?.getElement();
+    expect(header).toBeVisible();
+    expect(header?.textContent).toBe('Not implemented by the emulator');
+  });
+  fireEvent.click(modalButton(first, 'Cancel'));
+  expect(page.findModal()).toBeNull();
   const next = await openDelete();
-  expect(within(next).getByText('Not implemented by the emulator')).toBeVisible();
-  expect(within(next).getByText(/501 Not Implemented for DeleteAlarms/)).toBeVisible();
+  const alert = next.findContent().findAlert();
+  const header = alert?.findHeader()?.getElement();
+  const content = alert?.findContent().getElement();
+  expect(header).toBeVisible();
+  expect(header?.textContent).toBe('Not implemented by the emulator');
+  expect(content).toBeVisible();
+  expect(content).toHaveTextContent('501 Not Implemented for DeleteAlarms');
   confirm(next);
-  expect(within(next).getByRole('button', { name: 'Delete' })).toBeDisabled();
+  expect(modalButton(next, 'Delete')).toBeDisabled();
   expect(remove).toHaveBeenCalledTimes(1);
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();
@@ -215,9 +260,7 @@ it.each(['answers', 'fails'])(
     expect(await screen.findByText('Loading alarms')).toBeVisible();
 
     function expectResult() {
-      const flash = createWrapper().findFlashbar()?.getElement();
-      const element = flash?.querySelector('.aws-area-value-name');
-      expect(flash?.textContent).toContain(`Alarm ${exactName} deleted.`);
+      const element = expectDeletedFlash(exactName)?.find('.aws-area-value-name')?.getElement();
       expect(element?.textContent).toBe(exactName);
       expect(element?.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
     }
@@ -243,15 +286,15 @@ it.each([false, true])('drops the first dialog when the name changes (request pe
   const modal = await openDelete();
   if (pending) confirm(modal);
   act(() => follow(alarmPath('second-alarm')));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(page.findModal()).toBeNull();
   const next = await openDelete();
-  expect(next).toHaveAccessibleName('Delete alarm second-alarm?');
-  expect(within(next).getByRole('textbox')).toHaveValue('');
+  expect(next.getElement()).toHaveAccessibleName('Delete alarm second-alarm?');
+  expect(confirmationField(next)).toHaveValue('');
   if (pending) {
     expect(remove.mock.calls[0]?.[2].aborted).toBe(true);
     await act(async () => deletion.resolve(undefined));
   }
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();
-  expect(next).toBeVisible();
+  expect(next.getElement()).toBeVisible();
 });
