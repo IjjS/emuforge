@@ -249,7 +249,13 @@ describe("a subnet's page", () => {
     subnetIs({ found: true, value: subnet({ tags: [{ key: 'Name', value: 'p664 a  b' }] }) });
     open();
     const identity = String.raw`p664 a\u0020\u0020b`;
-    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    const heading = await waitFor(() => {
+      const headingText = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+      const title = headingText?.closest('h1');
+      if (title === undefined || title === null) throw new Error('Missing resource heading');
+      expect(title).toHaveAccessibleName(identity);
+      return title;
+    });
     const name = within(heading).getByText('p664 a  b', { normalizer: (value) => value });
     expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
   });

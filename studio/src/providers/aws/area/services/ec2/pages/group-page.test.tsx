@@ -279,8 +279,12 @@ describe("a security group's page", () => {
     rulesAre({});
     open(PATH);
 
-    const heading = await screen.findByRole('heading', { level: 1, name: identity });
-    expect(heading.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    await waitFor(() => {
+      const heading = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+      const title = heading?.closest('h1');
+      expect(title).toHaveAccessibleName(identity);
+      expect(title?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    });
   });
 
   it("rules → a row each; a group source links to that group's page, a range is text; the Rules description", async () => {
