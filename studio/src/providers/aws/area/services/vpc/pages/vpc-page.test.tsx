@@ -392,6 +392,30 @@ describe("a VPC's page", () => {
     );
   });
 
+  it.each([
+    { table: 'Subnets', id: 'subnet-2', href: '/aws/vpc/subnets/subnet/subnet-2' },
+    { table: 'Route tables', id: 'rtb-2', href: '/aws/vpc/route-tables/route-table/rtb-2' },
+  ])('distinguishes Name tags with repeated spaces in $table and links by ID', async ({ table, id, href }) => {
+    vi.mocked(api.listSubnets).mockResolvedValue({
+      items: [subnet('subnet-1', 'p664 a b'), subnet('subnet-2', 'p664 a  b')],
+    });
+    vi.mocked(api.listRouteTables).mockResolvedValue({
+      items: [routeTable('rtb-1', 'p664 a b', false, 0), routeTable('rtb-2', 'p664 a  b', false, 0)],
+    });
+    open();
+
+    await loaded();
+    const listing = within(section(table).getElement());
+    const link = await listing.findByRole('link', { name: id });
+    expect(link).toHaveAttribute('href', href);
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    expect(listing.getByRole('cell', { name: 'p664 a b' })).toBeInTheDocument();
+    const cell = listing.getByRole('cell', { name: identity });
+    expect(cell.closest('tr')).toBe(link.closest('tr'));
+    const name = within(cell).getByText('p664 a  b', { normalizer: (value) => value });
+    expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
+  });
+
   it('"Route tables": a row each, the ID a link to the table; none → "No route tables"; the next page asks with the token; "Create route table" with this VPC', async () => {
     vi.mocked(api.listRouteTables).mockImplementation((_endpoint, _filters, token) =>
       Promise.resolve(

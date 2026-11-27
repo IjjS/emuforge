@@ -199,7 +199,7 @@ function Subnets({ vpcId, listing, connection }: SectionProps<Subnet>) {
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={resourceName(row.tags)} />,
+      cell: (row) => <NameText name={resourceName(row.tags)} />,
     },
     {
       id: 'id',
@@ -276,7 +276,7 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={resourceName(row.tags)} />,
+      cell: (row) => <NameText name={resourceName(row.tags)} />,
     },
     {
       id: 'id',
