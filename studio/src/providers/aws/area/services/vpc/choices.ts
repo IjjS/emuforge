@@ -21,19 +21,20 @@ function present(...values: (string | undefined)[]): string[] {
   return values.filter((value): value is string => value !== undefined && value !== '');
 }
 
-/** The VPCs: each its ID, with its name, its block and "default VPC" for the default one. */
+/** The VPCs: each its ID, with its name, its block and "Default VPC" for the default one. */
 export function vpcChoices(endpoint: string | undefined): ChoiceSource<VpcChoice> {
   return {
     key: VPC_KEYS.choices('vpcs'),
     endpoint,
     operation: NETWORK_CHOICE_OPERATIONS.describeVpcs,
     filtering: 'local',
+    readAgainOnOpen: true,
     read: async (at, _text, token, signal) => tokenPage(await listVpcChoices(at, token, signal)),
     optionOf: (vpc) => ({
       value: vpc.id,
       label: vpc.id,
       ...(vpc.name === undefined ? {} : { description: vpc.name }),
-      tags: present(vpc.cidr, vpc.isDefault ? 'default VPC' : undefined),
+      tags: present(vpc.cidr, vpc.isDefault ? 'Default VPC' : undefined),
     }),
   };
 }
@@ -45,12 +46,16 @@ export function subnetChoices(endpoint: string | undefined, vpcId: string): Choi
     endpoint,
     operation: NETWORK_CHOICE_OPERATIONS.describeSubnets,
     filtering: 'local',
+    readAgainOnOpen: true,
     read: async (at, _text, token, signal) => tokenPage(await listSubnetChoices(at, token, signal, vpcId)),
-    optionOf: (subnet) => ({
-      value: subnet.id,
-      label: subnet.id,
-      ...(subnet.name === undefined ? {} : { description: subnet.name }),
-      tags: present(subnet.cidr, subnet.zone),
-    }),
+    optionOf: (subnet) => {
+      const placement = present(subnet.zone, subnet.cidr).join(' · ');
+      return {
+        value: subnet.id,
+        label: subnet.id,
+        ...(subnet.name === undefined ? {} : { description: subnet.name }),
+        tags: present(placement),
+      };
+    },
   };
 }

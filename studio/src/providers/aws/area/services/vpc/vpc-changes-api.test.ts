@@ -102,6 +102,29 @@ describe('create a VPC', () => {
     expect(sent.get('TagSpecification.1.Tag.1.Value')).toBe('app');
   });
 
+  it.each(['app', ''])('sends two tag rows with the Name tag first when supplied (%j)', async (name) => {
+    engine.on('CreateVpc', () => ok('CreateVpc', '<vpc><vpcId>vpc-0new</vpcId></vpc>'));
+    const tags = [
+      { key: 'team', value: 'core' },
+      { key: 'tier', value: 'app' },
+    ];
+    await createVpc(endpoint, { cidr: '10.0.0.0/16', name, tags }, signal());
+
+    expect(engine.of('CreateVpc')).toHaveLength(1);
+    const sent = engine.of('CreateVpc')[0]?.params ?? new URLSearchParams();
+    const expected = [...(name === '' ? [] : [{ key: 'Name', value: name }]), ...tags];
+    const entries = [...sent.entries()].filter(([key]) => key.startsWith('TagSpecification'));
+    expect(entries.sort()).toEqual(
+      [
+        ['TagSpecification.1.ResourceType', 'vpc'],
+        ...expected.flatMap(({ key, value }, index) => [
+          [`TagSpecification.1.Tag.${index + 1}.Key`, key],
+          [`TagSpecification.1.Tag.${index + 1}.Value`, value],
+        ]),
+      ].sort(),
+    );
+  });
+
   it('without a name, no TagSpecifications', async () => {
     engine.on('CreateVpc', () => ok('CreateVpc', '<vpc><vpcId>vpc-0new</vpcId></vpc>'));
     await createVpc(endpoint, { cidr: '10.0.0.0/16' }, signal());
