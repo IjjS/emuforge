@@ -27,12 +27,21 @@ interface AddTargetDialogProps {
   connection: AreaConnection & { engineOrigin: string };
   bus: string;
   name: string;
+  operationUnavailable?: boolean;
   onAdded: (id: string) => void;
   onUnavailable: () => void;
   onDismiss: () => void;
 }
 
-export function AddTargetDialog({ connection, bus, name, onAdded, onUnavailable, onDismiss }: AddTargetDialogProps) {
+export function AddTargetDialog({
+  connection,
+  bus,
+  name,
+  operationUnavailable,
+  onAdded,
+  onUnavailable,
+  onDismiss,
+}: AddTargetDialogProps) {
   const endpoint = connection.engineOrigin;
   const fields = useRef<TargetFieldsRef>(null);
   const pageSignal = usePageSignal();
@@ -42,7 +51,9 @@ export function AddTargetDialog({ connection, bus, name, onAdded, onUnavailable,
   const [validated, setValidated] = useState(false);
   const [duplicate, setDuplicate] = useState<string>();
   const [full, setFull] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [localFailure, setFailure] = useState<RequestFailure>();
+  const failure =
+    localFailure ?? (operationUnavailable ? { kind: 'not-implemented', operation: PUT_TARGETS } : undefined);
   const unavailable = failure?.kind === 'not-implemented' && failure.operation === PUT_TARGETS;
   const errors: TargetErrors = validated ? validateTarget(draft) : {};
   if (duplicate === draft.id) errors.id = EXISTING_TARGET_ID;
