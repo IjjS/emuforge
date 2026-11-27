@@ -19,6 +19,7 @@ import {
   dialogOf,
   errorOf,
   expectFlash,
+  expectValueIs,
   field,
   instanceDirect,
   instancePath,
@@ -276,7 +277,10 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
       const reported = await instanceDirect(ctx, port, reader);
       expect([reported?.instanceClass, reported?.zone].every(Boolean), "the reader's class and zone, directly").toBe(true);
       await open(page, clusterPath(k2), k2);
+      // "Fail over" is offered once the renamed, upgraded cluster is available again.
+      await expectValueIs(page, 'Status', 'available');
       await clusterAction(page, 'failover');
+      await expect(dialogOf(page), 'the Fail over dialog').toBeVisible();
       const targets = await openSelect(dialogField('Target DB instance'));
       await targets.expectOption(reader, reported!.instanceClass, reported!.zone!);
       await targets.close();
