@@ -111,6 +111,7 @@ const FULL = `<DBCluster>
   <DBClusterArn>arn:aws:rds:us-east-1:000000000000:cluster:app-aur</DBClusterArn>
   <DbClusterResourceId>cluster-ABC</DbClusterResourceId>
   <DBSubnetGroup>default</DBSubnetGroup>
+  <StorageType>aurora</StorageType>
   <VpcSecurityGroups><VpcSecurityGroupMembership><VpcSecurityGroupId>sg-1</VpcSecurityGroupId><Status>active</Status></VpcSecurityGroupMembership></VpcSecurityGroups>
   <DBClusterParameterGroup>default.aurora-postgresql16</DBClusterParameterGroup>
   <DBClusterMembers>
@@ -183,6 +184,7 @@ describe('one cluster', () => {
         arn: 'arn:aws:rds:us-east-1:000000000000:cluster:app-aur',
         resourceId: 'cluster-ABC',
         subnetGroup: 'default',
+        storageType: 'aurora',
         securityGroups: ['sg-1'],
         parameterGroup: 'default.aurora-postgresql16',
         members: [
@@ -217,7 +219,7 @@ describe('the members', () => {
     engine.on('DescribeDBInstances', () =>
       ok(
         'DescribeDBInstances',
-        `<DBInstances><DBInstance><DBInstanceIdentifier>app-aur-1</DBInstanceIdentifier><DBInstanceStatus>available</DBInstanceStatus><Engine>aurora-postgresql</Engine><DBInstanceClass>db.r6g.large</DBInstanceClass><DBClusterIdentifier>app-aur</DBClusterIdentifier><Endpoint><Address>0.0.0.0</Address><Port>40001</Port></Endpoint></DBInstance></DBInstances>`,
+        `<DBInstances><DBInstance><DBInstanceIdentifier>app-aur-1</DBInstanceIdentifier><DBInstanceStatus>available</DBInstanceStatus><Engine>aurora-postgresql</Engine><DBInstanceClass>db.r6g.large</DBInstanceClass><AvailabilityZone>us-east-1a</AvailabilityZone><DBClusterIdentifier>app-aur</DBClusterIdentifier><Endpoint><Address>0.0.0.0</Address><Port>40001</Port></Endpoint></DBInstance></DBInstances>`,
       ),
     );
     const members = await listMembers(endpoint, 'app-aur', signal());
@@ -231,6 +233,7 @@ describe('the members', () => {
         status: 'available',
         engine: 'aurora-postgresql',
         instanceClass: 'db.r6g.large',
+        zone: 'us-east-1a',
         clusterId: 'app-aur',
         address: '0.0.0.0',
         port: 40001,
@@ -277,6 +280,27 @@ describe('the changes', () => {
       Engine: 'aurora-postgresql',
       EngineVersion: '16.4',
       DBInstanceClass: 'db.r6g.large',
+    });
+  });
+
+  it('sends the chosen zone and tags on the member', async () => {
+    await addInstance(
+      endpoint,
+      {
+        id: 'app-aur-3',
+        clusterId: 'app-aur',
+        engine: 'aurora-postgresql',
+        engineVersion: '16.4',
+        instanceClass: 'db.r6g.large',
+        zone: 'us-east-1a',
+        tags: [{ key: 'env', value: 'dev' }],
+      },
+      signal(),
+    );
+    expect(Object.fromEntries(engine.sent[0]?.params ?? [])).toMatchObject({
+      AvailabilityZone: 'us-east-1a',
+      'Tags.Tag.1.Key': 'env',
+      'Tags.Tag.1.Value': 'dev',
     });
   });
 
@@ -354,9 +378,48 @@ describe('cluster operations', () => {
   ];
 
   it.each(cases)('sends %s with only the selected fields', async (operation, action, fields) => {
-    await operateCluster(endpoint, 'app-aur', action, signal());
+    await expect(operateCluster(endpoint, 'app-aur', action, signal())).resolves.toBe('app-aur');
     expect(engine.sent.map((request) => Object.fromEntries(request.params))).toEqual([
       { Action: operation, Version: '2014-10-31', DBClusterIdentifier: 'app-aur', ...fields },
     ]);
+  });
+
+  it.each([
+    ['answer-id', 'answer-id'],
+    ['app-aur', 'written-id'],
+    [undefined, 'written-id'],
+  ])('serializes the changed members and reads the rename identifier from %s', async (answered, expected) => {
+    engine.on('ModifyDBCluster', () =>
+      ok(
+        'ModifyDBCluster',
+        answered === undefined ? '' : `<DBCluster><DBClusterIdentifier>${answered}</DBClusterIdentifier></DBCluster>`,
+      ),
+    );
+    const id = await operateCluster(
+      endpoint,
+      'app-aur',
+      {
+        kind: 'modify',
+        changes: {
+          newIdentifier: 'written-id',
+          version: { version: '17.4', major: true },
+          securityGroupIds: ['sg-new'],
+          storageType: 'aurora-iopt1',
+        },
+      },
+      signal(),
+    );
+    expect(id).toBe(expected);
+    expect(Object.fromEntries(engine.sent[0]?.params ?? [])).toEqual({
+      Action: 'ModifyDBCluster',
+      Version: '2014-10-31',
+      DBClusterIdentifier: 'app-aur',
+      NewDBClusterIdentifier: 'written-id',
+      EngineVersion: '17.4',
+      AllowMajorVersionUpgrade: 'true',
+      'VpcSecurityGroupIds.VpcSecurityGroupId.1': 'sg-new',
+      StorageType: 'aurora-iopt1',
+      ApplyImmediately: 'true',
+    });
   });
 });

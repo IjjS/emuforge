@@ -12,6 +12,9 @@ import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
+import { RDS_KEYS } from '../queries';
+import * as choices from '../choices-api';
+import * as security from '../../../components/security-group-choices';
 import type { ClusterAction } from '../cluster-operations';
 import * as snapshots from '../cluster-snapshot-api';
 
@@ -22,6 +25,17 @@ vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
   return { ...real, listInstances: vi.fn(), getInstance: vi.fn(), actOnInstance: vi.fn() };
 });
+
+vi.mock('../choices-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../choices-api')>()),
+  readOrderableRows: vi.fn(),
+  findSubnetGroup: vi.fn(),
+}));
+
+vi.mock('../../../components/security-group-choices', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../components/security-group-choices')>()),
+  readSecurityGroupsById: vi.fn(),
+}));
 
 vi.mock('../cluster-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../cluster-api')>();
@@ -103,6 +117,9 @@ function matchMedia(query: string): MediaQueryList {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(choices.readOrderableRows).mockResolvedValue([]);
+  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-1' });
+  vi.mocked(security.readSecurityGroupsById).mockResolvedValue([]);
   vi.stubGlobal('matchMedia', matchMedia);
   connection = new Connection();
   connection.value = { result: connectedResult(), engineOrigin: ENGINE };
@@ -112,7 +129,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path = '/aws/rds') {
+function open(path = '/aws/rds', client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -120,7 +137,6 @@ function open(path = '/aws/rds') {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -835,6 +851,7 @@ async function selectReader(target: string) {
     expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['app-aur-2', 'app-aur-3']);
   });
   picker.selectOptionByValue(target);
+  await waitFor(() => expect(submit).toBeEnabled());
   return submit;
 }
 
@@ -855,7 +872,9 @@ async function expectRefusal(message: string) {
 
 describe('Aurora cluster operations', () => {
   beforeEach(() => {
-    vi.mocked(clusterApi.operateCluster).mockReset().mockResolvedValue(undefined);
+    vi.mocked(clusterApi.operateCluster)
+      .mockReset()
+      .mockImplementation(async (_endpoint, id) => id);
   });
 
   it('offers Stop when available, Start when stopped and neither during a transition', async () => {
@@ -902,7 +921,10 @@ describe('Aurora cluster operations', () => {
       );
 
       const next = holdRound();
-      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+      const readsBeforePoll = vi.mocked(clusterApi.listMembers).mock.calls.length;
+      await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(readsBeforePoll + 1), {
+        timeout: 4_000,
+      });
       const settled = holdRound();
       await act(async () => next.cluster.resolve(found({ status: final, members: ROLES })));
       await act(async () => next.members.resolve(rowsAt(before)));
@@ -962,6 +984,100 @@ describe('Aurora cluster operations', () => {
     expect(flashes('success')).toEqual(['DB cluster app-aur updated']);
   });
 
+  it.each(['before', 'after'] as const)(
+    'keeps the rename handover when the old read answers %s acceptance',
+    async (order) => {
+      answer(found());
+      const client = new QueryClient();
+      const router = open(PATH, client);
+      await loaded();
+      const operation = deferred<string>();
+      vi.mocked(clusterApi.operateCluster).mockReturnValueOnce(operation.promise);
+      const dialog = await editCluster();
+      fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster identifier' }), {
+        target: { value: 'renamed' },
+      });
+      fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+      const old = holdRound();
+      act(() => {
+        void client.refetchQueries({ queryKey: RDS_KEYS.cluster('app-aur', 'round') });
+      });
+      await waitFor(() => expect(clusterApi.getCluster).toHaveBeenCalledTimes(2));
+      const answerOld = async () => {
+        await act(async () => {
+          old.members.resolve([]);
+          old.cluster.resolve({ found: false });
+        });
+        expect(screen.queryByText('DB cluster not found')).toBeNull();
+      };
+      if (order === 'before') await answerOld();
+
+      answer(found({ id: 'renamed' }));
+      await act(async () => operation.resolve('renamed'));
+      await waitFor(() => expect(router.state.location.pathname).toBe('/aws/rds/clusters/cluster/renamed'));
+      if (order === 'after') await answerOld();
+      await loaded();
+      expect(flashes('success')).toEqual(['DB cluster renamed updated']);
+    },
+  );
+
+  it.each(['modify', 'failover'] as const)(
+    'ignores a pre-write round and commits the post-write round together after %s',
+    async (kind) => {
+      answer(found({ members: ROLES }), rowsAt());
+      const client = new QueryClient();
+      open(PATH, client);
+      await loaded();
+      const operation = deferred<string>();
+      vi.mocked(clusterApi.operateCluster).mockReturnValueOnce(operation.promise);
+      if (kind === 'modify') {
+        const dialog = await editCluster();
+        fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
+        fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+      } else {
+        fireEvent.click(await selectReader('app-aur-3'));
+      }
+      const older = holdRound();
+      const priorCalls = vi.mocked(clusterApi.getCluster).mock.calls.length;
+      act(() => {
+        void client.refetchQueries({ queryKey: RDS_KEYS.cluster('app-aur', 'round') });
+      });
+      await waitFor(() => expect(clusterApi.getCluster).toHaveBeenCalledTimes(priorCalls + 1));
+      const newest = holdRound();
+      await act(async () => operation.resolve('app-aur'));
+      const result = kind === 'modify' ? 'DB cluster app-aur updated' : 'Failing over DB cluster app-aur';
+      await waitFor(() => expect(flashes('success')).toEqual([result]));
+      await waitFor(() => expect(clusterApi.getCluster).toHaveBeenCalledTimes(priorCalls + 2));
+
+      const promoted = ROLES.map(({ id }) => ({ id, writer: id === 'app-aur-3' }));
+      await act(async () => {
+        if (kind === 'failover') newest.members.resolve(rowsAt());
+        else newest.cluster.resolve(found({ deletionProtection: true, members: promoted }));
+      });
+      await act(async () => {
+        if (kind === 'failover') newest.cluster.resolve(found({ deletionProtection: true, members: promoted }));
+        else newest.members.resolve(rowsAt());
+      });
+      await waitFor(() =>
+        expect(memberRows().map((row) => row.slice(0, 2))).toEqual([
+          ['app-aur-1', 'Reader'],
+          ['app-aur-2', 'Reader'],
+          ['app-aur-3', 'Writer'],
+        ]),
+      );
+      await act(async () => {
+        older.cluster.resolve(found({ members: ROLES }));
+        older.members.resolve(rowsAt());
+      });
+      expect(memberRows().map((row) => row.slice(0, 2))).toEqual([
+        ['app-aur-1', 'Reader'],
+        ['app-aur-2', 'Reader'],
+        ['app-aur-3', 'Writer'],
+      ]);
+      expect(flashes('success')).toEqual([result]);
+    },
+  );
+
   it('sends only the new retention period and displays the value returned by the read', async () => {
     answer(found({ deletionProtection: true }));
     open(PATH);
@@ -988,7 +1104,10 @@ describe('Aurora cluster operations', () => {
     open(PATH);
     await loaded();
     const modal = await openOperationDialog('modify', 'Modify DB cluster');
-    const field = modal.findContent().findFormField();
+    const field = modal
+      .findContent()
+      .findAllFormFields()
+      .find((item) => item.findLabel()?.getElement().textContent === 'Backup retention period (days)');
     expect(field?.findLabel()?.getElement()).toHaveTextContent('Backup retention period (days)');
     const dialog = within(modal.getElement());
     const retention = dialog.getByRole('textbox', { name: 'Backup retention period (days)' });
@@ -1039,8 +1158,17 @@ describe('Aurora cluster operations', () => {
     );
   });
 
-  it('explains why a cluster without a reader cannot fail over', async () => {
+  it('allows opening failover when the page only read a writer', async () => {
     answer(found({ members: ROLES.filter(({ writer }) => writer) }), [member('app-aur-1')]);
+    open(PATH);
+    await loaded();
+    const { submit } = await editFailover();
+    expect(await screen.findByText('Failover requires a reader DB instance in this cluster.')).toBeInTheDocument();
+    expect(submit).toBeDisabled();
+  });
+
+  it('explains why an unavailable cluster cannot fail over', async () => {
+    answer(found({ status: 'stopped', members: ROLES }), rowsAt());
     open(PATH);
     await loaded();
     const menu = openActions();
@@ -1048,13 +1176,8 @@ describe('Aurora cluster operations', () => {
     if (failover === null) throw new Error('Missing disabled Fail over action.');
     fireEvent.mouseEnter(failover.getElement());
     await waitFor(() => {
-      expect(menu.findDisabledReason()?.getElement()).toHaveTextContent(
-        'Failover requires a reader DB instance in this cluster.',
-      );
+      expect(menu.findDisabledReason()?.getElement()).toHaveTextContent('Only an available DB cluster can fail over.');
     });
-    fireEvent.click(failover.getElement());
-    expect(PAGE.findModal()).toBeNull();
-    expect(clusterApi.operateCluster).not.toHaveBeenCalled();
   });
 
   // Bound: Allow the reader dialog, the real three-second poll, and the ordered cluster and member responses.
@@ -1075,7 +1198,8 @@ describe('Aurora cluster operations', () => {
     await waitFor(() => expect(pairsOf('DB cluster details')['Status']).toBe('failing-over'));
 
     const next = holdRound();
-    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(3), { timeout: 4_000 });
+    const readsBeforePoll = vi.mocked(clusterApi.listMembers).mock.calls.length;
+    await waitFor(() => expect(clusterApi.listMembers).toHaveBeenCalledTimes(readsBeforePoll + 1), { timeout: 4_000 });
     const promoted = ROLES.map(({ id }) => ({ id, writer: id === 'app-aur-3' }));
     await act(async () => next.cluster.resolve(found({ members: promoted })));
     await act(async () => next.members.resolve(rowsAt()));
@@ -1101,7 +1225,9 @@ describe('Aurora cluster operations', () => {
     const { picker, submit } = await editFailover();
     expect(picker.findTrigger().getElement()).toHaveTextContent('app-aur-3');
     picker.openDropdown();
+    await waitFor(() => expect(picker.findDropdown().findOptionByValue('app-aur-2')).not.toBeNull());
     picker.selectOptionByValue('app-aur-2');
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(flashes('success')).toEqual(['Failing over DB cluster app-aur']));
     expect(clusterApi.operateCluster).toHaveBeenLastCalledWith(
