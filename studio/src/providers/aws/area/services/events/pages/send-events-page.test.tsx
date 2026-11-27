@@ -124,6 +124,7 @@ function renderPage(query = '') {
         .findFlashbar()
         ?.findItemsByType('success')
         .map((item) => item.findContent()?.getElement().textContent) ?? [],
+    failureFlash: () => wrapper.findFlashbar()?.findItemsByType('warning')[0],
     announcement: within(getByTestId('area-flash-announcement')).getByRole('status'),
     inlineReceipt: () => form.findActions()?.findStatusIndicator(),
     select,
@@ -140,6 +141,14 @@ function renderPage(query = '') {
     fill,
     expectFilled,
   };
+}
+
+function expectFailedSend(page: ReturnType<typeof renderPage>, details: string) {
+  const failure = page.failureFlash();
+  expect(failure?.findHeader()?.getElement().textContent).toBe('The event was not sent.');
+  expect(failure?.findContent()?.getElement().textContent).toBe(details);
+  expect(page.announcement.textContent).toBe(`Warning The event was not sent. ${details}`);
+  expect(page.inlineReceipt()?.getElement().textContent).toBeUndefined();
 }
 
 it('opens with the addressed bus, an empty JSON object, the routing description and the notice word', async () => {
@@ -199,6 +208,35 @@ it('checks the bus again and shows each accepted ID in one flash and beside Send
   });
 });
 
+it('replaces a previous acceptance with a refusal on the same visit', async () => {
+  const page = renderPage();
+  page.fill();
+  await act(async () => {
+    fireEvent.click(page.button.getElement());
+  });
+  expect(page.successes()).toEqual(['The emulator accepted the event for default. Event ID event-1.']);
+  expect(page.inlineReceipt()?.getElement().textContent).toContain('event-1');
+
+  send.mockRejectedValueOnce(
+    new RequestError({
+      kind: 'other',
+      operation: 'PutEvents',
+      code: 'ValidationException',
+      message: 'Refused by the emulator',
+    }),
+  );
+  await act(async () => {
+    fireEvent.click(page.button.getElement());
+  });
+
+  await waitFor(() => expect(page.successes()).toEqual([]));
+  expectFailedSend(page, 'PutEvents failed. ValidationException: Refused by the emulator');
+  const alert = page.content.findAlert();
+  expect(alert?.findContent().getElement().textContent).toBe('ValidationException: Refused by the emulator');
+  expect(page.show).toHaveBeenCalledTimes(2);
+  page.expectFilled();
+});
+
 it.each([
   { distanceFromBottom: -72, shouldReveal: false },
   { distanceFromBottom: 72, shouldReveal: true },
@@ -253,7 +291,7 @@ it('marks a bus deleted before send as missing and sends nothing', async () => {
   expect(read).toHaveBeenCalledTimes(2);
   expect(page.select.findTrigger().getElement().textContent).toBe('orders');
   expect(send).not.toHaveBeenCalled();
-  expect(page.show).not.toHaveBeenCalled();
+  expectFailedSend(page, 'Check the event bus field.');
   page.expectFilled();
 });
 
@@ -271,7 +309,7 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     expect(alert?.findHeader()?.getElement().textContent).toBe(`${operation} failed`);
     expect(alert?.findContent().getElement().textContent).toBe('ValidationException: Refused by the emulator');
     expect(send).toHaveBeenCalledTimes(operation === 'DescribeEventBus' ? 0 : 1);
-    expect(page.show).not.toHaveBeenCalled();
+    expectFailedSend(page, `${operation} failed. ValidationException: Refused by the emulator`);
     page.expectFilled();
   },
 );
@@ -286,7 +324,7 @@ it('shows the failed entry code and message without an acceptance flash', async 
       'The emulator did not accept the event: MalformedDetail: Detail is malformed.',
     ),
   );
-  expect(page.show).not.toHaveBeenCalled();
+  expectFailedSend(page, 'PutEvents failed. MalformedDetail: Detail is malformed.');
   page.expectFilled();
 });
 
@@ -307,7 +345,10 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     );
     expect(page.button.isDisabled()).toBe(operation === 'PutEvents');
     expect(send).toHaveBeenCalledTimes(operation === 'DescribeEventBus' ? 0 : 1);
-    expect(page.show).not.toHaveBeenCalled();
+    expectFailedSend(
+      page,
+      `Not implemented by the emulator. The emulator answered 501 Not Implemented for ${operation}.`,
+    );
     page.expectFilled();
   },
 );
@@ -326,7 +367,7 @@ it('shows a 501 at the bus field when the address read fails and offers Retry', 
   fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
-  expect(page.show).not.toHaveBeenCalled();
+  expectFailedSend(page, 'Check the form for details.');
 
   const retry = page.busField.findSecondaryControl()?.findButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
@@ -351,7 +392,7 @@ it.each([
   fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(reads);
   expect(send).not.toHaveBeenCalled();
-  expect(page.show).not.toHaveBeenCalled();
+  expectFailedSend(page, 'Check the form for details.');
 });
 
 it('shows field rules before calling DescribeEventBus or PutEvents', () => {
@@ -364,7 +405,7 @@ it('shows field rules before calling DescribeEventBus or PutEvents', () => {
   expect(page.detailField.findError()?.getElement().textContent).toBe('Enter a JSON object.');
   expect(read).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
-  expect(page.show).not.toHaveBeenCalled();
+  expectFailedSend(page, 'Check the form for details.');
 });
 
 it('uses the bus chosen from the list instead of an invalid address', async () => {
