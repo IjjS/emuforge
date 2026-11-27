@@ -169,7 +169,11 @@ it('reports an existing name at the Name field and keeps the entries', async () 
   enterAlarm(page);
   await submit(page);
 
-  expect(field(page, 'Name').findError()?.getElement().textContent).toBe(`An alarm named ${name} already exists.`);
+  const error = field(page, 'Name').findError();
+  expect(error?.getElement().textContent).toBe(`An alarm named ${name} already exists.`);
+  const shownName = error?.find('.aws-area-value-name')?.getElement();
+  expect(shownName?.textContent).toBe(name);
+  expect(shownName?.parentElement).toHaveStyle({ whiteSpace: 'pre-wrap' });
   expect(input(page, 'Name').getInputValue()).toBe(name);
   expect(input(page, 'Threshold').getInputValue()).toBe('2');
   expect(page.handOver).not.toHaveBeenCalled();

@@ -25,7 +25,16 @@ export function CreateAlarmPage({ connection }: ScreenPageProps) {
   const [failure, setFailure] = useState<RequestFailure>();
   const [existingName, setExistingName] = useState<string>();
   const fieldErrors = useMemo(
-    () => (existingName === values.name ? { name: `An alarm named ${values.name} already exists.` } : undefined),
+    () =>
+      existingName === values.name
+        ? {
+            name: (
+              <>
+                An alarm named <AlarmName name={existingName} /> already exists.
+              </>
+            ),
+          }
+        : undefined,
     [existingName, values.name],
   );
 
