@@ -286,8 +286,16 @@ function engines() {
   return found;
 }
 
-function chosenEngine() {
-  return screen.getAllByRole<HTMLInputElement>('radio').find((radio) => radio.checked);
+function engineRadio(value: string) {
+  const radio = engines().findInputByValue(value)?.getElement();
+  if (radio === undefined) {
+    throw new Error(`no engine radio for ${value}`);
+  }
+  return radio;
+}
+
+function chosenEngine(value: string) {
+  return engineRadio(value).checked;
 }
 
 function chooseEngine(value: string) {
@@ -317,9 +325,16 @@ async function chooseGroup(value: string) {
   groups.closeDropdown();
 }
 
-function shownVersions(): string[] {
-  const select = selectIn('Engine version - optional');
-  return (select.findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()));
+function expectShownVersions(version: string) {
+  const dropdown = selectIn('Engine version - optional').findDropdown();
+  const defaultOption = dropdown.findOptionByValue('');
+  const versionOption = dropdown.findOptionByValue(version);
+  expect(text(defaultOption?.findLabel().getElement())).toBe("The emulator's default");
+  expect(text(versionOption?.findLabel().getElement())).toBe(version);
+  expect(dropdown.findOptions()?.map((option) => option.getElement())).toEqual([
+    defaultOption?.getElement(),
+    versionOption?.getElement(),
+  ]);
 }
 
 function submit() {
@@ -360,13 +375,23 @@ describe('Create DB instance', () => {
     open();
     await opened();
     expect(inputOf('DB instance identifier').value).toBe('');
-    expect(chosenEngine()).toHaveAccessibleName('PostgreSQL');
-    const engineOptions = screen.getAllByRole('radio');
-    expect(engineOptions).toHaveLength(3);
-    expect(engineOptions[0]).toHaveAccessibleName('PostgreSQL');
-    expect(engineOptions[1]).toHaveAccessibleName('MySQL');
-    expect(engineOptions[2]).toHaveAccessibleName('MariaDB');
-    expect(engineOptions[0]).toHaveAccessibleDescription("PostgreSQL. The emulator's default version is 18.3.");
+    const postgres = engineRadio('postgres');
+    const mysql = engineRadio('mysql');
+    const mariadb = engineRadio('mariadb');
+    expect(postgres).toBeChecked();
+    expect(mysql).not.toBeChecked();
+    expect(mariadb).not.toBeChecked();
+    expect(postgres).toHaveAccessibleName('PostgreSQL');
+    expect(mysql).toHaveAccessibleName('MySQL');
+    expect(mariadb).toHaveAccessibleName('MariaDB');
+    expect(postgres).toHaveAccessibleDescription("PostgreSQL. The emulator's default version is 18.3.");
+    expect(mysql).toHaveAccessibleDescription("MySQL. The emulator's default version is 8.4.7.");
+    expect(mariadb).toHaveAccessibleDescription("MariaDB. The emulator's default version is 11.4.8.");
+    expect(
+      engines()
+        .findButtons()
+        .map((button) => button.findNativeInput().getElement()),
+    ).toEqual([postgres, mysql, mariadb]);
     expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     expect(triggerOf('DB instance class')).toContain('db.t3.micro');
     expect(choices.readOrderableRows).toHaveBeenCalledWith(ENGINE, 'postgres', '18.3', expect.any(AbortSignal));
@@ -398,7 +423,7 @@ describe('Create DB instance', () => {
     expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     selectIn('Engine version - optional').openDropdown();
     await waitFor(() => {
-      expect(shownVersions()).toEqual(["The emulator's default", '8.4.7']);
+      expectShownVersions('8.4.7');
     });
     expect(vi.mocked(choices.listEngineVersionChoices).mock.lastCall?.[1]).toBe('mysql');
   });
@@ -557,7 +582,7 @@ describe('Create DB instance', () => {
     expect(inputOf('Master user name').value).toBe('admin1');
     expect(inputOf('Master password').value).toBe(PASSWORD);
     expect(inputOf('Database name - optional').value).toBe('app');
-    expect(chosenEngine()).toHaveAccessibleName('MariaDB');
+    expect(chosenEngine('mariadb')).toBe(true);
     expect(triggerOf('DB subnet group - optional')).toContain('default');
     expect(triggerOf('DB instance class')).toContain('db.t3.small');
     expect(triggerOf('Storage type')).toContain('io1');
@@ -886,9 +911,9 @@ describe('Create DB instance', () => {
     );
     const zone = selectIn('Availability Zone');
     zone.openDropdown();
-    expect((zone.findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()))).toEqual([
-      'No preference',
-    ]);
+    const dropdown = zone.findDropdown();
+    expect(dropdown.findOptions()).toHaveLength(1);
+    expect(text(dropdown.findOptionByValue('')?.findLabel().getElement())).toBe('No preference');
     zone.closeDropdown();
   });
 
