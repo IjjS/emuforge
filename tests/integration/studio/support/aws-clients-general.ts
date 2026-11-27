@@ -466,6 +466,14 @@ export function directLogs(ctx: Ctx, port: number, action: string, input: object
   });
 }
 
+/** A CloudWatch action (AWS JSON 1.0) with its JSON input, straight to the emulator (issue 70: the alarms' checks). */
+export function directCloudWatch(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return direct(ctx, port, 'monitoring', 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.0',
+    'x-amz-target': `GraniteServiceVersion20100801.${action}`,
+  });
+}
+
 /** An ECS action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 575: ECS's checks). */
 export function directEcs(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
   return direct(ctx, port, 'ecs', 'POST', '/', {}, JSON.stringify(input), {
