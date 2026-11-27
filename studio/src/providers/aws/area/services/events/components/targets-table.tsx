@@ -79,7 +79,7 @@ const columns: TableProps.ColumnDefinition<Target>[] = [
     minWidth: '28ch',
     cell: ({ Id }) => <ValueText kind="name" value={Id} none="-" />,
   },
-  { id: 'arn', header: 'ARN', cell: ({ Arn }) => <ValueText kind="address" value={Arn} none="-" /> },
+  { id: 'arn', header: 'ARN', minWidth: '32ch', cell: ({ Arn }) => <ValueText kind="address" value={Arn} none="-" /> },
   { id: 'input', header: 'Receives', cell: (target) => <TargetInput target={target} /> },
   { id: 'details', header: 'Details', cell: (target) => <TargetDetails target={target} /> },
 ];
