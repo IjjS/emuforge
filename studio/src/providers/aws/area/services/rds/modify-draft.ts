@@ -7,6 +7,7 @@ export interface DraftField<T> {
   start: T;
   value: T;
   cleared?: string | undefined;
+  clearedByParent?: boolean | undefined;
   missing?: boolean;
   equal?: (left: T, right: T) => boolean;
 }
@@ -34,7 +35,6 @@ export function changes<T>(draft: Draft<T>): Partial<T> {
   return result;
 }
 
-/** An unseen list leaves the draft alone until it is known which children belong. */
 export function afterParent<T, P>(
   child: DraftField<T | undefined>,
   parent: DraftField<P>,
@@ -42,17 +42,27 @@ export function afterParent<T, P>(
   message: string,
   ancestorChanged = false,
 ): DraftField<T | undefined> {
+  const parentChanged = ancestorChanged || changed(parent);
+  const { start, value } = child;
+  const eligible = value === undefined ? start === undefined && child.cleared === undefined : list?.includes(value);
+  // A replacement can survive a revert once the restored list confirms it belongs.
+  if (!parentChanged && child.clearedByParent === true && (child.cleared !== undefined || eligible === false)) {
+    return {
+      ...editField(child, start),
+      clearedByParent: undefined,
+      missing: start !== undefined && list !== undefined && !list.includes(start),
+    };
+  }
   if (list === undefined) return child;
 
-  const parentChanged = ancestorChanged || changed(parent);
-  const value = !parentChanged && child.cleared !== undefined ? child.start : child.value;
-  if (value !== undefined && list.includes(value)) return editField(child, value);
-  if (!parentChanged && Object.is(value, child.start)) {
-    return { ...editField(child, value), missing: value !== undefined };
+  if (eligible || (!parentChanged && Object.is(value, start))) {
+    return {
+      ...editField(child, value),
+      clearedByParent: parentChanged ? child.clearedByParent : undefined,
+      missing: !eligible && value !== undefined,
+    };
   }
-  // A fixed, unset value remains valid across a parent change. A previously cleared choice still needs replacing.
-  if (value === undefined && child.start === undefined && child.cleared === undefined) return child;
-  return { ...editField(child, undefined), cleared: message };
+  return { ...editField(child, undefined), cleared: message, clearedByParent: parentChanged || undefined };
 }
 
 export function sameSecurityGroups(
@@ -70,6 +80,19 @@ interface SecurityGroupDraft<Group> extends DraftField<readonly Group[]> {
   };
 }
 
+export function editSecurityGroups<Group extends SecurityGroupChoice>(
+  groups: SecurityGroupDraft<Group>,
+  value: readonly Group[],
+): SecurityGroupDraft<Group> {
+  const { subnetGroupRemoval: removal, ...current } = groups;
+  const field = editField(current, value);
+  if (removal === undefined || removal.pendingReplacements !== undefined) return field;
+
+  // Choosing a displaced group again makes its later removal an explicit edit.
+  const selectedIds = new Set(value.map(({ id }) => id));
+  return { ...field, subnetGroupRemoval: { ids: removal.ids.filter((id) => !selectedIds.has(id)) } };
+}
+
 export function afterSubnetGroup<P, Group extends SecurityGroupChoice>(
   groups: SecurityGroupDraft<Group>,
   subnetGroup: DraftField<P>,
@@ -80,7 +103,9 @@ export function afterSubnetGroup<P, Group extends SecurityGroupChoice>(
   const removal = groups.subnetGroupRemoval;
   if (!subnetChanged && removal !== undefined) {
     const replacements = removal.pendingReplacements ?? groups.value.filter(({ id }) => !startingIds.has(id));
-    const starting = draftField(groups.start, groups.equal);
+    const selectedIds = new Set([...groups.value.map(({ id }) => id), ...removal.ids]);
+    const restored = groups.start.filter(({ id }) => selectedIds.has(id));
+    const starting = editField(draftField(groups.start, groups.equal), restored);
     if (vpcId === undefined) {
       return replacements.length === 0
         ? starting
