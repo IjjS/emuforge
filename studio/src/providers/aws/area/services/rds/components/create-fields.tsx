@@ -18,7 +18,6 @@ import {
   type DefaultVersions,
 } from '../choices-queries';
 import {
-  CLASS_DESCRIPTION,
   DATABASE_NAME_CONSTRAINT,
   IDENTIFIER_CONSTRAINT,
   masterUserNameConstraint,
@@ -164,15 +163,6 @@ export function EngineVersionField({
         value={value}
         onChange={onChange}
       />
-    </FormField>
-  );
-}
-
-/** "DB instance class", typed as the API names it. */
-export function ClassField(props: TextFieldProps) {
-  return (
-    <FormField label="DB instance class" description={CLASS_DESCRIPTION} errorText={props.error}>
-      <TextInput {...props} />
     </FormField>
   );
 }

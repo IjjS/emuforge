@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classError,
   databaseNameError,
   identifierError,
   iopsError,
@@ -23,12 +22,6 @@ describe('the checks of the forms', () => {
     expect(identifierError(`a${'b1-'.repeat(20)}z9`)).toBeUndefined();
     expect(`a${'b1-'.repeat(20)}z9`).toHaveLength(63);
     expect(identifierError('Ab-1')).toBeUndefined();
-  });
-
-  it('a class', () => {
-    expect(classError('')).toBe('Enter a class.');
-    expect(classError('db.t3.micro')).toBeUndefined();
-    expect(classError('anything')).toBeUndefined();
   });
 
   it('the storage', () => {
