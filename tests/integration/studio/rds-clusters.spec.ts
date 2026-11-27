@@ -10,6 +10,7 @@
 
 import { EnvError, expect, startStack, test } from './support';
 import { ACTION, addressOf, heading } from './support/frame';
+import { openSelect, triggerOf } from './support/form-choices';
 import { Lines } from './support/lines';
 import { creationDateText, SEOUL } from './support/service-screens';
 import { waitFor } from './support/wait';
@@ -28,6 +29,7 @@ import {
   CLUSTERS_PATH,
   clusterSnapshotsOf,
   confirmWith,
+  countActions,
   CREATE_CLUSTER,
   CREATE_CLUSTER_PATH,
   DELETE,
@@ -106,7 +108,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
   const members = () => tableOf(main, MEMBERS);
   const clusterIdentifier = () => field(main, CLUSTER_ID).getByRole('textbox');
   const instanceIdentifier = () => field(main, 'DB instance identifier').getByRole('textbox');
-  const instanceClass = () => field(main, 'DB instance class').getByRole('textbox');
+  const instanceClass = () => field(main, 'DB instance class');
   const user = () => field(main, 'Master user name').getByRole('textbox');
   // A password field has no role of a text box.
   const secret = () => field(main, 'Master password').locator('input:not([type="checkbox"])');
@@ -167,7 +169,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'S6 of `<prefix>-aur`, "Add DB instance" → S7, whose description names the cluster; the identifier `<prefix>-aur-1`, the class as it stands, "Add DB instance" → S6 with "Creating DB instance <prefix>-aur-1"; its row reads "Writer", `available` without a refresh, the class and the port as the emulator reports them',
+    'S6 of `<prefix>-aur`, "Add DB instance" → S7, whose description names the cluster; the identifier `<prefix>-aur-1`, the class `db.r6g.large` as the choice stands, "Add DB instance" → S6 with "Creating DB instance <prefix>-aur-1"; its row reads "Writer", `available` without a refresh, the class and the port as the emulator reports them (changed, issue 651)',
     async () => {
       await open(page, clusterPath(aur), aur);
       await expectValueIs(page, 'Status', 'available');
@@ -176,8 +178,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
       await expect(heading(page, ADD_INSTANCE)).toBeVisible({ timeout: 15_000 });
       await expect(main, 'the description names the cluster').toContainText(aur);
       await instanceIdentifier().fill(first, ACTION);
-      await expect(instanceClass(), 'the class as it stands').not.toHaveValue('');
-      const standing = await instanceClass().inputValue();
+      await expect(triggerOf(instanceClass()), 'the class as the choice stands').toContainText(MEMBER_CLASS);
       await button(main, ADD_INSTANCE).click(ACTION);
       await expect(page).toHaveURL(addressOf(clusterPath(aur)), { timeout: 30_000 });
       await expectFlash(page, 'success', `Creating DB instance ${first}`);
@@ -189,7 +190,7 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
         reported?.instanceClass,
         reported?.port,
       ]);
-      expect(reported?.instanceClass, 'the class the emulator reports is the one that stood').toBe(standing);
+      expect(reported?.instanceClass, 'the class the emulator reports is the one that stood').toBe(MEMBER_CLASS);
     },
   );
 
@@ -210,26 +211,19 @@ test('studio.rds-cluster-from-create-to-delete', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    "S7, the identifier `<prefix>-aur-2`, the class `db.nosuch.large` → the form stays with the emulator's `InvalidParameterCombination` and its message; the emulator reports no DB instance of that identifier",
+    'S7, the identifier `<p>-aur-2`, `db.nosuch` typed in "DB instance class" → "No classes match" and no option of the value `db.nosuch.large`; nothing is sent; the emulator reports no DB instance `<p>-aur-2` (changed, issue 651)',
     async () => {
-      const direct = await rds(ctx, port, 'CreateDBInstance', {
-        DBInstanceIdentifier: `${aur}-2`,
-        DBClusterIdentifier: aur,
-        Engine: 'aurora-postgresql',
-        // As S7 sends it: with the cluster's version.
-        EngineVersion: chosen,
-        DBInstanceClass: 'db.nosuch.large',
-      });
-      expect(direct.code, "the emulator's code, directly").toBe('InvalidParameterCombination');
       await open(page, addInstancePath(aur), ADD_INSTANCE);
       await instanceIdentifier().fill(`${aur}-2`, ACTION);
-      await instanceClass().fill('db.nosuch.large', ACTION);
-      await button(main, ADD_INSTANCE).click(ACTION);
-      await expect(alertWith(main, 'InvalidParameterCombination'), 'the refusal in the form').toBeVisible({
-        timeout: 20_000,
-      });
-      await expect(alertWith(main, direct.message!), "the emulator's message").toBeVisible();
+      const creates = countActions(page, 'CreateDBInstance');
+      const list = await openSelect(instanceClass());
+      await list.expectOption(MEMBER_CLASS);
+      await list.type('db.nosuch');
+      await list.expectSays('No classes match');
+      await list.expectNone('db.nosuch.large');
+      await list.close();
       await expect(page).toHaveURL(addressOf(addInstancePath(aur)));
+      expect(creates.count(), 'requests to create').toBe(0);
       expect(await instanceDirect(ctx, port, `${aur}-2`), 'a DB instance of that identifier, directly').toBeNull();
     },
   );

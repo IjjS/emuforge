@@ -12,6 +12,7 @@
 import { expect, startStack, test } from './support';
 import { connectedAt, expectLine, notStartedOn } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
+import { openSelect, triggerOf } from './support/form-choices';
 import { Lines } from './support/lines';
 import { creationDateText, SEOUL } from './support/service-screens';
 import { waitFor } from './support/wait';
@@ -268,7 +269,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
   const held = (await instanceDirect(ctx, port, x))!;
   const main = page.getByRole('main');
   const identifier = () => field(main, 'DB instance identifier').getByRole('textbox');
-  const instanceClass = () => field(main, 'DB instance class').getByRole('textbox');
+  const instanceClass = () => field(main, 'DB instance class');
   const storage = () => field(main, 'Allocated storage (GiB)').getByRole('textbox');
   const user = () => field(main, 'Master user name').getByRole('textbox');
   // A password field has no role of a text box.
@@ -298,7 +299,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
   let chosen = '';
 
   await lines.line(
-    'S1, "Create DB instance" → S2; the identifier `<prefix>-WEB` (upper case in it), "PostgreSQL" as it stands, a version of the emulator\'s list for `postgres` chosen, the class and the storage as they stand, a master user name, a password, the database name `webdb`, the DB subnet group `default` chosen, G chosen by typing its name; "Create DB instance" → S3 at `<prefix>-web` with "Creating DB instance <prefix>-web"; S3 reads `available` without a refresh',
+    'S1, "Create DB instance" → S2; the identifier `<prefix>-WEB` (upper case in it), "PostgreSQL" as it stands, a version of the emulator\'s list for `postgres` chosen, the class `db.t3.micro` as the choice stands and the storage as it stands, a master user name, a password, the database name `webdb`, the DB subnet group `default` chosen, G chosen by typing its name; "Create DB instance" → S3 at `<prefix>-web` with "Creating DB instance <prefix>-web"; S3 reads `available` without a refresh (changed, issue 651)',
     async () => {
       await open(page, INSTANCES_PATH, INSTANCES_H1);
       await main.getByRole('link', { name: CREATE_INSTANCE, exact: true }).first().click(ACTION);
@@ -310,7 +311,7 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       // Another version than the one the emulator gives by itself, when its list has one.
       chosen = versions.find((each) => each !== held.version) ?? versions[0]!;
       await chooseOption(version(), chosen);
-      await expect(instanceClass(), 'the class as it stands').toHaveValue(CLASS);
+      await expect(triggerOf(instanceClass()), 'the class as the choice stands').toContainText(CLASS);
       await expect(storage(), 'the storage as it stands').toHaveValue('20');
       await user().fill('webadmin', ACTION);
       await secret().fill(password, ACTION);
@@ -382,25 +383,25 @@ test('studio.rds-create-a-db-instance-reaches-the-emulator', async ({ ctx, page 
       await expect(identifier(), 'the identifier as typed').toHaveValue(x);
       await expect(user(), 'the master user name as typed').toHaveValue('heldadmin');
       expect((await secret().inputValue()) === password, 'the password is as typed').toBe(true);
-      await expect(instanceClass(), 'the class as it stood').toHaveValue(CLASS);
+      await expect(triggerOf(instanceClass()), 'the class as it stood').toContainText(CLASS);
       await expect(storage(), 'the storage as it stood').toHaveValue('20');
       expect(await instanceDirect(ctx, port, x), 'X, directly').toEqual(held);
     },
   );
 
   await lines.line(
-    "S2, the identifier `<prefix>-cls`, the class `db.nosuch.large` → the form stays with the emulator's `InvalidParameterCombination` and its message; the emulator reports no DB instance of that identifier",
+    'S2, the identifier `<p>-cls`, `db.nosuch` typed in "DB instance class" → "No classes match" and no option of the value `db.nosuch.large`; nothing is sent; the emulator reports no DB instance `<p>-cls` (changed, issue 651)',
     async () => {
-      const direct = await refusal({ DBInstanceIdentifier: `${p}-cls`, DBInstanceClass: 'db.nosuch.large' });
-      expect(direct.code, "the emulator's code, directly").toBe('InvalidParameterCombination');
       await formWith(`${p}-cls`, 'clsadmin');
-      await instanceClass().fill('db.nosuch.large', ACTION);
-      await submit().click(ACTION);
-      await expect(alertWith(main, 'InvalidParameterCombination'), 'the refusal in the form').toBeVisible({
-        timeout: 20_000,
-      });
-      await expect(alertWith(main, direct.message!), "the emulator's message").toBeVisible();
+      const creates = countActions(page, 'CreateDBInstance');
+      const list = await openSelect(instanceClass());
+      await list.expectOption(CLASS);
+      await list.type('db.nosuch');
+      await list.expectSays('No classes match');
+      await list.expectNone('db.nosuch.large');
+      await list.close();
       await expect(page).toHaveURL(addressOf(CREATE_INSTANCE_PATH));
+      expect(creates.count(), 'requests to create').toBe(0);
       expect(await instanceDirect(ctx, port, `${p}-cls`), 'a DB instance of that identifier, directly').toBeNull();
     },
   );
