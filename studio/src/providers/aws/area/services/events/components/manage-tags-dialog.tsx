@@ -47,6 +47,7 @@ export function ManageTagsDialog({
   const busy = useRef(false);
   const editor = useRef<TagEditorRef>(null);
   const [draft, setDraft] = useState(() => Object.entries(initialTags).map(([key, value]) => ({ key, value })));
+  const [savedTags, setSavedTags] = useState(initialTags);
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<{ operation: TagWriteOperation; reason: RequestFailure }>();
@@ -71,7 +72,7 @@ export function ManageTagsDialog({
       return;
     }
     if (validation.limit !== undefined) return;
-    const intended = tagChanges(initialTags, tagsToRecord(draft));
+    const intended = tagChanges(savedTags, tagsToRecord(draft));
     const changes = {
       remove: intended.remove.filter((key) => Object.hasOwn(latestTags, key)),
       put: Object.fromEntries(
@@ -99,7 +100,14 @@ export function ManageTagsDialog({
       const reason = failureOf(error instanceof PartialTagSaveError ? error.cause : error, operation);
       setFailure({ operation, reason });
       if (reason.kind === 'not-implemented') onUnavailable(operation);
-      if (error instanceof PartialTagSaveError) setPartial(error.message);
+      if (error instanceof PartialTagSaveError) {
+        setSavedTags((previous) => {
+          const remaining = { ...previous };
+          for (const key of changes.remove) delete remaining[key];
+          return remaining;
+        });
+        setPartial(error.message);
+      }
       tags.refresh();
       busy.current = false;
       setPending(false);

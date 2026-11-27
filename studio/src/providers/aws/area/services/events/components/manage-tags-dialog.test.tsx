@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -198,6 +198,53 @@ it('shows a partial save and retries only the missing edits alongside outside ch
     { remove: [], put: { team: 'local' } },
     expect.any(AbortSignal),
   );
+});
+
+it('restores a partially removed tag with its original value before reporting success', async () => {
+  const openingTags = { a: 'original', b: 'untouched' };
+  let completeRetry!: () => void;
+  const retry = new Promise<void>((resolve) => {
+    completeRetry = resolve;
+  });
+  write.mockRejectedValueOnce(new PartialTagSaveError(refusal('TagResource'))).mockReturnValueOnce(retry);
+  listTags.mockResolvedValueOnce(openingTags).mockResolvedValueOnce({ b: 'changed outside' });
+  const { modal, editor, save, onSaved, onDismiss } = await open(openingTags);
+  editor.findRow(1)?.findRemoveButton()?.click();
+  editor.findAddButton().click();
+  change(editor, 2, 1, 'c');
+  change(editor, 2, 2, 'new');
+  save.click();
+  await waitFor(() => {
+    const alerts = modal.findContent().findAllAlerts();
+    expect(alerts[0]?.getElement()).toHaveTextContent('The removed tags were saved.');
+    expect(alerts[1]?.getElement()).toHaveTextContent('TagResource failed');
+    expect(listTags).toHaveBeenCalledTimes(2);
+    expect(save.getElement()).toBeEnabled();
+  });
+  expect(write).toHaveBeenCalledExactlyOnceWith(
+    endpoint,
+    arn,
+    { remove: ['a'], put: { c: 'new' } },
+    expect.any(AbortSignal),
+  );
+  expect(onSaved).not.toHaveBeenCalled();
+
+  editor.findAddButton().click();
+  change(editor, 3, 1, 'a');
+  change(editor, 3, 2, 'original');
+  save.click();
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write).toHaveBeenLastCalledWith(
+    endpoint,
+    arn,
+    { remove: [], put: { a: 'original', c: 'new' } },
+    expect.any(AbortSignal),
+  );
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(onDismiss).not.toHaveBeenCalled();
+
+  await act(async () => completeRetry());
+  expect(onSaved).toHaveBeenCalledOnce();
 });
 
 it('blocks another save after the re-read fails until Retry reads the tags', async () => {
