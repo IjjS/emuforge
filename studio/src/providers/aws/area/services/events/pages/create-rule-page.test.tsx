@@ -527,25 +527,28 @@ it('cancels an unchanged form directly to the chosen bus’s Rules', async () =>
   expectUnsent();
 });
 
-it.each(['field', 'choice', 'row'] as const)('asks before discarding a changed %s', (change) => {
+it.each(['field', 'choice', 'row'] as const)('asks before discarding a changed %s', async (change) => {
   const page = open();
   if (change === 'field') page.enter('Description - optional', 'Routes orders');
   if (change === 'choice') fireEvent.click(page.radio('DISABLED'));
   if (change === 'row') page.click('Add target');
   page.click('Cancel');
-  function answerDialog(name: string) {
-    const dialog = page.dom.findModal();
-    expect(dialog?.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
-    const footer = dialog?.findFooter();
-    if (!footer) throw new Error('Expected the discard dialog footer');
-    fireEvent.click(namedButton(createWrapper(footer.getElement()), name));
+  async function answerDialog(name: string) {
+    const button = await waitForRender(() => {
+      const dialog = page.dom.findModal();
+      expect(dialog?.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
+      const footer = dialog?.findFooter();
+      if (!footer) throw new Error('Expected the discard dialog footer');
+      return namedButton(createWrapper(footer.getElement()), name);
+    });
+    fireEvent.click(button);
   }
-  answerDialog('Keep editing');
+  await answerDialog('Keep editing');
   if (change === 'field') expect(page.textbox('Description - optional')).toHaveValue('Routes orders');
   if (change === 'choice') expect(page.radio('DISABLED')).toBeChecked();
   if (change === 'row') expect(page.textbox('Target ID')).toBeVisible();
   page.click('Cancel');
-  answerDialog('Discard');
+  await answerDialog('Discard');
   expect(page.fixture?.getElement()).toHaveTextContent(/^\/aws\/events\/rules\?bus=default$/);
   expectUnsent();
 });
