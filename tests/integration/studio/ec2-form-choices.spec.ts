@@ -286,7 +286,6 @@ test('studio.ec2-launch-and-retype-follow-the-vpc-and-the-zone', async ({ ctx, p
       await offeredGroups.close();
       await expect(chosenOf(groups()), '`<p>-g` chosen').toHaveCount(1);
       const profiles = await openSelect(profile());
-      await profiles.type(prof);
       await profiles.expectOption(prof, '1 roles');
       await profiles.choose(prof);
       await main.getByRole('checkbox', { name: 'Termination protection', exact: true }).check(ACTION);
