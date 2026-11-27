@@ -2,7 +2,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, untilAborted } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -48,9 +48,18 @@ function deferredRead() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   read.mockReset().mockResolvedValue(fresh).mockResolvedValueOnce(stale);
   remove.mockReset().mockResolvedValue(undefined);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function open() {
   render(
@@ -72,7 +81,7 @@ const deleteControl = () => screen.getByRole('button', { name: 'Delete' });
 
 async function openDelete() {
   await screen.findByRole('link', { name });
-  fireEvent.click(screen.getByRole('radio', { name }));
+  fireEvent.click(screen.getByRole('radio', { name: `Alarm selection ${name}` }));
   expect(deleteControl()).toBeEnabled();
   fireEvent.click(deleteControl());
   return screen.findByRole('dialog', { name: `Delete alarm ${name}?` });
@@ -103,15 +112,23 @@ it('requires one selected alarm and opens the confirmation for it', async () => 
 });
 
 it('closes after deletion, reports success, and refreshes the shown page with no selection', async () => {
+  read
+    .mockReset()
+    .mockResolvedValueOnce({ items: [row('first-page-alarm')], next: 'second-page' })
+    .mockResolvedValueOnce({ items: [row(name), row('remaining-alarm')] })
+    .mockResolvedValueOnce({ items: [row('remaining-alarm')] });
   open();
+  await screen.findByRole('link', { name: 'first-page-alarm' });
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   confirm(await openDelete());
+  await waitFor(() => expect(screen.queryByRole('link', { name })).not.toBeInTheDocument());
   await screen.findByRole('link', { name: 'remaining-alarm' });
   expectDeleted();
-  expect(screen.getByRole('radio', { name: 'remaining-alarm' })).not.toBeChecked();
+  expect(screen.getByRole('radio', { name: 'Alarm selection remaining-alarm' })).not.toBeChecked();
   expect(deleteControl()).toBeDisabled();
   expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(read).toHaveBeenLastCalledWith(ENGINE, { prefix: '' }, undefined, expect.any(AbortSignal));
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).toHaveBeenLastCalledWith(ENGINE, { prefix: '' }, 'second-page', expect.any(AbortSignal));
 });
 
 async function startOverlappingRefresh() {

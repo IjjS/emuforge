@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -54,12 +54,21 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   remove.mockReset().mockResolvedValue(undefined);
   read.mockReset().mockImplementation(async (_endpoint, alarmName) => row(alarmName));
   list.mockReset().mockResolvedValue({ items: [] });
   vi.mocked(readAlarmHistory).mockReset().mockResolvedValue({ items: [] });
   vi.mocked(readAlarmTags).mockReset().mockResolvedValue([]);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function open(alarmName = name, inLayout = false) {
   const handOver = vi.fn();
@@ -125,8 +134,7 @@ it('deletes the alarm named in the header and leads to Alarms with the result', 
   const modal = await openDelete();
   expect(modal).toHaveAccessibleName(`Delete alarm ${name}?`);
   confirm(modal);
-  await waitFor(() => expect(screen.getByLabelText('Address')).toHaveTextContent(ALARMS_PATH));
-  expect(screen.getByLabelText('Address').textContent).toBe(ALARMS_PATH);
+  await waitFor(() => expect(screen.getByLabelText('Address').textContent).toBe(ALARMS_PATH));
   expect(createWrapper().findFlashbar()?.getElement()).toHaveTextContent(`Alarm ${name} deleted.`);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
@@ -135,7 +143,7 @@ it('deletes the alarm named in the header and leads to Alarms with the result', 
 
 it.each(['before', 'after'])('hands over once when a read finds no alarm %s the deletion answers', async (order) => {
   const reread = deferred<Alarm | undefined>();
-  const deletion = deferred<void>();
+  const deletion = deferred<undefined>();
   read.mockResolvedValueOnce(row(name)).mockReturnValueOnce(reread.promise);
   remove.mockReturnValueOnce(deletion.promise);
   const { handOver, show } = open();
@@ -150,7 +158,7 @@ it.each(['before', 'after'])('hands over once when a read finds no alarm %s the 
     expect(modal).toBeVisible();
     expect(handOver).not.toHaveBeenCalled();
   }
-  await act(async () => deletion.resolve());
+  await act(async () => deletion.resolve(undefined));
   if (order === 'after') {
     await act(async () => reread.resolve(undefined));
     expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
@@ -229,7 +237,7 @@ it.each(['answers', 'fails'])(
 );
 
 it.each([false, true])('drops the first dialog when the name changes (request pending: %s)', async (pending) => {
-  const deletion = deferred<void>();
+  const deletion = deferred<undefined>();
   remove.mockReturnValueOnce(deletion.promise);
   const { follow, handOver, show } = open();
   const modal = await openDelete();
@@ -241,7 +249,7 @@ it.each([false, true])('drops the first dialog when the name changes (request pe
   expect(within(next).getByRole('textbox')).toHaveValue('');
   if (pending) {
     expect(remove.mock.calls[0]?.[2].aborted).toBe(true);
-    await act(async () => deletion.resolve());
+    await act(async () => deletion.resolve(undefined));
   }
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();
