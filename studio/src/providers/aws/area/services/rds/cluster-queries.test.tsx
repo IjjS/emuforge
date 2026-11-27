@@ -355,18 +355,19 @@ describe('the changes', () => {
     await waitFor(() => expect(counts().aur1).toBe(2));
     answerAll();
     await waitFor(() => expect(hook.result.current.round.value).toBeDefined());
-    const keys = [RDS_KEYS.members('aur-1'), RDS_KEYS.members('aur-2')];
+    const oldMembersKey = RDS_KEYS.members('aur-1');
+    const newMembersKey = RDS_KEYS.members('aur-2');
     let oldMembersSignal: AbortSignal | undefined;
     const oldMembers = client
       .fetchQuery({
-        queryKey: keys[0]!,
+        queryKey: oldMembersKey,
         queryFn: ({ signal }) => {
           oldMembersSignal = signal;
           return new Promise<never>(() => undefined);
         },
       })
       .catch(() => undefined);
-    client.setQueryData(keys[1]!, []);
+    client.setQueryData(newMembersKey, []);
     const before = counts();
     const cancel = vi.spyOn(client, 'cancelQueries');
     const invalidate = vi.spyOn(client, 'invalidateQueries');
