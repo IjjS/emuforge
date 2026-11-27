@@ -133,8 +133,24 @@ function typeInto(label: string, value: string) {
   fireEvent.change(field(label), { target: { value } });
 }
 
-function choose(name: string) {
-  fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${name.replace('.', '\\.')}`) }));
+function keyOption(value: string) {
+  return createWrapper(document.body)
+    .findAllRadioGroups()
+    .flatMap((group) => group.findButtons())
+    .find((button) => button.findNativeInput().getElement().value === value);
+}
+
+function modeInput(value: 'create' | 'import') {
+  const input = createWrapper(document.body).findTiles()?.findInputByValue(value)?.getElement();
+  if (input === undefined) throw new Error(`Missing key pair mode ${value}`);
+  return input;
+}
+
+function choose(value: 'create' | 'import' | 'rsa' | 'ed25519' | 'pem' | 'ppk') {
+  const input =
+    value === 'create' || value === 'import' ? modeInput(value) : keyOption(value)?.findNativeInput().getElement();
+  if (input === undefined) throw new Error(`Missing key pair option ${value}`);
+  fireEvent.click(input);
 }
 
 function submit(name: string) {
@@ -165,26 +181,30 @@ describe('"Create key pair"', () => {
   it('opens on "Create a new key pair" with "RSA", ".pem", the name\'s rule and the two descriptions; "Import a public key" swaps type and format for "Public key"', async () => {
     open();
     expect(await screen.findByRole('heading', { level: 1, name: 'Create key pair' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /^Create a new key pair/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /^RSA/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /^\.pem/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /^ED25519/ })).not.toBeChecked();
-    expect(screen.getByRole('radio', { name: /^\.ppk/ })).not.toBeChecked();
+    expect(modeInput('create')).toBeChecked();
+    expect(keyOption('rsa')?.findNativeInput().getElement()).toBeChecked();
+    expect(keyOption('pem')?.findNativeInput().getElement()).toBeChecked();
+    expect(keyOption('ed25519')?.findNativeInput().getElement()).not.toBeChecked();
+    expect(keyOption('ppk')?.findNativeInput().getElement()).not.toBeChecked();
     const page = text(document.body);
     expect(page).toContain('1 to 255 ASCII characters.');
     expect(page).toContain('The emulator makes the key pair and returns the private key once.');
     expect(page).toContain('The emulator stores a public key you already have.');
-    expect(page).toContain('Uses the RSA algorithm for SSH authentication.');
-    expect(page).toContain('Uses Ed25519 for SSH authentication with a compact key.');
-    expect(page).toContain('Saves the private key in PEM format for OpenSSH.');
-    expect(page).toContain('Saves the private key in PuTTY format.');
+    expect(keyOption('rsa')?.findDescription()?.getElement().textContent).toBe(
+      'The emulator returns an RSA private key.',
+    );
+    expect(keyOption('ed25519')?.findDescription()?.getElement().textContent).toBe(
+      'The emulator returns an ED25519 private key.',
+    );
+    expect(keyOption('pem')?.findDescription()?.getElement().textContent).toBe('The private key as PEM text.');
+    expect(keyOption('ppk')?.findDescription()?.getElement().textContent).toBe("The private key in PuTTY's format.");
     expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: /Public key/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Create key pair' })).toBeInTheDocument();
 
-    choose('Import a public key');
-    expect(screen.queryByRole('radio', { name: /^RSA/ })).toBeNull();
-    expect(screen.queryByRole('radio', { name: /^\.pem/ })).toBeNull();
+    choose('import');
+    expect(keyOption('rsa')?.findNativeInput().getElement().value).toBeUndefined();
+    expect(keyOption('pem')?.findNativeInput().getElement().value).toBeUndefined();
     expect(field('Public key')).toBeInTheDocument();
     expect(text(document.body)).toContain('In OpenSSH format, as in a .pub file.');
     expect(screen.getByRole('button', { name: 'Import key pair' })).toBeInTheDocument();
@@ -203,7 +223,7 @@ describe('"Create key pair"', () => {
     typeInto('Name', 'a'.repeat(256));
     expect(fieldText('Name')).toContain('A name can have up to 255 characters.');
     typeInto('Name', 'imp');
-    choose('Import a public key');
+    choose('import');
     submit('Import key pair');
     await waitFor(() => {
       expect(fieldText('Public key')).toContain('Enter a public key.');
@@ -222,8 +242,8 @@ describe('"Create key pair"', () => {
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
     typeInto('Name', 'dev');
-    choose('ED25519');
-    choose('.ppk');
+    choose('ed25519');
+    choose('ppk');
     submit('Add tag');
     typeInto('Key', 'team');
     typeInto('Value - optional', 'core');
@@ -268,7 +288,7 @@ describe('"Create key pair"', () => {
     vi.mocked(api.importKeyPair).mockResolvedValue(undefined);
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -293,7 +313,7 @@ describe('"Create key pair"', () => {
     });
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Add tag');
@@ -354,7 +374,7 @@ describe('"Create key pair"', () => {
       const router = open(undefined, true);
       await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
       await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(1));
-      choose('Import a public key');
+      choose('import');
       typeInto('Name', 'imp');
       typeInto('Public key', PUBLIC_KEY);
       submit('Import key pair');
@@ -402,7 +422,7 @@ describe('"Create key pair"', () => {
     );
     open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -430,7 +450,7 @@ describe('"Create key pair"', () => {
     vi.mocked(api.importKeyPair).mockReturnValue(new Promise(() => undefined));
     open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -451,7 +471,7 @@ describe('"Create key pair"', () => {
   it('"Cancel" after an entry → the discard dialog; "Keep editing" keeps the form, "Discard" leaves', async () => {
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('.ppk');
+    choose('ppk');
     submit('Cancel');
     let dialog = await screen.findByRole('dialog');
     expect(text(dialog)).toContain('Discard what you entered?');
@@ -459,7 +479,7 @@ describe('"Create key pair"', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
-    expect(screen.getByRole('radio', { name: /^\.ppk/ })).toBeChecked();
+    expect(keyOption('ppk')?.findNativeInput().getElement()).toBeChecked();
     expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs/create');
     submit('Cancel');
     dialog = await screen.findByRole('dialog');
@@ -488,7 +508,7 @@ describe('"Create key pair"', () => {
     expect(screen.queryByText('Key pair dev created')).toBeNull();
     expect(text(document.body)).not.toContain('b3BlbnNzaC1rZXktdjEsecret');
     expect(document.body.innerHTML).not.toContain('b3BlbnNzaC1rZXktdjEsecret');
-    expect(screen.getByRole('radio', { name: /^RSA/ })).toBeChecked();
+    expect(keyOption('rsa')?.findNativeInput().getElement()).toBeChecked();
   });
 
   it('the page names its resources "key pairs" to the frame', async () => {

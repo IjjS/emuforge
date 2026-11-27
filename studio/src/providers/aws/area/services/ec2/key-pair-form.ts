@@ -43,11 +43,11 @@ export function publicKeyMessage(mode: KeyPairMode, publicKey: string): string |
 }
 
 export const KEY_TYPE_OPTIONS = [
-  { value: 'rsa', label: 'RSA', description: 'Uses the RSA algorithm for SSH authentication.' },
-  { value: 'ed25519', label: 'ED25519', description: 'Uses Ed25519 for SSH authentication with a compact key.' },
+  { value: 'rsa', label: 'RSA', description: 'The emulator returns an RSA private key.' },
+  { value: 'ed25519', label: 'ED25519', description: 'The emulator returns an ED25519 private key.' },
 ];
 
 export const KEY_FORMAT_OPTIONS = [
-  { value: 'pem', label: '.pem', description: 'Saves the private key in PEM format for OpenSSH.' },
-  { value: 'ppk', label: '.ppk', description: 'Saves the private key in PuTTY format.' },
+  { value: 'pem', label: '.pem', description: 'The private key as PEM text.' },
+  { value: 'ppk', label: '.ppk', description: "The private key in PuTTY's format." },
 ];
