@@ -677,6 +677,15 @@ describe('the object page, its frame', () => {
     expect(h1()).toHaveTextContent(/^x\.json$/);
   });
 
+  it('shows both spaces and the exact identity in the object heading', async () => {
+    engine.objects = [{ ...APP_JSON, key: 'logs/a  b' }];
+    open('logs/a  b');
+    await shown();
+
+    expect(h1()).toHaveAccessibleName('a\\u0020\\u0020b');
+    expect(h1().querySelector('[aria-hidden="true"]')?.textContent).toBe('a  b (a\\u0020\\u0020b)');
+  });
+
   it('a key ending in "/": the h1 is the whole key, and "Download" is unavailable with "This key names a folder."', async () => {
     engine.objects = [{ key: 'a/b/', body: new Uint8Array(), contentType: 'application/x-directory' }];
     open('a/b/');
