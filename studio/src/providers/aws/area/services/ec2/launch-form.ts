@@ -8,6 +8,8 @@ export const NAME_MAX = 256;
 export const NAME_RULE = 'Up to 256 characters. Stored as the Name tag.';
 export const NAME_TOO_LONG = 'A name can have up to 256 characters.';
 export const CHOOSE_IMAGE = 'Choose an image.';
+export const CHOOSE_VPC = 'Choose a VPC.';
+export const CHOOSE_SUBNET = 'Choose a subnet.';
 export const CHOOSE_TYPE = 'Choose an instance type.';
 
 export const TYPE_FILTER_HINT = "Type part of a type's name to narrow the list.";
@@ -27,6 +29,8 @@ export interface LaunchFormValues {
   name: string;
   imageChosen: boolean;
   typeChosen: boolean;
+  vpc: { isDefault: boolean } | undefined;
+  subnetChosen: boolean;
 }
 
 /** The message of each field that fails its check; a field that passes has none. */
@@ -34,10 +38,18 @@ export interface LaunchFormMessages {
   name?: string;
   image?: string;
   type?: string;
+  vpc?: string;
+  subnet?: string;
 }
 
 /** What is wrong with the form, field by field. */
-export function launchFormMessages({ name, imageChosen, typeChosen }: LaunchFormValues): LaunchFormMessages {
+export function launchFormMessages({
+  name,
+  imageChosen,
+  typeChosen,
+  vpc,
+  subnetChosen,
+}: LaunchFormValues): LaunchFormMessages {
   const messages: LaunchFormMessages = {};
   if (name.length > NAME_MAX) {
     messages.name = NAME_TOO_LONG;
@@ -47,6 +59,11 @@ export function launchFormMessages({ name, imageChosen, typeChosen }: LaunchForm
   }
   if (!typeChosen) {
     messages.type = CHOOSE_TYPE;
+  }
+  if (vpc === undefined) {
+    messages.vpc = CHOOSE_VPC;
+  } else if (!vpc.isDefault && !subnetChosen) {
+    messages.subnet = CHOOSE_SUBNET;
   }
   return messages;
 }
