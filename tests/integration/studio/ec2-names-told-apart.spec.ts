@@ -1,0 +1,158 @@
+// Key pairs and security groups whose names differ only by a repeated space, in the built app in front of a real
+// engine and emulator (test-criteria.md, issue 664).
+//
+// `studio.ec2-names-that-differ-by-spaces-are-told-apart`.
+//
+// The check makes, under its prefix `<p>`, the key pairs `<p> a b` and `<p> a  b` (two spaces) and, in a VPC of its
+// own, the security groups of those two names; everything is removed when the check ends (`Ec2Seeded`), the instance
+// it launches included. The exact identity of the two-space name is `<p> a`, a backslash and `u0020` twice, `b`
+// (`twoSpaceIdentity`). What the emulator holds is read directly. Words, direct calls and readers:
+// `services/ec2/ec2.ts`.
+
+import { expect, startStack, test } from './support';
+import { ACTION, addressOf } from './support/frame';
+import { Lines } from './support/lines';
+import { cellOfRowWith, checkPrefix, drawnText, headerHeading, twoSpaceIdentity } from './support/service-screens';
+import {
+  button,
+  chooseOption,
+  Ec2Seeded,
+  expectValueIs,
+  field,
+  findBy,
+  groupPath,
+  GROUPS_H1,
+  GROUPS_PATH,
+  instanceDirect,
+  instancePath,
+  KEY_PAIRS_H1,
+  KEY_PAIRS_PATH,
+  LAUNCH,
+  LAUNCH_PATH,
+  multiselectOf,
+  open,
+  openSelect,
+  optionLabel,
+  selectOf,
+  TABLE,
+  tableOf,
+  typeInMultiselect,
+  world,
+} from './services/ec2/ec2';
+
+test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page }) => {
+  test.setTimeout(300_000);
+  const stack = await startStack(ctx);
+  const port = stack.emulatorPort;
+  const lines = new Lines(ctx);
+  const p = checkPrefix(ctx, 'ec2names');
+  const one = `${p} a b`;
+  const two = `${p} a  b`;
+  const identity = twoSpaceIdentity(p);
+  const w = await world(ctx, port);
+  const seeded = new Ec2Seeded(ctx, port, p, w);
+  await seeded.keyPair(one);
+  await seeded.keyPair(two);
+  const own = await seeded.vpcWithSubnet('10.164.0.0/16', '10.164.1.0/24', 'us-east-1a');
+  const groupOne = await seeded.group(one, `one space ${p}`, own.vpcId);
+  const groupTwo = await seeded.group(two, `two spaces ${p}`, own.vpcId);
+  const main = page.getByRole('main');
+  const table = main.locator(TABLE).first();
+  const rowControl = (name: string) => table.getByRole('radio', { name, exact: true });
+  const rowLink = (name: string) => table.getByRole('link', { name, exact: true });
+  let launched = '';
+
+  await lines.line(
+    'Open Key pairs → selection controls of both names, the two-space one named by its identity; the row of the two-space key pair reads the name with its two spaces, followed by the identity in brackets',
+    async () => {
+      await open(page, KEY_PAIRS_PATH, KEY_PAIRS_H1);
+      await findBy(table, p);
+      await expect(rowControl(one), `the selection control named "${one}"`).toHaveCount(1, { timeout: 15_000 });
+      await expect(rowControl(identity), `the selection control named "${identity}"`).toHaveCount(1);
+      // Column 1 is the selection control's, column 2 the name.
+      const cell = await cellOfRowWith(table, page.getByRole('radio', { name: identity, exact: true }), 2);
+      expect(await drawnText(cell), "the two-space key pair's name as drawn").toBe(`${two} (${identity})`);
+    },
+  );
+
+  await lines.line(
+    "Open Security groups → links and selection controls of both names, and the row of the two-space group reads the name with its two spaces, followed by the identity in brackets; follow the link named by the identity → the heading is named by the identity and the group ID shown is the two-space group's",
+    async () => {
+      await open(page, GROUPS_PATH, GROUPS_H1);
+      await findBy(table, p);
+      await expect(rowLink(one), `the link named "${one}"`).toHaveCount(1, { timeout: 15_000 });
+      await expect(rowLink(identity), `the link named "${identity}"`).toHaveCount(1);
+      await expect(rowControl(one), `the selection control named "${one}"`).toHaveCount(1);
+      await expect(rowControl(identity), `the selection control named "${identity}"`).toHaveCount(1);
+      // Column 1 is the selection control's, column 2 the name.
+      const cell = await cellOfRowWith(table, page.getByRole('link', { name: identity, exact: true }), 2);
+      expect(await drawnText(cell), "the two-space group's name as drawn").toBe(`${two} (${identity})`);
+      await rowLink(identity).click(ACTION);
+      await expect(page, "the two-space group's address").toHaveURL(addressOf(groupPath(groupTwo)));
+      await expect(headerHeading(page), "the heading's accessible name").toHaveAccessibleName(identity, {
+        timeout: 15_000,
+      });
+      await expectValueIs(page, 'Group ID', groupTwo);
+      expect(groupTwo, 'the two groups have different IDs').not.toBe(groupOne);
+    },
+  );
+
+  await lines.line(
+    'On Launch an instance open "Key pair" → the option of the two-space value is labelled by its identity; choose it, choose the VPC\'s subnet and, in "Security groups", the option of the two-space group\'s ID, labelled by the identity; launch → the emulator\'s instance has the two-space key pair\'s name and the two-space group\'s ID',
+    async () => {
+      const keyPair = field(main, 'Key pair - optional');
+      const groups = field(main, 'Security groups - optional');
+      await open(page, LAUNCH_PATH, LAUNCH);
+      await field(main, 'Name - optional').getByRole('textbox').fill(`${p}-inst`, ACTION);
+      // A part of the image's name, never the whole of it.
+      await chooseOption(field(main, 'Image'), w.image.id, w.image.name.slice(1, -1));
+      await chooseOption(field(main, 'Instance type'), w.type, 't3.mic');
+      const option = await openSelect(keyPair, two);
+      expect(await drawnText(optionLabel(keyPair, two)), 'the label of the option of the two-space key pair').toBe(
+        identity,
+      );
+      await option.click(ACTION);
+      expect(await drawnText(selectOf(keyPair)), 'what the closed "Key pair" shows').toBe(identity);
+      await chooseOption(field(main, 'Subnet - optional'), own.subnetId);
+      const m = multiselectOf(groups);
+      await typeInMultiselect(groups, two);
+      await expect(m.option(groupTwo), "the option of the two-space group's ID").toBeVisible({ timeout: 20_000 });
+      expect(await drawnText(optionLabel(groups, groupTwo)), 'the label of the option of the two-space group').toBe(
+        identity,
+      );
+      await m.option(groupTwo).click(ACTION);
+      await expect(m.tokens, 'the chosen groups').toHaveCount(1, { timeout: 10_000 });
+      await page.keyboard.press('Escape');
+      await expect(m.list, 'the list after Escape').toHaveCount(0);
+      await button(main, LAUNCH).click(ACTION);
+      await expect(page).toHaveURL(/\/aws\/ec2\/instances\/instance\/i-[0-9a-f]+$/, { timeout: 30_000 });
+      launched = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '');
+      const reported = await instanceDirect(ctx, port, launched);
+      expect(
+        { key: reported?.keyName, groups: reported?.groups.map((each) => each.id) },
+        'the instance, directly',
+      ).toEqual({ key: two, groups: [groupTwo] });
+    },
+  );
+
+  await lines.line(
+    "Open that instance's page → the key pair's link is named by the identity and the Security groups table has a link named by the identity that leads to the two-space group's page",
+    async () => {
+      expect(launched, 'the instance of the line before').not.toBe('');
+      await page.goto(instancePath(launched));
+      const groupLink = tableOf(main, 'Security groups').getByRole('link', { name: identity, exact: true });
+      await expect(groupLink, "the group's link in the Security groups table").toHaveCount(1, { timeout: 30_000 });
+      expect(
+        new URL((await groupLink.getAttribute('href')) ?? '', 'http://127.0.0.1').pathname,
+        "where the group's link leads",
+      ).toBe(groupPath(groupTwo));
+      // The two links of that name on the page: the group's, in its table, and the key pair's.
+      const named = main.getByRole('link', { name: identity, exact: true });
+      await expect(named, 'the links named by the identity').toHaveCount(2);
+      const targets = await named.evaluateAll((links) => links.map((a) => new URL((a as HTMLAnchorElement).href).pathname));
+      expect(targets.sort(), 'where the two links lead').toEqual([KEY_PAIRS_PATH, groupPath(groupTwo)].sort());
+    },
+  );
+
+  lines.end();
+});
