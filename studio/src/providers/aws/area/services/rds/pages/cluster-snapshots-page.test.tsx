@@ -166,12 +166,28 @@ async function submitRestore(id: string) {
   fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
 }
 
-async function choose(dialog: ReturnType<typeof within>, field: RegExp, option: string) {
-  const trigger = dialog.getByRole('button', { name: field });
-  await waitFor(() => expect(trigger).toBeEnabled());
-  fireEvent.click(trigger);
-  fireEvent.click(await dialog.findByRole('option', { name: new RegExp(option) }));
-  if (trigger.getAttribute('aria-expanded') === 'true') fireEvent.keyDown(trigger, { key: 'Escape' });
+function restoreField(label: string) {
+  const field = createWrapper(screen.getByRole('dialog'))
+    .findAllFormFields()
+    .find((entry) => entry.findLabel()?.getElement().textContent === label);
+  if (field === undefined) throw new Error(`Missing field ${label}.`);
+  return createWrapper(field.getElement());
+}
+
+const SUBNET_GROUP = 'DB subnet group - optional';
+const SECURITY_GROUPS = 'Security groups - optional';
+const ZONES = 'Availability Zones';
+
+async function choose(field: string, value: string) {
+  const wrapper = restoreField(field);
+  const multi = field === SECURITY_GROUPS || field === ZONES;
+  const select = multi ? wrapper.findMultiselect() : wrapper.findSelect();
+  if (select === null) throw new Error(`Missing choice for ${field}.`);
+  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
+  select.openDropdown();
+  await waitFor(() => expect(select.findDropdown().findOptionByValue(value)).not.toBeNull());
+  select.selectOptionByValue(value);
+  if (multi) select.closeDropdown();
 }
 
 async function openDelete() {
@@ -309,8 +325,8 @@ describe('DB cluster snapshots', () => {
     fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster identifier' }), {
       target: { value: 'requested-cluster' },
     });
-    await choose(dialog, /DB subnet group/i, NETWORK.name);
-    await choose(dialog, /KMS key/i, 'alias/restore');
+    await choose(SUBNET_GROUP, NETWORK.name);
+    await choose('KMS key', KEY.arn);
     fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
 
     expect(snapshots.restoreClusterSnapshot).toHaveBeenCalledOnce();
@@ -376,10 +392,10 @@ describe('DB cluster snapshots', () => {
     fireEvent.change(first.getByRole('textbox', { name: 'DB cluster identifier' }), {
       target: { value: 'existing-cluster' },
     });
-    await choose(first, /DB subnet group/i, NETWORK.name);
-    await choose(first, /Security groups/i, GROUP.name);
-    await choose(first, /Availability Zones/i, NETWORK.zones[0] ?? '');
-    await choose(first, /KMS key/i, 'alias/restore');
+    await choose(SUBNET_GROUP, NETWORK.name);
+    await choose(SECURITY_GROUPS, GROUP.id);
+    await choose(ZONES, 'us-east-1c');
+    await choose('KMS key', KEY.arn);
     fireEvent.click(first.getByRole('checkbox', { name: 'Deletion protection' }));
     fireEvent.click(first.getByRole('button', { name: 'Add tag' }));
     fireEvent.change(first.getByRole('textbox', { name: 'Key' }), { target: { value: 'from' } });
@@ -401,14 +417,14 @@ describe('DB cluster snapshots', () => {
       expect.stringContaining('Restore creates a new DB cluster with this identifier.'),
     );
     expect(input).toHaveValue('existing-cluster');
-    expect(dialog.getByRole('button', { name: /DB subnet group/i })).toHaveTextContent(NETWORK.name);
-    expect(dialog.getByRole('button', { name: /KMS key/i })).toHaveTextContent('alias/restore');
+    expect(restoreField(SUBNET_GROUP).findSelect()?.findTrigger().getElement()).toHaveTextContent(NETWORK.name);
+    expect(restoreField('KMS key').findSelect()?.findTrigger().getElement()).toHaveTextContent('alias/restore');
     expect(dialog.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
     expect(dialog.getByRole('textbox', { name: 'Key' })).toHaveValue('from');
     expect(dialog.getByRole('textbox', { name: /Value/ })).toHaveValue('snap');
-    const selections = PAGE.findModal()?.findAllMultiselects();
-    expect(selections?.[0]?.findTokens()[0]?.getElement()).toHaveTextContent(GROUP.name);
-    expect(selections?.[1]?.findTokens()[0]?.getElement()).toHaveTextContent(NETWORK.zones[0] ?? '');
+    const selections = createWrapper(screen.getByRole('dialog')).findAllMultiselects();
+    expect(selections[0]?.findTokens()[0]?.getElement()).toHaveTextContent(GROUP.name);
+    expect(selections[1]?.findTokens()[0]?.getElement()).toHaveTextContent(NETWORK.zones[0] ?? '');
     await waitFor(() => expect(dialog.getByRole('button', { name: 'Restore' })).toBeEnabled());
     vi.mocked(clusters.getCluster).mockResolvedValue({ found: false });
     vi.mocked(clusters.listMembers).mockResolvedValue([]);

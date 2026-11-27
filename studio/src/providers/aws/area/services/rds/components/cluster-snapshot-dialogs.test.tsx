@@ -106,23 +106,37 @@ function change(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } });
 }
 
-function control(dialog: ReturnType<typeof within>, name: RegExp) {
-  return dialog.getByRole('button', { name });
+function modalField(label: string) {
+  const field = createWrapper(screen.getByRole('dialog'))
+    .findAllFormFields()
+    .find((entry) => entry.findLabel()?.getElement().textContent === label);
+  if (field === undefined) throw new Error(`Missing field ${label}.`);
+  return createWrapper(field.getElement());
 }
 
-async function choose(dialog: ReturnType<typeof within>, name: RegExp, label: string) {
-  fireEvent.click(control(dialog, name));
-  fireEvent.click(await dialog.findByRole('option', { name: new RegExp(label) }));
+function selectIn(label: string) {
+  const select = modalField(label).findSelect();
+  if (select === null) throw new Error(`Missing select for ${label}.`);
+  return select;
 }
 
-async function chooseGroup(dialog: ReturnType<typeof within>, label: string) {
-  await waitFor(() => expect(control(dialog, /Security groups/i)).toBeEnabled());
-  await choose(dialog, /Security groups/i, label);
-  fireEvent.keyDown(control(dialog, /Security groups/i), { key: 'Escape' });
+function multiselectIn(label: string) {
+  const select = modalField(label).findMultiselect();
+  if (select === null) throw new Error(`Missing multiselect for ${label}.`);
+  return select;
 }
 
-function multiselects() {
-  return createWrapper(document.body).findModal()?.findAllMultiselects() ?? [];
+const SUBNET_GROUP = 'DB subnet group - optional';
+const SECURITY_GROUPS = 'Security groups - optional';
+const ZONES = 'Availability Zones';
+
+async function choose(label: string, value: string) {
+  const field = label === SECURITY_GROUPS || label === ZONES ? multiselectIn(label) : selectIn(label);
+  await waitFor(() => expect(field.findTrigger().getElement()).toBeEnabled());
+  field.openDropdown();
+  await waitFor(() => expect(field.findDropdown().findOptionByValue(value)).not.toBeNull());
+  field.selectOptionByValue(value);
+  if (label === SECURITY_GROUPS || label === ZONES) field.closeDropdown();
 }
 
 function unsupported(operation: string) {
@@ -194,24 +208,22 @@ describe('Snapshot restoration', () => {
   it('shows the restore fields and explains the subnet group and encryption defaults', async () => {
     const { dialog } = await openRestore();
     expect(dialog.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('');
-    const subnetGroup = control(dialog, /DB subnet group/i);
+    const subnetGroup = selectIn(SUBNET_GROUP).findTrigger().getElement();
     expect(subnetGroup).toHaveTextContent('Chosen by the emulator');
-    fireEvent.click(subnetGroup);
-    expect(dialog.getByRole('option', { name: /Chosen by the emulator/ })).toHaveTextContent(
-      'The emulator puts the cluster in its subnet group named default.',
-    );
-    expect(control(dialog, /Security groups/i)).toBeVisible();
-    expect(control(dialog, /Availability Zones/i)).toBeVisible();
-    expect(control(dialog, /KMS key/i)).toHaveTextContent("Keep the snapshot's encryption");
-    expect(control(dialog, /KMS key/i)).toHaveTextContent('No key is sent.');
+    expect(subnetGroup).toHaveTextContent('The emulator puts the cluster in its subnet group named default.');
+    expect(multiselectIn(SECURITY_GROUPS).findTrigger().getElement()).toBeVisible();
+    expect(multiselectIn(ZONES).findTrigger().getElement()).toBeVisible();
+    const key = selectIn('KMS key').findTrigger().getElement();
+    expect(key).toHaveTextContent("Keep the snapshot's encryption");
+    expect(key).toHaveTextContent('No key is sent.');
     expect(dialog.getByRole('checkbox', { name: 'Deletion protection' })).not.toBeChecked();
     expect(dialog.getByText('Tags - optional')).toBeVisible();
   });
 
   it('reads groups in the chosen VPC and clears only the groups and zones the next subnet group lacks', async () => {
-    const { dialog } = await openRestore();
-    await choose(dialog, /DB subnet group/i, BLUE.name);
-    await chooseGroup(dialog, GROUP.name);
+    await openRestore();
+    await choose(SUBNET_GROUP, BLUE.name);
+    await choose(SECURITY_GROUPS, GROUP.id);
     expect(listSecurityGroupChoices).toHaveBeenCalledWith(
       ENDPOINT,
       expect.objectContaining({ vpcId: BLUE.vpcId }),
@@ -219,23 +231,23 @@ describe('Snapshot restoration', () => {
       expect.any(AbortSignal),
     );
 
-    await choose(dialog, /Availability Zones/i, 'us-east-1b');
-    expect(dialog.queryByRole('option', { name: /us-east-1a/ })).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('option', { name: /us-east-1c/ }));
-    fireEvent.keyDown(control(dialog, /Availability Zones/i), { key: 'Escape' });
-    expect(multiselects()[0]?.findTokens()).toHaveLength(1);
-    expect(multiselects()[1]?.findTokens()).toHaveLength(2);
+    const zones = multiselectIn(ZONES);
+    zones.openDropdown();
+    expect(zones.findDropdown().findOptionByValue('us-east-1a')).toBeNull();
+    zones.selectOptionByValue('us-east-1b');
+    zones.selectOptionByValue('us-east-1c');
+    zones.closeDropdown();
+    expect(multiselectIn(SECURITY_GROUPS).findTokens()).toHaveLength(1);
+    expect(zones.findTokens()).toHaveLength(2);
 
-    await choose(dialog, /DB subnet group/i, GREEN.name);
+    await choose(SUBNET_GROUP, GREEN.name);
     await waitFor(() => {
-      expect(multiselects()[0]?.findTokens()).toHaveLength(0);
-      expect(
-        multiselects()[1]
-          ?.findTokens()
-          .map((token) => token.getElement().textContent),
-      ).toEqual(['us-east-1c']);
+      expect(multiselectIn(SECURITY_GROUPS).findTokens()).toHaveLength(0);
+      const zones = multiselectIn(ZONES).findTokens();
+      expect(zones).toHaveLength(1);
+      expect(zones?.[0]?.getElement()).toHaveTextContent('us-east-1c');
     });
-    await chooseGroup(dialog, 'local-group');
+    await choose(SECURITY_GROUPS, 'sg-local');
     expect(listSecurityGroupChoices).toHaveBeenCalledWith(
       ENDPOINT,
       expect.objectContaining({ vpcId: GREEN.vpcId }),
@@ -247,11 +259,10 @@ describe('Snapshot restoration', () => {
   it('hands the selected fields and key ARN to the page', async () => {
     const { dialog, submit } = await openRestore();
     change(dialog.getByRole('textbox', { name: 'DB cluster identifier' }), 'restored');
-    await choose(dialog, /DB subnet group/i, BLUE.name);
-    await chooseGroup(dialog, GROUP.name);
-    await choose(dialog, /Availability Zones/i, 'us-east-1b');
-    fireEvent.keyDown(control(dialog, /Availability Zones/i), { key: 'Escape' });
-    await choose(dialog, /KMS key/i, 'alias/restore');
+    await choose(SUBNET_GROUP, BLUE.name);
+    await choose(SECURITY_GROUPS, GROUP.id);
+    await choose(ZONES, 'us-east-1b');
+    await choose('KMS key', KEY.arn);
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Deletion protection' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Add tag' }));
     change(dialog.getByRole('textbox', { name: 'Key' }), 'from');
@@ -277,9 +288,9 @@ describe('Snapshot restoration', () => {
       const empty = { name: 'default', vpcId: 'vpc-old' };
       vi.mocked(findSubnetGroup).mockResolvedValue(empty);
       vi.mocked(listSubnetGroupChoices).mockResolvedValue({ choices: [empty] });
-      const { dialog } = await openRestore();
-      if (explicit) await choose(dialog, /DB subnet group/i, '^default');
-      await chooseGroup(dialog, 'local-group');
+      await openRestore();
+      if (explicit) await choose(SUBNET_GROUP, 'default');
+      await choose(SECURITY_GROUPS, 'sg-local');
       expect(readDefaultVpcId).toHaveBeenCalledWith(ENDPOINT, expect.any(AbortSignal));
       expect(listSecurityGroupChoices).toHaveBeenCalledWith(
         ENDPOINT,
@@ -287,9 +298,9 @@ describe('Snapshot restoration', () => {
         undefined,
         expect.any(AbortSignal),
       );
-      fireEvent.click(control(dialog, /Availability Zones/i));
-      expect(dialog.getByText('No Availability Zones')).toBeVisible();
-      expect(dialog.queryByRole('option')).not.toBeInTheDocument();
+      const zones = multiselectIn(ZONES);
+      zones.openDropdown();
+      expect(zones.findDropdown().findOptions()).toEqual([]);
     },
   );
 
@@ -307,18 +318,18 @@ describe('Snapshot restoration', () => {
 
     const { dialog, submit } = await openRestore();
     if (explicit) {
-      await choose(dialog, /DB subnet group/i, BLUE.name);
+      await choose(SUBNET_GROUP, BLUE.name);
       await waitFor(() => expect(findSubnetGroup).toHaveBeenCalledWith(ENDPOINT, BLUE.name, expect.any(AbortSignal)));
     }
     await waitFor(() => {
       expect(dialog.getAllByText('Not implemented by the emulator')).toHaveLength(2);
       expect(dialog.getAllByText(new RegExp('501 Not Implemented for ' + operation))).toHaveLength(2);
     });
-    expect(control(dialog, /Choose DB subnet group first/i)).toBeDisabled();
+    expect(multiselectIn(SECURITY_GROUPS).findTrigger().getElement()).toBeDisabled();
     expect(listSecurityGroupChoices).not.toHaveBeenCalled();
-    fireEvent.click(control(dialog, /Availability Zones/i));
-    expect(dialog.getByText('No Availability Zones')).toBeVisible();
-    expect(dialog.queryByRole('option')).not.toBeInTheDocument();
+    const zones = multiselectIn(ZONES);
+    zones.openDropdown();
+    expect(zones.findDropdown().findOptions()).toEqual([]);
 
     change(dialog.getByRole('textbox', { name: 'DB cluster identifier' }), 'restored');
     fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
