@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { listAvailabilityZones } from '../../../lib/ec2-availability-zones';
 import AwsArea from '../../../index';
 import type { DbInstance } from '../api';
+import { findSubnetGroup, listSubnetGroupChoices } from '../choices-api';
 import * as clusters from '../cluster-api';
 import * as snapshots from '../cluster-snapshot-api';
 
@@ -22,10 +24,44 @@ vi.mock('../cluster-snapshot-api', async (importOriginal) => {
   return {
     ...real,
     listClusterSnapshots: vi.fn(),
+    createClusterSnapshot: vi.fn(),
     restoreClusterSnapshot: vi.fn(),
     deleteClusterSnapshot: vi.fn(),
   };
 });
+
+vi.mock('../choices-api', async (original) => ({
+  ...(await original<typeof import('../choices-api')>()),
+  findSubnetGroup: vi.fn(),
+  listSubnetGroupChoices: vi.fn(),
+}));
+
+vi.mock('../../../components/kms-key-choices', async (original) => {
+  const actual = await original<typeof import('../../../components/kms-key-choices')>();
+  return {
+    ...actual,
+    kmsKeyChoices: (endpoint: string | undefined) => ({
+      ...actual.kmsKeyChoices(endpoint),
+      read: async () => ({ items: [KEY] }),
+    }),
+  };
+});
+
+vi.mock('../../../components/security-group-choices', async (original) => {
+  const actual = await original<typeof import('../../../components/security-group-choices')>();
+  return {
+    ...actual,
+    securityGroupChoices: (endpoint: string | undefined, vpcId?: string) => ({
+      ...actual.securityGroupChoices(endpoint, vpcId),
+      read: async () => ({ items: vpcId === NETWORK.vpcId ? [GROUP] : [] }),
+    }),
+  };
+});
+
+vi.mock('../../../lib/ec2-availability-zones', async (original) => ({
+  ...(await original<typeof import('../../../lib/ec2-availability-zones')>()),
+  listAvailabilityZones: vi.fn(),
+}));
 
 const PAGE = createWrapper(document.body);
 const PATH = '/aws/rds/cluster-snapshots';
@@ -43,6 +79,14 @@ const ORPHAN = { id: 'orphan-snap', sourceId: 'old-cluster', engine: 'aurora-pos
 const OTHER = { id: 'other-snap', sourceId: 'other-cluster', engine: 'aurora-mysql', status: 'available' };
 const CREATING = { ...OTHER, id: 'creating-snap', status: 'creating' };
 const MARKER = 'c25hcC0yMA==';
+
+const NETWORK = { name: 'restore-network', vpcId: 'vpc-network', zones: ['us-east-1c'] };
+const GROUP = { id: 'sg-network', vpcId: NETWORK.vpcId, name: 'restore-group' };
+const KEY = {
+  id: 'restore-key',
+  arn: 'arn:aws:kms:us-east-1:000000000000:key/restore-key',
+  aliases: ['alias/restore'],
+};
 
 function AreaWithStudioProps() {
   const { pathname } = useLocation();
@@ -122,6 +166,14 @@ async function submitRestore(id: string) {
   fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
 }
 
+async function choose(dialog: ReturnType<typeof within>, field: RegExp, option: string) {
+  const trigger = dialog.getByRole('button', { name: field });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  fireEvent.click(trigger);
+  fireEvent.click(await dialog.findByRole('option', { name: new RegExp(option) }));
+  if (trigger.getAttribute('aria-expanded') === 'true') fireEvent.keyDown(trigger, { key: 'Escape' });
+}
+
 async function openDelete() {
   await select();
   const opener = action('Delete');
@@ -165,6 +217,12 @@ beforeEach(() => {
     .mockResolvedValue({ items: [ORPHAN] });
   vi.mocked(snapshots.restoreClusterSnapshot).mockReset().mockResolvedValue('restored-cluster');
   vi.mocked(snapshots.deleteClusterSnapshot).mockReset().mockResolvedValue(undefined);
+  vi.mocked(snapshots.createClusterSnapshot).mockReset().mockResolvedValue('new-snap');
+  vi.mocked(findSubnetGroup).mockImplementation(async (_endpoint, name) =>
+    name === NETWORK.name ? NETWORK : undefined,
+  );
+  vi.mocked(listSubnetGroupChoices).mockResolvedValue({ choices: [NETWORK] });
+  vi.mocked(listAvailabilityZones).mockResolvedValue(NETWORK.zones);
   vi.mocked(clusters.getCluster).mockReset();
   vi.mocked(clusters.listMembers).mockReset();
 });
@@ -247,13 +305,20 @@ describe('DB cluster snapshots', () => {
     await select();
     expect(status).toHaveTextContent('Selected snapshot status: available');
     expect(status).not.toHaveTextContent('Restore requires an available snapshot.');
-    await submitRestore('requested-cluster');
+    const dialog = await openRestore();
+    fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster identifier' }), {
+      target: { value: 'requested-cluster' },
+    });
+    await choose(dialog, /DB subnet group/i, NETWORK.name);
+    await choose(dialog, /KMS key/i, 'alias/restore');
+    fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
 
+    expect(snapshots.restoreClusterSnapshot).toHaveBeenCalledOnce();
     expect(snapshots.restoreClusterSnapshot).toHaveBeenCalledWith(
       ENGINE,
       ORPHAN.id,
       ORPHAN.engine,
-      'requested-cluster',
+      { identifier: 'requested-cluster', subnetGroupName: NETWORK.name, kmsKeyArn: KEY.arn },
       expect.any(AbortSignal),
     );
     await waitFor(() => {
@@ -261,6 +326,11 @@ describe('DB cluster snapshots', () => {
       expect(clusters.listMembers).toHaveBeenCalledWith(ENGINE, 'restored-cluster', expect.any(AbortSignal));
     });
 
+    await act(async () => {
+      members.resolve([]);
+      await members.promise;
+    });
+    expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent('Restoring DB cluster restored-cluster');
     await act(async () => {
       cluster.resolve({
         found: true,
@@ -275,10 +345,6 @@ describe('DB cluster snapshots', () => {
         },
       });
       await cluster.promise;
-    });
-    await act(async () => {
-      members.resolve([]);
-      await members.promise;
     });
 
     await waitFor(() => {
@@ -306,7 +372,19 @@ describe('DB cluster snapshots', () => {
       rejected('RestoreDBClusterFromSnapshot', 'DBClusterAlreadyExistsFault', 'A cluster with this identifier exists.'),
     );
     const router = open();
-    await submitRestore('existing-cluster');
+    const first = await openRestore();
+    fireEvent.change(first.getByRole('textbox', { name: 'DB cluster identifier' }), {
+      target: { value: 'existing-cluster' },
+    });
+    await choose(first, /DB subnet group/i, NETWORK.name);
+    await choose(first, /Security groups/i, GROUP.name);
+    await choose(first, /Availability Zones/i, NETWORK.zones[0] ?? '');
+    await choose(first, /KMS key/i, 'alias/restore');
+    fireEvent.click(first.getByRole('checkbox', { name: 'Deletion protection' }));
+    fireEvent.click(first.getByRole('button', { name: 'Add tag' }));
+    fireEvent.change(first.getByRole('textbox', { name: 'Key' }), { target: { value: 'from' } });
+    fireEvent.change(first.getByRole('textbox', { name: /Value/ }), { target: { value: 'snap' } });
+    fireEvent.click(first.getByRole('button', { name: 'Restore' }));
 
     await waitFor(() => {
       expect(flashOf('error')?.findHeader()?.getElement()).toHaveTextContent(
@@ -315,6 +393,7 @@ describe('DB cluster snapshots', () => {
       expect(flashOf('error')?.findContent()?.getElement()).toHaveTextContent('A cluster with this identifier exists.');
     });
     expect(router.state.location.pathname).toBe(PATH);
+    expect(PAGE.findModal()).toBeNull();
 
     const dialog = await openRestore();
     const input = dialog.getByRole('textbox', { name: 'DB cluster identifier' });
@@ -322,6 +401,15 @@ describe('DB cluster snapshots', () => {
       expect.stringContaining('Restore creates a new DB cluster with this identifier.'),
     );
     expect(input).toHaveValue('existing-cluster');
+    expect(dialog.getByRole('button', { name: /DB subnet group/i })).toHaveTextContent(NETWORK.name);
+    expect(dialog.getByRole('button', { name: /KMS key/i })).toHaveTextContent('alias/restore');
+    expect(dialog.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
+    expect(dialog.getByRole('textbox', { name: 'Key' })).toHaveValue('from');
+    expect(dialog.getByRole('textbox', { name: /Value/ })).toHaveValue('snap');
+    const selections = PAGE.findModal()?.findAllMultiselects();
+    expect(selections?.[0]?.findTokens()[0]?.getElement()).toHaveTextContent(GROUP.name);
+    expect(selections?.[1]?.findTokens()[0]?.getElement()).toHaveTextContent(NETWORK.zones[0] ?? '');
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Restore' })).toBeEnabled());
     vi.mocked(clusters.getCluster).mockResolvedValue({ found: false });
     vi.mocked(clusters.listMembers).mockResolvedValue([]);
     fireEvent.change(input, { target: { value: 'restored-cluster' } });
@@ -335,9 +423,63 @@ describe('DB cluster snapshots', () => {
       ENGINE,
       ORPHAN.id,
       ORPHAN.engine,
-      'restored-cluster',
+      {
+        identifier: 'restored-cluster',
+        subnetGroupName: NETWORK.name,
+        securityGroupIds: [GROUP.id],
+        zones: NETWORK.zones,
+        kmsKeyArn: KEY.arn,
+        deletionProtection: true,
+        tags: [{ key: 'from', value: 'snap' }],
+      },
       expect.any(AbortSignal),
     );
+  });
+
+  it('keeps the newly created snapshot and result when a read from an earlier visit answers last', async () => {
+    const earlier = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
+    const latest = deferred<Awaited<ReturnType<typeof snapshots.listClusterSnapshots>>>();
+    const created = { ...ORPHAN, id: 'new-snap', sourceId: 'source-db' };
+    vi.mocked(snapshots.listClusterSnapshots).mockReturnValueOnce(earlier.promise).mockReturnValueOnce(latest.promise);
+    vi.mocked(clusters.getCluster).mockResolvedValue({
+      found: true,
+      cluster: {
+        id: 'source-db',
+        status: 'available',
+        engine: ORPHAN.engine,
+        members: [],
+        securityGroups: [],
+        deletionProtection: false,
+        tags: [],
+      },
+    });
+    vi.mocked(clusters.listMembers).mockResolvedValue([]);
+    const router = open();
+    await waitFor(() => expect(snapshots.listClusterSnapshots).toHaveBeenCalledTimes(1));
+
+    await act(async () => router.navigate('/aws/rds/clusters/cluster/source-db'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Take snapshot' }));
+    const dialog = within((await modalOf('Take DB cluster snapshot')).getElement());
+    fireEvent.change(dialog.getByRole('textbox', { name: 'DB cluster snapshot identifier' }), {
+      target: { value: created.id },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Take snapshot' }));
+    await waitFor(() => expect(snapshots.listClusterSnapshots).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      latest.resolve({ items: [created] });
+      await latest.promise;
+    });
+    await waitFor(() => expect(rowIndex(created.id)).toBeGreaterThanOrEqual(0));
+    await act(async () => {
+      earlier.resolve({ items: [ORPHAN] });
+      await earlier.promise;
+    });
+
+    expect(router.state.location.pathname).toBe(PATH);
+    expect(rowIndex(created.id)).toBeGreaterThanOrEqual(0);
+    expect(rowIndex(ORPHAN.id)).toBe(-1);
+    expect(flashOf('success')?.findContent()?.getElement()).toHaveTextContent('Creating DB cluster snapshot new-snap');
   });
 
   it.each(['Cancel', 'Escape'])('requires the exact word and returns focus to Delete on %s', async (dismissal) => {
