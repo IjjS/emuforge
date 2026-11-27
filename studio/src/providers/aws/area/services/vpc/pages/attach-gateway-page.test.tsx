@@ -694,15 +694,15 @@ describe('Attach internet gateway', () => {
       expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
       if (order === 'VPC first') answerOccupancy();
       else answerVpc();
-      await waitFor(() => {
-        if (isOccupied) {
-          expect(errorOf('VPC')).toBe(occupied);
-          expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
-        } else {
-          expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
-          expect(attachButton()).toBeEnabled();
-        }
-      });
+      if (isOccupied) {
+        expect(await screen.findByText(occupied)).toBeInTheDocument();
+        expect(errorOf('VPC')).toBe(occupied);
+        expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+      } else {
+        expect(await screen.findByText('vpc-x')).toBeInTheDocument();
+        expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+        expect(attachButton()).toBeEnabled();
+      }
     });
   });
 
@@ -718,16 +718,15 @@ describe('Attach internet gateway', () => {
     expect(attachButton()).toBeDisabled();
     expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
     answer(isOccupied ? [attachment] : []);
-    await waitFor(() => {
-      if (isOccupied) {
-        expect(errorOf('VPC')).toBe(occupied);
-        expect(optionDisabled('vpc-x')).toBe(true);
-        expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
-      } else {
-        expect(attachButton()).toBeEnabled();
-        expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
-      }
-    });
+    if (isOccupied) {
+      expect(await screen.findByText(occupied)).toBeInTheDocument();
+      expect(errorOf('VPC')).toBe(occupied);
+      expect(optionDisabled('vpc-x')).toBe(true);
+      expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+    } else {
+      await waitFor(() => expect(attachButton()).toBeEnabled());
+      expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    }
   });
 
   it('the page names its resources "internet gateways" to the frame', async () => {
