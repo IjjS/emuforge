@@ -142,7 +142,11 @@ describe("ValueText, the area's one way of breaking a value", () => {
 
     expect(holder.firstElementChild).toHaveClass(VALUE_CLASS.name);
     expect(holder.firstElementChild?.textContent).toBe(name);
-    expect(rulesOf(VALUE_CLASS.name).get('white-space')).toBe('break-spaces');
+    const rules = rulesOf(VALUE_CLASS.name);
+    expect(rules.get('white-space-collapse')).toBe('break-spaces');
+    expect(rules.has('white-space')).toBe(false);
+    expect(rules.has('text-wrap')).toBe(false);
+    expect(rules.has('text-wrap-mode')).toBe(false);
   });
 
   it.each(['text', 'address', 'fixed'] as const)('a %s keeps its element and text', (kind) => {
