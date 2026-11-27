@@ -313,8 +313,8 @@ describe('Modify DB instance', () => {
 
   it.each([
     ['identifier', '9bad', 'An identifier begins with a letter.', 'good-db'],
-    ['storage', '25.5', '20 to 65536 GiB for gp2.', '30'],
-    ['storage', '65537', '20 to 65536 GiB for gp2.', '30'],
+    ['storage', '25.5', 'The storage is a whole number from 20 to 65536 for gp2.', '30'],
+    ['storage', '65537', 'The storage is a whole number from 20 to 65536 for gp2.', '30'],
     ['password', 'short', 'A master password has at least 8 characters.', 'DemoPass!234'],
   ] as const)('U3 blocks invalid %s (%s) and permits a correction', async (label, invalid, error, valid) => {
     const onSave = open();
@@ -591,7 +591,9 @@ describe('choices for a standalone DB instance', () => {
     const onSave = open();
     await opened();
     await choose('Storage type', 'io1');
-    expect(field('Allocated storage (GiB)').findError()?.getElement()).toHaveTextContent('100 to 65536 GiB for io1.');
+    expect(field('Allocated storage (GiB)').findError()?.getElement()).toHaveTextContent(
+      'The storage is a whole number from 100 to 65536 for io1.',
+    );
     expect(field('Provisioned IOPS').findError()?.getElement()).toHaveTextContent('Enter the IOPS.');
     expect(save()).toBeDisabled();
     change('storage', '100');

@@ -825,7 +825,9 @@ describe('Create DB instance', () => {
     await choose('DB instance class', 'db.t3.small');
     await choose('Storage type', 'io1');
     submit();
-    expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toContain('100 to 65536 GiB for io1');
+    expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toContain(
+      'The storage is a whole number from 100 to 65536 for io1.',
+    );
     expect(screen.getByText('Enter the IOPS.')).toBeInTheDocument();
     expect(creating.createInstance).not.toHaveBeenCalled();
   });
