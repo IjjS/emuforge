@@ -1,5 +1,6 @@
 import { createElement, Fragment, useRef, useState } from 'react';
 
+import { reportedServiceCode } from '../../../../../lib/aws/request';
 import { actionFailureItem } from '../../components/failure-states';
 import { usePageFlash } from '../../components/page-flash';
 import { failureOf, usePageSignal } from '../../components/use-token-listing';
@@ -45,6 +46,10 @@ export function useActionsSwitch({
         const refusal = failureOf(error, operation);
         if (refusal.kind === 'not-implemented') setUnsupported((previous) => [...previous, operation]);
         const item = actionFailureItem(refusal, operation, endpoint);
+        const accessDeniedCode = refusal.kind === 'access-denied' ? reportedServiceCode(refusal) : undefined;
+        if (accessDeniedCode) {
+          item.content = createElement(Fragment, null, item.content, ` (${accessDeniedCode})`);
+        }
         if (refusal.kind === 'emulator-did-not-answer' || refusal.kind === 'engine-did-not-answer') {
           item.content = createElement(Fragment, null, `${operation} failed. `, item.content);
         }
