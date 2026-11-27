@@ -124,10 +124,10 @@ function open(search = '') {
     return fields(label)[index];
   }
   function textbox(label: string, index = 0) {
-    const wrapper = field(label, index);
+    const control = field(label, index)?.findControl();
     const input =
-      wrapper?.findInput()?.findNativeInput().getElement() ??
-      wrapper?.findTextarea()?.findNativeTextarea().getElement();
+      control?.findInput()?.findNativeInput().getElement() ??
+      control?.findTextarea()?.findNativeTextarea().getElement();
     if (!input) throw new Error(`Expected an input for ${label}`);
     expect(input).toHaveAccessibleName(label);
     return input;
@@ -136,7 +136,7 @@ function open(search = '') {
     fireEvent.change(textbox(label, index), { target: { value } });
   }
   function select(label: string, index = 0) {
-    const found = field(label, index)?.findSelect();
+    const found = field(label, index)?.findControl()?.findSelect();
     if (!found) throw new Error(`Expected a select for ${label}`);
     return found;
   }
@@ -270,7 +270,7 @@ it('offers both schedule kinds on default and returns to a pattern on another bu
   await page.choose('Event bus', 'orders');
   expect(page.radio('schedule')).toBeDisabled();
   expect(trigger?.findDescription()?.getElement()).toHaveTextContent(restriction);
-  expect(trigger?.findRadioGroup()?.getElement()).toHaveAccessibleDescription(restriction);
+  expect(trigger?.findControl()?.findRadioGroup()?.getElement()).toHaveAccessibleDescription(restriction);
   expect(page.radio('pattern')).toBeChecked();
   expect(page.textbox('Event pattern')).toBeVisible();
   await page.choose('Event bus', 'default');
