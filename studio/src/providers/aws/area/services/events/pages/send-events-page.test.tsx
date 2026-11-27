@@ -160,6 +160,7 @@ it('opens with the addressed bus, an empty JSON object, the routing description 
     "The bus's enabled rules whose pattern matches route the event to their targets. A target receives it only if it allows EventBridge to deliver. The event ID says the emulator accepted the event, not that a rule matched or a target received it.",
   );
   expect(page.resources).toHaveBeenCalledWith({ word: 'event buses' });
+  expect(page.button.getElement()).toHaveAccessibleName('Send');
   for (const control of [page.source, page.type, page.text]) {
     expect(control).toHaveAttribute('aria-required', 'true');
   }
@@ -353,7 +354,7 @@ it.each(['DescribeEventBus', 'PutEvents'])(
   },
 );
 
-it('shows a 501 at the bus field when the address read fails and offers Retry', async () => {
+it.each([false, true])('Retry only reads the bus again after a 501 (previous Send: %s)', async (previousSend) => {
   read.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'DescribeEventBus' }));
   const page = renderPage('?bus=orders');
   await waitFor(() =>
@@ -364,16 +365,30 @@ it('shows a 501 at the bus field when the address read fails and offers Retry', 
   expect(page.busField.getElement()).toHaveTextContent('DescribeEventBus');
   expect(page.select.findTrigger().getElement().textContent).toBe('Choose an event bus');
   page.fill();
-  fireEvent.click(page.button.getElement());
-  expect(read).toHaveBeenCalledTimes(1);
-  expect(send).not.toHaveBeenCalled();
-  expectFailedSend(page, 'Check the form for details.');
+  if (previousSend) {
+    fireEvent.click(page.button.getElement());
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expectFailedSend(page, 'Check the form for details.');
+  }
 
+  const announcement = page.announcement.textContent;
   const retry = page.busField.findSecondaryControl()?.findButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
-  retry?.click();
+  if (!retry) throw new Error('Expected the Retry button in the bus field');
+  fireEvent.click(retry.getElement());
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
   expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenLastCalledWith(endpoint, 'orders', expect.any(AbortSignal));
+  expect(send).not.toHaveBeenCalled();
+  expect(page.show).toHaveBeenCalledTimes(previousSend ? 1 : 0);
+  expect(page.announcement.textContent).toBe(announcement);
+  if (!previousSend) {
+    expect(page.failureFlash()?.findHeader()?.getElement().textContent).toBeUndefined();
+    expect(page.successes()).toEqual([]);
+    expect(page.announcement).toBeEmptyDOMElement();
+  }
+  page.expectFilled();
 });
 
 it.each([
@@ -412,7 +427,7 @@ it('uses the bus chosen from the list instead of an invalid address', async () =
   const page = renderPage('?bus=');
   page.select.openDropdown();
   await waitFor(() =>
-    expect(page.select.findDropdown().findOption(1)?.findLabel().getElement().textContent).toBe('orders'),
+    expect(page.select.findDropdown().findOptionByValue('orders')?.findLabel().getElement().textContent).toBe('orders'),
   );
   await act(async () => page.select.selectOptionByValue('orders'));
   expect(page.busField.findError()?.getElement().textContent).toBeUndefined();
