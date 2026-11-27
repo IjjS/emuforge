@@ -1,14 +1,14 @@
 import Alert from '@cloudscape-design/components/alert';
 import AttributeEditor from '@cloudscape-design/components/attribute-editor';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { Tag } from '@aws-sdk/client-cloudwatch';
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import { refusalMessage, reportedServiceCode, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -58,6 +58,9 @@ export function ManageTagsDialog({
   const pageSignal = usePageSignal();
   const follow = useFollow();
   const busy = useRef(false);
+  const saveButton = useRef<ButtonProps.Ref>(null);
+  const cancelButton = useRef<ButtonProps.Ref>(null);
+  const retryButton = useRef<ButtonProps.Ref>(null);
   const fields = useRef(new Map<string, InputProps.Ref>());
   const [opened] = useState(() => tagRows(initialTags));
   const [draft, setDraft] = useState(opened);
@@ -91,8 +94,32 @@ export function ManageTagsDialog({
       ? (refusalMessage(refusal) ?? (refusal.kind === 'other' ? refusal.code : undefined))
       : undefined;
   const partialCode = removalsSaved && refusal ? reportedServiceCode(refusal) : undefined;
+  const partialResult = removalsSaved && refusal && (
+    <>
+      The removals were saved. The added and changed tags were not: {refusal.operation}:{' '}
+      {partialReason ?? feedback?.header}
+      {partialCode !== undefined && partialCode !== partialReason && (
+        <>
+          {' '}
+          (<Code>{partialCode}</Code>)
+        </>
+      )}
+    </>
+  );
   const readState = failedRead?.failure && readFailureState(failedRead.failure, connection, 'tags');
-  const disabled = pending || reading || failedRead !== undefined || unsupported !== undefined;
+  const inFlight = pending || reading;
+  const saveDisabled = failedRead !== undefined || (!inFlight && unsupported !== undefined);
+
+  useLayoutEffect(() => {
+    if (inFlight || !saveFailure) return;
+    if (failedRead) {
+      retryButton.current?.focus();
+    } else if (saveFailure.refusal.kind === 'not-implemented') {
+      cancelButton.current?.focus();
+    } else {
+      saveButton.current?.focus();
+    }
+  }, [failedRead, inFlight, saveFailure]);
 
   async function reread(signal: AbortSignal) {
     setReading(true);
@@ -115,7 +142,7 @@ export function ManageTagsDialog({
   }
 
   async function handleSave() {
-    if (busy.current || disabled) return;
+    if (busy.current || saveDisabled) return;
     setTried(true);
     const validation = validateTags(draft);
     const invalidRow = validation.rows.findIndex(({ key, value }) => key !== undefined || value !== undefined);
@@ -182,10 +209,16 @@ export function ManageTagsDialog({
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" disabled={pending || reading} onClick={handleDismiss}>
+            <Button ref={cancelButton} variant="link" disabled={inFlight} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={disabled} loading={pending} onClick={() => void handleSave()}>
+            <Button
+              ref={saveButton}
+              variant="primary"
+              disabled={saveDisabled}
+              loading={inFlight && !failedRead}
+              onClick={() => void handleSave()}
+            >
               Save
             </Button>
           </SpaceBetween>
@@ -193,18 +226,7 @@ export function ManageTagsDialog({
       }
     >
       <SpaceBetween size="m">
-        {removalsSaved && refusal && (
-          <Alert type="warning">
-            The removals were saved. The added and changed tags were not: {refusal.operation}:{' '}
-            {partialReason ?? feedback?.header}
-            {partialCode !== undefined && partialCode !== partialReason && (
-              <>
-                {' '}
-                (<Code>{partialCode}</Code>)
-              </>
-            )}
-          </Alert>
-        )}
+        {partialResult && <Alert type="warning">{partialResult}</Alert>}
         {feedback && refusal && partialReason === undefined && (
           <Alert type={feedback.type} header={feedback.header}>
             {(refusal.kind === 'engine-did-not-answer' || refusal.kind === 'emulator-did-not-answer') &&
@@ -217,7 +239,7 @@ export function ManageTagsDialog({
           <Alert
             type="error"
             action={
-              <Button disabled={reading} onClick={() => void handleRetry()}>
+              <Button ref={retryButton} loading={reading} onClick={() => void handleRetry()}>
                 Retry
               </Button>
             }
@@ -281,6 +303,15 @@ export function ManageTagsDialog({
           </div>
         )}
       </SpaceBetween>
+      <div className="aws-area-announcer" role="alert" aria-atomic="true">
+        {failedRead && !reading && (
+          <>
+            {partialResult}
+            {partialResult && ' '}
+            The tags could not be read again. Choose Retry to read the tags before saving.
+          </>
+        )}
+      </div>
     </AreaModal>
   );
 }
