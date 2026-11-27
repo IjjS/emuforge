@@ -20,6 +20,7 @@ interface ActionTopicsFieldProps {
   multiselectRef?: Ref<MultiselectProps.Ref>;
   /** Shares the opening topic read across all three fields of one form. */
   openingKey?: string;
+  baseline?: string[] | undefined;
 }
 
 export function ActionTopicsField({
@@ -30,10 +31,12 @@ export function ActionTopicsField({
   error,
   multiselectRef,
   openingKey,
+  baseline,
 }: ActionTopicsFieldProps) {
   const id = useId();
   const endpoint = connection.engineOrigin;
-  const [openingActions] = useState(() => value);
+  const [initialActions] = useState(() => value);
+  const openingActions = baseline ?? initialActions;
   const [removedOpeningActions, setRemovedOpeningActions] = useState<readonly string[]>([]);
   const hasOpeningActions = openingActions.length !== 0;
   const opening = useQuery({
