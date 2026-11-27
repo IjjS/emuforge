@@ -352,7 +352,7 @@ function ClusterStorageType({
 }
 
 type FailoverTarget = Awaited<ReturnType<typeof readFailoverTargets>>[number];
-type TargetRead = { targets: FailoverTarget[] } | { failure: RequestFailure };
+type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure };
 const NO_READER = 'Failover requires a reader DB instance in this cluster.';
 
 function FailoverDialog({
@@ -370,12 +370,13 @@ function FailoverDialog({
     operation: OPERATIONS.describeDBInstances,
     read: (at, signal) => readFailoverTargets(at, cluster.id, signal),
   });
+  // An empty answer retires older data even if closing the picker cancels the new read.
   const [latest, setLatest] = useState<TargetRead>();
   const [refreshing, setRefreshing] = useState<AbortSignal>();
   const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
   const [targetError, setTargetError] = useState<string>();
-  const targets = latest === undefined ? initial.value : 'targets' in latest ? latest.targets : undefined;
-  const failure = latest === undefined ? initial.failure : 'failure' in latest ? latest.failure : undefined;
+  const targets = latest === undefined ? initial.value : latest.targets;
+  const failure = latest === undefined ? initial.failure : latest.failure;
   const loading = refreshing !== undefined || (latest === undefined && initial.loading);
   const selected = targets?.find(({ id }) => id === target?.id);
   if (!loading && targets !== undefined && target !== undefined && selected === undefined) {
@@ -425,6 +426,7 @@ function FailoverDialog({
             none="No reader DB instances"
             value={selected ?? target}
             invalid={targetError !== undefined}
+            onOpen={() => setLatest({})}
             onChange={(choice) => {
               setTarget(choice);
               setTargetError(undefined);
