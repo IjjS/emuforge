@@ -8,6 +8,14 @@ import { readAlarmTags } from './alarm-page-api';
 import { useAlarm, useAlarmTags } from './alarm-queries';
 import { readAlarm } from './alarms-api';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 vi.mock('./alarms-api', async (load) => ({
   ...(await load<typeof import('./alarms-api')>()),
   readAlarm: vi.fn(),
@@ -39,7 +47,7 @@ function setup() {
 }
 
 it('keys reads by engine and argument and awaits the ARN before asking for tags', async () => {
-  const pending = Promise.withResolvers<Alarm>();
+  const pending = deferred<Alarm>();
   read.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(undefined).mockResolvedValueOnce(alarm('one'));
   readTags.mockResolvedValue([]);
   const { client, wrapper } = setup();
@@ -71,7 +79,7 @@ it('keys reads by engine and argument and awaits the ARN before asking for tags'
 });
 
 it('drops an earlier name’s answer when it arrives after the new name’s', async () => {
-  const first = Promise.withResolvers<Alarm>();
+  const first = deferred<Alarm>();
   read.mockReturnValueOnce(first.promise).mockResolvedValueOnce(alarm('two'));
   const { result, rerender } = renderHook(({ name }) => useAlarm(engine, name), {
     ...setup(),
@@ -86,7 +94,7 @@ it('drops an earlier name’s answer when it arrives after the new name’s', as
 });
 
 it('cancels and replaces an initial alarm read with the same arguments', async () => {
-  const first = Promise.withResolvers<Alarm>();
+  const first = deferred<Alarm>();
   const current = { ...alarm('one'), data: { ...alarm('one').data, StateReason: 'new' } } as Alarm;
   read.mockReturnValueOnce(first.promise).mockResolvedValueOnce(current);
   const { result } = renderHook(() => useAlarm(engine, 'one'), setup());
@@ -100,7 +108,7 @@ it('cancels and replaces an initial alarm read with the same arguments', async (
 });
 
 it('cancels and replaces an initial tags read with the same arguments', async () => {
-  const first = Promise.withResolvers<Awaited<ReturnType<typeof readAlarmTags>>>();
+  const first = deferred<Awaited<ReturnType<typeof readAlarmTags>>>();
   const current = [{ Key: 'project', Value: 'current' }];
   readTags.mockReturnValueOnce(first.promise).mockResolvedValueOnce(current);
   const { result } = renderHook(() => useAlarmTags(engine, 'arn:one'), setup());

@@ -14,6 +14,14 @@ import { readAlarm } from '../alarms-api';
 import { ALARM_PATH, ALARMS_PATH, alarmPath, editAlarmPath } from '../paths';
 import { AlarmPage } from './alarm-page';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 vi.mock('../alarms-api', async (load) => ({
   ...(await load<typeof import('../alarms-api')>()),
   readAlarm: vi.fn(),
@@ -169,8 +177,8 @@ it.each([true, false])(
 );
 
 it('drops the first alarm’s pending history and tags when the name changes', async () => {
-  const previousHistory = Promise.withResolvers<TokenPage<AlarmHistoryItem>>();
-  const previousTags = Promise.withResolvers<Awaited<ReturnType<typeof readAlarmTags>>>();
+  const previousHistory = deferred<TokenPage<AlarmHistoryItem>>();
+  const previousTags = deferred<Awaited<ReturnType<typeof readAlarmTags>>>();
   read.mockResolvedValueOnce(metric(name)).mockResolvedValueOnce(metric('second'));
   history.mockReturnValueOnce(previousHistory.promise).mockResolvedValueOnce({ items: [entry('Second history')] });
   tags.mockReturnValueOnce(previousTags.promise).mockResolvedValueOnce([{ Key: 'Stage', Value: 'second tag' }]);
