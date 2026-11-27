@@ -16,7 +16,7 @@ export function draftField<T>(start: T, equal?: DraftField<T>['equal']): DraftFi
 }
 
 export function editField<T>(field: DraftField<T>, value: T): DraftField<T> {
-  return { ...field, value, cleared: undefined, missing: false };
+  return { ...draftField(field.start, field.equal), value, cleared: undefined, missing: false };
 }
 
 export function changed<T>(field: DraftField<T>): boolean {
@@ -62,19 +62,29 @@ export function sameSecurityGroups(
   return left.length === right.length && left.every(({ id }) => right.some((group) => group.id === id));
 }
 
+interface SecurityGroupDraft<Group> extends DraftField<readonly Group[]> {
+  removedBySubnetGroup?: readonly string[];
+}
+
 export function afterSubnetGroup<P, Group extends SecurityGroupChoice>(
-  groups: DraftField<readonly Group[]>,
+  groups: SecurityGroupDraft<Group>,
   subnetGroup: DraftField<P>,
   vpcId: string | undefined,
-): DraftField<readonly Group[]> {
+): SecurityGroupDraft<Group> {
   if (!changed(subnetGroup)) {
-    if (groups.cleared !== undefined) return editField(groups, groups.start);
+    if (groups.cleared !== undefined || groups.removedBySubnetGroup?.length) return editField(groups, groups.start);
     if (!changed(groups)) return groups;
   }
   if (vpcId === undefined) return groups;
 
   const remaining = groups.value.filter((group) => group.vpcId === vpcId);
-  const field = editField(groups, remaining);
+  const removed = groups.value.filter(
+    (group) => group.vpcId !== vpcId && groups.start.some((start) => start.id === group.id),
+  );
+  const field = {
+    ...editField(groups, remaining),
+    removedBySubnetGroup: [...(groups.removedBySubnetGroup ?? []), ...removed.map(({ id }) => id)],
+  };
   return remaining.length === 0 ? { ...field, cleared: `Choose security groups of ${vpcId}` } : field;
 }
 

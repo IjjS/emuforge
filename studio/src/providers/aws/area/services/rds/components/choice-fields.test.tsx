@@ -92,13 +92,23 @@ function select() {
   return found;
 }
 
-const option = (value: string) => select().findDropdown().findOptionByValue(value)?.getElement();
-const labels = () =>
-  select()
-    .findDropdown()
-    .findOptions()
-    .map((item) => item.findLabel().getElement().textContent);
+const option = (value: string) => select().findDropdown().findOptionByValue(value);
+const optionDescription = (value: string) => option(value)?.findDescription()?.getElement();
 const trigger = () => select().findTrigger().getElement();
+
+function expectOptions(values: readonly string[], fixedLabel?: string) {
+  const expected = values.map((value) => {
+    const item = option(value);
+    expect(item?.findLabel().getElement()).toHaveTextContent(value === '' ? (fixedLabel ?? '') : value);
+    return item?.getElement();
+  });
+  expect(
+    select()
+      .findDropdown()
+      .findOptions()
+      .map((item) => item.getElement()),
+  ).toEqual(expected);
+}
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -118,11 +128,11 @@ describe('the orderable class and storage fields', () => {
   it('deduplicates class options and filters them by typed text', () => {
     open(classField(rows));
     select().openDropdown();
-    expect(labels()).toEqual(['db.first', 'db.second']);
-    expect(option('db.first')).toHaveTextContent('Storage: gp2, io1');
-    expect(option('db.second')).toHaveTextContent('Storage: gp2');
+    expectOptions(['db.first', 'db.second']);
+    expect(optionDescription('db.first')).toHaveTextContent('Storage: gp2, io1');
+    expect(optionDescription('db.second')).toHaveTextContent('Storage: gp2');
     select().findFilteringInput()?.setInputValue('second');
-    expect(labels()).toEqual(['db.second']);
+    expectOptions(['db.second']);
   });
 
   it('shows a contextual empty message', () => {
@@ -171,9 +181,10 @@ describe('the orderable class and storage fields', () => {
     view.rerender(<StorageTypeField {...blank} mode="instance-create" rows={rows} instanceClass="db.first" />);
     expect(trigger()).toHaveAccessibleDescription('The emulator creates gp2 storage.');
     select().openDropdown();
-    expect(labels()).toEqual(['Chosen by the emulator', 'gp2', 'io1']);
-    expect(option('gp2')).toHaveTextContent('20 to 65536 GiB');
-    expect(option('io1')).toHaveTextContent('100 to 65536 GiB, 1000 to 10000 IOPS');
+    expectOptions(['', 'gp2', 'io1'], 'Chosen by the emulator');
+    expect(optionDescription('')).toHaveTextContent('The emulator creates gp2 storage.');
+    expect(optionDescription('gp2')).toHaveTextContent('20 to 65536 GiB');
+    expect(optionDescription('io1')).toHaveTextContent('100 to 65536 GiB, 1000 to 10000 IOPS');
   });
 
   it.each([
@@ -191,8 +202,8 @@ describe('the orderable class and storage fields', () => {
     open(<StorageTypeField {...blank} mode={mode} rows={read} />);
     expect(trigger()).toHaveAccessibleDescription(description);
     select().openDropdown();
-    expect(labels()).toEqual([label, 'aurora', 'aurora-iopt1']);
-    expect(option('aurora')).toHaveTextContent('10 to 100 GiB');
+    expectOptions(['', 'aurora', 'aurora-iopt1'], label);
+    expect(optionDescription('aurora')).toHaveTextContent('10 to 100 GiB');
   });
 
   it('shows the fixed storage explanation as field help and in the open option', () => {
@@ -204,7 +215,7 @@ describe('the orderable class and storage fields', () => {
     expect(screen.getByText(description)).toBeVisible();
 
     select().openDropdown();
-    expect(option('')).toHaveTextContent(description);
+    expect(optionDescription('')).toHaveTextContent(description);
     select().closeDropdown();
 
     view.rerender(<StorageTypeField {...blank} mode="cluster-create" rows={rows} value="gp2" />);
@@ -225,7 +236,7 @@ describe('the orderable class and storage fields', () => {
     expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(new RegExp(`501 Not Implemented for ${operation}`))).toBeVisible();
     select().openDropdown();
-    expect(labels()).toEqual(['Chosen by the emulator']);
+    expectOptions([''], 'Chosen by the emulator');
   });
 });
 
@@ -235,9 +246,10 @@ describe('engine upgrades and zones', () => {
     expect(trigger()).toHaveTextContent('Keep 16.4');
     expect(trigger()).toHaveTextContent('No version is sent.');
     select().openDropdown();
-    await waitFor(() => expect(labels()).toEqual(['Keep 16.4', '16.13', '17.9']));
-    expect(option('16.13')).toHaveTextContent('Minor upgrade');
-    expect(option('17.9')).toHaveTextContent('Major upgrade');
+    await waitFor(() => expectOptions(['', '16.13', '17.9'], 'Keep 16.4'));
+    expect(optionDescription('')).toHaveTextContent('No version is sent.');
+    expect(optionDescription('16.13')).toHaveTextContent('Minor upgrade');
+    expect(optionDescription('17.9')).toHaveTextContent('Major upgrade');
   });
 
   it.each(['targets', 'versions'])('keeps the current version after a 501 reading %s', async (read) => {
@@ -250,6 +262,7 @@ describe('engine upgrades and zones', () => {
     expect(screen.getByText(/501 Not Implemented for DescribeDBEngineVersions/)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(trigger()).toHaveTextContent('Keep 16.4');
+    expect(option('')?.findLabel().getElement()).toHaveTextContent('Keep 16.4');
   });
 
   it('keeps No preference after a zone 501', () => {
@@ -264,8 +277,8 @@ describe('engine upgrades and zones', () => {
     expect(screen.getByText(/501 Not Implemented for DescribeAvailabilityZones/)).toBeVisible();
     expect(trigger()).toHaveTextContent('No preference');
     select().openDropdown();
-    expect(labels()).toEqual(['No preference', ...zones]);
-    expect(option('us-east-1b')).not.toHaveTextContent('use1-az2');
+    expectOptions(['', ...zones], 'No preference');
+    expect(option('us-east-1b')?.findDescription()).toBeNull();
   });
 
   it('lists only subnet group zones with IDs and displays No preference when disabled', () => {
@@ -274,8 +287,8 @@ describe('engine upgrades and zones', () => {
       "No zone is sent. The emulator reports a zone of its own, which may be none of the subnet group's.",
     );
     select().openDropdown();
-    expect(labels()).toEqual(['No preference', ...zones]);
-    expect(option('us-east-1b')).toHaveTextContent('use1-az2');
+    expectOptions(['', ...zones], 'No preference');
+    expect(optionDescription('us-east-1b')).toHaveTextContent('use1-az2');
     select().closeDropdown();
     view.rerender(<ZoneField {...blank} value="us-east-1b" zones={zones} zoneRead={zoneRead} disabled />);
     expect(trigger()).toBeDisabled();
@@ -292,7 +305,7 @@ describe('engine upgrades and zones', () => {
     expect(screen.getByText(description)).toBeVisible();
 
     select().openDropdown();
-    expect(option('')).toHaveTextContent(description);
+    expect(optionDescription('')).toHaveTextContent(description);
     select().closeDropdown();
 
     view.rerender(<ZoneField {...blank} zones={zones} zoneRead={zoneRead} value="us-east-1b" />);
@@ -305,12 +318,11 @@ describe('engine upgrades and zones', () => {
     const field = createWrapper(document.body).findMultiselect();
     expect(field?.findTokens()).toHaveLength(0);
     field?.openDropdown();
-    expect(
-      field
-        ?.findDropdown()
-        .findOptions()
-        .map((item) => item.findLabel().getElement().textContent),
-    ).toEqual(zones);
+    const dropdown = field?.findDropdown();
+    expect(dropdown?.findOptions()).toHaveLength(zones.length);
+    for (const zone of zones) {
+      expect(dropdown?.findOptionByValue(zone)?.findLabel().getElement()).toHaveTextContent(zone);
+    }
   });
 });
 

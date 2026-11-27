@@ -95,6 +95,25 @@ describe('a modify draft', () => {
     expect(canSave({ subnetGroup, groups: cleared }, [], [])).toBe(false);
   });
 
+  it('restores partially pruned starting groups when the subnet group returns to its start', () => {
+    const groupA = { id: 'sg-a', vpcId: 'vpc-a' };
+    const groupB = { id: 'sg-b', vpcId: 'vpc-b' };
+    const groups = draftField<readonly (typeof groupA)[]>([groupA, groupB], sameSecurityGroups);
+    const subnetA = draftField('subnet-group-a');
+    const subnetB = editField(subnetA, 'subnet-group-b');
+    const pruned = afterSubnetGroup(groups, subnetB, 'vpc-b');
+    expect(pruned.value).toEqual([groupB]);
+    expect(pruned.cleared).toBeUndefined();
+
+    const refreshed = afterSubnetGroup(pruned, subnetB, 'vpc-b');
+    const restoredSubnet = editField(subnetB, subnetA.start);
+    const restored = afterSubnetGroup(refreshed, restoredSubnet, 'vpc-a');
+    const draft = { subnetGroup: restoredSubnet, groups: restored, identifier: editField(identifier, 'renamed') };
+    expect(restored.value).toEqual([groupA, groupB]);
+    expect(canSave(draft, [], [])).toBe(true);
+    expect(changes(draft)).toEqual({ identifier: 'renamed' });
+  });
+
   it('compares security group selections by id independently of read metadata and list order', () => {
     const groups = draftField([{ id: 'sg-one' }, { id: 'sg-two' }], sameSecurityGroups);
     expect(changes({ groups: editField(groups, [{ id: 'sg-two', name: 'two' }, { id: 'sg-one' }]) })).toEqual({});
