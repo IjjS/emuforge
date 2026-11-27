@@ -103,7 +103,8 @@ it('shows one line per failed target and keeps the dialog open', async () => {
   expect(
     dialog
       .findContent()
-      .findAll('li')
+      .findAlert()
+      ?.findAll('li')
       .map((entry) => entry.getElement().textContent),
   ).toEqual(['queue Denied: Queue target refused', 'topic Busy: Topic target busy']);
   expect(onTargetsChanged).toHaveBeenCalledOnce();
