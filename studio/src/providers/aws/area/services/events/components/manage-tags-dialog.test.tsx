@@ -125,7 +125,7 @@ it('shows the limit and rejects 51 existing rows without writing', async () => {
   const many = Object.fromEntries(Array.from({ length: 51 }, (_, index) => [`tag-${String(index)}`, 'value']));
   listTags.mockResolvedValue(many);
   const { modal, editor, save } = await open(many);
-  expect(editor.findAddButton().getElement()).toBeDisabled();
+  expect(editor.findAddButton().getElement()).toHaveAttribute('aria-disabled', 'true');
   save.click();
   expect(modal.findContent().findFormField()?.findError()?.getElement()).toHaveTextContent(
     'You can add up to 50 tags.',
