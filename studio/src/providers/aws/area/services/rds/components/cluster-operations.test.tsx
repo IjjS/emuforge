@@ -400,6 +400,44 @@ describe('fail over a DB cluster', () => {
     expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'writer' });
   });
 
+  it('holds failover when the picker closes before its latest reader check answers', async () => {
+    renderControls();
+    const modal = await open('failover');
+    const submit = modal.getByRole('button', { name: 'Fail over' });
+    await pick('Target DB instance', 'reader');
+    expect(submit).toBeEnabled();
+
+    const promoted = found([
+      { id: 'writer', writer: false },
+      { id: 'reader', writer: true },
+    ]);
+    let answer!: (result: typeof promoted) => void;
+    const refresh = new Promise<typeof promoted>((resolve) => {
+      answer = resolve;
+    });
+    const getCluster = vi.mocked(api.getCluster);
+    getCluster.mockResolvedValue(promoted).mockReturnValueOnce(refresh);
+
+    const picker = target();
+    picker.openDropdown();
+    await waitFor(() => expect(getCluster).toHaveBeenCalledTimes(3));
+    const signal = getCluster.mock.lastCall?.[2];
+    expect(signal?.aborted).toBe(false);
+    expect(submit).toBeDisabled();
+    picker.closeDropdown();
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+    await act(async () => answer(promoted));
+    await waitFor(() => expect(modal.queryByText('Loading DB instances')).not.toBeInTheDocument());
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await pick('Target DB instance', 'writer');
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'writer' });
+  });
+
   it('reports a 501 from the members read at the target and holds the action', async () => {
     vi.mocked(api.listMembers).mockRejectedValue(
       new RequestError({
