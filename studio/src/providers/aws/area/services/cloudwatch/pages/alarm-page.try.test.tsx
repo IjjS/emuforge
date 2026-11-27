@@ -106,6 +106,7 @@ function open() {
 
 async function openState() {
   fireEvent.click(await screen.findByRole('button', { name: 'Set state' }));
+  await screen.findByRole('dialog');
   const modal = page.findModal();
   if (!modal) throw new Error('Set state dialog missing');
   return modal;
@@ -217,7 +218,9 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
   if (order === 'alarm missing') {
     expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
   } else {
-    expect(await screen.findByText('Set by hand in EmuForge Studio')).toBeVisible();
+    await waitFor(() =>
+      expect(summaryValue('State reason')?.getElement()).toHaveTextContent('Set by hand in EmuForge Studio'),
+    );
     expect(summaryValue('State')?.findStatusIndicator()?.getElement()).toHaveTextContent('In alarm');
   }
   if (order === 'alarm first') {

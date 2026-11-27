@@ -1,9 +1,11 @@
 import type { StateValue } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
+import { useRef } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import { setAlarmState } from '../try-api';
 import { SetStateDialog } from './set-state-dialog';
 
@@ -27,34 +29,43 @@ beforeEach(() => {
   send.mockReset().mockResolvedValue(undefined);
 });
 
-function open(currentState: StateValue = 'OK') {
+async function open(currentState: StateValue = 'OK') {
   const onSet = vi.fn();
   const onUnavailable = vi.fn();
   const onDismiss = vi.fn();
-  render(
-    <SetStateDialog
-      endpoint={endpoint}
-      name={name}
-      currentState={currentState}
-      unavailable={false}
-      onSet={onSet}
-      onUnavailable={onUnavailable}
-      onDismiss={onDismiss}
-    />,
-  );
+  function Area() {
+    const root = useRef<HTMLDivElement>(null);
+    return (
+      <AreaRootContext.Provider value={root}>
+        <div ref={root}>
+          <SetStateDialog
+            endpoint={endpoint}
+            name={name}
+            currentState={currentState}
+            unavailable={false}
+            onUnavailable={onUnavailable}
+            onSet={onSet}
+            onDismiss={onDismiss}
+          />
+        </div>
+      </AreaRootContext.Provider>
+    );
+  }
+  render(<Area />);
+  await screen.findByRole('dialog');
   const modal = page.findModal();
   if (!modal) throw new Error('Set state dialog missing');
   const state = modal.findContent().findSelect();
   const reason = modal.findContent().findTextarea();
   const [cancel, submit] = modal.findFooter()?.findAllButtons() ?? [];
   if (!state || !reason || !submit || !cancel) throw new Error('Set state controls missing');
-  return { onSet, onUnavailable, onDismiss, state, reason, submit, cancel };
+  return { modal, onSet, onUnavailable, onDismiss, state, reason, submit, cancel };
 }
 
 it.each<StateValue>(['OK', 'ALARM', 'INSUFFICIENT_DATA'])(
   'offers and describes the states other than %s',
   (current) => {
-    const { state } = open(current);
+    const { state } = await open(current);
     state.openDropdown();
     const dropdown = state.findDropdown();
     expect(dropdown.findOptionByValue(current)).toBeNull();
@@ -67,19 +78,17 @@ it.each<StateValue>(['OK', 'ALARM', 'INSUFFICIENT_DATA'])(
   },
 );
 
-it('fills the reason and shows the rule and when actions run', () => {
-  const { reason } = open();
+it('fills the reason and shows the rule and when actions run', async () => {
+  const { modal, reason } = await open();
   expect(reason.getTextareaValue()).toBe(defaultReason);
   expect(page.findAllFormFields()[1]?.findConstraint()?.getElement()).toHaveTextContent('1 to 1023 characters.');
-  expect(
-    screen.getByText(
-      "When the state changes and the alarm's actions are on, the actions of the new state run. The history records the change and each action that ran.",
-    ),
-  ).toBeVisible();
+  expect(modal.findContent().getElement()).toHaveTextContent(
+    "When the state changes and the alarm's actions are on, the actions of the new state run. The history records the change and each action that ran.",
+  );
 });
 
 it('requires a state and between 1 and 1023 reason characters', async () => {
-  const { state, reason, submit, onSet } = open();
+  const { state, reason, submit, onSet } = await open();
   submit.click();
   const fields = page.findAllFormFields();
   expect(fields[0]?.findError()?.getElement()).toHaveTextContent('Choose a state.');
@@ -103,13 +112,17 @@ it('keeps the chosen state and reason on refusal and names the operation and cod
   send.mockRejectedValueOnce(
     new RequestError({ kind: 'other', operation: 'SetAlarmState', code: 'ResourceNotFound', message: 'Alarm is gone' }),
   );
-  const { state, reason, submit, onSet } = open();
+  const { modal, state, reason, submit, onSet } = await open();
   state.openDropdown();
   state.selectOptionByValue('INSUFFICIENT_DATA');
   reason.setTextareaValue('Try again later');
   submit.click();
-  expect(await screen.findByText('SetAlarmState failed')).toBeVisible();
-  expect(screen.getByText('ResourceNotFound')).toBeVisible();
+  await waitFor(() =>
+    expect(modal.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent('SetAlarmState failed'),
+  );
+  expect(modal.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+    'ResourceNotFound: Alarm is gone',
+  );
   expect(state.findTrigger().getElement()).toHaveTextContent('Insufficient data');
   expect(reason.getTextareaValue()).toBe('Try again later');
   expect(onSet).not.toHaveBeenCalled();
@@ -117,12 +130,18 @@ it('keeps the chosen state and reason on refusal and names the operation and cod
 
 it('reports a 501 and leaves the confirmation disabled', async () => {
   send.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'SetAlarmState' }));
-  const { state, submit, onUnavailable, onSet } = open();
+  const { modal, state, submit, onUnavailable, onSet } = await open();
   state.openDropdown();
   state.selectOptionByValue('ALARM');
   submit.click();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText('The emulator answered 501 Not Implemented for SetAlarmState.')).toBeVisible();
+  await waitFor(() =>
+    expect(modal.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+      'Not implemented by the emulator',
+    ),
+  );
+  expect(modal.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+    'The emulator answered 501 Not Implemented for SetAlarmState.',
+  );
   expect(onUnavailable).toHaveBeenCalledOnce();
   expect(submit.getElement()).toBeDisabled();
   expect(onSet).not.toHaveBeenCalled();
@@ -135,7 +154,7 @@ it('locks both buttons while the request is out and reports its state once', asy
       answer = resolve;
     }),
   );
-  const { state, submit, cancel, onSet, onDismiss } = open();
+  const { state, submit, cancel, onSet, onDismiss } = await open();
   state.openDropdown();
   state.selectOptionByValue('ALARM');
   submit.click();
