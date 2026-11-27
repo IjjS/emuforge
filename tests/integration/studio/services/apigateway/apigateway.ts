@@ -726,15 +726,20 @@ export async function confirmDelete(page: Page, header: string, word: string): P
   await button(dialogFooter(page), 'Delete').click();
 }
 
-/** The invoke address the emulator's export of a REST stage gives: its server's URL with the base path's default. */
-export async function exportedAddress(rest: APIGateway, apiId: string, stageName: string): Promise<string> {
-  const answer = await rest.getExport({ restApiId: apiId, stageName, exportType: 'oas30' });
-  const document = JSON.parse(Buffer.from(answer.body ?? new Uint8Array()).toString('utf8')) as {
-    servers?: { url?: string; variables?: Record<string, { default?: string }> }[];
-  };
-  const server = document.servers?.[0];
-  if (!server?.url) throw new Error(`the export of stage ${stageName} names no server`);
-  return server.url.replace(/\{(\w+)\}/g, (_, name: string) => server.variables?.[name]?.default ?? '');
+/**
+ * The address the settled "Invoke URL" cell of the stage `stage` shows in the table `stages`, read from the cell: it
+ * must be the stage's local address, `https://127.0.0.1:<the run's emulator port>/_aws/execute-api/<api id>/<stage>`
+ * (issue 691). A check that calls the stage uses what this returns, so the request goes where the screen says.
+ */
+export async function shownStageAddress(f: Fixture, stages: Locator, apiId: string, stage: string): Promise<URL> {
+  const cell = await cellOf(stages, stage, 4);
+  await expect(cell).toHaveText(f.restStageAddress(apiId, stage));
+  const shown = new URL((await cell.innerText()).trim());
+  expect(shown.protocol).toBe('https:');
+  expect(shown.hostname).toBe('127.0.0.1');
+  expect(shown.port).toBe(String(f.port));
+  expect(shown.pathname).toBe(f.restStagePath(apiId, stage, ''));
+  return shown;
 }
 
 // -- Create method and Create route --------------------------------------------------------------------------------------
