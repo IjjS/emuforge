@@ -14,9 +14,13 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { SNAPSHOT_OPERATIONS, type ClusterSnapshot } from '../cluster-snapshot-api';
+import { SNAPSHOT_OPERATIONS, type ClusterSnapshot, type SnapshotRestore } from '../cluster-snapshot-api';
 import { useClusterSnapshotActions, useClusterSnapshotListing } from '../cluster-snapshot-queries';
-import { DeleteSnapshotDialog, RestoreSnapshotDialog } from '../components/cluster-snapshot-dialogs';
+import {
+  DeleteSnapshotDialog,
+  RestoreSnapshotDialog,
+  type RestoreSnapshotDraft,
+} from '../components/cluster-snapshot-dialogs';
 import { StatusValue } from '../components/status';
 import { clusterHref, CLUSTER_SNAPSHOTS_TITLE, CLUSTERS_PATH, NONE } from '../format';
 
@@ -49,9 +53,11 @@ const columns: TableProps.ColumnDefinition<ClusterSnapshot>[] = [
 
 type SnapshotAction = 'restore' | 'delete';
 type SnapshotDialog =
-  | { kind: 'restore'; id: string; engine: string; initialIdentifier?: string | undefined }
+  | { kind: 'restore'; id: string; engine: string; draft: RestoreSnapshotDraft | undefined }
   | { kind: 'delete'; id: string };
-type SnapshotRequest = { kind: 'restore'; id: string; engine: string; newId: string } | { kind: 'delete'; id: string };
+type SnapshotRequest =
+  | { kind: 'restore'; id: string; engine: string; draft: RestoreSnapshotDraft; values: SnapshotRestore }
+  | { kind: 'delete'; id: string };
 
 function restoreReason(snapshot: ClusterSnapshot | undefined, unsupported: boolean): string | undefined {
   if (unsupported) return 'The emulator does not implement RestoreDBClusterFromSnapshot.';
@@ -74,7 +80,7 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
   const [announcement, announce] = useAnnouncer();
   const [selectedId, setSelectedId] = useState<string>();
   const [dialog, setDialog] = useState<SnapshotDialog>();
-  const [retry, setRetry] = useState<{ snapshotId: string; identifier: string }>();
+  const [retry, setRetry] = useState<{ snapshotId: string; draft: RestoreSnapshotDraft }>();
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState<ReadonlySet<SnapshotAction>>(() => new Set());
   const inFlight = useRef(false);
@@ -136,7 +142,7 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
     setPending(true);
     try {
       if (action.kind === 'restore') {
-        const id = await restore(action.id, action.engine, action.newId, signal);
+        const id = await restore(action.id, action.engine, action.values, signal);
         if (!signal.aborted) {
           flash.handOver(clusterHref(id), [{ type: 'success', content: `Restoring DB cluster ${id}` }]);
         }
@@ -152,13 +158,13 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
       const failure = failureOf(error, SNAPSHOT_OPERATIONS[action.kind]);
       const subject =
         action.kind === 'restore'
-          ? `Restore DB cluster ${action.newId} from snapshot ${action.id}`
+          ? `Restore DB cluster ${action.values.identifier} from snapshot ${action.id}`
           : `Delete DB cluster snapshot ${action.id}`;
       const item = actionFailureItem(failure, subject, engineOrigin);
       if (failure.kind === 'not-implemented') {
         setUnavailable((current) => new Set([...current, action.kind]));
       } else if (action.kind === 'restore') {
-        setRetry({ snapshotId: action.id, identifier: action.newId });
+        setRetry({ snapshotId: action.id, draft: action.draft });
       }
       flash.show([
         failure.kind === 'other' || failure.kind === 'not-implemented'
@@ -256,9 +262,9 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
                   ariaDescribedby={selectionStatusId}
                   onClick={() => {
                     if (!canRestore || selected === undefined || engine === undefined) return;
-                    const initialIdentifier = retry?.snapshotId === selected.id ? retry.identifier : undefined;
-                    if (initialIdentifier !== undefined) setRetry(undefined);
-                    setDialog({ kind: 'restore', id: selected.id, engine, initialIdentifier });
+                    const draft = retry?.snapshotId === selected.id ? retry.draft : undefined;
+                    if (draft !== undefined) setRetry(undefined);
+                    setDialog({ kind: 'restore', id: selected.id, engine, draft });
                   }}
                 >
                   Restore
@@ -298,11 +304,12 @@ export function ClusterSnapshotsPage({ connection }: { connection: AreaConnectio
       {dialog?.kind === 'restore' && (
         <RestoreSnapshotDialog
           target={dialog.id}
-          initialIdentifier={dialog.initialIdentifier}
+          connection={connection}
+          initial={dialog.draft}
           pending={pending}
           onDismiss={handleDismiss}
-          onSubmit={(id) => {
-            void handleAction({ ...dialog, newId: id });
+          onSubmit={(draft, values) => {
+            void handleAction({ ...dialog, draft, values });
           }}
         />
       )}
