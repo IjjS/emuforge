@@ -7,7 +7,7 @@ import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -17,7 +17,14 @@ import { ValueText } from '../../../components/value-text';
 import { rulePath, ruleStateText, ruleTriggerText } from '../format';
 import { listRules, RULE_OPERATIONS } from '../rule-api';
 
-export function RulesTable({ connection, bus }: { connection: AreaConnection; bus: string }) {
+interface RulesTableProps {
+  connection: AreaConnection;
+  bus: string;
+  holdListing?: boolean;
+  readsEnabled?: boolean;
+}
+
+export function RulesTable({ connection, bus, holdListing = false, readsEnabled = true }: RulesTableProps) {
   const handleFollow = useFollow();
   const [announcement, announce] = useAnnouncer();
   const [filterText, setFilterText] = useState('');
@@ -25,11 +32,24 @@ export function RulesTable({ connection, bus }: { connection: AreaConnection; bu
   const listing = useTokenListing({
     key: ['events', 'rules', bus, prefix],
     endpoint: connection.engineOrigin,
+    enabled: readsEnabled,
     operation: RULE_OPERATIONS.listRules,
     read: (endpoint, token, signal) => listRules(endpoint, bus, prefix, token, signal),
   });
-  const failure = listing.failure && readFailureState(listing.failure, connection, 'rule list');
-  const message = failure?.firstText ?? (listing.pastEnd ? 'No more rules.' : '');
+  const { items, currentPage, pagesCount, openEnd, pastEnd } = listing;
+  const page = useMemo(
+    () => ({ items, currentPage, pagesCount, openEnd, pastEnd, prefix }),
+    [items, currentPage, pagesCount, openEnd, pastEnd, prefix],
+  );
+  const [lastShown, setLastShown] = useState<typeof page>();
+  if (!holdListing && items !== undefined && page !== lastShown) {
+    setLastShown(page);
+  }
+  const shown = holdListing ? lastShown : page;
+  const loading = !holdListing && listing.loading;
+  const failure =
+    !holdListing && listing.failure ? readFailureState(listing.failure, connection, 'rule list') : undefined;
+  const message = failure?.firstText ?? (!holdListing && pastEnd ? 'No more rules.' : '');
 
   useEffect(() => {
     announce(message);
@@ -73,18 +93,16 @@ export function RulesTable({ connection, bus }: { connection: AreaConnection; bu
     <>
       <Table
         ariaLabels={{ tableLabel: 'Rules' }}
-        items={listing.items ?? []}
+        items={shown?.items ?? []}
         trackBy="Name"
         columnDefinitions={columns}
         wrapLines
-        loading={listing.loading}
+        loading={loading}
         loadingText="Loading rules"
         header={
           <Header
             variant="h2"
-            actions={
-              <Button ariaLabel="Refresh" iconName="refresh" loading={listing.loading} onClick={listing.refresh} />
-            }
+            actions={<Button ariaLabel="Refresh" iconName="refresh" loading={loading} onClick={listing.refresh} />}
           >
             Rules
           </Header>
@@ -104,10 +122,10 @@ export function RulesTable({ connection, bus }: { connection: AreaConnection; bu
         }
         pagination={
           <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            disabled={listing.loading}
+            currentPageIndex={shown?.currentPage ?? 1}
+            pagesCount={shown?.pagesCount ?? 1}
+            openEnd={shown?.openEnd ?? false}
+            disabled={loading}
             ariaLabels={{
               nextPageLabel: 'Next page',
               previousPageLabel: 'Previous page',
@@ -117,13 +135,13 @@ export function RulesTable({ connection, bus }: { connection: AreaConnection; bu
           />
         }
         empty={
-          failure === undefined ? (
-            <Box textAlign="center" variant="strong">
-              {listing.pastEnd ? 'No more rules.' : prefix === '' ? 'No rules' : 'No rules match'}
-            </Box>
-          ) : (
+          failure !== undefined ? (
             <ReadFailure state={failure} onRetry={listing.refresh} />
-          )
+          ) : shown !== undefined ? (
+            <Box textAlign="center" variant="strong">
+              {shown.pastEnd ? 'No more rules.' : shown.prefix === '' ? 'No rules' : 'No rules match'}
+            </Box>
+          ) : undefined
         }
       />
       {announcement}
