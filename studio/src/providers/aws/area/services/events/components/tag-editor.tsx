@@ -1,7 +1,7 @@
 import AttributeEditor from '@cloudscape-design/components/attribute-editor';
 import FormField from '@cloudscape-design/components/form-field';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
-import { useImperativeHandle, useRef, type Ref } from 'react';
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, type Ref } from 'react';
 
 import { MAX_TAGS, TAG_LIMIT_MESSAGE, type Tag, type validateTags } from '../../../components/tags';
 
@@ -19,10 +19,19 @@ interface TagEditorProps {
 
 export function TagEditor({ tags, errors, disabled = false, onChange, ref }: TagEditorProps) {
   const inputs = useRef(new Map<string, InputProps.Ref>());
-  useImperativeHandle(ref, () => ({
-    focus: (index, part) => inputs.current.get(`${String(index)}-${part}`)?.focus(),
-  }));
+  const addedRow = useRef<number>(undefined);
   const atLimit = tags.length >= MAX_TAGS;
+
+  const focus = useCallback((index: number, part: keyof Tag) => {
+    inputs.current.get(`${String(index)}-${part}`)?.focus();
+  }, []);
+  useImperativeHandle(ref, () => ({ focus }), [focus]);
+
+  useLayoutEffect(() => {
+    const index = addedRow.current;
+    addedRow.current = undefined;
+    if (index !== undefined && index < tags.length) focus(index, 'key');
+  }, [focus, tags.length]);
 
   function field(tag: Tag, index: number, part: keyof Tag) {
     const id = `${String(index)}-${part}`;
@@ -54,7 +63,9 @@ export function TagEditor({ tags, errors, disabled = false, onChange, ref }: Tag
         isItemRemovable={() => !disabled}
         additionalInfo={atLimit && errors?.limit === undefined ? TAG_LIMIT_MESSAGE : undefined}
         onAddButtonClick={() => {
-          if (!disabled && !atLimit) onChange([...tags, { key: '', value: '' }]);
+          if (disabled || atLimit) return;
+          addedRow.current = tags.length;
+          onChange([...tags, { key: '', value: '' }]);
         }}
         onRemoveButtonClick={({ detail }) => {
           if (!disabled) onChange(tags.filter((_, index) => index !== detail.itemIndex));

@@ -65,14 +65,16 @@ function click(name: string) {
 
 function fill() {
   enter('Event bus name', 'Orders');
-  enter('Description', 'Routes orders');
+  enter('Description - optional', 'Routes orders');
   click('Add tag');
   enter('Key', 'team');
   enter('Value', 'core');
 }
 
-it('shows the name’s rules at open with no tag row', () => {
+it('shows the name’s rules and optional fields at open with no tag row', () => {
   const { resources } = renderPage();
+  expect(field('Description - optional')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeVisible();
   expect(resources).toHaveBeenCalledWith({ word: 'event buses' });
   expect(field('Event bus name')).toHaveAccessibleDescription(
     '1 to 256 characters. Use letters, digits and . - _. The name cannot start with aws.',
@@ -120,7 +122,7 @@ it.each(failures)('keeps the entered form and stays on page after %s', async (fa
   await screen.findByText(reason, { exact: false });
   expect(screen.getByRole('alert')).toHaveTextContent(operation);
   expect(field('Event bus name')).toHaveValue('Orders');
-  expect(field('Description')).toHaveValue('Routes orders');
+  expect(field('Description - optional')).toHaveValue('Routes orders');
   expect(field('Key')).toHaveValue('team');
   expect(field('Value')).toHaveValue('core');
   expect(screen.getByTestId('path')).toHaveTextContent(createPath);
@@ -155,11 +157,11 @@ it('leaves at once when Cancel is pressed on an unchanged form', () => {
 
 it('keeps changes or leaves when the discard dialog is answered', async () => {
   renderPage();
-  enter('Description', 'Routes orders');
+  enter('Description - optional', 'Routes orders');
   click('Cancel');
   let dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
-  expect(field('Description')).toHaveValue('Routes orders');
+  expect(field('Description - optional')).toHaveValue('Routes orders');
   click('Cancel');
   dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));

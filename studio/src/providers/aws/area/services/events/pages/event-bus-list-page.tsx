@@ -22,8 +22,10 @@ import { BUS_OPERATIONS, listEventBuses } from '../bus-api';
 import { BUS_DELETE_UNAVAILABLE, DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
 import { DeleteEventBusDialog } from '../components/delete-event-bus-dialog';
 import { busPath, CREATE_EVENT_BUS_PATH, CREATE_EVENT_BUS_TITLE, EVENT_BUSES_TITLE } from '../format';
+import { useOverflowHint } from '../use-overflow-hint';
 
 const NO_MORE = 'No more event buses.';
+const OVERFLOW_HINT = 'Scroll sideways to see creation and last change times.';
 
 export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connection'>) {
   useShowsResources('event buses');
@@ -49,6 +51,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
   }, [listing.refresh]);
 
   const rows = listing.items ?? [];
+  const { tableSection, showOverflow } = useOverflowHint(!listing.loading && rows.length > 0);
   const selected = rows.find(({ Name }) => Name !== undefined && Name === selectedName);
   const deleteReason =
     selected?.Name === 'default' ? DEFAULT_BUS_DELETE_REASON : deleteUnavailable ? BUS_DELETE_UNAVAILABLE : undefined;
@@ -83,6 +86,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
     {
       id: 'description',
       header: 'Description',
+      minWidth: '24ch',
       cell: ({ Description }) => <ValueText kind="text" value={Description || '-'} />,
     },
     {
@@ -99,100 +103,104 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
 
   return (
     <>
-      <Table
-        variant="full-page"
-        items={rows}
-        trackBy="Name"
-        selectionType="single"
-        selectedItems={selected === undefined ? [] : [selected]}
-        onSelectionChange={({ detail }) => setSelectedName(detail.selectedItems[0]?.Name)}
-        isItemDisabled={({ Name }) => listing.loading || Name === undefined}
-        ariaLabels={{
-          selectionGroupLabel: 'Event bus selection',
-          itemSelectionLabel: (_, row) => row.Name ?? 'Unnamed event bus',
-        }}
-        columnDefinitions={columns}
-        wrapLines
-        loading={listing.loading}
-        loadingText="Loading event buses"
-        {...(rows.length > 0 && { skeleton: { totalRows: rows.length + 1 } })}
-        header={
-          <Header
-            variant="awsui-h1-sticky"
-            actions={
-              <SpaceBetween size="xs" direction="horizontal">
-                <Button
-                  ariaLabel="Refresh"
-                  iconName="refresh"
-                  loading={listing.loading}
-                  onClick={() => {
+      <div ref={tableSection}>
+        <Table
+          variant="full-page"
+          items={rows}
+          trackBy="Name"
+          selectionType="single"
+          selectedItems={selected === undefined ? [] : [selected]}
+          onSelectionChange={({ detail }) => setSelectedName(detail.selectedItems[0]?.Name)}
+          isItemDisabled={({ Name }) => listing.loading || Name === undefined}
+          ariaLabels={{
+            tableLabel: showOverflow ? `${EVENT_BUSES_TITLE}. ${OVERFLOW_HINT}` : EVENT_BUSES_TITLE,
+            selectionGroupLabel: 'Event bus selection',
+            itemSelectionLabel: (_, row) => row.Name ?? 'Unnamed event bus',
+          }}
+          columnDefinitions={columns}
+          wrapLines
+          loading={listing.loading}
+          loadingText="Loading event buses"
+          {...(rows.length > 0 && { skeleton: { totalRows: rows.length + 1 } })}
+          header={
+            <Header
+              variant="awsui-h1-sticky"
+              description={showOverflow ? OVERFLOW_HINT : undefined}
+              actions={
+                <SpaceBetween size="xs" direction="horizontal">
+                  <Button
+                    ariaLabel="Refresh"
+                    iconName="refresh"
+                    loading={listing.loading}
+                    onClick={() => {
+                      setSelectedName(undefined);
+                      listing.refresh();
+                    }}
+                  />
+                  <Button
+                    disabled={!canDelete}
+                    disabledReason={deleteReason ?? (selected === undefined ? 'Select an event bus.' : undefined)}
+                    onClick={() => {
+                      if (canDelete) setDeleteTarget(selected.Name);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                  <Button variant="primary" href={CREATE_EVENT_BUS_PATH} onFollow={handleFollow}>
+                    {CREATE_EVENT_BUS_TITLE}
+                  </Button>
+                </SpaceBetween>
+              }
+            >
+              {EVENT_BUSES_TITLE}
+            </Header>
+          }
+          filter={
+            <FormField
+              label="Filter by name"
+              description="Finds event buses whose name starts with the text. Upper and lower case are different."
+            >
+              <TextFilter
+                filteringText={filterText}
+                filteringClearAriaLabel="Clear the name filter"
+                onChange={({ detail }) => setFilterText(detail.filteringText)}
+                onDelayedChange={({ detail }) => {
+                  if (detail.filteringText !== prefix) {
                     setSelectedName(undefined);
-                    listing.refresh();
-                  }}
-                />
-                <Button
-                  disabled={!canDelete}
-                  disabledReason={deleteReason ?? (selected === undefined ? 'Select an event bus.' : undefined)}
-                  onClick={() => {
-                    if (canDelete) setDeleteTarget(selected.Name);
-                  }}
-                >
-                  Delete
-                </Button>
-                <Button variant="primary" href={CREATE_EVENT_BUS_PATH} onFollow={handleFollow}>
-                  {CREATE_EVENT_BUS_TITLE}
-                </Button>
-              </SpaceBetween>
-            }
-          >
-            {EVENT_BUSES_TITLE}
-          </Header>
-        }
-        filter={
-          <FormField
-            label="Filter by name"
-            description="Finds event buses whose name starts with the text. Upper and lower case are different."
-          >
-            <TextFilter
-              filteringText={filterText}
-              filteringClearAriaLabel="Clear the name filter"
-              onChange={({ detail }) => setFilterText(detail.filteringText)}
-              onDelayedChange={({ detail }) => {
-                if (detail.filteringText !== prefix) {
-                  setSelectedName(undefined);
-                  setPrefix(detail.filteringText);
-                }
+                    setPrefix(detail.filteringText);
+                  }
+                }}
+              />
+            </FormField>
+          }
+          pagination={
+            <Pagination
+              currentPageIndex={listing.currentPage}
+              pagesCount={listing.pagesCount}
+              openEnd={listing.openEnd}
+              disabled={listing.loading}
+              ariaLabels={{
+                nextPageLabel: 'Next page',
+                previousPageLabel: 'Previous page',
+                pageLabel: (page) => `Page ${String(page)}`,
+              }}
+              onChange={({ detail }) => {
+                setSelectedName(undefined);
+                listing.goToPage(detail.currentPageIndex);
               }}
             />
-          </FormField>
-        }
-        pagination={
-          <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            disabled={listing.loading}
-            ariaLabels={{
-              nextPageLabel: 'Next page',
-              previousPageLabel: 'Previous page',
-              pageLabel: (page) => `Page ${String(page)}`,
-            }}
-            onChange={({ detail }) => {
-              setSelectedName(undefined);
-              listing.goToPage(detail.currentPageIndex);
-            }}
-          />
-        }
-        empty={
-          failure !== undefined ? (
-            <ReadFailure state={failure} onRetry={listing.refresh} />
-          ) : (
-            <Box textAlign="center" variant="strong">
-              {listing.pastEnd ? NO_MORE : prefix === '' ? 'No event buses' : 'No event buses match'}
-            </Box>
-          )
-        }
-      />
+          }
+          empty={
+            failure !== undefined ? (
+              <ReadFailure state={failure} onRetry={listing.refresh} />
+            ) : (
+              <Box textAlign="center" variant="strong">
+                {listing.pastEnd ? NO_MORE : prefix === '' ? 'No event buses' : 'No event buses match'}
+              </Box>
+            )
+          }
+        />
+      </div>
       {engineOrigin !== undefined && deleteTarget !== undefined && (
         <DeleteEventBusDialog
           endpoint={engineOrigin}

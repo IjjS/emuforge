@@ -99,6 +99,35 @@ it('shows the bus values, links, resource notice word and create action', async 
   expect(create).toHaveAttribute('href', '/aws/events/event-buses/create');
 });
 
+it.each([
+  [390, true],
+  [1280, false],
+] as const)('offers a scroll hint only when the bus table overflows at width %s', async (width, overflows) => {
+  const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+    return this.querySelector(':scope > table') ? 760 : 0;
+  });
+  const clientWidth = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+    return this.querySelector(':scope > table') ? width : 0;
+  });
+  try {
+    read.mockResolvedValueOnce({ items: [{ Name: 'orders', Description: 'Routes orders' }] });
+    const { table } = renderPage();
+    await waitFor(() => expect(table.findRows()).toHaveLength(1));
+    const hint = 'Scroll sideways to see creation and last change times.';
+    const nativeTable = required(table.find('table')).getElement();
+    if (overflows) {
+      expect(screen.getByText(hint)).toBeVisible();
+      expect(nativeTable).toHaveAccessibleName(`Event buses. ${hint}`);
+    } else {
+      expect(screen.queryByText(hint)).toBeNull();
+      expect(nativeTable).toHaveAccessibleName('Event buses');
+    }
+  } finally {
+    scrollWidth.mockRestore();
+    clientWidth.mockRestore();
+  }
+});
+
 it('shows loading and reads a settled filter from the first page', async () => {
   read
     .mockResolvedValueOnce({ items: [{ Name: 'default' }], next: 'more' })
