@@ -97,17 +97,18 @@ const optionDescription = (value: string) => option(value)?.findDescription()?.g
 const trigger = () => select().findTrigger().getElement();
 
 function expectOptions(values: readonly string[], fixedLabel?: string) {
-  const expected = values.map((value) => {
+  expect(select().findDropdown().findOptions()).toHaveLength(values.length);
+  let previous: HTMLElement | undefined;
+  for (const value of values) {
     const item = option(value);
-    expect(item?.findLabel().getElement()).toHaveTextContent(value === '' ? (fixedLabel ?? '') : value);
-    return item?.getElement();
-  });
-  expect(
-    select()
-      .findDropdown()
-      .findOptions()
-      .map((item) => item.getElement()),
-  ).toEqual(expected);
+    if (item === null) throw new Error(`No option for value ${JSON.stringify(value)}`);
+    expect(item.findLabel().getElement()).toHaveTextContent(value === '' ? (fixedLabel ?? '') : value);
+    const element = item.getElement();
+    if (previous !== undefined) {
+      expect(previous.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    previous = element;
+  }
 }
 
 beforeEach(() => {
