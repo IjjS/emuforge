@@ -168,7 +168,13 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
             {...(listing.items === undefined ? {} : { counter: `(${String(rows.length)})` })}
             actions={
               <SpaceBetween size="xs" direction="horizontal">
-                <Button ariaLabel="Refresh" iconName="refresh" loading={listing.loading} onClick={handleRefresh} />
+                <Button
+                  ariaLabel="Refresh"
+                  iconName="refresh"
+                  loading={listing.loading}
+                  loadingText="Refreshing alarms"
+                  onClick={handleRefresh}
+                />
                 {canEdit ? (
                   <Button href={editAlarmPath(selectedName)} onFollow={handleFollow}>
                     Edit

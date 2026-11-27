@@ -172,6 +172,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
                     disabled={engineOrigin === undefined || actions.unavailable}
                     disabledReason={actions.disabledReason}
                     loading={actions.pending}
+                    loadingText={alarm.data.ActionsEnabled ? 'Turning alarm actions off' : 'Turning alarm actions on'}
                     onClick={() => void actions.toggle()}
                   >
                     {actions.label}

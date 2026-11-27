@@ -378,9 +378,9 @@ it('shows Alarm not found without a result if confirmation finds the alarm gone'
 });
 
 it.each([
-  ['Turn actions off', true, 'DisableAlarmActions'],
-  ['Turn actions on', false, 'EnableAlarmActions'],
-])('keeps focus on %s while pending and after refusal', async (label, enabled, operation) => {
+  ['Turn actions off', true, 'DisableAlarmActions', 'Turning alarm actions off'],
+  ['Turn actions on', false, 'EnableAlarmActions', 'Turning alarm actions on'],
+])('keeps focus on %s while pending and after refusal', async (label, enabled, operation, loadingText) => {
   const user = userEvent.setup();
   const written = deferred<undefined>();
   read.mockResolvedValueOnce(alarm(enabled));
@@ -397,6 +397,9 @@ it.each([
   expect(button).toHaveFocus();
   expect(button).toHaveAttribute('aria-disabled', 'true');
   expect(button).not.toBeDisabled();
+  expect(
+    await screen.findByText(loadingText, { selector: '[aria-live="polite"]' }, { timeout: 3000 }),
+  ).toBeInTheDocument();
   await user.keyboard('{Enter}');
   expect(changeActions).toHaveBeenCalledExactlyOnceWith(engine, name, !enabled, expect.any(AbortSignal));
   await act(async () =>

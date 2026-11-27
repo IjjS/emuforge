@@ -83,6 +83,7 @@ export function DeleteAlarmDialog({
               variant="primary"
               disabled={disabled || pending}
               loading={pending}
+              loadingText="Deleting alarm"
               onClick={() => void handleConfirm()}
             >
               Delete

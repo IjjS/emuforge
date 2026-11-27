@@ -125,6 +125,7 @@ export function SetStateDialog({
               variant="primary"
               disabled={disabled}
               loading={pending}
+              loadingText="Setting alarm state"
               onClick={() => void handleConfirm()}
             >
               Set state
