@@ -137,15 +137,19 @@ it.each([
   expect(refreshHistory).not.toHaveBeenCalled();
 });
 
-it('reports a 501 and marks the operation unavailable', async () => {
-  write.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'DisableAlarmActions' }));
-  const { toggle, result, show } = open(true);
+it.each([
+  ['DisableAlarmActions', true],
+  ['EnableAlarmActions', false],
+])('reports a 501 and marks %s unavailable', async (operation, enabled) => {
+  write.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  const { toggle, result, show } = open(enabled);
   await toggle();
-  expectResult(show, 'info', 'The emulator answered 501 Not Implemented for DisableAlarmActions.');
+  expectResult(show, 'info', `The emulator answered 501 Not Implemented for ${operation}.`);
   expect(show.mock.calls[0]?.[0][0].header).toBe('Not implemented by the emulator');
   expect(result.current.unavailable).toBe(true);
+  expect(result.current.disabledReason).toBe(`Not implemented by the emulator (${operation}).`);
   await toggle();
-  expect(write).toHaveBeenCalledOnce();
+  expect(write).toHaveBeenCalledExactlyOnceWith(endpoint, name, !enabled, expect.any(AbortSignal));
 });
 
 it('does not send a second write while writing or awaiting confirmation', async () => {

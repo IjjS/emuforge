@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate, type NavigateFunction } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -106,23 +106,25 @@ function open(alarmName = name) {
   };
 }
 
-function setStateControl() {
+function headerControl(label: string) {
   const actions = page.findContentLayout()?.findHeader()?.findHeader()?.findActions();
-  const control = actions
-    ?.findAllButtons()
-    .find((item) => item.findTextRegion()?.getElement().textContent === 'Set state');
-  if (!control) throw new Error('Set state button missing');
+  const control = actions?.findAllButtons().find((button) => {
+    const name = button.getElement().getAttribute('aria-label') ?? button.findTextRegion()?.getElement().textContent;
+    return name === label;
+  });
+  if (!control) throw new Error(`Alarm header control is missing: ${label}`);
   return control.getElement();
 }
 
 async function openState() {
-  const trigger = await waitFor(setStateControl);
+  const trigger = await waitFor(() => headerControl('Set state'));
   trigger.focus();
   fireEvent.click(trigger);
-  await screen.findByRole('dialog');
-  const modal = page.findModal();
-  if (!modal) throw new Error('Set state dialog missing');
-  return modal;
+  return waitFor(() => {
+    const modal = page.findModal();
+    if (!modal?.isVisible()) throw new Error('Set state dialog missing');
+    return modal;
+  });
 }
 
 async function setState() {
@@ -154,14 +156,25 @@ function summaryValue(label: string) {
 }
 
 function refreshAlarm() {
-  const button = page.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton();
-  if (!button) throw new Error('Alarm refresh control missing');
-  button.click();
+  fireEvent.click(headerControl('Refresh'));
+}
+
+async function expectAlarmNotFound() {
+  await waitFor(() => {
+    const heading = page.findContentLayout()?.findContent().findContainer()?.findContent().findBox()?.getElement();
+    expect(heading).toBeVisible();
+    expect(heading?.tagName).toBe('H2');
+    expect(heading?.textContent).toBe('Alarm not found');
+  });
+}
+
+function historySection() {
+  return page.findContentLayout()?.findContent().find('[aria-label="History"]');
 }
 
 async function expectHistory(type: string, summary: string) {
   await waitFor(() => {
-    const table = page.findTable();
+    const table = historySection()?.findTable();
     expect(table?.findBodyCell(1, 2)?.getElement().textContent).toBe(type);
     expect(table?.findBodyCell(1, 3)?.getElement().textContent).toBe(summary);
   });
@@ -178,7 +191,7 @@ it('preserves the alarm name in a span that inherits the page heading’s typogr
   const exactName = ' checkout  alarm\n ';
   read.mockResolvedValueOnce(alarm(true, 'metric', exactName));
   open(exactName);
-  await screen.findByRole('button', { name: 'Set state' });
+  await waitFor(() => headerControl('Set state'));
   const heading = page.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
   const nameWrapper = heading?.firstElementChild;
   expect(heading?.textContent).toBe(exactName);
@@ -192,7 +205,9 @@ it('keeps the success sentence whole and focuses the existing History section fr
   await waitFor(() => expect(findFlashContent()).toEqual([stateFlash]));
   const flashContent = page.findFlashbar()?.findItemsByType('success')[0]?.findContent();
   const link = flashContent?.findLink()?.getElement();
-  const section = screen.getByRole('region', { name: 'History' });
+  const section = historySection()?.getElement();
+  if (!section) throw new Error('History section missing');
+  expect(section).toHaveRole('region');
   const scrollIntoView = vi.fn();
   Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });
   expect(link).toHaveAccessibleName('View history');
@@ -208,7 +223,7 @@ it('keeps the success sentence whole and focuses the existing History section fr
 it('disables Set state on a log alarm and explains why', async () => {
   read.mockResolvedValueOnce(alarm(true, 'log'));
   open();
-  const button = await screen.findByRole('button', { name: 'Set state' });
+  const button = await waitFor(() => headerControl('Set state'));
   expect(button).toHaveAttribute('aria-disabled', 'true');
   expect(button).toHaveAccessibleDescription('The emulator does not set the state of a log alarm.');
   fireEvent.click(button);
@@ -221,10 +236,10 @@ it.each<AlarmType>(['metric', 'metric-math', 'composite', 'log'])(
   async (type) => {
     read.mockResolvedValueOnce(alarm(true, type)).mockResolvedValueOnce(alarm(false, type));
     open();
-    const off = await screen.findByRole('button', { name: 'Turn actions off' });
+    const off = await waitFor(() => headerControl('Turn actions off'));
     expect(off).toBeEnabled();
     fireEvent.click(off);
-    expect(await screen.findByRole('button', { name: 'Turn actions on' })).toBeEnabled();
+    expect(await waitFor(() => headerControl('Turn actions on'))).toBeEnabled();
     expect(changeActions).toHaveBeenCalledExactlyOnceWith(engine, name, false, expect.any(AbortSignal));
   },
 );
@@ -260,7 +275,7 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
   }
   await act(async () => freshAlarm.resolve(order === 'alarm missing' ? undefined : current));
   if (order === 'alarm missing') {
-    expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
+    await expectAlarmNotFound();
   } else {
     await waitFor(() =>
       expect(summaryValue('State reason')?.getElement()).toHaveTextContent('Set by hand in EmuForge Studio'),
@@ -287,15 +302,19 @@ it.each([
   read.mockResolvedValueOnce(alarm(true)).mockResolvedValueOnce(alarm(false));
   open();
   await expectHistory('State', 'First history');
-  page.findTable()?.findPagination()?.findNextPageButton().click();
+  historySection()?.findTable()?.findPagination()?.findNextPageButton().click();
   await expectHistory('Action', 'Older history');
   expect(history).toHaveBeenLastCalledWith(engine, name, 'page-two', expect.any(AbortSignal));
-  expect(page.findTable()?.findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName('History page 2');
+  expect(historySection()?.findTable()?.findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName(
+    'History page 2',
+  );
   if (operation === 'Set state') await setState();
-  else fireEvent.click(screen.getByRole('button', { name: operation }));
+  else fireEvent.click(headerControl(operation));
   await expectHistory(type, 'New history');
   expect(history).toHaveBeenLastCalledWith(engine, name, undefined, expect.any(AbortSignal));
-  expect(page.findTable()?.findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName('History page 1');
+  expect(historySection()?.findTable()?.findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName(
+    'History page 1',
+  );
 });
 
 it.each(['history first', 'alarm first', 'history fails'])('keeps the actions result with %s', async (order) => {
@@ -305,7 +324,7 @@ it.each(['history first', 'alarm first', 'history fails'])('keeps the actions re
   history.mockResolvedValueOnce(historyPage('State', 'Opening history')).mockReturnValueOnce(freshHistory.promise);
   open();
   await expectHistory('State', 'Opening history');
-  fireEvent.click(await screen.findByRole('button', { name: 'Turn actions off' }));
+  fireEvent.click(await waitFor(() => headerControl('Turn actions off')));
   await waitFor(() => expect(history).toHaveBeenCalledTimes(2));
   expect(findFlashContent()).toEqual([]);
   if (order === 'history first') {
@@ -325,7 +344,9 @@ it.each(['history first', 'alarm first', 'history fails'])('keeps the actions re
         new RequestError({ kind: 'access-denied', operation: 'DescribeAlarmHistory', message: 'History refused' }),
       ),
     );
-    await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('History refused'));
+    await waitFor(() =>
+      expect(historySection()?.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('History refused'),
+    );
   }
   expect(findFlashContent()).toEqual([actionsResult]);
   expect(summaryValue('Actions')?.getElement().textContent).toBe('Off');
@@ -338,7 +359,7 @@ it.each(['before', 'after'])('drops the older alarm read when it answers %s the 
   read.mockResolvedValueOnce(alarm(true)).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
   changeActions.mockReturnValueOnce(written.promise);
   open();
-  const button = await screen.findByRole('button', { name: 'Turn actions off' });
+  const button = await waitFor(() => headerControl('Turn actions off'));
   refreshAlarm();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   const oldSignal = read.mock.calls[1]?.[2];
@@ -365,11 +386,11 @@ it.each(['dialog open', 'switch pending'])('resets controls on a different name 
   if (mode === 'dialog open') {
     expect((await openState()).getElement()).toBeVisible();
   } else {
-    fireEvent.click(await screen.findByRole('button', { name: 'Turn actions off' }));
+    fireEvent.click(await waitFor(() => headerControl('Turn actions off')));
     expect(changeActions).toHaveBeenCalledOnce();
   }
   act(() => follow('second-alarm'));
-  expect(await screen.findByRole('button', { name: 'Turn actions on' })).toBeEnabled();
+  expect(await waitFor(() => headerControl('Turn actions on'))).toBeEnabled();
   expect(page.findModal()).toBeNull();
   if (mode === 'switch pending') {
     expect(changeActions.mock.calls[0]?.[3].aborted).toBe(true);
@@ -383,8 +404,8 @@ it.each(['dialog open', 'switch pending'])('resets controls on a different name 
 it('shows Alarm not found without a result if confirmation finds the alarm gone', async () => {
   read.mockResolvedValueOnce(alarm(true)).mockResolvedValueOnce(undefined);
   open();
-  fireEvent.click(await screen.findByRole('button', { name: 'Turn actions off' }));
-  expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
+  fireEvent.click(await waitFor(() => headerControl('Turn actions off')));
+  await expectAlarmNotFound();
   expect(findFlashContent()).toEqual([]);
 });
 
@@ -397,20 +418,19 @@ it.each([
   read.mockResolvedValueOnce(alarm(enabled));
   changeActions.mockReturnValueOnce(written.promise);
   open();
-  const button = await waitFor(() => {
-    const actions = page.findContentLayout()?.findHeader()?.findHeader()?.findActions();
-    const control = actions?.findAllButtons().find((item) => item.getElement().textContent?.trim() === label);
-    if (!control) throw new Error(`Missing ${label} button`);
-    return control.getElement();
-  });
+  const button = await waitFor(() => headerControl(label));
   button.focus();
   await user.keyboard('{Enter}');
   expect(button).toHaveFocus();
   expect(button).toHaveAttribute('aria-disabled', 'true');
   expect(button).not.toBeDisabled();
-  expect(
-    await screen.findByText(loadingText, { selector: '[aria-live="polite"]' }, { timeout: 3000 }),
-  ).toBeInTheDocument();
+  await waitFor(
+    () =>
+      expect(page.findAll('[aria-live="polite"]').map((region) => region.getElement().textContent)).toContain(
+        loadingText,
+      ),
+    { timeout: 3000 },
+  );
   await user.keyboard('{Enter}');
   expect(changeActions).toHaveBeenCalledExactlyOnceWith(engine, name, !enabled, expect.any(AbortSignal));
   await act(async () =>
@@ -421,16 +441,21 @@ it.each([
   expect(button).not.toHaveAttribute('aria-disabled', 'true');
 });
 
-it('keeps a switch that answered 501 in the header, unavailable', async () => {
-  changeActions.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'DisableAlarmActions' }));
+it.each([
+  ['Turn actions off', true, 'DisableAlarmActions'],
+  ['Turn actions on', false, 'EnableAlarmActions'],
+])('keeps %s in the header and marks it unavailable after a 501', async (label, enabled, operation) => {
+  read.mockResolvedValueOnce(alarm(enabled));
+  changeActions.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
   open();
-  const button = await screen.findByRole('button', { name: 'Turn actions off' });
+  const button = await waitFor(() => headerControl(label));
   fireEvent.click(button);
-  await waitFor(() => expect(button).toHaveAttribute('aria-disabled', 'true'));
-  expect(button).toHaveAccessibleDescription('Not implemented by the emulator (DisableAlarmActions).');
-  expect(findFlashContent()).toEqual(['The emulator answered 501 Not Implemented for DisableAlarmActions.']);
-  fireEvent.click(button);
-  expect(changeActions).toHaveBeenCalledOnce();
+  await waitFor(() => expect(headerControl(label)).toHaveAttribute('aria-disabled', 'true'));
+  expect(headerControl(label)).toBeVisible();
+  expect(headerControl(label)).toHaveAccessibleDescription(`Not implemented by the emulator (${operation}).`);
+  expect(findFlashContent()).toEqual([`The emulator answered 501 Not Implemented for ${operation}.`]);
+  fireEvent.click(headerControl(label));
+  expect(changeActions).toHaveBeenCalledExactlyOnceWith(engine, name, !enabled, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledOnce();
 });
 
@@ -455,7 +480,7 @@ it.each(['Cancel', 'Escape'])(
       first?.findFooter()?.findAllButtons()[0]?.click();
     }
     expect(page.findModal()).toBeNull();
-    expect(setStateControl()).toHaveFocus();
+    expect(headerControl('Set state')).toHaveFocus();
     const description = page.findContentLayout()?.findHeader()?.findHeader()?.findDescription();
     expect(description?.getElement()).toBeVisible();
     expect(description?.getElement().textContent).toBe('Not implemented by the emulator (SetAlarmState).');
@@ -490,7 +515,7 @@ it('keeps the new first history page and its token when the earlier request answ
   await expectHistory('State', 'New first page');
   await act(async () => old.resolve(historyPage('State', 'Stale page', 'stale-token')));
   await expectHistory('State', 'New first page');
-  const pagination = page.findTable()?.findPagination();
+  const pagination = historySection()?.findTable()?.findPagination();
   expect(pagination?.findCurrentPage().getElement()).toHaveAccessibleName('History page 1');
   pagination?.findNextPageButton().click();
   await expectHistory('Configuration', 'Next fresh page');
