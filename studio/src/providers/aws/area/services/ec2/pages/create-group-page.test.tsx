@@ -10,8 +10,10 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as network from '../../../lib/ec2-network-choices';
+import * as choices from '../choices-api';
 import * as groups from '../group-api';
 import * as forms from '../group-form-api';
+import { EC2_KEYS } from '../queries';
 
 // S5 rendered inside the area's layout, with the calls of `lib/ec2-network-choices.ts`, `group-form-api.ts` and, for the group's
 // page the create leads to, `group-api.ts` answered by the case (their own tests prove the calls against a fake
@@ -20,6 +22,11 @@ import * as forms from '../group-form-api';
 vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/ec2-network-choices')>();
   return { ...real, listVpcChoices: vi.fn() };
+});
+
+vi.mock('../choices-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../choices-api')>();
+  return { ...real, getDefaultVpc: vi.fn() };
 });
 
 vi.mock('../group-api', async (importOriginal) => {
@@ -110,7 +117,7 @@ function open(path = CREATE_PATH) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return router;
+  return Object.assign(router, { client });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -127,6 +134,7 @@ const VPCS: network.VpcChoice[] = [
 
 beforeEach(() => {
   vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: VPCS });
+  vi.mocked(choices.getDefaultVpc).mockResolvedValue(VPCS[0]);
   vi.mocked(forms.createSecurityGroup).mockResolvedValue('sg-0new');
   vi.mocked(groups.getSecurityGroup).mockResolvedValue({
     found: true,
@@ -137,6 +145,14 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The form as a user reads and fills it.
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
 
 const PAGE = createWrapper(document.body);
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
@@ -202,7 +218,7 @@ describe('Create security group', () => {
     expect(inputOf('Description').value).toBe('');
     expect(constraintOf('Name')).toBe(NAME_RULE);
     expect(constraintOf('Description')).toBe(DESCRIPTION_RULE);
-    expect(text(vpcSelect().findTrigger().getElement())).toBe('The default VPC');
+    expect(text(vpcSelect().findTrigger().getElement())).toContain('The default VPC');
     expect(network.listVpcChoices).not.toHaveBeenCalled();
   });
 
@@ -253,7 +269,9 @@ describe('Create security group', () => {
     expect(shown).toContain('vpc-d');
     expect(shown).toContain('172.31.0.0/16');
     expect(shown).toContain('Default');
-    expect(text(select.findDropdown().findOptionByValue('vpc-x')?.getElement())).not.toContain('Default');
+    const other = text(select.findDropdown().findOptionByValue('vpc-x')?.getElement());
+    expect(other).toContain('10.0.0.0/16');
+    expect(other).not.toContain('Default');
     select.selectOptionByValue('vpc-x');
     submit();
     await waitFor(() => {
@@ -264,6 +282,104 @@ describe('Create security group', () => {
       description: 'Web servers',
       vpcId: 'vpc-x',
     });
+  });
+
+  it('describes the default VPC before and after the read returns its ID', async () => {
+    const read = deferred<network.VpcChoice | undefined>();
+    vi.mocked(choices.getDefaultVpc).mockReturnValue(read.promise);
+    open();
+    await opened();
+    expect(screen.getByText('The emulator creates the group in its default VPC.')).toBeVisible();
+
+    await act(async () => read.resolve(VPCS[0]));
+    expect(await screen.findByText('The emulator creates the group in its default VPC, vpc-d.')).toBeVisible();
+    expect(choices.getDefaultVpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the VPC choices and submission available when the default VPC read answers 501', async () => {
+    vi.mocked(choices.getDefaultVpc).mockRejectedValue(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeVpcs' }),
+    );
+    open();
+    await opened();
+    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(screen.getByText(/501 Not Implemented for DescribeVpcs/)).toBeVisible();
+    expect(screen.getByText('The emulator creates the group in its default VPC.')).toBeVisible();
+    const select = vpcSelect();
+    select.openDropdown();
+    await waitFor(() => expect(select.findDropdown().findOptionByValue('vpc-x')).not.toBeNull());
+    select.selectOptionByValue('vpc-x');
+    fill();
+    submit();
+
+    expect(await screen.findByText('Created security group web')).toBeVisible();
+    expect(forms.createSecurityGroup).toHaveBeenCalledWith(
+      ENGINE,
+      { name: 'web', description: 'Web servers', vpcId: 'vpc-x' },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('requires a key for a tag value and sends the group once with the corrected tag', async () => {
+    open();
+    await opened();
+    fill();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value: 'core' } });
+    submit();
+    expect(screen.getByText('Enter a key.')).toBeVisible();
+    expect(forms.createSecurityGroup).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: 'team' } });
+    submit();
+    expect(await screen.findByText('Created security group web')).toBeVisible();
+    expect(forms.createSecurityGroup).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      { name: 'web', description: 'Web servers', tags: [{ key: 'team', value: 'core' }] },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('keeps the new group and result when its rules answer before its detail and the old list answers last', async () => {
+    const list = deferred<groups.GroupPage>();
+    const detail = deferred<groups.GroupRead>();
+    const rules = deferred<groups.RulePage>();
+    const router = open();
+    await opened();
+    let listSignal: AbortSignal | undefined;
+    const oldRead = router.client
+      .fetchQuery({
+        queryKey: EC2_KEYS.securityGroups(''),
+        queryFn: ({ signal }) => {
+          listSignal = signal;
+          return list.promise;
+        },
+      })
+      .catch(() => undefined);
+    vi.mocked(groups.getSecurityGroup).mockReturnValue(detail.promise);
+    vi.mocked(groups.listSecurityGroupRules).mockReturnValue(rules.promise);
+    fill();
+    submit();
+    expect(await screen.findByText('Created security group web')).toBeVisible();
+    expect(listSignal?.aborted).toBe(true);
+    await waitFor(() => expect(groups.listSecurityGroupRules).toHaveBeenCalled());
+    await act(async () => rules.resolve({ rules: [] }));
+    await act(async () =>
+      detail.resolve({
+        found: true,
+        group: { id: 'sg-0new', name: 'web', description: 'Web servers', vpcId: 'vpc-d' },
+      }),
+    );
+    expect(await screen.findByText('No rules')).toBeVisible();
+
+    await act(async () => {
+      list.resolve({ groups: [] });
+      await oldRead;
+    });
+    expect(router.state.location.pathname).toBe('/aws/ec2/security-groups/group/sg-0new');
+    expect(screen.getByText('Created security group web')).toBeVisible();
+    expect(screen.getByText('Web servers')).toBeVisible();
   });
 
   it('a refusal → the form stays with the code and message and every entry', async () => {

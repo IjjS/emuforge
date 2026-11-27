@@ -1,4 +1,5 @@
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
@@ -6,18 +7,21 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ChoiceSelect } from '../../../components/choice-select';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, readFailureState } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { failureOf } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
 import type { VpcChoice } from '../../../lib/ec2-network-choices';
-import { vpcChoices } from '../choices-queries';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
+import { useDefaultVpc, vpcChoices } from '../choices-queries';
 import { CREATE_SECURITY_GROUP_TITLE, securityGroupHref, SECURITY_GROUPS_PATH, SECURITY_GROUPS_WORD } from '../format';
 import { GROUP_DESCRIPTION_RULE, groupFormMessages, GROUP_NAME_RULE, type GroupFormMessages } from '../group-form';
 import { GROUP_FORM_OPERATIONS, type NewSecurityGroup } from '../group-form-api';
@@ -35,13 +39,14 @@ interface GroupFormState {
   name: string;
   description: string;
   vpc: VpcChoice | undefined;
+  tags: TagRow[];
 }
 
-const START: GroupFormState = { name: '', description: '', vpc: undefined };
+const START: GroupFormState = { name: '', description: '', vpc: undefined, tags: [] };
 
 /** Whether the form differs from how it opened (`aws-area.md`, entry 5). */
 function differs(form: GroupFormState): boolean {
-  return form.name !== '' || form.description !== '' || form.vpc !== undefined;
+  return form.name !== '' || form.description !== '' || form.vpc !== undefined || form.tags.length > 0;
 }
 
 function messagesOf(form: GroupFormState): GroupFormMessages {
@@ -49,11 +54,12 @@ function messagesOf(form: GroupFormState): GroupFormMessages {
 }
 
 /** What `CreateSecurityGroup` is sent for the form: the VPC only when one was chosen. */
-function groupOf(form: GroupFormState): NewSecurityGroup {
+function groupOf(form: GroupFormState, tags: TagRow[]): NewSecurityGroup {
   const group: NewSecurityGroup = { name: form.name, description: form.description };
   if (form.vpc !== undefined) {
     group.vpcId = form.vpc.id;
   }
+  if (tags.length > 0) group.tags = tags;
   return group;
 }
 
@@ -68,6 +74,13 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
   const flash = usePageFlash();
   const engineOrigin = connection.engineOrigin;
   const create = useCreateSecurityGroup(engineOrigin);
+  const defaultVpc = useDefaultVpc(engineOrigin);
+  const defaultVpcId = defaultVpc.vpc?.id;
+  const defaultVpcDescription =
+    defaultVpcId === undefined
+      ? 'The emulator creates the group in its default VPC.'
+      : `The emulator creates the group in its default VPC, ${defaultVpcId}.`;
+  const vpcFailure = defaultVpc.failure && readFailureState(defaultVpc.failure, connection, 'default VPC');
 
   const [form, setForm] = useState<GroupFormState>(START);
   const [tried, setTried] = useState(false);
@@ -76,6 +89,7 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
 
   const nameRef = useRef<InputProps.Ref>(null);
   const descriptionRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -100,6 +114,7 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
   }, []);
 
   const messages = tried ? messagesOf(form) : {};
+  const tags = checkTagRows(form.tags);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -115,6 +130,10 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
     }
     if (found.description !== undefined) {
       descriptionRef.current?.focus();
+      return;
+    }
+    if (tags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(tags.firstInvalid);
       return;
     }
     const operation = GROUP_FORM_OPERATIONS.createSecurityGroup;
@@ -133,7 +152,7 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
       setPending(false);
     };
     try {
-      const id = await create(groupOf(form), controller.signal);
+      const id = await create(groupOf(form, tags.tags), controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -229,14 +248,34 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
                     connection={connection}
                     things="VPCs"
                     fixed="The default VPC"
+                    fixedDescription={defaultVpcDescription}
                     value={form.vpc}
                     onChange={(vpc) => {
                       change({ vpc });
                     }}
                   />
                 </FormField>
+                {vpcFailure !== undefined && (
+                  <SpaceBetween size="xxs">
+                    <StatusIndicator type={vpcFailure.type}>{vpcFailure.first}</StatusIndicator>
+                    {vpcFailure.detail !== undefined && <Box variant="small">{vpcFailure.detail}</Box>}
+                    {defaultVpc.failure?.kind !== 'not-implemented' && (
+                      <Button variant="inline-link" formAction="none" onClick={defaultVpc.retry}>
+                        Retry
+                      </Button>
+                    )}
+                  </SpaceBetween>
+                )}
               </SpaceBetween>
             </Container>
+
+            <TagsField
+              ref={tagsRef}
+              rows={form.tags}
+              errors={tried ? tags.errors : undefined}
+              onChange={(rows) => change({ tags: rows })}
+              disabled={pending}
+            />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>

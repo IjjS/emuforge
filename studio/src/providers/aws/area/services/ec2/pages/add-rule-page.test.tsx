@@ -12,6 +12,7 @@ import AwsArea from '../../../index';
 import * as choices from '../choices-api';
 import * as groups from '../group-api';
 import * as forms from '../group-form-api';
+import { EC2_KEYS } from '../queries';
 
 // S7 rendered inside the area's layout, with the calls of `group-api.ts` (the group's read, and the group's page the
 // add leads to), `choices-api.ts` and `group-form-api.ts` answered by the case (their own tests prove the calls
@@ -110,7 +111,7 @@ function open(path = ADD_RULE_PATH) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return router;
+  return Object.assign(router, { client });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -132,7 +133,7 @@ beforeEach(() => {
         filters.vpcId === 'vpc-x'
           ? [
               { id: 'sg-1', name: 'web' },
-              { id: 'sg-2', name: 'app' },
+              { id: 'sg-2', name: 'app', description: 'Application servers' },
             ]
           : [{ id: 'sg-other', name: 'elsewhere' }],
     }),
@@ -142,6 +143,14 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The form as a user reads and fills it.
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
 
 const PAGE = createWrapper(document.body);
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
@@ -232,7 +241,7 @@ describe('Add rule', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Add rule' })).toBeInTheDocument();
     expect(groups.getSecurityGroup).toHaveBeenCalledWith(ENGINE, 'sg-1', expect.anything());
     expect(radio('Direction', 'inbound')?.getElement()).toBeChecked();
-    expect(text(selectIn('Protocol').findTrigger().getElement())).toBe('TCP');
+    expect(text(selectIn('Protocol').findTrigger().getElement())).toContain('TCP');
     expect(inputOf('First port').value).toBe('');
     expect(inputOf('Last port - optional').value).toBe('');
     expect(constraintOf('First port')).toBe(FIRST_RULE);
@@ -256,6 +265,9 @@ describe('Add rule', () => {
     await waitFor(() => {
       expect(select.findDropdown().findOptionByValue('sg-2')).not.toBeNull();
     });
+    const peer = text(select.findDropdown().findOptionByValue('sg-2')?.getElement());
+    expect(peer).toContain('app');
+    expect(peer).toContain('sg-2 · Application servers');
     expect(select.findDropdown().findOptionByValue('sg-other')).toBeNull();
     expect(vi.mocked(choices.listGroupChoices).mock.calls[0]?.[1]).toEqual({ vpcId: 'vpc-x' });
   });
@@ -270,6 +282,87 @@ describe('Add rule', () => {
     }
     protocol('udp');
     expect(findField('First port')).toBeDefined();
+  });
+
+  it('describes each direction, protocol and peer kind', async () => {
+    open();
+    await opened();
+    for (const description of [
+      "The rule is added to the group's inbound rules.",
+      "The rule is added to the group's outbound rules.",
+      'A range of IPv4 addresses.',
+      'A range of IPv6 addresses.',
+      'The members of a security group of this VPC.',
+    ]) {
+      expect(screen.getByText(description)).toBeVisible();
+    }
+
+    const select = selectIn('Protocol');
+    select.openDropdown();
+    for (const [value, description] of [
+      ['tcp', 'TCP, for a range of ports.'],
+      ['udp', 'UDP, for a range of ports.'],
+      ['icmp', 'Every ICMP type and code.'],
+      ['all', 'Every protocol and every port.'],
+    ] as const) {
+      expect(text(select.findDropdown().findOptionByValue(value)?.getElement())).toContain(description);
+    }
+  });
+
+  it.each(['inbound', 'outbound'] as const)('sends a rule tag with the %s request', async (direction) => {
+    open();
+    await opened();
+    chooseRadio('Direction', direction);
+    fillSsh();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: 'use' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value: 'ssh' } });
+    submit();
+
+    expect(await screen.findByText(`Added an ${direction} rule to web`)).toBeVisible();
+    expect(forms.addSecurityGroupRule).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      'sg-1',
+      {
+        egress: direction === 'outbound',
+        protocol: 'tcp',
+        fromPort: 22,
+        peer: { kind: 'ipv4', value: '10.0.0.0/16' },
+        tags: [{ key: 'use', value: 'ssh' }],
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('keeps the new rule and result when an earlier rules read answers last', async () => {
+    const rules = deferred<groups.RulePage>();
+    const router = open();
+    await opened();
+    let rulesSignal: AbortSignal | undefined;
+    const oldRead = router.client
+      .fetchQuery({
+        queryKey: EC2_KEYS.rules('sg-1'),
+        queryFn: ({ signal }) => {
+          rulesSignal = signal;
+          return rules.promise;
+        },
+      })
+      .catch(() => undefined);
+    vi.mocked(groups.listSecurityGroupRules).mockResolvedValue({
+      rules: [{ id: 'sgr-new', egress: false, protocol: 'tcp', fromPort: 22, description: 'New rule' }],
+    });
+    fillSsh();
+    submit();
+
+    expect(await screen.findByText('New rule')).toBeVisible();
+    expect(rulesSignal?.aborted).toBe(true);
+    await act(async () => {
+      rules.resolve({ rules: [] });
+      await oldRead;
+    });
+    expect(router.state.location.pathname).toBe(GROUP_PATH);
+    expect(screen.getByText('Added an inbound rule to web')).toBeVisible();
+    expect(screen.getByText('New rule')).toBeVisible();
   });
 
   it('a fault → its message at the field and nothing sent', async () => {
