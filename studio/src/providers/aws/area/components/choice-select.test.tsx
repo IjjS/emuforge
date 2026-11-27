@@ -104,6 +104,14 @@ function shown(): string[] {
   return (select().findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()));
 }
 
+function expectOptions(labelsByValue: Record<string, string>) {
+  const dropdown = select().findDropdown();
+  expect(dropdown.findOptions()).toHaveLength(Object.keys(labelsByValue).length);
+  for (const [value, label] of Object.entries(labelsByValue)) {
+    expect(text(dropdown.findOptionByValue(value)?.findLabel().getElement())).toBe(label);
+  }
+}
+
 function dropdownText(): string {
   return text(select().findDropdown().getElement());
 }
@@ -141,7 +149,7 @@ describe('ChoiceSelect', () => {
     await waitFor(() => {
       expect(shown()).toEqual(['alpha', 'beta']);
     });
-    const first = select().findDropdown().findOption(1);
+    const first = select().findDropdown().findOptionByValue('t-1');
     expect(text(first?.getElement())).toContain('t-1');
     expect(text(first?.getElement())).toContain('size 2');
     select().selectOptionByValue('t-2');
@@ -270,7 +278,7 @@ describe('ChoiceSelect', () => {
     select().selectOptionByValue('a');
     expect(triggerText()).toContain('a');
     select().openDropdown();
-    select().selectOption(1);
+    select().selectOptionByValue('');
     expect(chosen).toEqual([thing('a'), undefined]);
     expect(triggerText()).toBe('Nothing chosen');
   });
@@ -345,8 +353,9 @@ describe('described and dependent choices', () => {
     expect(help).toHaveStyle({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
 
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual([fixed, 'a']));
-    expect(text(select().findDropdown().findOption(1)?.getElement())).toContain(description);
+    await waitFor(() => expectOptions({ '': fixed, a: 'a' }));
+    const fixedOption = select().findDropdown().findOptionByValue('');
+    expect(fixedOption?.findDescription()?.getElement()).toHaveTextContent(description);
     select().selectOptionByValue('a');
     expect(triggerText()).not.toContain(description);
   });
@@ -355,9 +364,11 @@ describe('described and dependent choices', () => {
     read.mockResolvedValue({ items: [{ ...thing('a'), disabledReason: 'Already used' }] });
     open();
     select().openDropdown();
-    const option = await screen.findByRole('option', { name: /a/ });
-    expect(option).toHaveAttribute('aria-disabled', 'true');
-    expect(option).toHaveAccessibleDescription('Already used');
+    await waitFor(() => {
+      const option = select().findDropdown().findOptionByValue('a')?.getElement().closest('[role="option"]');
+      expect(option).toHaveAttribute('aria-disabled', 'true');
+      expect(option).toHaveAccessibleDescription('Already used');
+    });
     select().selectOptionByValue('a');
     expect(chosen).toEqual([]);
   });
@@ -372,7 +383,7 @@ describe('described and dependent choices', () => {
 
     update({ lockedBy: undefined });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['No choice', 'a']));
+    await waitFor(() => expectOptions({ '': 'No choice', a: 'a' }));
     expect(read).toHaveBeenCalledTimes(1);
   });
 
@@ -387,16 +398,19 @@ describe('described and dependent choices', () => {
     read.mockResolvedValue({ items: [thing('a'), thing('b')] });
     const update = open({ fixed: 'No choice' });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['No choice', 'a', 'b']));
+    await waitFor(() => expectOptions({ '': 'No choice', a: 'a', b: 'b' }));
     select().selectOptionByValue('a');
     update({ held: 'Checking VPC' });
     expect(triggerText()).toBe('a');
     expect(screen.getByRole('status')).toHaveTextContent('Checking VPC');
 
     select().openDropdown();
-    const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(3);
-    for (const option of options) expect(option).toHaveAttribute('aria-disabled', 'true');
+    const dropdown = select().findDropdown();
+    expect(dropdown.findOptions()).toHaveLength(3);
+    for (const value of ['', 'a', 'b']) {
+      const option = dropdown.findOptionByValue(value)?.getElement().closest('[role="option"]');
+      expect(option).toHaveAttribute('aria-disabled', 'true');
+    }
     select().selectOptionByValue('b');
     expect(chosen).toEqual([thing('a')]);
 
@@ -411,13 +425,13 @@ describe('openings', () => {
     read.mockResolvedValueOnce({ items: [thing('a')] }).mockResolvedValueOnce({ items: [thing('b')] });
     open({ readAgainOnOpen: true });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['a']));
+    await waitFor(() => expectOptions({ a: 'a' }));
     const filter = screen.getByRole('combobox');
     fireEvent.keyDown(filter, { key: 'Escape', code: 'Escape', keyCode: 27 });
     expect(select().findTrigger().getElement()).toHaveFocus();
 
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['b']));
+    await waitFor(() => expectOptions({ b: 'b' }));
     expect(read).toHaveBeenCalledTimes(2);
   });
 
@@ -425,7 +439,7 @@ describe('openings', () => {
     read.mockResolvedValue({ items: [thing('a')] });
     open({ readAgainOnOpen: true });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['a']));
+    await waitFor(() => expectOptions({ a: 'a' }));
     select().closeDropdown();
     act(() => {
       (document.activeElement as HTMLElement | null)?.blur();
@@ -435,7 +449,7 @@ describe('openings', () => {
 
     read.mockResolvedValue({ items: [thing('a'), thing('b')] });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['a', 'b']));
+    await waitFor(() => expectOptions({ a: 'a', b: 'b' }));
     expect(read).toHaveBeenCalledTimes(2);
   });
 
@@ -444,7 +458,7 @@ describe('openings', () => {
     const onOpen = vi.fn();
     open({ onOpen });
     select().openDropdown();
-    await waitFor(() => expect(shown()).toEqual(['a']));
+    await waitFor(() => expectOptions({ a: 'a' }));
     expect(onOpen).toHaveBeenCalledTimes(1);
     select().closeDropdown();
     select().openDropdown();
