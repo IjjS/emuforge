@@ -48,7 +48,7 @@ function renderField(initialChoice: BusChoice = { kind: 'chosen', name: 'default
   const select = page.findSelect();
   const field = page.findFormField();
   if (!select || !field) throw new Error('Expected the bus field');
-  return { page, select, field, change };
+  return { select, field, change };
 }
 
 it('reads only on opening, shows descriptions or ARNs, pages and sends the typed prefix', async () => {
@@ -59,20 +59,24 @@ it('reads only on opening, shows descriptions or ARNs, pages and sends the typed
     })
     .mockResolvedValueOnce({ items: [{ Name: 'shipments', Arn: 'arn:shipments' }] })
     .mockResolvedValueOnce({ items: [{ Name: 'shipping' }] });
-  const { page, select, change } = renderField();
+  const { select, change } = renderField();
   expect(read).not.toHaveBeenCalled();
   select.openDropdown();
   const dropdown = select.findDropdown();
-  await waitFor(() => expect(dropdown.findOption(1)?.getElement()).toHaveTextContent(/^ordersOrder events$/));
+  await waitFor(() =>
+    expect(dropdown.findOptionByValue('orders')?.getElement()).toHaveTextContent(/^ordersOrder events$/),
+  );
   expect(read).toHaveBeenLastCalledWith(endpoint, '', undefined, expect.any(AbortSignal));
-  const more = page.findButton();
+  const more = select.findDropdownFooter()?.findButton();
   if (!more) throw new Error('Expected Load more');
   expect(more.getElement()).toHaveAccessibleName('Load more');
   fireEvent.click(more.getElement());
-  await waitFor(() => expect(dropdown.findOption(2)?.getElement()).toHaveTextContent(/^shipmentsarn:shipments$/));
+  await waitFor(() =>
+    expect(dropdown.findOptionByValue('shipments')?.getElement()).toHaveTextContent(/^shipmentsarn:shipments$/),
+  );
   expect(read).toHaveBeenLastCalledWith(endpoint, '', 'page2', expect.any(AbortSignal));
   select.findFilteringInput()?.setInputValue('ship');
-  await waitFor(() => expect(dropdown.findOption(1)?.getElement()).toHaveTextContent(/^shipping$/));
+  await waitFor(() => expect(dropdown.findOptionByValue('shipping')?.getElement()).toHaveTextContent(/^shipping$/));
   expect(read).toHaveBeenLastCalledWith(endpoint, 'ship', undefined, expect.any(AbortSignal));
   select.selectOptionByValue('shipping');
   expect(change).toHaveBeenCalledExactlyOnceWith('shipping');
@@ -88,7 +92,7 @@ it.each([
   expect(field.findError()?.getElement().textContent).toBe(message);
   select.openDropdown();
   await waitFor(() =>
-    expect(select.findDropdown().findOption(1)?.findLabel().getElement()).toHaveTextContent(/^orders$/),
+    expect(select.findDropdown().findOptionByValue('orders')?.findLabel().getElement()).toHaveTextContent(/^orders$/),
   );
   select.selectOptionByValue('orders');
   expect(change).toHaveBeenCalledExactlyOnceWith('orders');
@@ -112,6 +116,8 @@ it.each([
   const retry = select.findErrorRecoveryButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
   retry?.click();
-  await waitFor(() => expect(dropdown.findOption(1)?.findLabel().getElement()).toHaveTextContent(/^orders$/));
+  await waitFor(() =>
+    expect(dropdown.findOptionByValue('orders')?.findLabel().getElement()).toHaveTextContent(/^orders$/),
+  );
   expect(read).toHaveBeenCalledTimes(2);
 });
