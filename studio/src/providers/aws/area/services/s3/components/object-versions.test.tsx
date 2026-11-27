@@ -401,10 +401,11 @@ it.each([
     { id: 'one-space', key: 'a b', spoken: 'a b' },
     { id: 'two-spaces', key: 'a  b', spoken: 'a\\u0020\\u0020b' },
     { id: 'literal-space', key: 'a\\u0020b', spoken: 'a\\\\u0020b' },
+    { id: 'space-and-percent', key: 'archive 100%.txt', spoken: 'archive 100%.txt' },
   ] satisfies Array<{ id: string; key: string; spoken: string; indicator?: string; cellCue?: string }>;
   engine.readHistory = () => history(keys.map(({ id, key }) => row(id, false, 'Version', key)).join(''));
   engine.getVersion = () => refusal(404, 'NoSuchVersion', 'The version is unavailable.');
-  open();
+  open('/aws/s3/buckets/alpha');
   await toggleVersions();
 
   const nativeSelection = required(window.getSelection());
@@ -450,7 +451,7 @@ it.each([
 
 it('distinguishes a tab from a space followed by a tab when version metadata is identical', async () => {
   engine.readHistory = () => history(row('same', true, 'Version', 'a\tb') + row('same', true, 'Version', 'a \tb'));
-  open();
+  open('/aws/s3/buckets/alpha');
   await toggleVersions();
 
   const withoutSpace = await screen.findByRole('radio', {

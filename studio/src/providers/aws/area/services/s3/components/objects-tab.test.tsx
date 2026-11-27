@@ -21,7 +21,12 @@ function open(listing: string) {
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <ObjectsTab name="alpha" prefix="" connection={{ engineOrigin: endpoint }} announce={vi.fn()} />
+        <ObjectsTab
+          name="alpha"
+          prefix=""
+          connection={{ engineOrigin: endpoint, result: undefined }}
+          announce={vi.fn()}
+        />
       </MemoryRouter>
     </QueryClientProvider>,
   );
