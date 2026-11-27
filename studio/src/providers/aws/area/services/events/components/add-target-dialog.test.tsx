@@ -1,7 +1,9 @@
+import type { Target } from '@aws-sdk/client-eventbridge';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
@@ -62,7 +64,9 @@ async function openAndSubmit() {
   }
   const { container } = render(
     <QueryClientProvider client={new QueryClient()}>
-      <Root />
+      <MemoryRouter>
+        <Root />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   const dialog = await waitFor(() => {
@@ -86,7 +90,15 @@ async function openAndSubmit() {
 }
 
 it('rereads the rule targets before saving the single target and reports its ID', async () => {
+  let answer!: (targets: Target[]) => void;
+  read.mockReturnValueOnce(
+    new Promise((resolve) => {
+      answer = resolve;
+    }),
+  );
   const { onAdded } = await openAndSubmit();
+  expect(write).not.toHaveBeenCalled();
+  await act(async () => answer([]));
   await waitFor(() => expect(onAdded).toHaveBeenCalledWith('delivery'));
   expect(read).toHaveBeenCalledWith(connection.engineOrigin, 'orders', 'route', expect.any(AbortSignal));
   expect(write).toHaveBeenCalledWith(
@@ -96,7 +108,6 @@ it('rereads the rule targets before saving the single target and reports its ID'
     [{ Id: 'delivery', Arn: 'arn:topic' }],
     expect.any(AbortSignal),
   );
-  expect(read).toHaveBeenCalledBefore(write);
 });
 
 it('refuses an ID already in use, at the ID field', async () => {
@@ -120,10 +131,11 @@ it('refuses to write to a rule already at the target limit', async () => {
   expect(write).not.toHaveBeenCalled();
 });
 
-it.each([
-  new RequestError({ kind: 'other', operation: 'PutTargets', code: 'Denied', message: 'Write refused' }),
-  new PutTargetsError([{ TargetId: 'delivery', ErrorCode: 'Denied', ErrorMessage: 'Write refused' }]),
-])('keeps the entered fields and names the operation and reason for a refusal', async (error) => {
+it.each(['request', 'entry'])('keeps the entered fields and the reason after a refused %s', async (kind) => {
+  const error =
+    kind === 'request'
+      ? new RequestError({ kind: 'other', operation: 'PutTargets', code: 'Denied', message: 'Write refused' })
+      : new PutTargetsError([{ TargetId: 'delivery', ErrorCode: 'Denied', ErrorMessage: 'Write refused' }]);
   write.mockRejectedValueOnce(error);
   const { dialog, input, onAdded } = await openAndSubmit();
   await waitFor(() => expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent('Write refused'));
