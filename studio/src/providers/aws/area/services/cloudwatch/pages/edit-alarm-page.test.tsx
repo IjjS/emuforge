@@ -313,7 +313,9 @@ it('shows every conflict, keeps changed entries, adopts untouched ones and allow
   expect(send).not.toHaveBeenCalled();
   await waitFor(() => expect(input(page, 'Namespace').getInputValue()).toBe('Outside'));
   const action = createWrapper(field(page, 'In alarm').getElement()).findMultiselect();
-  expect(action?.findToken(1)?.findOption().getElement()).toHaveTextContent('Not a topic in the emulator');
+  await waitFor(() =>
+    expect(action?.findToken(1)?.findOption().getElement()).toHaveTextContent('Not a topic in the emulator'),
+  );
 
   await submit(page);
   expect(edit).toHaveBeenLastCalledWith(

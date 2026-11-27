@@ -157,8 +157,10 @@ export function mergeAlarmEdit(
   for (const key of EXTRA_FIELDS) copyMember(input, key, latest.data[key]);
 
   // An unset datapoint count uses the merged evaluation count, even if that count was just edited.
-  values.datapointsToAlarm = String(input.DatapointsToAlarm ?? values.evaluationPeriods);
-  const errors = validateAlarmRelationships(values);
+  const errors = validateAlarmRelationships({
+    ...values,
+    datapointsToAlarm: String(input.DatapointsToAlarm ?? values.evaluationPeriods),
+  });
   if (Object.keys(errors).length > 0) return { kind: 'invalid', errors, ...rebased };
   return { kind: 'ready', input, ...rebased };
 }

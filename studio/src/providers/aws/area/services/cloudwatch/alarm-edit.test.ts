@@ -170,6 +170,14 @@ it('validates the evaluation span against the latest period', () => {
   expect(mergeAlarmEdit(name, original, values, latest)).toMatchObject({
     kind: 'invalid',
     errors: { evaluationPeriods: 'The evaluation periods cannot cover more than one day for a period under one hour.' },
-    values: { period: 3540, evaluationPeriods: '25' },
+    values: { period: 3540, evaluationPeriods: '25', datapointsToAlarm: '1' },
   });
+});
+
+it('keeps the datapoint setting unset when only the evaluation periods are edited', () => {
+  const original = alarm();
+  const values = { ...alarmEditValues(name, original), evaluationPeriods: '2' };
+  const result = mergeAlarmEdit(name, original, values, original);
+  expect(result).toMatchObject({ kind: 'ready', input: { EvaluationPeriods: 2 } });
+  expect(result).not.toHaveProperty('input.DatapointsToAlarm');
 });
