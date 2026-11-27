@@ -11,7 +11,16 @@ import Input from '@cloudscape-design/components/input';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea from '@cloudscape-design/components/textarea';
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type FormEvent,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { DiscardDialog } from '../../../components/discard-dialog';
@@ -138,10 +147,12 @@ export function AlarmForm({
 }: AlarmFormProps) {
   const openingKey = useId();
   const [tried, setTried] = useState(false);
+  const [rejectedNamePaste, setRejectedNamePaste] = useState(false);
   const [asking, setAsking] = useState(false);
   const [kept, setKept] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const busy = useRef(false);
+  const entriesLocked = pending || submitting;
   const controls = useRef<Partial<Record<FormFieldName, { focus: () => void } | null>>>({});
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
@@ -165,11 +176,26 @@ export function AlarmForm({
     return {
       ...(mode === 'create' ? validateAlarmRelationships(values) : {}),
       ...validateAlarmFields(values, mode),
+      ...(rejectedNamePaste ? { name: NAME_RULE } : {}),
     };
   }
 
   function change<K extends keyof AlarmFormValues>(field: K, value: AlarmFormValues[K]) {
-    onChange({ ...values, [field]: value });
+    if (!pending && !busy.current) onChange({ ...values, [field]: value });
+  }
+
+  function handleNamePaste(event: ClipboardEvent<HTMLInputElement>) {
+    // The single-line input strips these characters before reporting its new value.
+    if (/[\r\n]/.test(event.clipboardData.getData('text/plain'))) {
+      event.preventDefault();
+      setRejectedNamePaste(true);
+    }
+  }
+
+  function blockEntryEdit(event: SyntheticEvent) {
+    if (!pending && !busy.current) return;
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   const writeUnavailable = failure?.kind === 'not-implemented' && failure.operation === 'PutMetricAlarm';
@@ -226,7 +252,7 @@ export function AlarmForm({
               </Button>
               <Button
                 variant="primary"
-                loading={pending || submitting}
+                loading={entriesLocked}
                 disabled={writeUnavailable}
                 loadingText={mode === 'create' ? 'Creating alarm' : 'Saving changes'}
               >
@@ -235,15 +261,38 @@ export function AlarmForm({
             </SpaceBetween>
           }
         >
-          <SpaceBetween size="l">
+          <SpaceBetween
+            size="l"
+            nativeAttributes={{
+              'aria-disabled': entriesLocked || undefined,
+              onClickCapture: blockEntryEdit,
+              onChangeCapture: blockEntryEdit,
+              onBeforeInputCapture: blockEntryEdit,
+              onPasteCapture: blockEntryEdit,
+              onDropCapture: blockEntryEdit,
+              onKeyDownCapture: (event) => {
+                const copyOrSelect = (event.ctrlKey || event.metaKey) && /^[ac]$/i.test(event.key);
+                if (event.key !== 'Tab' && event.key !== 'Escape' && !copyOrSelect) blockEntryEdit(event);
+              },
+            }}
+          >
             <Container header={<Header variant="h2">Details</Header>}>
               <SpaceBetween size="m">
                 {mode === 'create' ? (
-                  <FormField label="Name" constraintText={NAME_RULE} errorText={nameError ?? errors.name}>
+                  <FormField
+                    label="Name"
+                    constraintText={NAME_RULE}
+                    errorText={rejectedNamePaste ? NAME_RULE : (nameError ?? errors.name)}
+                  >
                     <Input
                       ref={(control) => register('name', control)}
                       value={values.name}
-                      onChange={({ detail }) => change('name', detail.value)}
+                      readOnly={entriesLocked}
+                      nativeInputAttributes={{ onPaste: handleNamePaste }}
+                      onChange={({ detail }) => {
+                        setRejectedNamePaste(false);
+                        change('name', detail.value);
+                      }}
                     />
                   </FormField>
                 ) : (
@@ -256,6 +305,7 @@ export function AlarmForm({
                   <Textarea
                     ref={(control) => register('description', control)}
                     value={values.description}
+                    readOnly={entriesLocked}
                     onChange={({ detail }) => change('description', detail.value)}
                   />
                 </FormField>
@@ -305,6 +355,7 @@ export function AlarmForm({
                       type="number"
                       step="any"
                       value={values.threshold}
+                      readOnly={entriesLocked}
                       onChange={({ detail }) => change('threshold', detail.value)}
                     />
                   </FormField>
@@ -323,6 +374,7 @@ export function AlarmForm({
                       ref={(control) => register('datapointsToAlarm', control)}
                       type="number"
                       value={values.datapointsToAlarm}
+                      readOnly={entriesLocked}
                       onChange={({ detail }) => change('datapointsToAlarm', detail.value)}
                     />
                   </FormField>
@@ -335,6 +387,7 @@ export function AlarmForm({
                       ref={(control) => register('evaluationPeriods', control)}
                       type="number"
                       value={values.evaluationPeriods}
+                      readOnly={entriesLocked}
                       onChange={({ detail }) => change('evaluationPeriods', detail.value)}
                     />
                   </FormField>

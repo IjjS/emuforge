@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 
@@ -238,6 +239,27 @@ it('shows every invalid field and focuses the first, then reports the complete v
     metric: { namespace: 'App', name: 'Jobs', dimensions: [] },
     threshold: '0.25',
   });
+});
+
+it('rejects a multiline paste before the single-line Name input can normalize it', async () => {
+  const user = userEvent.setup();
+  const start = ready();
+  const { submitted } = open({ start });
+  const name = control('Name').findInput()?.findNativeInput().getElement();
+  if (!name) throw new Error('Missing Name input');
+  await user.click(name);
+  await user.paste('first\r\nsecond\nthird');
+  expect(name).toHaveValue(start.name);
+  expect(field('Name').findError()?.getElement().textContent).toBe(NAME_RULE);
+
+  await act(async () => button('Create alarm').click());
+  expect(submitted).not.toHaveBeenCalled();
+  expect(name).toHaveFocus();
+
+  await user.clear(name);
+  await user.paste('corrected name');
+  await act(async () => button('Create alarm').click());
+  expect(submitted).toHaveBeenCalledExactlyOnceWith({ ...start, name: 'corrected name' });
 });
 
 it('shows the operation and refusal, keeps the entries, and blocks a second submission while busy', async () => {
