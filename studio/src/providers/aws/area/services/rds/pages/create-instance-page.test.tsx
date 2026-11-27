@@ -286,9 +286,8 @@ function engines() {
   return found;
 }
 
-function chosenEngine(): string {
-  const checked = (engines().findButtons() ?? []).find((button) => button.findNativeInput().getElement().checked);
-  return text(checked?.findLabel().getElement());
+function chosenEngine() {
+  return screen.getAllByRole<HTMLInputElement>('radio').find((radio) => radio.checked);
 }
 
 function chooseEngine(value: string) {
@@ -361,20 +360,21 @@ describe('Create DB instance', () => {
     open();
     await opened();
     expect(inputOf('DB instance identifier').value).toBe('');
-    expect(chosenEngine()).toBe('PostgreSQL');
-    expect((engines().findButtons() ?? []).map((button) => text(button.findLabel().getElement()))).toEqual([
-      'PostgreSQL',
-      'MySQL',
-      'MariaDB',
-    ]);
-    expect(triggerOf('Engine version - optional')).toBe("The emulator's default");
+    expect(chosenEngine()).toHaveAccessibleName('PostgreSQL');
+    const engineOptions = screen.getAllByRole('radio');
+    expect(engineOptions).toHaveLength(3);
+    expect(engineOptions[0]).toHaveAccessibleName('PostgreSQL');
+    expect(engineOptions[1]).toHaveAccessibleName('MySQL');
+    expect(engineOptions[2]).toHaveAccessibleName('MariaDB');
+    expect(engineOptions[0]).toHaveAccessibleDescription("PostgreSQL. The emulator's default version is 18.3.");
+    expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     expect(triggerOf('DB instance class')).toContain('db.t3.micro');
     expect(choices.readOrderableRows).toHaveBeenCalledWith(ENGINE, 'postgres', '18.3', expect.any(AbortSignal));
     expect(inputOf('Allocated storage (GiB)').value).toBe('20');
     expect(inputOf('Master user name').value).toBe('');
     expect(inputOf('Master password').value).toBe('');
     expect(inputOf('Database name - optional').value).toBe('');
-    expect(triggerOf('DB subnet group - optional')).toBe('Chosen by the emulator');
+    expect(triggerOf('DB subnet group - optional')).toContain('Chosen by the emulator');
     expect(groupsField().findTokens()).toEqual([]);
     expect(text(groupsField().findTrigger().getElement())).toContain('Choose security groups');
     expect(choices.listEngineVersionChoices).not.toHaveBeenCalled();
@@ -395,7 +395,7 @@ describe('Create DB instance', () => {
     await choose('Engine version - optional', '17.7');
     expect(triggerOf('Engine version - optional')).toContain('17.7');
     chooseEngine('mysql');
-    expect(triggerOf('Engine version - optional')).toBe("The emulator's default");
+    expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     selectIn('Engine version - optional').openDropdown();
     await waitFor(() => {
       expect(shownVersions()).toEqual(["The emulator's default", '8.4.7']);
@@ -557,7 +557,7 @@ describe('Create DB instance', () => {
     expect(inputOf('Master user name').value).toBe('admin1');
     expect(inputOf('Master password').value).toBe(PASSWORD);
     expect(inputOf('Database name - optional').value).toBe('app');
-    expect(chosenEngine()).toBe('MariaDB');
+    expect(chosenEngine()).toHaveAccessibleName('MariaDB');
     expect(triggerOf('DB subnet group - optional')).toContain('default');
     expect(triggerOf('DB instance class')).toContain('db.t3.small');
     expect(triggerOf('Storage type')).toContain('io1');

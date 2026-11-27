@@ -308,9 +308,8 @@ function engines() {
   return found;
 }
 
-function chosenEngine(): string {
-  const checked = (engines().findButtons() ?? []).find((button) => button.findNativeInput().getElement().checked);
-  return text(checked?.findLabel().getElement());
+function chosenEngine() {
+  return screen.getAllByRole<HTMLInputElement>('radio').find((radio) => radio.checked);
 }
 
 function chooseEngine(value: string) {
@@ -383,19 +382,22 @@ describe('Create DB cluster', () => {
     open();
     await opened();
     expect(inputOf('DB cluster identifier').value).toBe('');
-    expect(chosenEngine()).toBe('Aurora PostgreSQL');
-    expect((engines().findButtons() ?? []).map((button) => text(button.findLabel().getElement()))).toEqual([
-      'Aurora PostgreSQL',
-      'Aurora MySQL',
-    ]);
-    expect(triggerOf('Engine version - optional')).toBe("The emulator's default");
+    expect(chosenEngine()).toHaveAccessibleName('Aurora PostgreSQL');
+    const engineOptions = screen.getAllByRole('radio');
+    expect(engineOptions).toHaveLength(2);
+    expect(engineOptions[0]).toHaveAccessibleName('Aurora PostgreSQL');
+    expect(engineOptions[1]).toHaveAccessibleName('Aurora MySQL');
+    expect(engineOptions[0]).toHaveAccessibleDescription(
+      "Aurora, PostgreSQL-compatible. The emulator's default version is 16.4.",
+    );
+    expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     expect(inputOf('Master user name').value).toBe('');
     expect(inputOf('Master password').value).toBe('');
     expect(text(field('Master password').findDescription()?.getElement())).toBe(
       'EmuForge Studio does not keep the password and the API does not return it: note it before you create the DB cluster.',
     );
     expect(inputOf('Database name - optional').value).toBe('');
-    expect(triggerOf('DB subnet group - optional')).toBe('Chosen by the emulator');
+    expect(triggerOf('DB subnet group - optional')).toContain('Chosen by the emulator');
     expect(groupsField().findTokens()).toEqual([]);
     expect(
       screen.getByText("Creates the cluster alone. Add its DB instances from the cluster's page."),
@@ -421,7 +423,7 @@ describe('Create DB cluster', () => {
     await choose('Engine version - optional', '15.8');
     chooseEngine('aurora-mysql');
     expect(constraint()).toBe('1 to 16 letters and digits, beginning with a letter.');
-    expect(triggerOf('Engine version - optional')).toBe("The emulator's default");
+    expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     selectIn('Engine version - optional').openDropdown();
     await waitFor(() => {
       expect(shownVersions()).toEqual(["The emulator's default", '8.0.mysql_aurora.3.08.0']);
@@ -634,7 +636,7 @@ describe('Create DB cluster', () => {
       expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
     });
     expect(router.state.location.pathname).toBe(CREATE_PATH);
-    expect(chosenEngine()).toBe('Aurora MySQL');
+    expect(chosenEngine()).toHaveAccessibleName('Aurora MySQL');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() => {
