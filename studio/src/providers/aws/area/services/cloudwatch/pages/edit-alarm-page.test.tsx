@@ -179,6 +179,14 @@ function submit(page: Page) {
   return act(async () => button(page, 'Save changes').click());
 }
 
+function captureAlarmWrite() {
+  const write = vi.fn<(command: PutMetricAlarmCommand) => Promise<unknown>>().mockResolvedValue({});
+  send.mockImplementationOnce(async (_endpoint, _operation, request, signal) =>
+    request({ send: write } as unknown as CloudWatchClient, signal),
+  );
+  return write;
+}
+
 function expectFlash(page: Page) {
   const items = page.wrapper.findFlashbar()?.findItems();
   expect(items).toHaveLength(1);
@@ -204,10 +212,7 @@ it('opens the populated edit form with an immutable name and the replace notice'
 
 it.each([false, true])('tracks implicit data points until overridden (%s)', async (override) => {
   read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
-  const write = vi.fn<(command: PutMetricAlarmCommand) => Promise<unknown>>().mockResolvedValue({});
-  send.mockImplementationOnce(async (_endpoint, _operation, request, signal) =>
-    request({ send: write } as unknown as CloudWatchClient, signal),
-  );
+  const write = captureAlarmWrite();
 
   const page = open();
   await ready(page);
@@ -221,10 +226,10 @@ it.each([false, true])('tracks implicit data points until overridden (%s)', asyn
   expect(content(page)?.getElement()).toHaveTextContent('Alarm when 3 out of 3 periods');
 
   if (override) {
-    datapoints.setInputValue('1');
+    datapoints.setInputValue('2');
     periods.setInputValue('4');
-    expect(datapoints.getInputValue()).toBe('1');
-    expect(content(page)?.getElement()).toHaveTextContent('Alarm when 1 out of 4 periods');
+    expect(datapoints.getInputValue()).toBe('2');
+    expect(content(page)?.getElement()).toHaveTextContent('Alarm when 2 out of 4 periods');
   }
 
   await submit(page);
@@ -232,10 +237,92 @@ it.each([false, true])('tracks implicit data points until overridden (%s)', asyn
   const request = write.mock.calls[0]?.[0].input;
   expect(request?.EvaluationPeriods).toBe(override ? 4 : 3);
   if (override) {
-    expect(request?.DatapointsToAlarm).toBe(1);
+    expect(request?.DatapointsToAlarm).toBe(2);
   } else {
     expect(request).not.toHaveProperty('DatapointsToAlarm');
   }
+});
+
+it.each([
+  { entered: '5', count: '5', sent: 5 },
+  { entered: '3', count: '6', sent: undefined },
+])('uses the opening count to detect a revert when $entered is entered', async ({ entered, count, sent }) => {
+  read.mockResolvedValue(metric(name, { EvaluationPeriods: 3, DatapointsToAlarm: undefined }));
+  const write = captureAlarmWrite();
+  const page = open();
+  await ready(page);
+
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  periods.setInputValue('5');
+  datapoints.setInputValue('2');
+  datapoints.setInputValue(entered);
+  periods.setInputValue('6');
+  expect(datapoints.getInputValue()).toBe(count);
+  expect(content(page)?.getElement()).toHaveTextContent(`Alarm when ${count} out of 6 periods`);
+
+  await submit(page);
+  expect(write).toHaveBeenCalledTimes(1);
+  const request = write.mock.calls[0]?.[0].input;
+  expect(request?.EvaluationPeriods).toBe(6);
+  if (sent === undefined) {
+    expect(request).not.toHaveProperty('DatapointsToAlarm');
+  } else {
+    expect(request?.DatapointsToAlarm).toBe(sent);
+  }
+});
+
+it('focuses the invalid evaluation periods or the invalid explicit datapoint count', async () => {
+  read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
+  const page = open();
+  await ready(page);
+
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  periods.setInputValue('');
+  await submit(page);
+
+  const datapointField = field(page, 'Data points to alarm');
+  const periodField = field(page, 'Evaluation periods');
+  expect(datapointField.findError()).toBeNull();
+  expect(periodField.findError()?.getElement()).toHaveTextContent('Enter a whole number of at least 1.');
+  expect(periods.findNativeInput().getElement()).toHaveFocus();
+  expect(read).toHaveBeenCalledTimes(1);
+
+  periods.setInputValue('3');
+  datapoints.setInputValue('');
+  await submit(page);
+  expect(periodField.findError()).toBeNull();
+  expect(datapointField.findError()?.getElement()).toHaveTextContent('Enter a whole number of at least 1.');
+  expect(datapoints.findNativeInput().getElement()).toHaveFocus();
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('clears the prior datapoint rule from the field when the count is implicit again', async () => {
+  read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
+  const page = open();
+  await ready(page);
+
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  datapoints.setInputValue('2');
+  await submit(page);
+  const datapointField = field(page, 'Data points to alarm');
+  expect(datapointField.findError()?.getElement()).toHaveTextContent(
+    'Data points to alarm cannot exceed the evaluation periods.',
+  );
+
+  datapoints.setInputValue('1');
+  periods.setInputValue('');
+  await submit(page);
+  expect(datapointField.findError()).toBeNull();
+  expect(field(page, 'Evaluation periods').findError()?.getElement()).toHaveTextContent(
+    'Enter a whole number of at least 1.',
+  );
+  expect(periods.findNativeInput().getElement()).toHaveFocus();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('shows loading and then the missing alarm state, and makes no request for a missing name', async () => {

@@ -173,13 +173,16 @@ export function AlarmForm<Values extends AlarmEditValues>({
     controls.current[field] = control;
   }
 
+  const datapointsAreImplicit = values.datapointsToAlarm === undefined;
   const datapointsToAlarm = alarmDatapointCount(values);
 
   function validate(): AlarmFormErrors {
     const entries = { ...values, datapointsToAlarm };
+    const errors = validateAlarmFields(entries, mode);
+    if (datapointsAreImplicit) delete errors.datapointsToAlarm;
     return {
       ...(mode === 'create' ? validateAlarmRelationships(entries) : {}),
-      ...validateAlarmFields(entries, mode),
+      ...errors,
       ...(rejectedNamePaste ? { name: NAME_RULE } : {}),
     };
   }
@@ -375,7 +378,7 @@ export function AlarmForm<Values extends AlarmEditValues>({
                   <FormField
                     label="Data points to alarm"
                     constraintText={COUNT_RULE}
-                    errorText={errors.datapointsToAlarm}
+                    errorText={datapointsAreImplicit ? undefined : errors.datapointsToAlarm}
                   >
                     <Input
                       ref={(control) => register('datapointsToAlarm', control)}
