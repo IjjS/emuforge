@@ -1,13 +1,15 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
-import { MemoryRouter, useLocation, useNavigate } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
+import { AreaFlash, FlashAnnouncer } from '../../../components/area-flash';
 import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
 import { getEventBus, listEventBuses } from '../bus-api';
 import { createRule, ruleNameTaken } from '../rule-create-api';
 import { PutTargetsError, putRuleTargets } from '../target-api';
@@ -78,7 +80,7 @@ function open(search = '') {
   function Area() {
     const root = useRef<HTMLDivElement>(null);
     const { pathname, search } = useLocation();
-    const navigate = useNavigate();
+    const flash = useAreaFlash(pathname, pathname === createPath ? 0 : 1, true);
     return (
       <AreaRootContext.Provider value={root}>
         <div ref={root}>
@@ -86,12 +88,16 @@ function open(search = '') {
             {pathname}
             {search}
           </div>
+          <FlashAnnouncer announcement={flash.announcement} />
+          {flash.shown !== null && (
+            <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
+          )}
           <PageFlashContext.Provider
             value={{
-              show: vi.fn(),
+              show: flash.pageFlash.show,
               handOver: (...args) => {
                 handOver(...args);
-                void navigate(args[0]);
+                flash.pageFlash.handOver(...args);
               },
             }}
           >
@@ -110,50 +116,86 @@ function open(search = '') {
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  const page = createWrapper(container);
+  const dom = createWrapper(container);
+  function fields(label: string) {
+    return dom.findAllFormFields().filter((field) => field.findLabel()?.getElement().textContent === label);
+  }
+  function field(label: string, index = 0) {
+    return fields(label)[index];
+  }
+  function textbox(label: string, index = 0) {
+    const wrapper = field(label, index);
+    const input =
+      wrapper?.findInput()?.findNativeInput().getElement() ??
+      wrapper?.findTextarea()?.findNativeTextarea().getElement();
+    if (!input) throw new Error(`Expected an input for ${label}`);
+    expect(input).toHaveAccessibleName(label);
+    return input;
+  }
+  function enter(label: string, value: string, index = 0) {
+    fireEvent.change(textbox(label, index), { target: { value } });
+  }
   function select(label: string, index = 0) {
-    const field = page
-      .findAllFormFields()
-      .filter((candidate) => candidate.findLabel()?.getElement().textContent === label)[index];
-    const found = field && createWrapper(field.getElement()).findSelect();
+    const found = field(label, index)?.findSelect();
     if (!found) throw new Error(`Expected a select for ${label}`);
     return found;
   }
   async function choose(label: string, value: string, index = 0) {
-    const field = select(label, index);
-    act(() => field.openDropdown());
-    await waitFor(() => expect(field.findDropdown().findOptionByValue(value)).not.toBeNull());
-    act(() => field.selectOptionByValue(value));
+    const control = select(label, index);
+    act(() => control.openDropdown());
+    await waitFor(() => expect(control.findDropdown().findOptionByValue(value)).not.toBeNull());
+    act(() => control.selectOptionByValue(value));
   }
-  return { handOver, select, choose, container };
+  function button(name: string) {
+    return namedButton(dom, name);
+  }
+  function click(name: string) {
+    fireEvent.click(button(name));
+  }
+  function radio(value: string) {
+    for (const group of dom.findAllRadioGroups()) {
+      const input = group.findInputByValue(value);
+      if (input) return input.getElement();
+    }
+    throw new Error(`Expected a radio option for ${value}`);
+  }
+  function fill() {
+    enter('Rule name', 'route');
+    enter('Description - optional', 'Routes orders');
+    enter('Event pattern', pattern);
+  }
+  const fixture = dom.find('[data-testid="address"]');
+  const announcer = dom.find('.aws-area-flash-announcer');
+  return {
+    dom,
+    handOver,
+    select,
+    choose,
+    field,
+    fields,
+    textbox,
+    enter,
+    button,
+    click,
+    radio,
+    fill,
+    fixture,
+    announcer,
+  };
 }
 
-function textbox(name: string) {
-  return screen.getByRole('textbox', { name });
-}
-
-function enter(name: string, value: string) {
-  fireEvent.change(textbox(name), { target: { value } });
-}
-
-function button(name: string) {
-  return screen.getByRole('button', { name });
-}
-
-function click(name: string) {
-  fireEvent.click(button(name));
-}
-
-function radio(value: string) {
-  const control = screen.getAllByRole('radio').find((input) => input.getAttribute('value') === value);
-  if (!control) throw new Error(`Expected a radio option for ${value}`);
-  return control;
-}
-
-function fill() {
-  enter('Rule name', 'route');
-  enter('Description - optional', 'Routes orders');
-  enter('Event pattern', pattern);
+function namedButton(scope: ReturnType<typeof createWrapper>, name: string) {
+  const button = scope
+    .findAllButtons()
+    .find(
+      (item) =>
+        (item.getElement().getAttribute('aria-label') ?? item.findTextRegion()?.getElement().textContent?.trim()) ===
+        name,
+    )
+    ?.getElement();
+  if (!button) throw new Error(`Expected a button named ${name}`);
+  expect(button).toHaveAccessibleName(name);
+  return button;
 }
 
 function expectUnsent() {
@@ -163,10 +205,8 @@ function expectUnsent() {
 }
 
 async function addTopic(page: ReturnType<typeof open>, id: string, index = 0) {
-  click('Add target');
-  const field = screen.getAllByRole('textbox', { name: 'Target ID' })[index];
-  if (!field) throw new Error('Expected the target row');
-  fireEvent.change(field, { target: { value: id } });
+  page.click('Add target');
+  page.enter('Target ID', id, index);
   await page.choose('Target kind', 'sns', index);
   await page.choose('Topic', topicArn, index);
 }
@@ -175,21 +215,23 @@ it('opens with the bus from the address, a pattern, an enabled state and no targ
   const page = open('?bus=orders');
   await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   expect(getEventBus).toHaveBeenCalledWith(endpoint, 'orders', expect.any(AbortSignal));
-  expect(radio('pattern')).toBeChecked();
-  expect(radio('ENABLED')).toBeChecked();
-  expect(textbox('Rule name')).toHaveAccessibleDescription(
+  expect(page.radio('pattern')).toBeChecked();
+  expect(page.radio('ENABLED')).toBeChecked();
+  expect(page.textbox('Rule name')).toHaveAccessibleDescription(
     '1 to 64 characters. Use letters, digits, periods, hyphens and underscores.',
   );
-  expect(textbox('Description - optional')).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Targets - optional' })).toBeVisible();
-  expect(textbox('Event pattern')).toHaveValue('');
-  expect(textbox('Event pattern')).toHaveAccessibleDescription(
+  expect(page.textbox('Description - optional')).toBeVisible();
+  expect(
+    page.dom.findAllContainers().at(-1)?.findHeader()?.findHeader()?.findHeadingText().getElement(),
+  ).toHaveTextContent(/^Targets - optional$/);
+  expect(page.textbox('Event pattern')).toHaveValue('');
+  expect(page.textbox('Event pattern')).toHaveAccessibleDescription(
     expect.stringContaining(
       'List the source values you want to match in an array, such as {"source":["shop.checkout"]}',
     ),
   );
-  expect(textbox('Event pattern')).toHaveAccessibleDescription(expect.stringContaining('up to 2048 characters'));
-  expect(screen.queryByRole('textbox', { name: 'Target ID' })).toBeNull();
+  expect(page.textbox('Event pattern')).toHaveAccessibleDescription(expect.stringContaining('up to 2048 characters'));
+  expect(page.fields('Target ID')).toHaveLength(0);
   for (const [value, description] of [
     ['pattern', 'Runs for each event on the bus that matches the pattern.'],
     [
@@ -202,68 +244,70 @@ it('opens with the bus from the address, a pattern, an enabled state and no targ
     ],
     ['DISABLED', 'The rule is kept and routes nothing until it is enabled.'],
   ] as const) {
-    expect(radio(value)).toHaveAccessibleDescription(description);
+    expect(page.radio(value)).toHaveAccessibleDescription(description);
   }
 });
 
 it('offers both schedule kinds on default and returns to a pattern on another bus', async () => {
   const page = open();
   expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^default$/);
-  expect(radio('schedule')).toBeEnabled();
-  const trigger = screen.getByRole('radiogroup', { name: 'What starts the rule' });
+  expect(page.radio('schedule')).toBeEnabled();
+  const trigger = page.field('What starts the rule');
   const restriction = 'Schedules are available only on the default event bus.';
-  expect(screen.queryByText(restriction)).toBeNull();
-  fireEvent.click(radio('schedule'));
-  expect(radio('rate')).toBeChecked();
-  expect(radio('rate')).toHaveAccessibleDescription(
+  expect(trigger?.findDescription()).toBeNull();
+  fireEvent.click(page.radio('schedule'));
+  expect(page.radio('rate')).toBeChecked();
+  expect(page.radio('rate')).toHaveAccessibleDescription(
     'Runs again each time the number of minutes, hours or days has passed.',
   );
-  expect(radio('cron')).toHaveAccessibleDescription(
+  expect(page.radio('cron')).toHaveAccessibleDescription(
     'Runs at the times a cron expression of six fields names, such as cron(0 12 * * ? *).',
   );
-  expect(textbox('Rate')).toHaveValue('1');
-  fireEvent.click(radio('cron'));
-  expect(textbox('Cron expression')).toBeVisible();
-  expect(screen.queryByRole('textbox', { name: 'Rate' })).toBeNull();
+  expect(page.textbox('Rate')).toHaveValue('1');
+  fireEvent.click(page.radio('cron'));
+  expect(page.textbox('Cron expression')).toBeVisible();
+  expect(page.fields('Rate')).toHaveLength(0);
   await page.choose('Event bus', 'orders');
-  expect(radio('schedule')).toBeDisabled();
-  expect(screen.getByText(restriction)).toBeVisible();
-  expect(trigger).toHaveAccessibleDescription(restriction);
-  expect(radio('pattern')).toBeChecked();
-  expect(textbox('Event pattern')).toBeVisible();
+  expect(page.radio('schedule')).toBeDisabled();
+  expect(trigger?.findDescription()?.getElement()).toHaveTextContent(restriction);
+  expect(trigger?.findRadioGroup()?.getElement()).toHaveAccessibleDescription(restriction);
+  expect(page.radio('pattern')).toBeChecked();
+  expect(page.textbox('Event pattern')).toBeVisible();
   await page.choose('Event bus', 'default');
-  expect(screen.queryByText(restriction)).toBeNull();
+  expect(trigger?.findDescription()).toBeNull();
 });
 
 it('shows the expressions for the rate currently entered', () => {
-  open();
-  fireEvent.click(radio('schedule'));
+  const page = open();
+  fireEvent.click(page.radio('schedule'));
   for (const [unit, plural] of [
     ['minute', 'minutes'],
     ['hour', 'hours'],
     ['day', 'days'],
   ] as const) {
-    expect(radio(unit)).toHaveAccessibleDescription(`rate(1 ${unit})`);
-    enter('Rate', '5');
-    expect(radio(unit)).toHaveAccessibleDescription(`rate(5 ${plural})`);
-    enter('Rate', '1');
+    expect(page.radio(unit)).toHaveAccessibleDescription(`rate(1 ${unit})`);
+    page.enter('Rate', '5');
+    expect(page.radio(unit)).toHaveAccessibleDescription(`rate(5 ${plural})`);
+    page.enter('Rate', '1');
   }
 });
 
 it('accepts up to five target rows and makes room when one is removed', () => {
-  open();
+  const page = open();
   for (let row = 0; row < 5; row += 1) {
-    click('Add target');
-    expect(screen.getAllByRole('textbox', { name: 'Target ID' })[row]).toHaveFocus();
+    page.click('Add target');
+    expect(page.textbox('Target ID', row)).toHaveFocus();
   }
-  expect(screen.getAllByRole('textbox', { name: 'Target ID' })).toHaveLength(5);
-  expect(button('Add target')).toBeDisabled();
-  expect(screen.getByText('A rule holds at most 5 targets.')).toBeVisible();
-  click('Remove target 2');
-  expect(screen.getAllByRole('textbox', { name: 'Target ID' })).toHaveLength(4);
-  expect(button('Add target')).toBeEnabled();
-  click('Add target');
-  expect(screen.getAllByRole('textbox', { name: 'Target ID' })[4]).toHaveFocus();
+  expect(page.fields('Target ID')).toHaveLength(5);
+  expect(page.button('Add target')).toBeDisabled();
+  expect(page.dom.findAllContainers().at(-1)?.findContent().findAllBoxes().at(-1)?.getElement()).toHaveTextContent(
+    'A rule holds at most 5 targets.',
+  );
+  page.click('Remove target 2');
+  expect(page.fields('Target ID')).toHaveLength(4);
+  expect(page.button('Add target')).toBeEnabled();
+  page.click('Add target');
+  expect(page.textbox('Target ID', 4)).toHaveFocus();
 });
 
 it('reads the name before creating a rule without targets and hands over success', async () => {
@@ -273,9 +317,9 @@ it('reads the name before creating a rule without targets and hands over success
       resolveLookup = resolve;
     }),
   );
-  const { handOver } = open();
-  fill();
-  click('Create rule');
+  const page = open();
+  page.fill();
+  page.click('Create rule');
   expect(lookup).toHaveBeenCalledExactlyOnceWith(endpoint, 'default', 'route', expect.any(AbortSignal));
   expect(put).not.toHaveBeenCalled();
   expect(putTargets).not.toHaveBeenCalled();
@@ -292,11 +336,11 @@ it('reads the name before creating a rule without targets and hands over success
     expect.any(AbortSignal),
   );
   expect(putTargets).not.toHaveBeenCalled();
-  expect(screen.getByTestId('address')).toHaveTextContent(rulePath);
-  expect(handOver).toHaveBeenCalledOnce();
-  const [first] = handOver.mock.calls[0]?.[1] ?? [];
-  expect(first?.type).toBe('success');
-  expect(render(<>{first?.content}</>).container).toHaveTextContent('Rule route created.');
+  expect(page.fixture?.getElement()).toHaveTextContent(rulePath);
+  expect(page.handOver).toHaveBeenCalledOnce();
+  expect(page.dom.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement()).toHaveTextContent(
+    'Rule route created.',
+  );
 });
 
 it('waits for PutRule, then writes both targets and hands over success', async () => {
@@ -307,10 +351,10 @@ it('waits for PutRule, then writes both targets and hands over success', async (
     }),
   );
   const page = open();
-  fill();
+  page.fill();
   await addTopic(page, 'first');
   await addTopic(page, 'second', 1);
-  click('Create rule');
+  page.click('Create rule');
   await waitFor(() => expect(put).toHaveBeenCalledOnce());
   expect(putTargets).not.toHaveBeenCalled();
   await act(() => resolvePut());
@@ -324,24 +368,26 @@ it('waits for PutRule, then writes both targets and hands over success', async (
     ],
     expect.any(AbortSignal),
   );
-  expect(screen.getByTestId('address')).toHaveTextContent(rulePath);
-  const [first] = page.handOver.mock.calls[0]?.[1] ?? [];
-  expect(first?.type).toBe('success');
-  expect(render(<>{first?.content}</>).container).toHaveTextContent('Rule route created.');
+  expect(page.fixture?.getElement()).toHaveTextContent(rulePath);
+  expect(page.dom.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement()).toHaveTextContent(
+    'Rule route created.',
+  );
 });
 
 it('reports an existing name at its field and sends no write', async () => {
   lookup.mockResolvedValueOnce(true);
-  const { handOver } = open();
-  fill();
-  click('Create rule');
-  expect(
-    await screen.findByText('A rule named route already exists on default. Creating it again would replace it.'),
-  ).toBeVisible();
-  expect(textbox('Rule name')).toHaveAccessibleDescription(/already exists on default/);
+  const page = open();
+  page.fill();
+  page.click('Create rule');
+  await waitFor(() =>
+    expect(page.field('Rule name')?.findError()?.getElement()).toHaveTextContent(
+      'A rule named route already exists on default. Creating it again would replace it.',
+    ),
+  );
+  expect(page.textbox('Rule name')).toHaveAccessibleDescription(/already exists on default/);
   expect(put).not.toHaveBeenCalled();
   expect(putTargets).not.toHaveBeenCalled();
-  expect(handOver).not.toHaveBeenCalled();
+  expect(page.handOver).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -351,25 +397,25 @@ it.each([
   ['DescribeRule', unsupported('DescribeRule'), 'Not implemented by the emulator', false],
 ] as const)('keeps the form after a failure of %s (%s)', async (operation, error, reason, disables) => {
   const page = open();
-  fill();
+  page.fill();
   await addTopic(page, 'first');
   if (operation === 'DescribeRule') lookup.mockRejectedValueOnce(error);
   else put.mockRejectedValueOnce(error);
-  click('Create rule');
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(operation);
-  expect(alert).toHaveTextContent(reason);
-  expect(textbox('Rule name')).toHaveValue('route');
-  expect(textbox('Description - optional')).toHaveValue('Routes orders');
-  expect(textbox('Event pattern')).toHaveValue(pattern);
-  expect(textbox('Target ID')).toHaveValue('first');
+  page.click('Create rule');
+  await waitFor(() => expect(page.dom.findAlert()?.getElement()).toHaveTextContent(operation));
+  expect(page.dom.findAlert()?.getElement()).toHaveTextContent(reason);
+  expect(page.textbox('Rule name')).toHaveValue('route');
+  expect(page.textbox('Description - optional')).toHaveValue('Routes orders');
+  expect(page.textbox('Event pattern')).toHaveValue(pattern);
+  expect(page.textbox('Target ID')).toHaveValue('first');
   expect(page.select('Topic').findTrigger().getElement()).toHaveTextContent(/^orders$/);
-  expect(screen.getByTestId('address')).toHaveTextContent(createPath);
-  if (disables) expect(button('Create rule')).toBeDisabled();
-  else expect(button('Create rule')).toBeEnabled();
+  expect(page.fixture?.getElement()).toHaveTextContent(createPath);
+  if (disables) expect(page.button('Create rule')).toBeDisabled();
+  else expect(page.button('Create rule')).toBeEnabled();
   if (operation === 'DescribeRule') expect(put).not.toHaveBeenCalled();
   expect(putTargets).not.toHaveBeenCalled();
   expect(page.handOver).not.toHaveBeenCalled();
+  expect(page.dom.findFlashbar()).toBeNull();
 });
 
 it.each([
@@ -378,24 +424,24 @@ it.each([
   [unsupported('PutTargets'), 'Not implemented by the emulator'],
 ] as const)('hands over a warning after a refused target write (%s)', async (error, reason) => {
   const page = open();
-  fill();
+  page.fill();
   await addTopic(page, 'first');
   putTargets.mockRejectedValueOnce(error);
-  click('Create rule');
-  await waitFor(() => expect(page.handOver).toHaveBeenCalledOnce());
-  const [to, items, note] = page.handOver.mock.calls[0] ?? [];
+  page.click('Create rule');
+  const warning = 'Rule route created, but its targets were not added.';
+  const flashContent = () => page.dom.findFlashbar()?.findItemsByType('warning')[0]?.findContent()?.getElement();
+  await waitFor(() => expect(flashContent()).toHaveTextContent(warning));
+  expect(page.handOver).toHaveBeenCalledOnce();
+  const [to, , note] = page.handOver.mock.calls[0] ?? [];
   expect(to).toBe(rulePath);
-  expect(screen.getByTestId('address')).toHaveTextContent(new RegExp(`^${rulePath}$`));
-  expect(items?.[0].type).toBe('warning');
-  const { container } = render(
-    <>
-      {items?.[0].header}
-      {items?.[0].content}
-    </>,
-  );
-  expect(container).toHaveTextContent('Rule route created, but its targets were not added.');
-  expect(container).toHaveTextContent('PutTargets');
-  expect(container).toHaveTextContent(reason);
+  expect(page.fixture?.getElement()).toHaveTextContent(new RegExp(`^${rulePath}$`));
+  expect(flashContent()).toHaveTextContent('PutTargets');
+  expect(flashContent()).toHaveTextContent(reason);
+  const liveRegion = page.announcer?.getElement();
+  expect(liveRegion).toHaveAttribute('role', 'status');
+  expect(liveRegion).toHaveTextContent(`Warning ${warning}`);
+  expect(liveRegion).toHaveTextContent('PutTargets');
+  expect(liveRegion).toHaveTextContent(reason);
   expect(note).toEqual(
     error.failure.kind === 'not-implemented'
       ? { notImplemented: 'PutTargets', bus: 'default', rule: 'route' }
@@ -406,14 +452,19 @@ it.each([
 it('shows a 501 bus read at the field with Retry and sends no rule read or write', async () => {
   vi.mocked(getEventBus).mockRejectedValueOnce(unsupported('DescribeEventBus'));
   const page = open('?bus=orders');
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/for DescribeEventBus/)).toBeVisible();
-  expect(button('Retry')).toBeEnabled();
+  const busFailure = () => page.field('Event bus')?.findSecondaryControl();
+  await waitFor(() =>
+    expect(busFailure()?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+  );
+  expect(busFailure()?.getElement()).toHaveTextContent(/for DescribeEventBus/);
+  const retry = busFailure()?.findButton()?.getElement();
+  expect(retry).toHaveAccessibleName('Retry');
+  expect(retry).toBeEnabled();
   expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent('Choose an event bus');
-  fill();
-  click('Create rule');
+  page.fill();
+  page.click('Create rule');
   expectUnsent();
-  click('Retry');
+  if (retry) fireEvent.click(retry);
   await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   expectUnsent();
 });
@@ -425,39 +476,39 @@ it.each([
 ])('validates an unresolved bus from %s and accepts a listed bus instead', async (search, message) => {
   vi.mocked(getEventBus).mockResolvedValueOnce({ kind: 'not-found' });
   const page = open(search);
-  expect(await screen.findByText(message)).toBeVisible();
-  fill();
-  click('Create rule');
+  await waitFor(() => expect(page.field('Event bus')?.findError()?.getElement()).toHaveTextContent(message));
+  page.fill();
+  page.click('Create rule');
   expect(page.select('Event bus').findTrigger().getElement()).toHaveFocus();
   expectUnsent();
   await page.choose('Event bus', 'orders');
-  expect(screen.queryByText(message)).toBeNull();
-  click('Create rule');
+  expect(page.field('Event bus')?.findError()).toBeNull();
+  page.click('Create rule');
   await waitFor(() => expect(page.handOver).toHaveBeenCalledOnce());
   expect(lookup).toHaveBeenCalledWith(endpoint, 'orders', 'route', expect.any(AbortSignal));
 });
 
 it('focuses the first invalid field and sends no requests to create the rule', () => {
-  open();
-  enter('Rule name', 'invalid/name');
-  enter('Event pattern', '[]');
-  click('Create rule');
-  expect(textbox('Rule name')).toHaveFocus();
-  expect(textbox('Rule name')).toHaveAttribute('aria-invalid', 'true');
-  expect(textbox('Event pattern')).toHaveAttribute('aria-invalid', 'true');
+  const page = open();
+  page.enter('Rule name', 'invalid/name');
+  page.enter('Event pattern', '[]');
+  page.click('Create rule');
+  expect(page.textbox('Rule name')).toHaveFocus();
+  expect(page.textbox('Rule name')).toHaveAttribute('aria-invalid', 'true');
+  expect(page.textbox('Event pattern')).toHaveAttribute('aria-invalid', 'true');
   expectUnsent();
 });
 
 it('focuses a queue with its ARN still outstanding and sends no requests to create the rule', async () => {
   vi.mocked(getTargetQueueArn).mockReturnValueOnce(new Promise(() => undefined));
   const page = open();
-  fill();
-  click('Add target');
-  enter('Target ID', 'queue');
+  page.fill();
+  page.click('Add target');
+  page.enter('Target ID', 'queue');
   await page.choose('Target kind', 'sqs');
   await page.choose('Queue', queueUrl);
-  click('Create rule');
-  expect(screen.getByText('The queue ARN must be read before saving.')).toBeVisible();
+  page.click('Create rule');
+  expect(page.field('Queue')?.findError()?.getElement()).toHaveTextContent('The queue ARN must be read before saving.');
   expect(page.select('Queue').findTrigger().getElement()).toHaveFocus();
   expectUnsent();
 });
@@ -465,25 +516,31 @@ it('focuses a queue with its ARN still outstanding and sends no requests to crea
 it('cancels an unchanged form directly to the chosen bus’s Rules', async () => {
   const page = open('?bus=orders');
   await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
-  click('Cancel');
-  expect(screen.getByTestId('address')).toHaveTextContent(/^\/aws\/events\/rules\?bus=orders$/);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  page.click('Cancel');
+  expect(page.fixture?.getElement()).toHaveTextContent(/^\/aws\/events\/rules\?bus=orders$/);
+  expect(page.dom.findModal()).toBeNull();
   expectUnsent();
 });
 
-it.each(['field', 'choice', 'row'] as const)('asks before discarding a changed %s', async (change) => {
-  open();
-  if (change === 'field') enter('Description - optional', 'Routes orders');
-  if (change === 'choice') fireEvent.click(radio('DISABLED'));
-  if (change === 'row') click('Add target');
-  click('Cancel');
-  const dialog = () => screen.findByRole('dialog', { name: 'Discard what you entered?' });
-  fireEvent.click(within(await dialog()).getByRole('button', { name: 'Keep editing' }));
-  if (change === 'field') expect(textbox('Description - optional')).toHaveValue('Routes orders');
-  if (change === 'choice') expect(radio('DISABLED')).toBeChecked();
-  if (change === 'row') expect(textbox('Target ID')).toBeVisible();
-  click('Cancel');
-  fireEvent.click(within(await dialog()).getByRole('button', { name: 'Discard' }));
-  expect(screen.getByTestId('address')).toHaveTextContent(/^\/aws\/events\/rules\?bus=default$/);
+it.each(['field', 'choice', 'row'] as const)('asks before discarding a changed %s', (change) => {
+  const page = open();
+  if (change === 'field') page.enter('Description - optional', 'Routes orders');
+  if (change === 'choice') fireEvent.click(page.radio('DISABLED'));
+  if (change === 'row') page.click('Add target');
+  page.click('Cancel');
+  function answerDialog(name: string) {
+    const dialog = page.dom.findModal();
+    expect(dialog?.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
+    const footer = dialog?.findFooter();
+    if (!footer) throw new Error('Expected the discard dialog footer');
+    fireEvent.click(namedButton(createWrapper(footer.getElement()), name));
+  }
+  answerDialog('Keep editing');
+  if (change === 'field') expect(page.textbox('Description - optional')).toHaveValue('Routes orders');
+  if (change === 'choice') expect(page.radio('DISABLED')).toBeChecked();
+  if (change === 'row') expect(page.textbox('Target ID')).toBeVisible();
+  page.click('Cancel');
+  answerDialog('Discard');
+  expect(page.fixture?.getElement()).toHaveTextContent(/^\/aws\/events\/rules\?bus=default$/);
   expectUnsent();
 });
