@@ -56,17 +56,16 @@ it('subtracts applied changes, keeps edits to tags changed outside, and identifi
     { key: 'changed', value: '1' },
     { key: 'already-changed', value: '1' },
   ];
-  const draft = [
-    { key: 'changed', value: '2' },
-    { key: 'already-changed', value: '2' },
-    { key: 'added', value: '' },
-    { key: 'yet-to-add', value: '' },
-  ];
+  const changed = { key: 'changed', value: '2' };
+  const alreadyChanged = { key: 'already-changed', value: '2' };
+  const added = { key: 'added', value: '' };
+  const yetToAdd = { key: 'yet-to-add', value: '' };
+  const draft = [changed, alreadyChanged, added, yetToAdd];
   const outside = { key: 'outside', value: '3' };
-  const latest = [{ key: 'still-here', value: '3' }, { key: 'changed', value: '3' }, draft[1]!, draft[2]!, outside];
+  const latest = [{ key: 'still-here', value: '3' }, { key: 'changed', value: '3' }, alreadyChanged, added, outside];
   expect(changesOwed(tagChanges(opened, draft), latest)).toEqual({
     remove: ['still-here'],
-    put: [draft[0], draft[3]],
+    put: [changed, yetToAdd],
   });
   expect(tagsAddedOutside(opened, draft, latest)).toEqual([outside]);
 });

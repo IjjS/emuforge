@@ -19,6 +19,11 @@ const page = createWrapper(document.body);
 type ReadResult = Awaited<ReturnType<Parameters<typeof ManageTagsDialog>[0]['tags']['refresh']>>;
 const refresh = vi.fn<() => Promise<ReadResult>>();
 
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`${label} missing`);
+  return value;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -89,20 +94,26 @@ async function open(initialTags: Tag[] = initial) {
   }
   const view = render(<Area />);
   await screen.findByRole('dialog');
-  const modal = page.findModal()!;
+  const modal = required(page.findModal(), 'Tag dialog');
   const content = modal.findContent();
-  const editor = content.findAttributeEditor()!;
-  const save = modal.findFooter()!.findAllButtons()[1]!.getElement();
-  const cancel = modal.findFooter()!.findAllButtons()[0]!;
+  const editor = required(content.findAttributeEditor(), 'Tag editor');
+  const buttons = required(modal.findFooter(), 'Dialog footer').findAllButtons();
+  const save = required(buttons[1], 'Save button').getElement();
+  const cancel = required(buttons[0], 'Cancel button');
   const field = (row: number, column: number) =>
-    editor.findRow(row)!.findField(column)!.findControl()!.findInput()!.findNativeInput().getElement();
+    required(
+      editor.findRow(row)?.findField(column)?.findControl()?.findInput(),
+      `Tag field ${row.toString()}, ${column.toString()}`,
+    )
+      .findNativeInput()
+      .getElement();
   const alertText = () => content.findAllAlerts().map((alert) => alert.getElement().textContent);
   const add = (key: string) => {
     editor.findAddButton().click();
     fireEvent.change(field(editor.findRows().length, 1), { target: { value: key } });
   };
   const replaceA = () => {
-    editor.findRow(1)!.findRemoveButton()!.click();
+    required(editor.findRow(1)?.findRemoveButton(), 'Remove tag button').click();
     add('c');
   };
   return { editor, save, cancel, field, alertText, replaceA, content, onSaved, onDismiss };
@@ -125,7 +136,7 @@ it('opens with the tags as read, validates rows, and writes nothing for an uncha
   edit.editor.findAddButton().click();
   fireEvent.change(edit.field(3, 1), { target: { value: 'AwS:reserved' } });
   fireEvent.click(edit.save);
-  expect(edit.editor.findRow(3)!.findField(1)!.findError()?.getElement()).toHaveTextContent(
+  expect(edit.editor.findRow(3)?.findField(1)?.findError()?.getElement()).toHaveTextContent(
     'A key must not start with aws:.',
   );
   expect(sent).toEqual([]);

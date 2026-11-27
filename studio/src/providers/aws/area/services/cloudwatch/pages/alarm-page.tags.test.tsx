@@ -37,6 +37,11 @@ const tags = vi.mocked(readAlarmTags);
 const save = vi.mocked(saveAlarmTags);
 const page = createWrapper(document.body);
 
+function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`${label} missing`);
+  return value;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -120,22 +125,22 @@ async function manage() {
   const control = await waitFor(() => {
     const button = manageButton();
     expect(button).toBeEnabled();
-    return button!;
+    return required(button, 'Manage tags button');
   });
   fireEvent.click(control);
   await screen.findByRole('dialog');
-  const modal = page.findModal()!;
-  const footer = modal.findFooter()!.findAllButtons();
-  const row = modal.findContent().findAttributeEditor()!.findRow(1)!;
-  const key = row.findField(1)!.findControl()!.findInput()!.findNativeInput().getElement();
-  const value = row.findField(2)!.findControl()!.findInput()!.findNativeInput().getElement();
+  const modal = required(page.findModal(), 'Tag dialog');
+  const footer = required(modal.findFooter(), 'Dialog footer').findAllButtons();
+  const row = required(modal.findContent().findAttributeEditor()?.findRow(1), 'First tag row');
+  const field = (column: number, label: string) =>
+    required(row.findField(column)?.findControl()?.findInput(), label).findNativeInput().getElement();
   return {
     modal,
-    key,
-    value,
-    remove: row.findRemoveButton()!,
-    cancel: footer[0]!,
-    save: footer[1]!.getElement(),
+    key: field(1, 'Tag key'),
+    value: field(2, 'Tag value'),
+    remove: required(row.findRemoveButton(), 'Remove tag button'),
+    cancel: required(footer[0], 'Cancel button'),
+    save: required(footer[1], 'Save button').getElement(),
   };
 }
 
@@ -158,25 +163,28 @@ it.each<AlarmType>(['metric', 'composite', 'log'])(
   },
 );
 
-it.each([UNTAG_RESOURCE, TAG_RESOURCE])('remembers a 501 for %s when reopening the editor', async (operation) => {
-  save.mockRejectedValueOnce(refuse(operation, 501));
-  open();
-  const dialog = await manage();
-  if (operation === UNTAG_RESOURCE) dialog.remove.click();
-  else fireEvent.change(dialog.value, { target: { value: '2' } });
-  fireEvent.click(dialog.save);
-  await waitFor(() => expect(dialog.cancel.getElement()).toBeEnabled());
-  await waitFor(() => expect(dialog.modal.findContent().findAlert()?.getElement()).toHaveTextContent(operation));
-  dialog.cancel.click();
-  const reopened = await manage();
-  const alert = reopened.modal.findContent().findAlert()?.getElement();
-  expect(alert).toHaveTextContent('Not implemented by the emulator');
-  expect(alert).toHaveTextContent(operation);
-  expect(reopened.save).toBeDisabled();
-  fireEvent.click(reopened.save);
-  expect(save).toHaveBeenCalledOnce();
-  expect(flashText()).toBeUndefined();
-});
+it.each<TagOperation>([UNTAG_RESOURCE, TAG_RESOURCE])(
+  'remembers a 501 for %s when reopening the editor',
+  async (operation) => {
+    save.mockRejectedValueOnce(refuse(operation, 501));
+    open();
+    const dialog = await manage();
+    if (operation === UNTAG_RESOURCE) dialog.remove.click();
+    else fireEvent.change(dialog.value, { target: { value: '2' } });
+    fireEvent.click(dialog.save);
+    await waitFor(() => expect(dialog.cancel.getElement()).toBeEnabled());
+    await waitFor(() => expect(dialog.modal.findContent().findAlert()?.getElement()).toHaveTextContent(operation));
+    dialog.cancel.click();
+    const reopened = await manage();
+    const alert = reopened.modal.findContent().findAlert()?.getElement();
+    expect(alert).toHaveTextContent('Not implemented by the emulator');
+    expect(alert).toHaveTextContent(operation);
+    expect(reopened.save).toBeDisabled();
+    fireEvent.click(reopened.save);
+    expect(save).toHaveBeenCalledOnce();
+    expect(flashText()).toBeUndefined();
+  },
+);
 
 it('closes the dialog, shows the saved flash, and uses the tags read afterward', async () => {
   tags.mockResolvedValueOnce(initial).mockResolvedValue(revised);
@@ -201,7 +209,10 @@ it('keeps the save’s flash and tags when a previous refresh answers later', as
   tags.mockResolvedValueOnce(initial).mockReturnValueOnce(older.promise).mockResolvedValue(revised);
   open();
   await waitFor(() => expect(manageButton()).toBeEnabled());
-  const refresh = page.findContentLayout()!.findHeader()!.findHeader()!.findActions()!.findButton()!;
+  const refresh = required(
+    page.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton(),
+    'Page refresh button',
+  );
   expect(refresh.getElement()).toHaveAccessibleName('Refresh');
   refresh.click();
   await waitFor(() => expect(tags).toHaveBeenCalledTimes(2));

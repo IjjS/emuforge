@@ -18,7 +18,8 @@ function intercept(answers: Record<string, () => Response | Promise<Response>> =
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init);
     if (new URL(request.url).pathname === '/__emuforge/session') return Response.json({ token: 'test-session' });
-    const operation = request.headers.get('x-amz-target')!.split('.').at(-1)!;
+    const operation = request.headers.get('x-amz-target')?.split('.').at(-1);
+    if (operation === undefined) throw new Error('CloudWatch operation missing');
     sent.push({ operation, body: (await request.json()) as unknown });
     return answers[operation]?.() ?? Response.json({});
   });

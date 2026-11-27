@@ -64,7 +64,10 @@ export function ManageTagsDialog({
   const owed = changesOwed(tagChanges(opened, draft), current);
   const outside = tagsAddedOutside(opened, draft, current);
   const errors = tried ? validateTags(draft) : undefined;
-  const writes = [...(owed.remove.length > 0 ? [UNTAG_RESOURCE] : []), ...(owed.put.length > 0 ? [TAG_RESOURCE] : [])];
+  const writes: TagOperation[] = [
+    ...(owed.remove.length > 0 ? [UNTAG_RESOURCE] : []),
+    ...(owed.put.length > 0 ? [TAG_RESOURCE] : []),
+  ];
   const unsupported = (writes.length === 0 ? [UNTAG_RESOURCE, TAG_RESOURCE] : writes).find(
     (operation) =>
       unavailable.has(operation) ||
