@@ -46,7 +46,7 @@ async function open() {
     if (!wrapper) throw new Error('Expected the remove dialog');
     return wrapper;
   });
-  const [, action] = dialog.findFooter().findAllButtons();
+  const [, action] = dialog.findFooter()?.findAllButtons() ?? [];
   if (!action) throw new Error('Expected the Remove button');
   return { dialog, action, onRemoved, onUnavailable };
 }

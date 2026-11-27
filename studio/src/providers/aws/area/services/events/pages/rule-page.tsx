@@ -76,7 +76,8 @@ export function RulePage({ connection, params }: ScreenPageProps) {
     : removeUnavailable
       ? RULE_CHANGE_OPERATIONS.removeTargets
       : undefined;
-  const actionBlocked = dialog !== undefined || leaving || switchPending || engineOrigin === undefined;
+  const anotherAction = dialog !== undefined || leaving || engineOrigin === undefined;
+  const actionBlocked = anotherAction || switchPending;
   const removeDisabledReason = removeUnavailable
     ? unavailableReason(RULE_CHANGE_OPERATIONS.removeTargets)
     : actionBlocked
@@ -141,9 +142,10 @@ export function RulePage({ connection, params }: ScreenPageProps) {
             rule && (
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
-                  disabled={actionBlocked || currentRule === undefined || switchUnavailable}
+                  disabled={anotherAction || switchUnavailable}
                   disabledReason={switchUnavailable ? unavailableReason(switchOperation) : undefined}
-                  loading={switchPending}
+                  loading={switchPending || read.loading}
+                  loadingText={read.loading ? 'Reading rule state' : enabling ? 'Enabling rule' : 'Disabling rule'}
                   onClick={() => void handleSwitch()}
                 >
                   {enabling ? 'Enable' : 'Disable'}

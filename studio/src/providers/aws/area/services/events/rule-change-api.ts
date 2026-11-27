@@ -3,10 +3,10 @@ import {
   DisableRuleCommand,
   EnableRuleCommand,
   RemoveTargetsCommand,
+  type RemoveTargetsResultEntry,
 } from '@aws-sdk/client-eventbridge';
 
 import { RequestError } from '../../../../../lib/aws/request';
-import { failureOf } from '../../components/use-token-listing';
 import { sendEvents } from './clients';
 import { listRuleTargets, RULE_OPERATIONS } from './rule-api';
 
@@ -17,14 +17,8 @@ export const RULE_CHANGE_OPERATIONS = {
   delete: 'DeleteRule',
 } as const;
 
-interface FailedTarget {
-  TargetId?: string | undefined;
-  ErrorCode?: string | undefined;
-  ErrorMessage?: string | undefined;
-}
-
 export class RemoveTargetsError extends RequestError {
-  constructor(readonly entries: readonly FailedTarget[]) {
+  constructor(readonly entries: readonly RemoveTargetsResultEntry[]) {
     super({
       kind: 'other',
       operation: RULE_CHANGE_OPERATIONS.removeTargets,
@@ -36,8 +30,8 @@ export class RemoveTargetsError extends RequestError {
 }
 
 export class DeleteAfterRemovalError extends RequestError {
-  constructor(error: unknown) {
-    super(failureOf(error, RULE_CHANGE_OPERATIONS.delete));
+  constructor(error: RequestError) {
+    super(error.failure);
     this.message = "The rule's targets were removed, but the rule was not deleted.";
   }
 }
@@ -100,7 +94,7 @@ export async function deleteRule(endpoint: string, bus: string, name: string, si
       signal,
     );
   } catch (error) {
-    if (!signal.aborted && ids.length > 0) throw new DeleteAfterRemovalError(error);
+    if (error instanceof RequestError && ids.length > 0) throw new DeleteAfterRemovalError(error);
     throw error;
   }
 }

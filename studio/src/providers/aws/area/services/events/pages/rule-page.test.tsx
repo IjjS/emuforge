@@ -169,14 +169,18 @@ const refused = (operation: string, message: string) =>
 
 type Page = ReturnType<typeof createWrapper>;
 
-function headerButton(page: Page, name: string) {
+function headerAction(page: Page, name: string) {
   const button = page
     .findHeader()
     ?.findActions()
     ?.findAllButtons()
-    .find((candidate) => candidate.getElement().textContent === name);
+    .find((candidate) => candidate.findTextRegion()?.getElement().textContent === name);
   if (!button) throw new Error(`Expected header button ${name}`);
-  return button.getElement();
+  return button;
+}
+
+function headerButton(page: Page, name: string) {
+  return headerAction(page, name).getElement();
 }
 
 async function modal(page: Page) {
@@ -195,11 +199,11 @@ async function openDelete(page: Page) {
 
 function confirmDelete(dialog: Awaited<ReturnType<typeof modal>>) {
   const field = dialog.findContent().findInput()?.findNativeInput().getElement();
-  const [, confirm] = dialog.findFooter().findAllButtons();
+  const [, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
   if (!field || !confirm) throw new Error('Expected the delete controls');
   fireEvent.change(field, { target: { value: '.' } });
   fireEvent.click(confirm.getElement());
-  return confirm.getElement();
+  return confirm;
 }
 
 async function confirmRemove(page: Page) {
@@ -210,7 +214,7 @@ async function confirmRemove(page: Page) {
   });
   fireEvent.click(button.getElement());
   const dialog = await modal(page);
-  const [, confirm] = dialog.findFooter().findAllButtons();
+  const [, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
   if (!confirm) throw new Error('Expected the Remove confirmation');
   fireEvent.click(confirm.getElement());
   return dialog;
@@ -255,7 +259,7 @@ it.each([
 });
 
 it.each([true, false])('reports the switch to enabled=%s and reads the rule again', async (enable) => {
-  const pending = deferred<void>();
+  const pending = deferred<undefined>();
   changeState.mockReturnValueOnce(pending.promise);
   read
     .mockResolvedValueOnce(ruleIn(enable ? 'DISABLED' : 'ENABLED'))
@@ -263,11 +267,12 @@ it.each([true, false])('reports the switch to enabled=%s and reads the rule agai
   const { page, show } = open();
   const button = await waitFor(() => headerButton(page, enable ? 'Enable' : 'Disable'));
   fireEvent.click(button);
-  expect(button).toBeDisabled();
-  expect(button).toHaveAttribute('aria-busy', 'true');
+  const action = headerAction(page, enable ? 'Enable' : 'Disable');
+  expect(action.isDisabled()).toBe(true);
+  expect(action.findLoadingIndicator()).not.toBeNull();
   expect(changeState).toHaveBeenCalledExactlyOnceWith(engineOrigin, '..', '.', enable, expect.any(AbortSignal));
 
-  await act(async () => pending.resolve());
+  await act(async () => pending.resolve(undefined));
   await waitFor(() => expect(headerButton(page, enable ? 'Disable' : 'Enable')).toBeEnabled());
   expect(flashText(show)).toBe(`Rule . ${enable ? 'enabled' : 'disabled'}.`);
   expect(read).toHaveBeenCalledTimes(2);
@@ -347,7 +352,7 @@ it('closes the remove dialog, flashes success and refreshes the targets', async 
 it.each(['before', 'after'])('ignores a targets read returning %s the read started by removal', async (order) => {
   const old = deferred<Target[]>();
   const fresh = deferred<Target[]>();
-  const removal = deferred<void>();
+  const removal = deferred<undefined>();
   read.mockResolvedValue(found);
   readTargets.mockResolvedValueOnce([queue]).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
   remove.mockReturnValueOnce(removal.promise);
@@ -356,7 +361,7 @@ it.each(['before', 'after'])('ignores a targets read returning %s the read start
   void client.refetchQueries({ queryKey: ['events', 'targets'] });
   await waitFor(() => expect(readTargets).toHaveBeenCalledTimes(2));
   await confirmRemove(page);
-  await act(async () => removal.resolve());
+  await act(async () => removal.resolve(undefined));
   await waitFor(() => expect(readTargets).toHaveBeenCalledTimes(3));
   if (order === 'before') await act(async () => old.resolve([queue]));
   await act(async () => fresh.resolve([]));
@@ -399,7 +404,7 @@ it.each(['before', 'after'])(
   async (order) => {
     const oldRule = deferred<RuleRead>();
     const oldTargets = deferred<Target[]>();
-    const deletion = deferred<void>();
+    const deletion = deferred<undefined>();
     read.mockResolvedValueOnce(found).mockReturnValueOnce(oldRule.promise);
     readTargets.mockResolvedValueOnce([queue]).mockReturnValueOnce(oldTargets.promise);
     drop.mockReturnValueOnce(deletion.promise);
@@ -419,13 +424,13 @@ it.each(['before', 'after'])(
     if (order === 'before') {
       await act(async () => answerOld());
       expect(page.findModal()?.getElement()).toBeVisible();
-      expect(action).toBeDisabled();
-      expect(action).toHaveAttribute('aria-busy', 'true');
+      expect(action.isDisabled()).toBe(true);
+      expect(action.findLoadingIndicator()).not.toBeNull();
       expect(container).toHaveTextContent('Routes orders');
       expect(container).not.toHaveTextContent('Rule no longer exists');
       expect(container).not.toHaveTextContent('Rule not found');
     }
-    await act(async () => deletion.resolve());
+    await act(async () => deletion.resolve(undefined));
     if (order === 'after') await act(async () => answerOld());
     expect(handOver.mock.lastCall?.[0]).toBe('/aws/events/rules?bus=..');
     expect(flashText(handOver, 1)).toBe('Rule . deleted.');
@@ -442,7 +447,7 @@ it('shows a missing rule after dismissing the delete dialog without confirming',
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   await act(async () => old.resolve({ kind: 'not-found' }));
   expect(container).not.toHaveTextContent('Rule not found');
-  const [cancel] = dialog.findFooter().findAllButtons();
+  const [cancel] = dialog.findFooter()?.findAllButtons() ?? [];
   if (!cancel) throw new Error('Expected the Cancel button');
   fireEvent.click(cancel.getElement());
   await waitFor(() => expect(container).toHaveTextContent('Rule not found'));
@@ -465,7 +470,7 @@ it('reads the targets again behind the dialog after a delete refused following r
 it.each(['ordinary', 'before', 'after'])('refreshes a partial removal behind the open dialog (%s)', async (order) => {
   const old = deferred<Target[]>();
   const fresh = deferred<Target[]>();
-  const deletion = deferred<void>();
+  const deletion = deferred<undefined>();
   read.mockResolvedValue(found);
   const all = [queue, topic, logs];
   readTargets.mockResolvedValueOnce(all);

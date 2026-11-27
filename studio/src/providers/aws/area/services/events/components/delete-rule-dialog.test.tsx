@@ -51,7 +51,7 @@ async function open(targetCount = 3) {
     if (!wrapper) throw new Error('Expected the delete dialog');
     return wrapper;
   });
-  const [cancel, action] = dialog.findFooter().findAllButtons();
+  const [cancel, action] = dialog.findFooter()?.findAllButtons() ?? [];
   const field = dialog.findContent().findInput()?.findNativeInput().getElement();
   if (!cancel || !action || !field) throw new Error('Expected the delete controls');
   const confirm = () => {

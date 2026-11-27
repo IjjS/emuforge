@@ -80,8 +80,9 @@ export function RemoveTargetDialog({
             </Button>
             <Button
               variant="primary"
-              disabled={pending || unavailable}
+              disabled={unavailable}
               loading={pending}
+              loadingText="Removing target"
               onClick={() => void handleConfirm()}
             >
               Remove
