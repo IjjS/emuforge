@@ -2,6 +2,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
@@ -53,7 +54,9 @@ function open() {
   }
   const { container } = render(
     <QueryClientProvider client={new QueryClient()}>
-      <Form />
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   const page = createWrapper(container);
