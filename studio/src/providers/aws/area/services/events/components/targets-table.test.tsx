@@ -19,7 +19,7 @@ function open({ value, failure, loading = false }: { value?: Target[]; failure?:
   const refresh = vi.fn();
   const { container } = render(
     <MemoryRouter>
-      <TargetsTable connection={{ engineOrigin }} targets={{ value, failure, loading, refresh }} />
+      <TargetsTable connection={{ engineOrigin, result: undefined }} targets={{ value, failure, loading, refresh }} />
     </MemoryRouter>,
   );
   const table = createWrapper(container).findTable();

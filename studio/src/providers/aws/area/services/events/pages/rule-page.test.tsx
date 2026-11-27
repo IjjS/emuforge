@@ -33,7 +33,7 @@ function open() {
     <MemoryRouter>
       <QueryClientProvider client={new QueryClient()}>
         <PageResourcesContext.Provider value={resources}>
-          <RulePage connection={{ engineOrigin }} params={{ bus: '*..', rule: '*.' }} />
+          <RulePage connection={{ engineOrigin, result: undefined }} params={{ bus: '*..', rule: '*.' }} />
         </PageResourcesContext.Provider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -42,8 +42,15 @@ function open() {
 }
 
 it('uses the address to read the rule before reading its targets', async () => {
-  const answer = Promise.withResolvers<RuleRead>();
-  read.mockReturnValueOnce(answer.promise);
+  let finishRead: (value: RuleRead) => void = () => {
+    throw new Error('The rule read has not started');
+  };
+  read.mockImplementationOnce(
+    () =>
+      new Promise<RuleRead>((resolve) => {
+        finishRead = resolve;
+      }),
+  );
   const { page, resources } = open();
   expect(page.findHeader()?.findHeadingText().getElement().textContent).toBe('.');
   expect(resources).toHaveBeenCalledWith({ word: 'targets' });
@@ -51,7 +58,7 @@ it('uses the address to read the rule before reading its targets', async () => {
   expect(readTargets).not.toHaveBeenCalled();
   expect(page.findStatusIndicator()?.getElement().textContent).toBe('Loading rule');
 
-  answer.resolve(found);
+  finishRead(found);
   await waitFor(() => expect(readTargets).toHaveBeenCalledWith(engineOrigin, '..', '.', expect.any(AbortSignal)));
   await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent(/^No targets$/));
 });
@@ -64,7 +71,7 @@ it.each(['Rule . does not exist on EventBus ...', 'Event bus .. does not exist.'
     const state = page.findContainer()?.getElement();
     await waitFor(() => expect(state).toHaveTextContent('Rule not found'));
     expect(state).toHaveTextContent(message);
-    const back = page.findContainer()?.findButton()?.getElement();
+    const back = page.findButton('a')?.getElement();
     expect(back).toHaveAccessibleName('Go to Rules');
     expect(back).toHaveAttribute('href', '/aws/events/rules');
     expect(readTargets).not.toHaveBeenCalled();
@@ -89,7 +96,7 @@ it.each([
     await waitFor(() => expect(page.findStatusIndicator()?.getElement().textContent).toBe(status));
     if (detail) expect(page.findContainer()?.getElement()).toHaveTextContent(detail);
     expect(readTargets).not.toHaveBeenCalled();
-    const retry = page.findContainer()?.findButton()?.getElement();
+    const retry = page.findButton()?.getElement();
     expect(retry).toHaveAccessibleName('Retry');
     if (retry) fireEvent.click(retry);
     await waitFor(() => expect(readTargets).toHaveBeenCalledOnce());
@@ -110,7 +117,7 @@ it('keeps the rule details visible when only the targets read fails', async () =
   await waitFor(() =>
     expect(page.findTable()?.findEmptySlot()?.findStatusIndicator()?.getElement().textContent).toBe('Access denied'),
   );
-  expect(page.findContainer()?.findKeyValuePairs()?.findItems()[0]?.findValue()?.getElement().textContent).toBe(arn);
+  expect(page.findKeyValuePairs()?.findItems()[0]?.findValue()?.getElement().textContent).toBe(arn);
   expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent(
     'ListTargetsByRule was refused: Targets refused',
   );
