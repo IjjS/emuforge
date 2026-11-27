@@ -223,6 +223,77 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the internet gateway list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = gateway('igw-b', 'p664 a b');
+    const doubleSpace = gateway('igw-c', 'p664 a  b', 'vpc-a');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, SPARE] } });
+    open();
+
+    const radio = (row: number) => table().findRowSelectionArea(row)?.find('input[type="radio"]');
+    await waitFor(() => {
+      expect(radio(2)?.getElement()).toHaveAccessibleName(identity);
+    });
+    expect(radio(1)?.getElement()).toHaveAccessibleName('p664 a b');
+    expect(radio(3)?.getElement()).toHaveAccessibleName(SPARE.id);
+    expect(
+      SPARE_ROW.map(
+        (_, column) =>
+          table()
+            .findBodyCell(3, column + 2)
+            ?.getElement().textContent,
+      ),
+    ).toEqual(SPARE_ROW);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    if (cell === undefined) throw new Error('Missing Name cell');
+    expect(cell).toHaveAccessibleName(identity);
+    const name = within(cell).getByText('p664 a  b', exactText);
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    const selectRepeatedName = () => {
+      const control = radio(2)?.getElement();
+      if (control === undefined) throw new Error('Missing row selection control');
+      fireEvent.click(control);
+    };
+    selectRepeatedName();
+    fireEvent.click(action('Detach'));
+    const detach = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null || !modal.isVisible()) throw new Error('Missing detach dialog');
+      return modal;
+    });
+    expect(detach.getElement()).toHaveAccessibleName('Detach internet gateway?');
+    const detachContent = detach.findContent().getElement();
+    expect(within(detachContent).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(detachContent)).toContain('is detached from vpc-a.');
+
+    vi.mocked(changes.detachInternetGateway).mockResolvedValue(undefined);
+    answer({ '|': { items: [singleSpace, gateway('igw-c', 'p664 a  b'), SPARE] } });
+    const confirm = detach.findFooter()?.findAllButtons()[1]?.getElement();
+    if (confirm === undefined) throw new Error('Missing detach confirmation');
+    expect(confirm).toHaveAccessibleName('Detach');
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      const message = PAGE.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
+      expect(message).toHaveTextContent('Detached igw-c from vpc-a');
+    });
+    await waitFor(() => expect(table().findBodyCell(2, 4)?.getElement()).toHaveTextContent('Detached'));
+
+    selectRepeatedName();
+    fireEvent.click(action('Delete'));
+    const deletion = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null || !modal.isVisible()) throw new Error('Missing deletion dialog');
+      return modal;
+    });
+    expect(deletion.getElement()).toHaveAccessibleName('Delete internet gateway?');
+    const deletionContent = deletion.findContent().getElement();
+    expect(within(deletionContent).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletionContent)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per gateway with name, internet gateway ID, "Attached" or "Detached", and the VPC ID (to the VPC) or "-"', async () => {
     answer({ '|': { items: [EDGE, SPARE] } });
     const router = open();

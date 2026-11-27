@@ -2,6 +2,7 @@ import Multiselect, { type MultiselectProps } from '@cloudscape-design/component
 import type { Ref } from 'react';
 
 import { optional, useChoiceField, type ChoiceFieldProps } from './choice-select';
+import { identityOption } from './name-identity';
 
 // A form's field of several choices, read a page at a time (issue 553, design "What is shared"): a Cloudscape
 // `Multiselect` over the same hook and states as `choice-select.tsx`. Each choice made is shown as a token that can
@@ -23,7 +24,7 @@ export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
     <Multiselect
       ref={multiselectRef}
       {...parts}
-      selectedOptions={value.map(source.optionOf)}
+      selectedOptions={value.map((item) => identityOption(source.optionOf(item)))}
       options={options}
       {...optional({ placeholder, invalid, ariaLabel })}
       deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}

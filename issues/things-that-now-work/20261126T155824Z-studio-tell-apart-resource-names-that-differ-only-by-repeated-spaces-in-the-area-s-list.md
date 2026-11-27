@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|names-with-repeated-spaces|labels
-Issue-Check-Ids:
+Issue-Check-Ids: 664
 Issue-Commit: b39aa927c3c654f3ae9681167c4f028c9339f345
 
 # Tell apart resource names that differ only by repeated spaces in the area's lists, links and choices

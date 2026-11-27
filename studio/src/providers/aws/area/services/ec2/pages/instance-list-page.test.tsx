@@ -265,6 +265,32 @@ describe('the instances list', () => {
     });
   });
 
+  it('distinguishes instance Name tags with repeated spaces and selects unnamed instances by ID', async () => {
+    const name = 'dev  instance';
+    const identity = 'dev\\u0020\\u0020instance';
+    answer({
+      '||': {
+        instances: [
+          instance('i-1', 'running', { tags: [{ key: 'Name', value: 'dev instance' }] }),
+          instance('i-2', 'running', { tags: [{ key: 'Name', value: name }] }),
+          instance('i-3', 'running', { tags: [] }),
+        ],
+      },
+    });
+    open();
+
+    await waitFor(() => expect(table().findRows()).toHaveLength(3));
+    const [ordinaryRow, spacedRow, unnamedRow] = table().findRows();
+    if (!ordinaryRow || !spacedRow || !unnamedRow) throw new Error('Missing instance rows');
+    expect(within(ordinaryRow.getElement()).getByRole('radio')).toHaveAccessibleName('dev instance');
+    expect(within(spacedRow.getElement()).getByRole('radio')).toHaveAccessibleName(identity);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    expect(cell?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    expect(within(unnamedRow.getElement()).getByRole('radio')).toHaveAccessibleName('i-3');
+    expect(table().findBodyCell(3, 3)?.findLink()?.getElement()).toHaveAccessibleName('i-3');
+    expect(table().findBodyCell(3, 2)?.getElement().textContent).toBe('-');
+  });
+
   it('none, no filter → "No instances" with "Launch instance", which leads to the launch address', async () => {
     answer({});
     const router = open('/aws/ec2/instances');

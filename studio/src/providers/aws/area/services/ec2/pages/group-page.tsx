@@ -14,6 +14,7 @@ import { useCallback, useState } from 'react';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -369,7 +370,7 @@ export function GroupPage({ connection, params }: ScreenPageProps) {
               </SpaceBetween>
             }
           >
-            <ValueText kind="name" value={name ?? id} />
+            <NameText name={name ?? id} />
           </Header>
         }
       >

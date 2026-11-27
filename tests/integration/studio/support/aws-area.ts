@@ -9,7 +9,7 @@
 import type { Locator, Page } from '@playwright/test';
 
 import { expect } from './check';
-import { ACTION, BREADCRUMB_GROUP, breadcrumbs, heading } from './frame';
+import { ACTION, BREADCRUMB_GROUP, BREADCRUMB_ITEMS, breadcrumbs, heading } from './frame';
 
 /** The constant label of the emulator line (R4.2). */
 export const LINE_LABEL = 'Local emulator, not AWS';
@@ -79,6 +79,14 @@ export async function expectLine(page: Page, status: RegExp, timeout = LINE_CHAN
 /** The texts of the crumbs on screen, in order, the current page last. */
 export async function crumbs(page: Page): Promise<string[]> {
   return breadcrumbs(page);
+}
+
+/**
+ * The crumb at `index` (0 the first) of the crumbs on screen, in the order `crumbs` reads them: the breadcrumb
+ * group's own item, for its visible text and, when it is a link, the address it leads to.
+ */
+export function crumbAt(page: Page, index: number): Locator {
+  return page.locator(BREADCRUMB_ITEMS).filter({ visible: true }).nth(index);
 }
 
 /** A crumb link with exactly `name`, as it is shown. */

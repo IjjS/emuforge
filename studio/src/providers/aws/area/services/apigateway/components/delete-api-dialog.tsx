@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { AreaModal } from '../../../components/area-modal';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { deleteApiOperation, type DeleteApiTarget } from '../api-delete-api';
 import { useDeleteApi } from '../api-delete-queries';
@@ -43,7 +44,7 @@ export function DeleteApiDialog({ api, endpoint, onDeleted, onDismiss }: DeleteA
       visible
       header={
         <>
-          Delete API <ValueText kind="name" value={api.name} />?
+          Delete API <NameText name={api.name} />?
         </>
       }
       closeAriaLabel="Close dialog"

@@ -1,6 +1,7 @@
 import type { LogGroupClass } from '@aws-sdk/client-cloudwatch-logs';
 
-import { LINE_BREAK, nameSegment, normalizeLineBreaks } from '../../components/name-segment';
+import { nameIdentity } from '../../components/name-identity';
+import { nameSegment, normalizeLineBreaks } from '../../components/name-segment';
 
 export { LINE_BREAK, nameFromSegment, nameSegment, normalizeLineBreaks } from '../../components/name-segment';
 
@@ -25,18 +26,8 @@ export function logStreamPath(group: string, stream: string): string {
 
 export const streamNameForDisplay = normalizeLineBreaks;
 
-const LINE_BREAKS = new RegExp(LINE_BREAK, 'g');
-
-const LINE_BREAK_ESCAPES: Record<string, string> = {
-  '\r': '\\r',
-  '\n': '\\n',
-  '\r\n': '\\r\\n',
-  '\u2028': '\\u2028',
-  '\u2029': '\\u2029',
-};
-
 export function streamNameLabel(name: string): string {
-  return name.replaceAll('\\', '\\\\').replace(LINE_BREAKS, (lineBreak) => LINE_BREAK_ESCAPES[lineBreak] ?? lineBreak);
+  return nameIdentity(name);
 }
 
 export const RETENTION_DAYS = [

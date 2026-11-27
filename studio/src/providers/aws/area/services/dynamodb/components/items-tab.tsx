@@ -19,6 +19,8 @@ import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, type ReadFailureState } from '../../../components/failure-states';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { keyOfItem, type Item, type Table as TableDescription } from '../api';
 import { cellText } from '../format';
@@ -76,7 +78,7 @@ function Cell({ item, name, kind }: { item: Item; name: string; kind: 'name' | '
       <Box variant="span" fontSize="body-s" color="text-body-secondary">
         {shown.type}
       </Box>{' '}
-      <ValueText kind={kind} value={shown.text} />
+      {kind === 'name' ? <NameText name={shown.text} /> : <ValueText kind="text" value={shown.text} />}
     </span>
   );
 }
@@ -393,6 +395,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
       cell: (item: Item) =>
         position === 0 ? (
           <Link
+            ariaLabel={nameIdentity(trackBy(item))}
             onFollow={(event) => {
               event.preventDefault();
               editor.open(item);
@@ -431,7 +434,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
         ariaLabels={{
           tableLabel: 'Items',
           allItemsSelectionLabel: () => 'Select every item of the page',
-          itemSelectionLabel: (_, item) => `Select ${trackBy(item)}`,
+          itemSelectionLabel: (_, item) => `Select ${nameIdentity(trackBy(item))}`,
           selectionGroupLabel: 'Item selection',
         }}
         columnDefinitions={columns}
