@@ -41,3 +41,13 @@ export function keyNameMessage(name: string): string | undefined {
 export function publicKeyMessage(mode: KeyPairMode, publicKey: string): string | undefined {
   return mode === 'import' && publicKey.trim() === '' ? PUBLIC_KEY_EMPTY : undefined;
 }
+
+export const KEY_TYPE_OPTIONS = [
+  { value: 'rsa', label: 'RSA', description: 'Uses the RSA algorithm for SSH authentication.' },
+  { value: 'ed25519', label: 'ED25519', description: 'Uses Ed25519 for SSH authentication with a compact key.' },
+];
+
+export const KEY_FORMAT_OPTIONS = [
+  { value: 'pem', label: '.pem', description: 'Saves the private key in PEM format for OpenSSH.' },
+  { value: 'ppk', label: '.ppk', description: 'Saves the private key in PuTTY format.' },
+];
