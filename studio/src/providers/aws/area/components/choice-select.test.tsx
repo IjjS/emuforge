@@ -120,6 +120,125 @@ beforeEach(() => {
 });
 
 describe('ChoiceSelect', () => {
+  it('labels choices with their identities and keeps the stored name as the selected value', async () => {
+    const oneSpace = thing('a b');
+    const twoSpaces = thing('a  b');
+    const identity = 'a\\u0020\\u0020b';
+    read.mockResolvedValue({ items: [oneSpace, twoSpaces] });
+    open();
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a b', identity]));
+
+    expect(select().findDropdown().findOptionByValue(twoSpaces.id)?.findLabel().getElement()).toHaveTextContent(
+      identity,
+    );
+    expect(select().findDropdown().findOptionByValue(oneSpace.id)?.findLabel().getElement()).toHaveTextContent('a b');
+    select().selectOptionByValue(twoSpaces.id);
+    expect(triggerText()).toBe(identity);
+    expect(chosen).toEqual([twoSpaces]);
+  });
+
+  it('filters by the stored name, id or description and shows the escaped label with the usual option details', async () => {
+    const identity = 'a\\u0020\\u0020b';
+    read.mockResolvedValue({ items: [thing('id-1', 'a b', '1', 'Primary'), thing('id-2', 'a  b', '2', 'Replica')] });
+    open({ filtering: 'local' });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a b', identity]));
+
+    const input = select().findFilteringInput();
+    input?.setInputValue('a  b');
+    await waitFor(() => expect(shown()).toEqual([identity]));
+    const option = select().findDropdown().findOptionByValue('id-2')?.getElement();
+    expect(option?.textContent).not.toContain('a  b');
+    expect(option).toHaveTextContent(identity);
+    expect(option).toHaveTextContent('Replica');
+    expect(option).toHaveTextContent('id-2');
+    expect(option).toHaveTextContent('size 2');
+
+    input?.setInputValue('ID-1');
+    await waitFor(() => expect(shown()).toEqual(['a b']));
+    input?.setInputValue('Replica');
+    await waitFor(() => expect(shown()).toEqual([identity]));
+    input?.setInputValue('missing');
+    expect(await screen.findByText('No things match')).toBeInTheDocument();
+    expect(screen.queryByText('No things')).not.toBeInTheDocument();
+    input?.setInputValue('');
+    await waitFor(() => expect(shown()).toEqual(['a b', identity]));
+    expect(read.mock.calls).toEqual([['', undefined]]);
+  });
+
+  it('shows loading and retry for a local source and says "No things" when the successful read is empty', async () => {
+    let reject: (error: Error) => void = () => undefined;
+    read.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    read.mockResolvedValueOnce({ items: [] });
+    open({ filtering: 'local' });
+    select().openDropdown();
+    await waitFor(() => expect(dropdownText()).toContain('Loading things'));
+
+    reject(new RequestError({ kind: 'other', operation: 'ListThings', code: 'Broken' }));
+    await waitFor(() => expect(dropdownText()).toContain('The things could not be loaded: Broken'));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('No things')).toBeInTheDocument();
+  });
+
+  it('filters a fixed first choice even when the source is empty, restoring it when the text is cleared', async () => {
+    read.mockResolvedValue({ items: [] });
+    open({ filtering: 'local', fixed: 'No key pair' });
+    select().openDropdown();
+    await waitFor(() => expect(dropdownText()).toContain('No things'));
+
+    const input = select().findFilteringInput();
+    input?.setInputValue('missing');
+    expect(await screen.findByText('No things match')).toBeInTheDocument();
+    expect(shown()).toEqual([]);
+    input?.setInputValue('');
+    await waitFor(() => expect(shown()).toEqual(['No key pair']));
+  });
+
+  it('matches a fixed first choice by label alongside a source with options', async () => {
+    read.mockResolvedValue({ items: [thing('id-1', 'existing key', '2', 'Replica')] });
+    open({ filtering: 'local', fixed: 'No key pair' });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['No key pair', 'existing key']));
+    const option = select().findDropdown().findOptionByValue('id-1')?.getElement();
+    expect(option).toHaveTextContent('Replica');
+    expect(option).toHaveTextContent('size 2');
+
+    select().findFilteringInput()?.setInputValue('pair');
+    await waitFor(() => expect(shown()).toEqual(['No key pair']));
+  });
+
+  it('offers another page when a local filter hides the first page and narrows the new options too', async () => {
+    read.mockResolvedValueOnce({ items: [thing('id-1', 'one')], next: 'next' });
+    read.mockResolvedValueOnce({ items: [thing('id-2', 'a  b'), thing('id-3', 'three')] });
+    open({ filtering: 'local' });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['one']));
+
+    select().findFilteringInput()?.setInputValue('a  b');
+    await waitFor(() => expect(shown()).toEqual([]));
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(shown()).toEqual(['a\\u0020\\u0020b']));
+    expect(read.mock.calls).toEqual([
+      ['', undefined],
+      ['', 'next'],
+    ]);
+  });
+
+  it('sends the typed text with both spaces to a remote source', async () => {
+    read.mockResolvedValue({ items: [] });
+    open({ filtering: 'sent' });
+    select().openDropdown();
+    await waitFor(() => expect(read).toHaveBeenCalledWith('', undefined));
+    select().findFilteringInput()?.setInputValue('a  b');
+    await waitFor(() => expect(read).toHaveBeenLastCalledWith('a  b', undefined));
+  });
+
   it('opened → "Loading {things}", then the first page\'s choices, each with its label and its further values', async () => {
     let answer: (page: TokenPage<Thing>) => void = () => undefined;
     read.mockImplementationOnce(

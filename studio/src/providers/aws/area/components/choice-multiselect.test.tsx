@@ -94,6 +94,24 @@ beforeEach(() => {
 });
 
 describe('ChoiceMultiselect', () => {
+  it('labels a token and its remove button with the identity and keeps the other choice when removed', async () => {
+    const oneSpace = thing('1', 'a b');
+    const twoSpaces = thing('2', 'a  b');
+    const identity = 'a\\u0020\\u0020b';
+    read.mockResolvedValue({ items: [oneSpace, twoSpaces] });
+    open();
+    field().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a b', identity]));
+    field().selectOptionByValue('1');
+    field().selectOptionByValue('2');
+    field().closeDropdown();
+
+    expect(tokens()).toEqual(['a b', identity]);
+    fireEvent.click(screen.getByRole('button', { name: `Remove ${identity}` }));
+    expect(latest).toEqual([oneSpace]);
+    expect(tokens()).toEqual(['a b']);
+  });
+
   it('several choices are made and each can be removed; the placeholder shows with none', async () => {
     read.mockResolvedValue({ items: [thing('a', 'alpha'), thing('b', 'beta'), thing('c', 'gamma')] });
     open();

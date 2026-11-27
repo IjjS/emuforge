@@ -1,0 +1,9 @@
+/* Keep the accessible identity inline so a browser reads adjacent punctuation without adding a space. */
+.aws-area-name-identity {
+  display: inline;
+  font-size: 0;
+  line-height: 0;
+  opacity: 0;
+  white-space: nowrap;
+  user-select: none;
+}
