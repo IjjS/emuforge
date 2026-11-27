@@ -84,6 +84,12 @@ function TypeFields({
     { source, connection, pending, onUnsupported },
     'instance types',
   );
+  const displayed = selected ?? items.find(({ type }) => type === current);
+  const outsideZone = current !== undefined && offerings.types?.has(current) === false;
+  const currentOption =
+    current === undefined
+      ? null
+      : { value: current, label: current, ...(outsideZone ? { description: "Not in the emulator's list" } : {}) };
   const change =
     !checking &&
     !choices.loading &&
@@ -113,7 +119,8 @@ function TypeFields({
           dropdownRole="dialog"
           disabled={pending || checking}
           options={options}
-          selectedOption={selected === undefined ? null : source.optionOf(selected)}
+          selectedOption={displayed === undefined ? currentOption : source.optionOf(displayed)}
+          triggerVariant={selected === undefined && outsideZone ? 'option' : 'label'}
           onChange={({ detail }) => {
             setSelected(items.find(({ type }) => type === detail.selectedOption.value));
           }}

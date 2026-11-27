@@ -286,7 +286,7 @@ function enterSettings() {
   fireEvent.click(screen.getByRole('checkbox', { name: 'Termination protection' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'User data - optional' }), { target: { value: 'a\nbé' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Key', exact: true }), { target: { value: 'Team' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: 'Team' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value: 'Web' } });
 }
 
@@ -578,7 +578,11 @@ describe('Launch instance', () => {
     const protection = deferred<boolean>();
     const router = open();
     await opened();
-    const listRead = vi.fn((_context: { signal: AbortSignal }) => list.promise);
+    let earlierSignal: AbortSignal | undefined;
+    const listRead = ({ signal }: { signal: AbortSignal }) => {
+      earlierSignal = signal;
+      return list.promise;
+    };
     const beforeLaunch = router.client
       .fetchQuery({ queryKey: EC2_KEYS.instances('earlier'), queryFn: listRead })
       .catch(() => undefined);
@@ -588,7 +592,7 @@ describe('Launch instance', () => {
     await choose('Instance type', TYPE.type);
     submit();
     expect(await screen.findByText('Launched instance i-0new')).toBeVisible();
-    expect(listRead.mock.calls[0]?.[0].signal.aborted).toBe(true);
+    expect(earlierSignal?.aborted).toBe(true);
     await act(async () => protection.resolve(true));
     await act(async () =>
       detail.resolve({
@@ -672,7 +676,7 @@ describe('Launch instance', () => {
     expect(groupTokens()).toEqual(['other']);
     expect(screen.getByRole('checkbox', { name: 'Termination protection' })).toBeChecked();
     expect(screen.getByRole('textbox', { name: 'User data - optional' })).toHaveValue('a\nbé');
-    expect(screen.getByRole('textbox', { name: 'Key', exact: true })).toHaveValue('Team');
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('Team');
     expect(screen.getByRole('textbox', { name: 'Value - optional' })).toHaveValue('Web');
   });
 

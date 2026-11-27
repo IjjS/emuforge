@@ -212,6 +212,8 @@ describe('instance attribute editor', () => {
     await edit(TYPE);
     await waitFor(() => expect(typeField().findTrigger().getElement()).toBeEnabled());
     expect(listInstanceTypeOfferings).toHaveBeenCalledWith(ENDPOINT, CORE.zone, expect.any(AbortSignal));
+    expect(typeField().findTrigger().getElement()).toHaveTextContent(CORE.type ?? '');
+    expect(typeField().findTrigger().getElement()).toHaveTextContent("Not in the emulator's list");
     typeField().openDropdown();
     const dropdown = typeField().findDropdown();
     await waitFor(() =>

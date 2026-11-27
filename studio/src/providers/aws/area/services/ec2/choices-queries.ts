@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { DESCRIBE_SECURITY_GROUPS } from '../../components/security-group-choices';
 import type { ChoiceSource } from '../../components/use-paged-choices';
 import { failureOf, noEndpoint } from '../../components/use-token-listing';
 import {
@@ -133,7 +134,7 @@ export function groupChoices(
   return {
     key: EC2_KEYS.choices('security-groups', vpcId ?? null),
     endpoint,
-    operation: CHOICE_OPERATIONS.describeSecurityGroups,
+    operation: DESCRIBE_SECURITY_GROUPS,
     filtering: 'sent',
     ready,
     readAgainOnOpen: true,
@@ -178,6 +179,8 @@ export function useDefaultVpc(endpoint: string | undefined) {
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   return {
     vpc: query.data ?? undefined,
@@ -198,6 +201,8 @@ export function useInstanceTypeOfferings(endpoint: string | undefined, zone: str
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   return {
     types: query.isSuccess && !query.isFetching ? query.data : undefined,
