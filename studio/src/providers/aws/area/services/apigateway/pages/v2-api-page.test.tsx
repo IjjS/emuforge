@@ -168,7 +168,12 @@ it('shows the HTTP API name with its spaces and names the heading by its exact i
   open();
 
   const identity = 'a\\u0020\\u0020b';
-  const heading = await screen.findByRole('heading', { level: 1, name: identity });
+  const heading = await waitFor(() => {
+    const found = pageHeading();
+    assert(found);
+    expect(found).toHaveAccessibleName(identity);
+    return found;
+  });
   expect(within(heading).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
   expect(within(heading).getByText(`(${identity})`)).toBeVisible();
 });
