@@ -109,11 +109,11 @@ async function open(initialTags: Tag[] = initial) {
       .getElement();
   const alertText = () => content.findAllAlerts().map((alert) => alert.getElement().textContent);
   const add = (key: string) => {
-    editor.findAddButton().click();
+    fireEvent.click(editor.findAddButton().getElement());
     fireEvent.change(field(editor.findRows().length, 1), { target: { value: key } });
   };
   const replaceA = () => {
-    required(editor.findRow(1)?.findRemoveButton(), 'Remove tag button').click();
+    fireEvent.click(required(editor.findRow(1)?.findRemoveButton(), 'Remove tag button').getElement());
     add('c');
   };
   return { editor, save, cancel, field, alertText, replaceA, content, onSaved, onDismiss };
@@ -133,7 +133,7 @@ it('opens with the tags as read, validates rows, and writes nothing for an uncha
   expect(screen.queryByRole('dialog')).toBeNull();
 
   const edit = await open();
-  edit.editor.findAddButton().click();
+  fireEvent.click(edit.editor.findAddButton().getElement());
   fireEvent.change(edit.field(3, 1), { target: { value: 'AwS:reserved' } });
   fireEvent.click(edit.save);
   expect(edit.editor.findRow(3)?.findField(1)?.findError()?.getElement()).toHaveTextContent(
@@ -150,7 +150,7 @@ it('allows replacing a tag at the 50-tag limit and saves the removal before the 
   ];
   const edit = await open(full);
   expect(edit.editor.findAddButton().getElement()).toBeDisabled();
-  edit.editor.findAddButton().click();
+  fireEvent.click(edit.editor.findAddButton().getElement());
   expect(edit.editor.findRows()).toHaveLength(50);
   edit.replaceA();
   expect(edit.editor.findRows()).toHaveLength(50);
@@ -221,7 +221,7 @@ it('blocks additional saves during writes and reads and re-enables save after a 
   expect(edit.save).toBeDisabled();
   const retryButton = edit.content.findAllAlerts()[1]?.findActionButton();
   expect(retryButton?.getElement()).toBeEnabled();
-  retryButton?.click();
+  fireEvent.click(required(retryButton, 'Retry button').getElement());
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(edit.save).toBeDisabled();
   await act(async () => retry.resolve({ value: initial }));
@@ -250,7 +250,7 @@ it.each([
     expect(edit.onSaved).not.toHaveBeenCalled();
     expect(sent).toEqual(expected);
     await waitFor(() => expect(edit.cancel.getElement()).toBeEnabled());
-    edit.cancel.click();
+    fireEvent.click(edit.cancel.getElement());
     expect(edit.onDismiss).toHaveBeenCalledOnce();
   },
 );

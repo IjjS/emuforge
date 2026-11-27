@@ -169,12 +169,12 @@ it.each<TagOperation>([UNTAG_RESOURCE, TAG_RESOURCE])(
     save.mockRejectedValueOnce(refuse(operation, 501));
     open();
     const dialog = await manage();
-    if (operation === UNTAG_RESOURCE) dialog.remove.click();
+    if (operation === UNTAG_RESOURCE) fireEvent.click(dialog.remove.getElement());
     else fireEvent.change(dialog.value, { target: { value: '2' } });
     fireEvent.click(dialog.save);
     await waitFor(() => expect(dialog.cancel.getElement()).toBeEnabled());
     await waitFor(() => expect(dialog.modal.findContent().findAlert()?.getElement()).toHaveTextContent(operation));
-    dialog.cancel.click();
+    fireEvent.click(dialog.cancel.getElement());
     const reopened = await manage();
     const alert = reopened.modal.findContent().findAlert()?.getElement();
     expect(alert).toHaveTextContent('Not implemented by the emulator');
@@ -214,7 +214,7 @@ it('keeps the save’s flash and tags when a previous refresh answers later', as
     'Page refresh button',
   );
   expect(refresh.getElement()).toHaveAccessibleName('Refresh');
-  refresh.click();
+  fireEvent.click(refresh.getElement());
   await waitFor(() => expect(tags).toHaveBeenCalledTimes(2));
 
   const dialog = await manage();

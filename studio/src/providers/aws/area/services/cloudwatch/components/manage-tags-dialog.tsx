@@ -27,6 +27,8 @@ import {
 } from '../tags';
 import { ValueText } from '../../../components/value-text';
 
+const TAG_OPERATIONS = [UNTAG_RESOURCE, TAG_RESOURCE] as const;
+
 interface ManageTagsDialogProps {
   endpoint: string;
   arn: string;
@@ -64,11 +66,10 @@ export function ManageTagsDialog({
   const owed = changesOwed(tagChanges(opened, draft), current);
   const outside = tagsAddedOutside(opened, draft, current);
   const errors = tried ? validateTags(draft) : undefined;
-  const writes: TagOperation[] = [
-    ...(owed.remove.length > 0 ? [UNTAG_RESOURCE] : []),
-    ...(owed.put.length > 0 ? [TAG_RESOURCE] : []),
-  ];
-  const unsupported = (writes.length === 0 ? [UNTAG_RESOURCE, TAG_RESOURCE] : writes).find(
+  const writes: TagOperation[] = [];
+  if (owed.remove.length > 0) writes.push(UNTAG_RESOURCE);
+  if (owed.put.length > 0) writes.push(TAG_RESOURCE);
+  const unsupported = (writes.length === 0 ? TAG_OPERATIONS : writes).find(
     (operation) =>
       unavailable.has(operation) ||
       (saveFailure?.refusal.kind === 'not-implemented' && saveFailure.refusal.operation === operation),
