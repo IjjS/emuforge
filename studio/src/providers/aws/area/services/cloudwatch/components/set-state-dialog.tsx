@@ -1,7 +1,7 @@
 import { StateValue } from '@aws-sdk/client-cloudwatch';
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -47,6 +47,7 @@ export function SetStateDialog({
   const inFlight = useRef(false);
   const selectRef = useRef<SelectProps.Ref>(null);
   const reasonRef = useRef<TextareaProps.Ref>(null);
+  const submitRef = useRef<ButtonProps.Ref>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
   const [state, setState] = useState<StateValue>();
   const [reason, setReason] = useState('Set by hand in EmuForge Studio');
@@ -60,8 +61,10 @@ export function SetStateDialog({
   const accessDeniedCode = shownFailure?.kind === 'access-denied' ? reportedServiceCode(shownFailure) : undefined;
 
   useEffect(() => {
+    // Cloudscape moves focus to the heading when the dismiss button is hidden.
+    if (pending) submitRef.current?.focus();
     if (failure) failureRef.current?.focus();
-  }, [failure]);
+  }, [failure, pending]);
 
   const handleDismiss = () => {
     if (!inFlight.current) onDismiss();
@@ -109,6 +112,7 @@ export function SetStateDialog({
         </>
       }
       closeAriaLabel="Close dialog"
+      hideDismissButton={pending}
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
@@ -116,7 +120,13 @@ export function SetStateDialog({
             <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={disabled} loading={pending} onClick={() => void handleConfirm()}>
+            <Button
+              ref={submitRef}
+              variant="primary"
+              disabled={disabled}
+              loading={pending}
+              onClick={() => void handleConfirm()}
+            >
               Set state
             </Button>
           </SpaceBetween>

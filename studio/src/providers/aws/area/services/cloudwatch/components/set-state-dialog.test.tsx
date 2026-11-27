@@ -128,7 +128,8 @@ it.each([
         refuse = reject;
       }),
     );
-    const { modal, state, reason, submit, onSet } = await open();
+    const { modal, state, reason, submit, onSet, onDismiss } = await open();
+    expect(modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
     state.openDropdown();
     state.selectOptionByValue('INSUFFICIENT_DATA');
     reason.setTextareaValue('Try again later');
@@ -138,8 +139,11 @@ it.each([
     expect(button).toHaveFocus();
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).not.toBeDisabled();
+    expect(modal.findDismissButton()).toBeNull();
     await user.keyboard('{Enter}');
+    await user.keyboard('{Escape}');
     expect(send).toHaveBeenCalledOnce();
+    expect(onDismiss).not.toHaveBeenCalled();
     await act(async () =>
       refuse(
         new RequestError(
@@ -154,6 +158,10 @@ it.each([
     expect(state.findTrigger().getElement()).toHaveTextContent('Insufficient data');
     expect(reason.getTextareaValue()).toBe('Try again later');
     expect(onSet).not.toHaveBeenCalled();
+    const close = modal.findDismissButton().getElement();
+    expect(close).toHaveAccessibleName('Close dialog');
+    await user.click(close);
+    expect(onDismiss).toHaveBeenCalledOnce();
   },
 );
 
