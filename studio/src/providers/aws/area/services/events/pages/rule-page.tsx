@@ -9,12 +9,13 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, useState } from 'react';
 
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
+import { useHandOverNote, usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
+import { AddTargetDialog } from '../components/add-target-dialog';
 import { DeleteRuleDialog } from '../components/delete-rule-dialog';
 import { RemoveTargetDialog } from '../components/remove-target-dialog';
 import { RuleDetails } from '../components/rule-details';
@@ -23,7 +24,11 @@ import { busFromParams, ruleFromParams, rulesPath, RULES_PATH } from '../format'
 import { useRule, useRuleTargets } from '../queries';
 import { RULE_CHANGE_OPERATIONS, setRuleEnabled } from '../rule-change-api';
 
-type RuleDialog = { kind: 'remove'; id: string } | { kind: 'delete'; rule: DescribeRuleResponse; targets: Target[] };
+import { PUT_TARGETS } from '../target-api';
+import { MAX_TARGETS, TARGET_LIMIT_TEXT } from '../target-form';
+
+type RuleDialog =
+  { kind: 'add' } | { kind: 'remove'; id: string } | { kind: 'delete'; rule: DescribeRuleResponse; targets: Target[] };
 
 function unavailableReason(operation: string) {
   return `Not implemented by the emulator (${operation}).`;
@@ -37,10 +42,13 @@ export function RulePage({ connection, params }: ScreenPageProps) {
   const name = ruleFromParams(params);
   const { engineOrigin } = connection;
   const flash = usePageFlash();
+  const note = useHandOverNote();
   const pageSignal = usePageSignal();
   const [dialog, setDialog] = useState<RuleDialog>();
   const [leaving, setLeaving] = useState(false);
-  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
+  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(
+    () => new Set(note?.notImplemented === PUT_TARGETS && note.bus === bus && note.rule === name ? [PUT_TARGETS] : []),
+  );
   const [switchPending, setSwitchPending] = useState(false);
   const switchBusy = useRef(false);
 
@@ -70,6 +78,8 @@ export function RulePage({ connection, params }: ScreenPageProps) {
   const enabling = rule?.State === 'DISABLED';
   const switchOperation = enabling ? RULE_CHANGE_OPERATIONS.enable : RULE_CHANGE_OPERATIONS.disable;
   const switchUnavailable = unavailable.has(switchOperation);
+  const addUnavailable = unavailable.has(PUT_TARGETS);
+  const targetLimitReached = (targets.value?.length ?? 0) >= MAX_TARGETS;
   const removeUnavailable = unavailable.has(RULE_CHANGE_OPERATIONS.removeTargets);
   const deleteUnavailable = unavailable.has(RULE_CHANGE_OPERATIONS.delete)
     ? RULE_CHANGE_OPERATIONS.delete
@@ -151,6 +161,15 @@ export function RulePage({ connection, params }: ScreenPageProps) {
                   {enabling ? 'Enable' : 'Disable'}
                 </Button>
                 <Button
+                  disabled={actionBlocked || targets.value === undefined || targetLimitReached || addUnavailable}
+                  disabledReason={
+                    addUnavailable ? unavailableReason(PUT_TARGETS) : targetLimitReached ? TARGET_LIMIT_TEXT : undefined
+                  }
+                  onClick={() => setDialog({ kind: 'add' })}
+                >
+                  Add target
+                </Button>
+                <Button
                   disabled={
                     actionBlocked ||
                     currentRule === undefined ||
@@ -207,6 +226,29 @@ export function RulePage({ connection, params }: ScreenPageProps) {
             onRemove={(id) => setDialog({ kind: 'remove', id })}
           />
         </SpaceBetween>
+      )}
+      {engineOrigin !== undefined && dialog?.kind === 'add' && (
+        <AddTargetDialog
+          connection={{ ...connection, engineOrigin }}
+          bus={bus}
+          name={name}
+          onDismiss={dismiss}
+          onUnavailable={() => markUnavailable(PUT_TARGETS)}
+          onAdded={(id) => {
+            dismiss();
+            flash.show([
+              {
+                type: 'success',
+                content: (
+                  <>
+                    Target <ValueText kind="name" value={id} /> added to <ValueText kind="name" value={name} />.
+                  </>
+                ),
+              },
+            ]);
+            targets.refresh();
+          }}
+        />
       )}
       {engineOrigin !== undefined && dialog?.kind === 'remove' && (
         <RemoveTargetDialog
