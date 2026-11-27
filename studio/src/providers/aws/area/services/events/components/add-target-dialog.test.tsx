@@ -113,10 +113,13 @@ it('rereads the rule targets before saving the single target and reports its ID'
 it('refuses an ID already in use, at the ID field', async () => {
   read.mockResolvedValueOnce([{ Id: 'delivery', Arn: 'arn:existing' }]);
   const { dialog, input } = await openAndSubmit();
-  await waitFor(() =>
-    expect(dialog.findContent().findFormField()?.findError()?.getElement()).toHaveTextContent(
-      'The rule already holds a target with this ID.',
-    ),
+  await waitFor(
+    () =>
+      expect(dialog.findContent().findFormField()?.findError()?.getElement()).toHaveTextContent(
+        'The rule already holds a target with this ID.',
+      ),
+    // Cloudscape's scoped wrapper selectors temporarily change an attribute on the field.
+    { mutationObserverOptions: { childList: true, characterData: true, subtree: true } },
   );
   expect(input).toHaveValue('delivery');
   expect(write).not.toHaveBeenCalled();
