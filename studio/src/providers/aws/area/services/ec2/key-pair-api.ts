@@ -3,10 +3,14 @@ import {
   DeleteKeyPairCommand,
   DescribeKeyPairsCommand,
   ImportKeyPairCommand,
+  type CreateKeyPairCommandInput,
+  type ImportKeyPairCommandInput,
   type KeyPairInfo,
+  type TagSpecification,
 } from '@aws-sdk/client-ec2';
 
-import { sendEc2, text } from '../../lib/ec2-client';
+import { sendEc2, text, withValues } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
 
 // The calls of EC2's key pair screens, S8 and S9 (issue 553, design task 5), through the engine as every API file of
 // the folder sends them (`api.ts`, `sendEc2`), mapped to plain typed results. `DescribeKeyPairs` has no pages: one
@@ -79,6 +83,12 @@ export interface NewKeyPair {
   name: string;
   type: KeyType;
   format: KeyFormat;
+  tags?: readonly TagRow[];
+}
+
+function keyPairTagSpecifications(tags: readonly TagRow[] | undefined): TagSpecification[] | undefined {
+  if (!tags?.length) return undefined;
+  return [{ ResourceType: 'key-pair', Tags: tags.map(({ key, value }) => ({ Key: key, Value: value })) }];
 }
 
 /**
@@ -103,7 +113,12 @@ export async function createKeyPair(
     KEY_PAIR_OPERATIONS.createKeyPair,
     (client, abortSignal) =>
       client.send(
-        new CreateKeyPairCommand({ KeyName: keyPair.name, KeyType: keyPair.type, KeyFormat: keyPair.format }),
+        new CreateKeyPairCommand(
+          withValues<CreateKeyPairCommandInput>(
+            { KeyName: keyPair.name, KeyType: keyPair.type, KeyFormat: keyPair.format },
+            { TagSpecifications: keyPairTagSpecifications(keyPair.tags) },
+          ),
+        ),
         { abortSignal },
       ),
     signal,
@@ -138,12 +153,21 @@ export async function importKeyPair(
   name: string,
   publicKey: string,
   signal: AbortSignal,
+  tags?: readonly TagRow[],
 ): Promise<void> {
   await sendEc2(
     endpoint,
     KEY_PAIR_OPERATIONS.importKeyPair,
     (client, abortSignal) =>
-      client.send(new ImportKeyPairCommand({ KeyName: name, PublicKeyMaterial: bytesOf(publicKey) }), { abortSignal }),
+      client.send(
+        new ImportKeyPairCommand(
+          withValues<ImportKeyPairCommandInput>(
+            { KeyName: name, PublicKeyMaterial: bytesOf(publicKey) },
+            { TagSpecifications: keyPairTagSpecifications(tags) },
+          ),
+        ),
+        { abortSignal },
+      ),
     signal,
   );
 }

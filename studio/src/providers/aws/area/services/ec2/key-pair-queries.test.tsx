@@ -138,6 +138,20 @@ describe('after a change', () => {
     });
   }
 
+  it.each([[undefined], [[{ key: 'team', value: 'core' }]]] as const)(
+    'imports with the given tags %j and rereads the list',
+    async (tags) => {
+      vi.mocked(api.importKeyPair).mockResolvedValue(undefined);
+      const hook = await settled();
+      const at = signal();
+      await act(async () => {
+        await hook.result.current.importKey('n', 'ssh-ed25519 AAAA', at, tags);
+      });
+      expect(api.importKeyPair).toHaveBeenCalledExactlyOnceWith(ENDPOINT, 'n', 'ssh-ed25519 AAAA', at, tags);
+      await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(2));
+    },
+  );
+
   it('a create hands its private key to the caller; no cached read and no retained result of the app holds it', async () => {
     vi.mocked(api.createKeyPair).mockResolvedValue({ name: 'n', privateKey: PRIVATE_KEY, fingerprint: 'f' });
     const hook = await settled();

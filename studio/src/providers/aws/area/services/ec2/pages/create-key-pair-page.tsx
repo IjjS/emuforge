@@ -18,14 +18,23 @@ import { CopyValue } from '../../../components/copy-value';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf } from '../../../components/use-token-listing';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import { PrivateKey } from '../components/private-key';
 import { CREATE_KEY_PAIR_TITLE, KEY_PAIRS_PATH, KEY_PAIRS_WORD, NONE } from '../format';
 import { KEY_PAIR_OPERATIONS, type CreatedKeyPair, type KeyFormat, type KeyType } from '../key-pair-api';
-import { KEY_NAME_RULE, keyNameMessage, publicKeyMessage, type KeyPairMode } from '../key-pair-form';
+import {
+  KEY_FORMAT_OPTIONS,
+  KEY_NAME_RULE,
+  KEY_TYPE_OPTIONS,
+  keyNameMessage,
+  publicKeyMessage,
+  type KeyPairMode,
+} from '../key-pair-form';
 import { useCreateKeyPair, useImportKeyPair } from '../key-pair-queries';
 
 // S9, "Create key pair" (issue 553, design task 5): create a new key pair, or import a public key. `key-pair-form.ts`
@@ -47,25 +56,16 @@ const MODE_ITEMS = [
   { value: 'import', label: 'Import a public key', description: 'The emulator stores a public key you already have.' },
 ];
 
-const TYPE_ITEMS = [
-  { value: 'rsa', label: 'RSA' },
-  { value: 'ed25519', label: 'ED25519' },
-];
-
-const FORMAT_ITEMS = [
-  { value: 'pem', label: '.pem' },
-  { value: 'ppk', label: '.ppk' },
-];
-
 interface KeyPairFormState {
   mode: KeyPairMode;
   name: string;
   type: KeyType;
   format: KeyFormat;
   publicKey: string;
+  tags: TagRow[];
 }
 
-const START: KeyPairFormState = { mode: 'create', name: '', type: 'rsa', format: 'pem', publicKey: '' };
+const START: KeyPairFormState = { mode: 'create', name: '', type: 'rsa', format: 'pem', publicKey: '', tags: [] };
 
 /** Whether the form differs from how it opened (`aws-area.md`, entry 5). */
 function differs(form: KeyPairFormState): boolean {
@@ -74,7 +74,8 @@ function differs(form: KeyPairFormState): boolean {
     form.name !== '' ||
     form.type !== START.type ||
     form.format !== START.format ||
-    form.publicKey !== ''
+    form.publicKey !== '' ||
+    form.tags.length !== 0
   );
 }
 
@@ -163,6 +164,7 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
 
   const nameRef = useRef<InputProps.Ref>(null);
   const publicKeyRef = useRef<TextareaProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -187,6 +189,7 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
   }, []);
 
   const messages = tried ? messagesOf(form) : {};
+  const checkedTags = checkTagRows(form.tags);
   const importing = form.mode === 'import';
   const operation = importing ? KEY_PAIR_OPERATIONS.importKeyPair : KEY_PAIR_OPERATIONS.createKeyPair;
 
@@ -206,6 +209,11 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
       publicKeyRef.current?.focus();
       return;
     }
+    if (checkedTags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(checkedTags.firstInvalid);
+      return;
+    }
+    const tags = checkedTags.tags;
     const what = importing ? `Importing key pair ${form.name}` : `Creating key pair ${form.name}`;
     if (engineOrigin === undefined) {
       setFailure(actionFailureItem({ kind: 'engine-did-not-answer', operation }, what, undefined));
@@ -222,14 +230,17 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
     };
     try {
       if (importing) {
-        await importKey(form.name, form.publicKey, controller.signal);
+        await importKey(form.name, form.publicKey, controller.signal, tags);
         if (controller.signal.aborted) {
           return;
         }
         settle();
         flash.handOver(KEY_PAIRS_PATH, [{ type: 'success', content: `Imported key pair ${form.name}` }]);
       } else {
-        const keyPair = await create({ name: form.name, type: form.type, format: form.format }, controller.signal);
+        const keyPair = await create(
+          { name: form.name, type: form.type, format: form.format, tags },
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }
@@ -348,7 +359,7 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
                     <FormField label="Type">
                       <RadioGroup
                         value={form.type}
-                        items={TYPE_ITEMS}
+                        items={KEY_TYPE_OPTIONS}
                         onChange={({ detail }) => {
                           change({ type: detail.value as KeyType });
                         }}
@@ -357,7 +368,7 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
                     <FormField label="Private key format">
                       <RadioGroup
                         value={form.format}
-                        items={FORMAT_ITEMS}
+                        items={KEY_FORMAT_OPTIONS}
                         onChange={({ detail }) => {
                           change({ format: detail.value as KeyFormat });
                         }}
@@ -367,6 +378,14 @@ export function CreateKeyPairPage({ connection }: ScreenPageProps) {
                 )}
               </SpaceBetween>
             </Container>
+
+            <TagsField
+              ref={tagsRef}
+              rows={form.tags}
+              onChange={(rows) => change({ tags: rows })}
+              errors={tried ? checkedTags.errors : undefined}
+              disabled={pending}
+            />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>
