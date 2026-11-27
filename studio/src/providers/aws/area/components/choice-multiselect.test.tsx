@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RequestError } from '../../../../lib/aws/request';
 import { ChoiceMultiselect } from './choice-multiselect';
 import type { AreaConnection } from './emulator-line';
-import type { ChoiceSource } from './use-paged-choices';
+import type { ChoiceFiltering, ChoiceSource } from './use-paged-choices';
 import type { TokenPage } from './use-token-listing';
 
 // The multiple field with a stand-in reader and stand-in words: the reader's answers are the case's.
@@ -39,11 +39,11 @@ const SOURCE: ChoiceSource<Thing> = {
   optionOf: (each) => ({ value: each.id, label: each.name, description: each.id }),
 };
 
-function Field() {
+function Field({ filtering }: { filtering: ChoiceFiltering }) {
   const [value, setValue] = useState<Thing[]>([]);
   return (
     <ChoiceMultiselect<Thing>
-      source={SOURCE}
+      source={{ ...SOURCE, filtering }}
       connection={CONNECTION}
       things="things"
       placeholder="Choose things"
@@ -56,11 +56,11 @@ function Field() {
   );
 }
 
-function open() {
+function open(filtering: ChoiceFiltering = 'sent') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <Field />
+      <Field filtering={filtering} />
     </QueryClientProvider>,
   );
 }
@@ -94,6 +94,21 @@ beforeEach(() => {
 });
 
 describe('ChoiceMultiselect', () => {
+  it('selects the first matching option immediately after entering the two-space name', async () => {
+    const oneSpace = thing('1', 'a b');
+    const twoSpaces = thing('2', 'a  b');
+    read.mockResolvedValue({ items: [oneSpace, twoSpaces] });
+    open('local');
+    field().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a b', 'a\\u0020\\u0020b']));
+
+    field().findFilteringInput()?.setInputValue(twoSpaces.name);
+    field().selectOption(1);
+
+    expect(latest).toEqual([twoSpaces]);
+    expect(tokens()).toEqual(['a\\u0020\\u0020b']);
+  });
+
   it('labels a token and its remove button with the identity and keeps the other choice when removed', async () => {
     const oneSpace = thing('1', 'a b');
     const twoSpaces = thing('2', 'a  b');
@@ -107,7 +122,9 @@ describe('ChoiceMultiselect', () => {
     field().closeDropdown();
 
     expect(tokens()).toEqual(['a b', identity]);
-    fireEvent.click(screen.getByRole('button', { name: `Remove ${identity}` }));
+    const remove = field().findToken(2)?.findDismiss();
+    expect(remove?.getElement()).toHaveAccessibleName(`Remove ${identity}`);
+    remove?.click();
     expect(latest).toEqual([oneSpace]);
     expect(tokens()).toEqual(['a b']);
   });

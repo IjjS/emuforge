@@ -3,6 +3,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useEffect, useEffectEvent, useRef } from 'react';
 
 import { optional, useChoiceField, type ChoiceSelectProps } from '../../../components/choice-select';
+import { identityOption } from '../../../components/name-identity';
 import { RequestReadFailure } from './request-read-failure';
 
 export type PagedChoiceProps<T> = ChoiceSelectProps<T>;
@@ -31,7 +32,8 @@ export function PagedChoice<T>(props: PagedChoiceProps<T>) {
   } = useChoiceField({ ...props, source: { ...source, readAgainOnOpen: false } }, fixedOption);
   const select = useRef<HTMLDivElement>(null);
   const firstPageRetry = useRef(false);
-  const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
+  const selectedOption = value === undefined ? fixedOption : source.optionOf(value);
+  const selected = selectedOption === undefined ? null : identityOption(selectedOption);
 
   useEffect(() => {
     if (!choices.loading) firstPageRetry.current = false;

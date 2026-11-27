@@ -265,6 +265,29 @@ describe('the instances list', () => {
     });
   });
 
+  it('distinguishes instance Name tags with repeated spaces and selects unnamed instances by ID', async () => {
+    const name = 'dev  instance';
+    const identity = 'dev\\u0020\\u0020instance';
+    answer({
+      '||': {
+        instances: [
+          instance('i-1', 'running', { tags: [{ key: 'Name', value: 'dev instance' }] }),
+          instance('i-2', 'running', { tags: [{ key: 'Name', value: name }] }),
+          instance('i-3', 'running', { tags: [] }),
+        ],
+      },
+    });
+    open();
+
+    expect(await screen.findByRole('radio', { name: 'dev instance' })).toBeInTheDocument();
+    const selection = screen.getByRole('radio', { name: identity });
+    const row = selection.closest('tr');
+    expect(row?.querySelector('.aws-area-value-name')?.parentElement?.textContent).toBe(`${name} (${identity})`);
+    const unnamed = screen.getByRole('radio', { name: 'i-3' }).closest('tr');
+    expect(unnamed && within(unnamed).getByRole('link', { name: 'i-3' })).toBeInTheDocument();
+    expect(rows().find((row) => row[1] === 'i-3')?.[0]).toBe('-');
+  });
+
   it('none, no filter → "No instances" with "Launch instance", which leads to the launch address', async () => {
     answer({});
     const router = open('/aws/ec2/instances');

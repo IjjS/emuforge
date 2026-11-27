@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { SUBNET_CHANGE_OPERATIONS } from '../subnet-changes-api';
 import { useDeleteSubnet } from '../subnet-changes';
@@ -93,7 +94,7 @@ function Dialog({
       header="Delete subnet?"
       body={
         <>
-          <ValueText kind="name" value={subnet.label} />
+          <NameText name={subnet.label} />
           <ValueText kind="text" value={SENTENCE} />
           {failure !== undefined && (
             <Failure

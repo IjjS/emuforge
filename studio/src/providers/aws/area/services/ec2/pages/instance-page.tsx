@@ -16,6 +16,7 @@ import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { NameText } from '../../../components/name-text';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { usePageSignal } from '../../../components/use-token-listing';
@@ -90,7 +91,7 @@ function KeyPair({ name }: { name: string | undefined }) {
   }
   return (
     <Link href={KEY_PAIRS_PATH} onFollow={handleFollow}>
-      <ValueText kind="name" value={name} />
+      <NameText name={name} />
     </Link>
   );
 }
@@ -220,7 +221,7 @@ function Groups({
       isRowHeader: true,
       cell: (group) => (
         <Link href={securityGroupHref(group.id)} onFollow={handleFollow}>
-          <ValueText kind="name" value={group.name ?? group.id} />
+          <NameText name={group.name ?? group.id} />
         </Link>
       ),
     },
@@ -442,7 +443,7 @@ function InstanceVisit({ connection, id }: { connection: AreaConnection; id: str
               </SpaceBetween>
             }
           >
-            <ValueText kind="name" value={instanceHeading(id, instance?.tags ?? [])} />
+            <NameText name={instanceHeading(id, instance?.tags ?? [])} />
           </Header>
         }
       >

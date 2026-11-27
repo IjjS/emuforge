@@ -163,6 +163,16 @@ it('shows all four read parts of the API', async () => {
   });
 });
 
+it('shows the HTTP API name with its spaces and names the heading by its exact identity', async () => {
+  vi.mocked(getV2Api).mockResolvedValue({ found: true, api: { ...api, Name: 'a  b' } });
+  open();
+
+  const identity = 'a\\u0020\\u0020b';
+  const heading = await screen.findByRole('heading', { level: 1, name: identity });
+  expect(within(heading).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
+  expect(within(heading).getByText(`(${identity})`)).toBeVisible();
+});
+
 it('shows that the API was not found and links back to the list', async () => {
   vi.mocked(getV2Api).mockResolvedValue({ found: false });
   const { container } = open();
