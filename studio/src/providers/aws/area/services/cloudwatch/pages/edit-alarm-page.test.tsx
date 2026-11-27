@@ -214,8 +214,8 @@ it.each([
   {
     scenario: 'follows evaluation periods while untouched',
     edits: [['Evaluation periods', '6']],
-    periods: 6,
-    count: 6,
+    periods: '6',
+    count: '6',
     sent: undefined,
   },
   {
@@ -224,8 +224,8 @@ it.each([
       ['Data points to alarm', '2'],
       ['Evaluation periods', '6'],
     ],
-    periods: 6,
-    count: 2,
+    periods: '6',
+    count: '2',
     sent: 2,
   },
   {
@@ -235,22 +235,22 @@ it.each([
       ['Data points to alarm', '5'],
       ['Evaluation periods', '6'],
     ],
-    periods: 6,
-    count: 5,
+    periods: '6',
+    count: '5',
     sent: 5,
   },
   {
     scenario: 'keeps an explicit count that equals the opening periods',
     edits: [['Data points to alarm', '3']],
-    periods: 5,
-    count: 3,
+    periods: '5',
+    count: '3',
     sent: 3,
   },
   {
     scenario: 'restores the opening condition with the count untouched',
     edits: [['Evaluation periods', '3']],
-    periods: 3,
-    count: 3,
+    periods: '3',
+    count: '3',
     sent: undefined,
   },
   {
@@ -259,8 +259,8 @@ it.each([
       ['Data points to alarm', '3'],
       ['Evaluation periods', '3'],
     ],
-    periods: 3,
-    count: 3,
+    periods: '3',
+    count: '3',
     sent: undefined,
   },
   {
@@ -270,8 +270,29 @@ it.each([
       ['Evaluation periods', '3'],
       ['Data points to alarm', '3'],
     ],
-    periods: 3,
-    count: 3,
+    periods: '3',
+    count: '3',
+    sent: undefined,
+  },
+  {
+    scenario: 'restores the opening condition with a leading zero in the count',
+    edits: [
+      ['Data points to alarm', '2'],
+      ['Evaluation periods', '3'],
+      ['Data points to alarm', '03'],
+    ],
+    periods: '3',
+    count: '3',
+    sent: undefined,
+  },
+  {
+    scenario: 'restores the opening condition with a leading zero in the periods',
+    edits: [
+      ['Data points to alarm', '3'],
+      ['Evaluation periods', '03'],
+    ],
+    periods: '03',
+    count: '03',
     sent: undefined,
   },
 ] as const)('$scenario', async ({ edits, periods, count, sent }) => {
@@ -288,13 +309,13 @@ it.each([
   expect(content(page)?.getElement()).toHaveTextContent('Alarm when 5 out of 5 periods');
 
   for (const [field, value] of edits) input(page, field).setInputValue(value);
-  expect(datapoints.getInputValue()).toBe(String(count));
+  expect(datapoints.getInputValue()).toBe(count);
   expect(content(page)?.getElement()).toHaveTextContent(`Alarm when ${count} out of ${periods} periods`);
 
   await submit(page);
   expect(write).toHaveBeenCalledTimes(1);
   const request = write.mock.calls[0]?.[0].input;
-  expect(request?.EvaluationPeriods).toBe(periods);
+  expect(request?.EvaluationPeriods).toBe(Number(periods));
   if (sent === undefined) {
     expect(request).not.toHaveProperty('DatapointsToAlarm');
   } else {
@@ -525,6 +546,44 @@ it('shows every conflict, keeps changed entries, adopts untouched ones and allow
   );
   expect(send).toHaveBeenCalledTimes(1);
   expect(page.handOver).toHaveBeenCalledTimes(1);
+});
+
+it('keeps an explicit datapoint count after a conflict and another description edit', async () => {
+  read.mockResolvedValue(metric(name, { EvaluationPeriods: 3, DatapointsToAlarm: undefined }));
+  const write = captureAlarmWrite();
+  const page = open();
+  await ready(page);
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  const textarea = createWrapper(field(page, 'Description').getElement()).findTextarea();
+  if (!textarea) throw new Error('Missing Description field');
+  datapoints.setInputValue('2');
+  textarea.setTextareaValue('My description');
+  read.mockResolvedValue(
+    metric(name, { EvaluationPeriods: 2, DatapointsToAlarm: undefined, AlarmDescription: 'Outside description' }),
+  );
+
+  await submit(page);
+  expect(page.wrapper.findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+    'This alarm changed while you were editing it',
+  );
+  expect(write).not.toHaveBeenCalled();
+  expect(periods.getInputValue()).toBe('2');
+  expect(datapoints.getInputValue()).toBe('2');
+  expect(textarea.getTextareaValue()).toBe('My description');
+
+  textarea.setTextareaValue('New description');
+  periods.setInputValue('4');
+  expect(datapoints.getInputValue()).toBe('2');
+  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 2 out of 4 periods');
+
+  await submit(page);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(write.mock.calls[0]?.[0].input).toMatchObject({
+    AlarmDescription: 'New description',
+    EvaluationPeriods: 4,
+    DatapointsToAlarm: 2,
+  });
 });
 
 it.each([
