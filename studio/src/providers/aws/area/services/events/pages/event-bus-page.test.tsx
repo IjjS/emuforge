@@ -454,7 +454,7 @@ it.each([
   async (order, outcome) => {
     const stale = deferred<EventBusRead>();
     const fresh = deferred<EventBusRead>();
-    const updating = deferred<void>();
+    const updating = deferred<undefined>();
     read.mockResolvedValueOnce(loaded).mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
     vi.mocked(updateBusDescription).mockReturnValueOnce(updating.promise);
     const page = renderPage(undefined, 'orders');
@@ -472,7 +472,7 @@ it.each([
     }
 
     if (order === 'before') await settleEarlierRead();
-    await act(async () => updating.resolve());
+    await act(async () => updating.resolve(undefined));
     await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
     expectSaved(page, 'Description of orders saved.');
     await act(async () => fresh.resolve({ kind: 'found', bus: { ...loaded.bus, Description: 'Read after save' } }));
