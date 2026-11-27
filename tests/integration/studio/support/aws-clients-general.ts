@@ -474,6 +474,14 @@ export function directEcs(ctx: Ctx, port: number, action: string, input: object)
   });
 }
 
+/** An EventBridge action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 75: EventBridge's checks). */
+export function directEvents(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return direct(ctx, port, 'events', 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.1',
+    'x-amz-target': `AWSEvents.${action}`,
+  });
+}
+
 /** `status` of a direct answer, or its error, for the log. */
 export function shown(answer: DirectAnswer): string {
   return 'error' in answer ? `error ${answer.error}` : `status ${String(answer.status)}`;
