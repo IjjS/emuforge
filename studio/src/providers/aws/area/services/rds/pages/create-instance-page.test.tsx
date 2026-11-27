@@ -25,7 +25,32 @@ vi.mock('../api', async (importOriginal) => {
 
 vi.mock('../choices-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../choices-api')>();
-  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn() };
+  return {
+    ...real,
+    listEngineVersionChoices: vi.fn(),
+    listSubnetGroupChoices: vi.fn(),
+    findSubnetGroup: vi.fn(),
+    readDefaultVpcId: vi.fn(),
+    readDefaultVersion: vi.fn(),
+    readOrderableRows: vi.fn(),
+  };
+});
+
+vi.mock('../../../lib/ec2-availability-zones', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/ec2-availability-zones')>()),
+  listAvailabilityZones: async () => ['us-east-1a', 'us-east-1b'],
+}));
+
+const KEY_ARN = 'arn:aws:kms:us-east-1:000000000000:key/create-test';
+vi.mock('../../../components/kms-key-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../components/kms-key-choices')>();
+  return {
+    ...real,
+    kmsKeyChoices: (endpoint: string | undefined) => ({
+      ...real.kmsKeyChoices(endpoint),
+      read: async () => ({ items: [{ id: 'create-test', arn: KEY_ARN, aliases: ['alias/create-test'] }] }),
+    }),
+  };
 });
 
 vi.mock('../create-api', async (importOriginal) => {
@@ -43,10 +68,10 @@ vi.mock('../choices-queries', async (importOriginal) => {
   );
   return {
     ...real,
-    groupChoices: (endpoint: string | undefined) => ({
-      ...securityGroupChoices(endpoint),
+    groupChoices: (endpoint: string | undefined, vpcId?: string) => ({
+      ...securityGroupChoices(endpoint, vpcId),
       read: async (at: string, text: string, token: string | undefined, signal: AbortSignal) => {
-        const page = await readGroups(at, { name: text }, token, signal);
+        const page = await readGroups(at, { name: text, ...(vpcId === undefined ? {} : { vpcId }) }, token, signal);
         return page.nextToken === undefined ? { items: page.choices } : { items: page.choices, next: page.nextToken };
       },
     }),
@@ -166,19 +191,44 @@ function instance(id: string): api.InstanceRead {
   };
 }
 
+const SUBNET_GROUPS = [
+  { name: 'default', description: 'default', vpcId: 'vpc-d', zones: ['us-east-1a'] },
+  { name: 'other', description: 'another group', vpcId: 'vpc-x', zones: ['us-east-1b'] },
+];
+
+const ROWS = [
+  { DBInstanceClass: 'db.t3.micro', StorageType: 'gp2' },
+  { DBInstanceClass: 'db.t3.small', StorageType: 'gp2' },
+  {
+    DBInstanceClass: 'db.t3.small',
+    StorageType: 'io1',
+    MinStorageSize: 100,
+    MaxStorageSize: 65536,
+    MinIopsPerDbInstance: 1000,
+    MaxIopsPerDbInstance: 64000,
+  },
+];
+
 beforeEach(() => {
   vi.mocked(choices.listEngineVersionChoices).mockImplementation((_at, engine) =>
     Promise.resolve({ choices: VERSIONS[engine] ?? [] }),
   );
-  vi.mocked(choices.listSubnetGroupChoices).mockResolvedValue({
-    choices: [{ name: 'default', description: 'default', vpcId: 'vpc-d' }],
+  vi.mocked(choices.readDefaultVersion).mockImplementation(async (_at, engine) => VERSIONS[engine]?.[0]?.version);
+  vi.mocked(choices.readOrderableRows).mockResolvedValue(ROWS);
+  vi.mocked(choices.listSubnetGroupChoices).mockResolvedValue({ choices: SUBNET_GROUPS });
+  vi.mocked(choices.findSubnetGroup).mockImplementation(async (at, name, signal) => {
+    const page = await choices.listSubnetGroupChoices(at, undefined, signal);
+    return page.choices.find((group) => group.name === name);
   });
-  readGroups.mockResolvedValue({
-    choices: [
-      { id: 'sg-1', name: 'default', vpcId: 'vpc-d' },
-      { id: 'sg-2', name: 'web', vpcId: 'vpc-x' },
-    ],
-  });
+  vi.mocked(choices.readDefaultVpcId).mockResolvedValue('vpc-d');
+  const groups = [
+    { id: 'sg-1', name: 'default', vpcId: 'vpc-d' },
+    { id: 'sg-2', name: 'web', vpcId: 'vpc-d' },
+    { id: 'sg-3', name: 'other', vpcId: 'vpc-x' },
+  ];
+  readGroups.mockImplementation(async (_at, { vpcId }) => ({
+    choices: groups.filter((group) => group.vpcId === vpcId),
+  }));
   vi.mocked(creating.createInstance).mockImplementation((_at, values) =>
     Promise.resolve(values.identifier.toLowerCase()),
   );
@@ -278,9 +328,20 @@ function submit() {
 }
 
 async function opened() {
+  await screen.findByRole('heading', { level: 1, name: 'Create DB instance' });
   await waitFor(() => {
-    expect(screen.getByRole('heading', { level: 1, name: 'Create DB instance' })).toBeInTheDocument();
+    expect(screen.queryByText('Checking DB instance class')).not.toBeInTheDocument();
   });
+}
+
+function toggle(label: string) {
+  fireEvent.click(screen.getByRole('checkbox', { name: label }));
+}
+
+function addTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
 }
 
 function alertText(): string {
@@ -307,7 +368,8 @@ describe('Create DB instance', () => {
       'MariaDB',
     ]);
     expect(triggerOf('Engine version - optional')).toBe("The emulator's default");
-    expect(inputOf('DB instance class').value).toBe('db.t3.micro');
+    expect(triggerOf('DB instance class')).toContain('db.t3.micro');
+    expect(choices.readOrderableRows).toHaveBeenCalledWith(ENGINE, 'postgres', '18.3', expect.any(AbortSignal));
     expect(inputOf('Allocated storage (GiB)').value).toBe('20');
     expect(inputOf('Master user name').value).toBe('');
     expect(inputOf('Master password').value).toBe('');
@@ -352,11 +414,9 @@ describe('Create DB instance', () => {
 
     fillRequired('1abc');
     type('Allocated storage (GiB)', '19');
-    type('DB instance class', '');
     type('Database name - optional', 'a-b');
     submit();
     expect(text(field('DB instance identifier').findError()?.getElement())).toBe('An identifier begins with a letter.');
-    expect(text(field('DB instance class').findError()?.getElement())).toBe('Enter a class.');
     expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toBe(
       'The storage is a whole number from 20 to 65536.',
     );
@@ -373,14 +433,21 @@ describe('Create DB instance', () => {
     type('DB instance identifier', 'App-DB');
     chooseEngine('mysql');
     await choose('Engine version - optional', '8.4.7');
-    type('DB instance class', 'db.t3.small');
-    type('Allocated storage (GiB)', '25');
+    await choose('DB instance class', 'db.t3.small');
+    await choose('Storage type', 'io1');
+    type('Allocated storage (GiB)', '100');
+    type('Provisioned IOPS', '3000');
     type('Master user name', 'admin1');
     type('Master password', PASSWORD);
     type('Database name - optional', 'app_db1');
     await choose('DB subnet group - optional', 'default');
     await chooseGroup('sg-1');
     await chooseGroup('sg-2');
+    await choose('Availability Zone', 'us-east-1a');
+    toggle('Encrypt storage');
+    await choose('KMS key', KEY_ARN);
+    toggle('Deletion protection');
+    addTag('project', 'studio');
     submit();
     await waitFor(() => {
       expect(screen.getByText('Creating DB instance app-db')).toBeInTheDocument();
@@ -394,12 +461,19 @@ describe('Create DB instance', () => {
         engine: 'mysql',
         engineVersion: '8.4.7',
         instanceClass: 'db.t3.small',
-        allocatedStorage: 25,
+        allocatedStorage: 100,
         masterUsername: 'admin1',
         masterPassword: PASSWORD,
         dbName: 'app_db1',
         subnetGroupName: 'default',
         securityGroupIds: ['sg-1', 'sg-2'],
+        availabilityZone: 'us-east-1a',
+        storageType: 'io1',
+        iops: 3000,
+        encrypted: true,
+        kmsKeyId: KEY_ARN,
+        deletionProtection: true,
+        tags: [{ key: 'project', value: 'studio' }],
       },
     ]);
   });
@@ -463,6 +537,16 @@ describe('Create DB instance', () => {
     chooseEngine('mariadb');
     type('Database name - optional', 'app');
     await choose('DB subnet group - optional', 'default');
+    await choose('DB instance class', 'db.t3.small');
+    await choose('Storage type', 'io1');
+    type('Allocated storage (GiB)', '100');
+    type('Provisioned IOPS', '3000');
+    await choose('Availability Zone', 'us-east-1a');
+    await chooseGroup('sg-1');
+    toggle('Encrypt storage');
+    await choose('KMS key', KEY_ARN);
+    toggle('Deletion protection');
+    addTag('project', 'studio');
     submit();
     await waitFor(() => {
       expect(alertText()).toContain('DBInstanceAlreadyExists');
@@ -475,6 +559,17 @@ describe('Create DB instance', () => {
     expect(inputOf('Database name - optional').value).toBe('app');
     expect(chosenEngine()).toBe('MariaDB');
     expect(triggerOf('DB subnet group - optional')).toContain('default');
+    expect(triggerOf('DB instance class')).toContain('db.t3.small');
+    expect(triggerOf('Storage type')).toContain('io1');
+    expect(inputOf('Allocated storage (GiB)')).toHaveValue('100');
+    expect(inputOf('Provisioned IOPS')).toHaveValue('3000');
+    expect(triggerOf('Availability Zone')).toContain('us-east-1a');
+    expect(groupsField().findTokens()).toHaveLength(1);
+    expect(screen.getByRole('checkbox', { name: 'Encrypt storage' })).toBeChecked();
+    expect(triggerOf('KMS key')).toContain('alias/create-test');
+    expect(screen.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('project');
+    expect(screen.getByRole('textbox', { name: 'Value - optional' })).toHaveValue('studio');
   });
 
   it('a 501 → "not implemented by the emulator" with CreateDBInstance', async () => {
@@ -573,6 +668,158 @@ describe('Create DB instance', () => {
     });
   }
 
+  it('keeps a class across engines that offer it and clears it when the next engine does not', async () => {
+    vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, engine) =>
+      engine === 'mariadb' ? ROWS.filter((row) => row.DBInstanceClass !== 'db.t3.micro') : ROWS,
+    );
+    open();
+    await opened();
+    chooseEngine('mysql');
+    await opened();
+    expect(triggerOf('DB instance class')).toContain('db.t3.micro');
+    chooseEngine('mariadb');
+    await opened();
+    expect(triggerOf('DB instance class')).toBe('Choose a class');
+  });
+
+  it('blocks submit while an explicit version’s orderable rows are pending', async () => {
+    let finish!: (rows: typeof ROWS) => void;
+    vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, _engine, version) =>
+      version === '17.7'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : ROWS,
+    );
+    open();
+    await opened();
+    fillRequired();
+    await choose('Engine version - optional', '17.7');
+    await screen.findByText('Checking DB instance class');
+    await waitFor(() =>
+      expect(choices.readOrderableRows).toHaveBeenCalledWith(ENGINE, 'postgres', '17.7', expect.any(AbortSignal)),
+    );
+    submit();
+    expect(creating.createInstance).not.toHaveBeenCalled();
+    act(() => finish(ROWS));
+    await opened();
+    submit();
+    expect(creating.createInstance).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an earlier engine’s late rows', async () => {
+    let finish!: (rows: typeof ROWS) => void;
+    vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, engine) =>
+      engine === 'postgres'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : ROWS.slice(0, 1),
+    );
+    open();
+    await screen.findByText('Checking DB instance class');
+    await waitFor(() =>
+      expect(choices.readOrderableRows).toHaveBeenCalledWith(ENGINE, 'postgres', '18.3', expect.any(AbortSignal)),
+    );
+    chooseEngine('mysql');
+    await opened();
+    await act(async () => finish(ROWS));
+    const select = selectIn('DB instance class');
+    select.openDropdown();
+    expect(select.findDropdown().findOptionByValue('db.t3.micro')).not.toBeNull();
+    expect(select.findDropdown().findOptionByValue('db.t3.small')).toBeNull();
+  });
+
+  it('resets to emulator storage when the next class lacks the selected type', async () => {
+    open();
+    await opened();
+    await choose('DB instance class', 'db.t3.small');
+    await choose('Storage type', 'io1');
+    await choose('DB instance class', 'db.t3.micro');
+    expect(triggerOf('Storage type')).toContain('Chosen by the emulator');
+    expect(screen.queryByText('Provisioned IOPS')).not.toBeInTheDocument();
+  });
+
+  it('takes default placement from the group’s subnets, clearing incompatible groups and zone when it changes', async () => {
+    open();
+    await opened();
+    await chooseGroup('sg-1');
+    await choose('Availability Zone', 'us-east-1a');
+    expect(readGroups).toHaveBeenLastCalledWith(
+      ENGINE,
+      { name: '', vpcId: 'vpc-d' },
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(choices.readDefaultVpcId).not.toHaveBeenCalled();
+
+    await choose('DB subnet group - optional', 'other');
+    expect(groupsField().findTokens()).toEqual([]);
+    expect(triggerOf('Availability Zone')).toContain('No preference');
+    await chooseGroup('sg-3');
+    expect(readGroups).toHaveBeenLastCalledWith(
+      ENGINE,
+      { name: '', vpcId: 'vpc-x' },
+      undefined,
+      expect.any(AbortSignal),
+    );
+    await choose('Availability Zone', 'us-east-1b');
+  });
+
+  it('Multi-AZ clears and disables the zone and sends MultiAZ alone', async () => {
+    open();
+    await opened();
+    fillRequired();
+    await choose('Availability Zone', 'us-east-1a');
+    toggle('Multi-AZ');
+    expect(selectIn('Availability Zone').findTrigger().getElement()).toBeDisabled();
+    expect(triggerOf('Availability Zone')).toContain('No preference');
+    submit();
+    expect(creating.createInstance).toHaveBeenCalledTimes(1);
+    const request = vi.mocked(creating.createInstance).mock.calls[0]?.[1];
+    expect(request?.multiAz).toBe(true);
+    expect(request).not.toHaveProperty('availabilityZone');
+  });
+
+  it('opens without a class if the initial rows lack it and focuses the missing field on submit', async () => {
+    vi.mocked(choices.readOrderableRows).mockResolvedValue(ROWS.slice(1));
+    open();
+    await opened();
+    expect(triggerOf('DB instance class')).toBe('Choose a class');
+    fillRequired();
+    submit();
+    expect(screen.getByText('Choose a class.')).toBeInTheDocument();
+    expect(selectIn('DB instance class').findTrigger().getElement()).toHaveFocus();
+    expect(creating.createInstance).not.toHaveBeenCalled();
+  });
+
+  it('reports both insufficient size and missing IOPS on io1', async () => {
+    open();
+    await opened();
+    fillRequired();
+    await choose('DB instance class', 'db.t3.small');
+    await choose('Storage type', 'io1');
+    submit();
+    expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toContain('100 to 65536 GiB for io1');
+    expect(screen.getByText('Enter the IOPS.')).toBeInTheDocument();
+    expect(creating.createInstance).not.toHaveBeenCalled();
+  });
+
+  it('reports a tag without a key and asks before discarding added tags', async () => {
+    open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument());
+    fillRequired();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value: 'dev' } });
+    submit();
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveAccessibleDescription('Enter a key.');
+    expect(creating.createInstance).not.toHaveBeenCalled();
+  });
+
   it('a choice list that failed to load does not keep the form from being sent', async () => {
     vi.mocked(choices.listSubnetGroupChoices).mockRejectedValue(
       new RequestError({ kind: 'other', operation: 'DescribeDBSubnetGroups', code: 'InternalError', message: 'boom' }),
@@ -621,6 +868,57 @@ describe('Create DB instance', () => {
     });
     expect(creating.createInstance).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])('uses the default VPC for an empty default subnet group (explicit: %s)', async (explicit) => {
+    vi.mocked(choices.listSubnetGroupChoices).mockResolvedValue({
+      choices: [{ name: 'default', vpcId: 'vpc-unused' }],
+    });
+    open();
+    await opened();
+    if (explicit) await choose('DB subnet group - optional', 'default');
+    await chooseGroup('sg-1');
+    expect(choices.readDefaultVpcId).toHaveBeenCalledWith(ENGINE, expect.any(AbortSignal));
+    expect(readGroups).toHaveBeenLastCalledWith(
+      ENGINE,
+      { name: '', vpcId: 'vpc-d' },
+      undefined,
+      expect.any(AbortSignal),
+    );
+    const zone = selectIn('Availability Zone');
+    zone.openDropdown();
+    expect((zone.findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()))).toEqual([
+      'No preference',
+    ]);
+    zone.closeDropdown();
+  });
+
+  it.each(['DescribeDBSubnetGroups', 'DescribeVpcs'])(
+    'shows %s 501 at both placement fields without blocking create',
+    async (operation) => {
+      const failure = new RequestError({ kind: 'not-implemented', operation });
+      if (operation === 'DescribeDBSubnetGroups') {
+        vi.mocked(choices.findSubnetGroup).mockRejectedValue(failure);
+      } else {
+        vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-unused' });
+        vi.mocked(choices.readDefaultVpcId).mockRejectedValue(failure);
+      }
+      open();
+      await opened();
+      await waitFor(() => {
+        for (const label of ['Security groups - optional', 'Availability Zone']) {
+          expect(text(field(label).getElement())).toContain(`501 Not Implemented for ${operation}`);
+        }
+      });
+      expect(groupsField().findTrigger().getElement()).toBeDisabled();
+      expect(selectIn('Availability Zone').findTrigger().getElement()).toBeDisabled();
+      fillRequired();
+      submit();
+      expect(creating.createInstance).toHaveBeenCalledTimes(1);
+      const request = vi.mocked(creating.createInstance).mock.calls[0]?.[1];
+      expect(request).not.toHaveProperty('securityGroupIds');
+      expect(request).not.toHaveProperty('availabilityZone');
+    },
+  );
 
   it('the page names its resources "DB instances" to the frame', async () => {
     open();
