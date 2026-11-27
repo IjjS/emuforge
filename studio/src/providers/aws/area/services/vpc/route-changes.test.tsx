@@ -55,7 +55,11 @@ describe("a route table's routes and associations", () => {
   it('after a route is added → the route table lists (every filter) and that table are asked again', async () => {
     vi.mocked(api.createRoute).mockResolvedValue(undefined);
     const spy = vi.spyOn(client, 'invalidateQueries');
-    const route = { routeTableId: 'rtb-1', destination: '0.0.0.0/0', gatewayId: 'igw-1' };
+    const route = {
+      routeTableId: 'rtb-1',
+      destination: '0.0.0.0/0',
+      target: { kind: 'GatewayId' as const, id: 'igw-1' },
+    };
     await hooks().add(route, signal());
     expect(vi.mocked(api.createRoute).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, route]);
     expect(spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort()).toEqual(EXPECTED);
@@ -92,7 +96,10 @@ describe("a route table's routes and associations", () => {
     const spy = vi.spyOn(client, 'invalidateQueries');
     const current = hooks();
     await expect(
-      current.add({ routeTableId: 'rtb-1', destination: '0.0.0.0/0', gatewayId: 'igw-1' }, signal()),
+      current.add(
+        { routeTableId: 'rtb-1', destination: '0.0.0.0/0', target: { kind: 'GatewayId' as const, id: 'igw-1' } },
+        signal(),
+      ),
     ).rejects.toBe(refusal);
     await expect(current.remove('rtb-1', '0.0.0.0/0', signal())).rejects.toBe(refusal);
     await expect(current.associate('rtb-1', 'subnet-1', signal())).rejects.toBe(refusal);

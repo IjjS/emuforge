@@ -247,6 +247,8 @@ describe('Associate subnet', () => {
       expect(shown()).toHaveLength(2);
     });
     const [first, second] = shown();
+    expect(first).toContain('us-east-1a · 10.0.1.0/24');
+    expect(second).toContain('us-east-1b · 10.0.2.0/24');
     for (const part of ['subnet-1', 'web', '10.0.1.0/24', 'us-east-1a']) {
       expect(first).toContain(part);
     }

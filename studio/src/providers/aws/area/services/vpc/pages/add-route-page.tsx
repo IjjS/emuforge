@@ -6,13 +6,14 @@ import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
-import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
+import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
+import { ChoiceSelect } from '../../../components/choice-select';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -20,30 +21,20 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf } from '../../../components/use-token-listing';
-import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { RouteTable } from '../api';
-import {
-  ADD_ROUTE_TITLE,
-  INTERNET_GATEWAYS_PATH,
-  nameOrId,
-  NONE,
-  resourceName,
-  routeTableHref,
-  ROUTE_TABLES_PATH,
-  ROUTE_TABLES_WORD,
-} from '../format';
+import { ADD_ROUTE_TITLE, nameOrId, routeTableHref, ROUTE_TABLES_PATH, ROUTE_TABLES_WORD } from '../format';
 import { blockMessage, ROUTE_DESTINATION } from '../form';
-import { useGatewayListing, useRouteTable } from '../queries';
+import { useRouteTable } from '../queries';
 import { ROUTE_CHANGE_OPERATIONS } from '../route-changes-api';
 import { useAddRoute } from '../route-changes';
+import { ROUTE_TARGET_KINDS, routeTargetChoices, type RouteTarget, type RouteTargetKind } from '../route-targets';
 
-// S10, "Add route" (issue 574, design task 3), for the route table of its address, read by `route-table-id`: a
-// destination, an IPv4 block; the target, the internet gateway attached to the table's VPC (`DescribeInternetGateways`
-// by `attachment.vpc-id`), shown, not chosen. With none attached, or while its read is loading or failed, the form
-// cannot be sent. One `CreateRoute` with `GatewayId`; on 200 S9 opens with a result that names the gateway and the
-// table and no destination, since the emulator stores a destination without its host bits and answers 200 to a route
-// the table already holds. A refusal stays on the form with the emulator's code and message and the entry.
+const targetKinds = Object.entries(ROUTE_TARGET_KINDS).map(([value, { label, description }]) => ({
+  value: value as RouteTargetKind,
+  label,
+  description,
+}));
 
 const ADDING = 'Adding';
 
@@ -141,61 +132,19 @@ export function ForRouteTable({ connection, id, title, description, children }: 
   );
 }
 
-/** "Target": the internet gateway attached to the table's VPC, its read's states, or that none is attached. */
-function Target({
-  vpcId,
-  listing,
-  connection,
-}: {
-  vpcId: string;
-  listing: ReturnType<typeof useGatewayListing>;
-  connection: AreaConnection;
-}) {
-  const handleFollow = useFollow();
-  const { items, failure, refresh } = listing;
-  const gateway = items?.[0];
-  if (failure !== undefined) {
-    return <ReadFailure state={readFailureState(failure, connection, 'internet gateway')} onRetry={refresh} />;
-  }
-  if (items === undefined) {
-    return <StatusIndicator type="loading">Loading internet gateway</StatusIndicator>;
-  }
-  if (gateway === undefined) {
-    return (
-      <SpaceBetween size="xxs">
-        <Box variant="p">
-          No internet gateway is attached to <ValueText kind="name" value={vpcId} none={NONE} />. Attach one to add a
-          route to it.
-        </Box>
-        <Link href={INTERNET_GATEWAYS_PATH} onFollow={handleFollow}>
-          View internet gateways
-        </Link>
-      </SpaceBetween>
-    );
-  }
-  return (
-    <KeyValuePairs
-      columns={2}
-      minColumnWidth={200}
-      ariaLabel="Target"
-      items={[
-        { label: 'Internet gateway ID', value: <ValueText kind="name" value={gateway.id} /> },
-        { label: 'Name', value: <ValueText kind="name" value={resourceName(gateway.tags)} none={NONE} /> },
-      ]}
-    />
-  );
-}
-
 function AddRouteForm({ table, connection }: { table: RouteTable; connection: AreaConnection }) {
   const navigate = useNavigate();
   const flash = usePageFlash();
   const engineOrigin = connection.engineOrigin;
   const add = useAddRoute(engineOrigin);
   const vpcId = table.vpcId ?? '';
-  const gateways = useGatewayListing(engineOrigin, { name: '', vpcId });
-  const gateway = gateways.failure === undefined ? gateways.items?.[0] : undefined;
 
   const [destination, setDestination] = useState('');
+  const [kind, setKind] = useState<RouteTargetKind>();
+  const [target, setTarget] = useState<RouteTarget>();
+  const kindRef = useRef<SelectProps.Ref>(null);
+  const targetRef = useRef<SelectProps.Ref>(null);
+  const targets = kind === undefined ? 'targets' : ROUTE_TARGET_KINDS[kind].plural;
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
@@ -220,17 +169,27 @@ function AddRouteForm({ table, connection }: { table: RouteTable; connection: Ar
   }, [failure]);
 
   const message = tried ? blockMessage(destination, ROUTE_DESTINATION) : undefined;
+  const kindMessage = tried && kind === undefined ? 'Choose a target type.' : undefined;
+  const targetMessage = tried && kind !== undefined && target === undefined ? 'Choose a target.' : undefined;
   const tableHref = routeTableHref(table.id);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || gateway === undefined) {
+    if (busy.current) {
       return;
     }
     setTried(true);
     setFailure(undefined);
     if (blockMessage(destination, ROUTE_DESTINATION) !== undefined) {
       destinationRef.current?.focus();
+      return;
+    }
+    if (kind === undefined) {
+      kindRef.current?.focus();
+      return;
+    }
+    if (target === undefined) {
+      targetRef.current?.focus();
       return;
     }
     const operation = ROUTE_CHANGE_OPERATIONS.createRoute;
@@ -249,12 +208,12 @@ function AddRouteForm({ table, connection }: { table: RouteTable; connection: Ar
       setPending(false);
     };
     try {
-      await add({ routeTableId: table.id, destination, gatewayId: gateway.id }, controller.signal);
+      await add({ routeTableId: table.id, destination, target: { kind, id: target.id } }, controller.signal);
       if (controller.signal.aborted) {
         return;
       }
       settle();
-      flash.handOver(tableHref, [{ type: 'success', content: `Saved the route to ${gateway.id} in ${table.id}` }]);
+      flash.handOver(tableHref, [{ type: 'success', content: `Saved the route to ${target.id} in ${table.id}` }]);
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -274,7 +233,7 @@ function AddRouteForm({ table, connection }: { table: RouteTable; connection: Ar
     }
   }, [kept]);
   const handleCancel = () => {
-    if (destination !== '') {
+    if (destination !== '' || kind !== undefined) {
       setAsking(true);
       return;
     }
@@ -301,7 +260,7 @@ function AddRouteForm({ table, connection }: { table: RouteTable; connection: Ar
               <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button variant="primary" disabled={gateway === undefined} loading={pending} loadingText={ADDING}>
+              <Button variant="primary" loading={pending} loadingText={ADDING}>
                 {pending ? ADDING : ADD_ROUTE_TITLE}
               </Button>
             </SpaceBetween>
@@ -326,8 +285,37 @@ function AddRouteForm({ table, connection }: { table: RouteTable; connection: Ar
                     }}
                   />
                 </FormField>
-                <FormField label="Target" description="The internet gateway attached to this table's VPC.">
-                  <Target vpcId={vpcId} listing={gateways} connection={connection} />
+                <FormField label="Target type" errorText={kindMessage}>
+                  <Select
+                    ref={kindRef}
+                    ariaLabel="Target type"
+                    placeholder="Choose a target type"
+                    options={targetKinds}
+                    selectedOption={targetKinds.find((option) => option.value === kind) ?? null}
+                    onChange={({ detail }) => {
+                      const next = targetKinds.find((option) => option.value === detail.selectedOption.value)?.value;
+                      if (next !== kind) {
+                        setKind(next);
+                        setTarget(undefined);
+                      }
+                    }}
+                  />
+                </FormField>
+                <FormField label="Target" errorText={targetMessage}>
+                  <ChoiceSelect
+                    key={kind}
+                    source={routeTargetChoices(engineOrigin, vpcId, kind ?? 'GatewayId')}
+                    connection={connection}
+                    things={targets}
+                    none={`No ${targets} in ${vpcId}`}
+                    lockedBy={kind === undefined ? 'Target type' : undefined}
+                    placeholder="Choose a target"
+                    ariaLabel="Target"
+                    invalid={targetMessage !== undefined}
+                    value={target}
+                    onChange={setTarget}
+                    selectRef={targetRef}
+                  />
                 </FormField>
               </SpaceBetween>
             </Container>

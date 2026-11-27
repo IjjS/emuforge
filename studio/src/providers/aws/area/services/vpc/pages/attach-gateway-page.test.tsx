@@ -148,7 +148,7 @@ const DETACHED: api.Read<api.InternetGateway> = { found: true, value: gateway('i
 beforeEach(() => {
   vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: VPCS });
   vi.mocked(api.getInternetGateway).mockResolvedValue(DETACHED);
-  vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [gateway('igw-1', 'edge', 'vpc-x')] });
+  vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [gateway('igw-1', 'edge')] });
   vi.mocked(changes.attachInternetGateway).mockResolvedValue(undefined);
 });
 
@@ -197,11 +197,23 @@ function alertText(): string {
 
 async function chooseVpc(id: string) {
   const select = vpcSelect();
-  select.openDropdown();
-  await waitFor(() => {
-    expect(select.findDropdown().findOptionByValue(id)).not.toBeNull();
-  });
-  select.selectOptionByValue(id);
+  if (select.findTrigger().getElement().getAttribute('aria-expanded') !== 'true') {
+    select.openDropdown();
+  }
+  await chooseOpenVpc(id);
+}
+
+function vpcOption(id: string) {
+  return screen.getByRole('option', { name: (name) => name.includes(id) });
+}
+
+async function chooseOpenVpc(id: string) {
+  await waitFor(() => expect(vpcOption(id)).not.toHaveAttribute('aria-disabled', 'true'));
+  vpcSelect().selectOptionByValue(id);
+}
+
+function attachButton() {
+  return screen.getByRole('button', { name: 'Attach' });
 }
 
 function rows(): string[] {
@@ -280,6 +292,7 @@ describe('Attach internet gateway', () => {
   it('"Attach" with no VPC → "Choose a VPC." and nothing sent', async () => {
     open();
     await formShown();
+    await waitFor(() => expect(attachButton()).toBeEnabled());
     submit();
     expect(errorOf('VPC')).toBe('Choose a VPC.');
     expect(changes.attachInternetGateway).not.toHaveBeenCalled();
@@ -540,8 +553,7 @@ describe('Attach internet gateway', () => {
   });
 
   const optionText = (id: string) => text(vpcSelect().findDropdown().findOptionByValue(id)?.getElement());
-  const optionDisabled = (id: string) =>
-    vpcSelect().findDropdown().findOptionByValue(id)?.getElement().getAttribute('aria-disabled') === 'true';
+  const optionDisabled = (id: string) => vpcOption(id).getAttribute('aria-disabled') === 'true';
 
   async function openChoices() {
     const select = vpcSelect();
@@ -551,121 +563,169 @@ describe('Attach internet gateway', () => {
     });
   }
 
-  it('the gateways read with one attached to one of two VPCs → that VPC\'s option tagged "Has {id}", not disabled; the other untagged', async () => {
+  const CHECKING = 'Checking which VPCs have an internet gateway';
+  const attachment = gateway('igw-other', 'external', 'vpc-x');
+  const occupied = 'vpc-x already has igw-other. Choose another VPC.';
+
+  function holdAttachments() {
+    let answer: (page: api.Page<api.InternetGateway>) => void = () => undefined;
+    vi.mocked(api.listInternetGateways).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    return (items: api.InternetGateway[]) => act(() => answer({ items }));
+  }
+
+  it('holds every VPC and disables Attach while checking', async () => {
+    vi.mocked(api.listInternetGateways).mockImplementation(() => new Promise(() => undefined));
     open();
     await formShown();
-    await waitFor(() => {
-      expect(api.listInternetGateways).toHaveBeenCalled();
-    });
-    expect(vi.mocked(api.listInternetGateways).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, {}, undefined]);
+    expect(screen.getByText(CHECKING)).toBeInTheDocument();
+    expect(attachButton()).toBeDisabled();
     await openChoices();
-    await waitFor(() => {
-      expect(optionText('vpc-x')).toContain('Has igw-1');
-    });
-    expect(optionDisabled('vpc-x')).toBe(false);
-    expect(optionText('vpc-d')).not.toContain('Has ');
+    for (const id of ['vpc-x', 'vpc-d']) {
+      expect(optionDisabled(id)).toBe(true);
+      vpcSelect().selectOptionByValue(id);
+    }
+    expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+    expect(changes.attachInternetGateway).not.toHaveBeenCalled();
   });
 
-  it("the gateways read in two pages, the attachment on the second → the VPC's option tagged (the read goes to its end)", async () => {
+  it('marks an occupied VPC as disabled and enables Attach with a free VPC selected', async () => {
+    vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [attachment] });
+    open();
+    await formShown();
+    await openChoices();
+    await waitFor(() => expect(optionText('vpc-x')).toContain('Has igw-other'));
+    expect(optionDisabled('vpc-x')).toBe(true);
+    expect(optionText('vpc-d')).not.toContain('Has ');
+    vpcSelect().selectOptionByValue('vpc-x');
+    expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+    await chooseOpenVpc('vpc-d');
+    expect(attachButton()).toBeEnabled();
+  });
+
+  it('uses attachments on further pages of the gateway read', async () => {
     vi.mocked(api.listInternetGateways).mockImplementation((_endpoint, _filters, token) =>
       Promise.resolve(
-        token === undefined
-          ? { items: [gateway('igw-2', 'spare')], nextToken: 'tok-g' }
-          : { items: [gateway('igw-1', 'edge', 'vpc-x')] },
+        token === undefined ? { items: [gateway('igw-2', 'spare')], nextToken: 'tok-g' } : { items: [attachment] },
       ),
     );
     open();
     await formShown();
+    await waitFor(() => expect(attachButton()).toBeEnabled());
     await openChoices();
-    await waitFor(() => {
-      expect(optionText('vpc-x')).toContain('Has igw-1');
-    });
-    expect(vi.mocked(api.listInternetGateways).mock.calls.map((call) => call[2])).toEqual([undefined, 'tok-g']);
+    await waitFor(() => expect(optionText('vpc-x')).toContain('Has igw-other'));
+    expect(vi.mocked(api.listInternetGateways).mock.calls.map((call) => call[2])).toEqual([
+      undefined,
+      'tok-g',
+      undefined,
+      'tok-g',
+    ]);
   });
 
-  it('a marked VPC chosen, "Attach" → sent with it; the emulator\'s refusal shown as it came, the form kept', async () => {
-    const message = 'Network vpc-x already has an internet gateway attached';
-    vi.mocked(changes.attachInternetGateway).mockRejectedValue(
+  it('shows a gateway lookup failure and holds the VPC field until Retry succeeds', async () => {
+    vi.mocked(api.listInternetGateways).mockRejectedValue(
       new RequestError({
         kind: 'other',
-        operation: 'AttachInternetGateway',
-        code: 'Resource.AlreadyAssociated',
-        message,
+        operation: 'DescribeInternetGateways',
+        code: 'InternalError',
+        message: 'broke',
       }),
     );
-    const router = open();
+    open();
+    await formShown();
+    await openChoices();
+    await waitFor(() => expect(text(field('VPC').getElement())).toContain('InternalError'));
+    expect(attachButton()).toBeDisabled();
+    for (const id of ['vpc-x', 'vpc-d']) {
+      expect(optionDisabled(id)).toBe(true);
+    }
+    vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [attachment] });
+    fireEvent.click(within(field('VPC').getElement()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(attachButton()).toBeEnabled());
+    expect(within(field('VPC').getElement()).queryByText(/InternalError/)).not.toBeInTheDocument();
+    await chooseVpc('vpc-d');
+  });
+
+  it('shows a gateway lookup 501 with its operation, and prevents choosing and attaching', async () => {
+    vi.mocked(api.listInternetGateways).mockRejectedValue(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeInternetGateways' }),
+    );
+    open();
     await formShown();
     await openChoices();
     await waitFor(() => {
-      expect(optionText('vpc-x')).toContain('Has igw-1');
+      expect(text(field('VPC').getElement())).toMatch(/Not implemented by the emulator.*DescribeInternetGateways/);
     });
-    vpcSelect().selectOptionByValue('vpc-x');
-    submit();
-    await waitFor(() => {
-      expect(alertText()).toContain('Resource.AlreadyAssociated');
-    });
-    expect(alertText()).toContain(message);
-    expect(vi.mocked(changes.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'igw-1', 'vpc-x']);
-    expect(router.state.location.pathname).toBe(ATTACH_PATH);
-    expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    expect(text(field('VPC').getElement())).not.toContain('Retry');
+    expect(optionDisabled('vpc-x')).toBe(true);
+    expect(optionDisabled('vpc-d')).toBe(true);
+    expect(attachButton()).toBeDisabled();
   });
 
-  const unanswered: [string, () => void, RegExp | undefined][] = [
-    [
-      'not yet answered',
-      () => {
-        vi.mocked(api.listInternetGateways).mockImplementation(() => new Promise(() => undefined));
-      },
-      undefined,
-    ],
-    ...(
-      [
-        [{ kind: 'not-implemented', operation: 'DescribeInternetGateways' }, /Not implemented by the emulator/],
-        [{ kind: 'access-denied', operation: 'DescribeInternetGateways', message: 'no' }, /Access denied/],
-        [
-          { kind: 'emulator-did-not-answer', operation: 'DescribeInternetGateways', message: 'timed out' },
-          /The emulator did not answer/,
-        ],
-        [{ kind: 'engine-did-not-answer', operation: 'DescribeInternetGateways' }, /engine.*did not answer/],
-        [
-          { kind: 'other', operation: 'DescribeInternetGateways', code: 'InternalError', message: 'broke' },
-          /InternalError/,
-        ],
-      ] as [RequestFailure, RegExp][]
-    ).map(([failure, words]): [string, () => void, RegExp] => [
-      `failed, ${failure.kind}`,
-      () => {
-        vi.mocked(api.listInternetGateways).mockRejectedValue(new RequestError(failure));
-      },
-      words,
-    ]),
-  ];
-  for (const [kind, arrange, words] of unanswered) {
-    it(`the gateways read ${kind} → the options untagged, no failure shown for it, a VPC chosen and "Attach" sent as before`, async () => {
-      arrange();
-      const router = open();
+  describe.each(['VPC first', 'gateways first'])('preset reads, %s', (order) => {
+    it.each([false, true])('settles the preset once both reads answer (occupied: %s)', async (isOccupied) => {
+      const answerGateways = holdAttachments();
+      let finishVpc: (read: api.Read<api.Vpc>) => void = () => undefined;
+      vi.mocked(api.getVpc).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishVpc = resolve;
+          }),
+      );
+      open(`${ATTACH_PATH}?vpc=vpc-x`);
       await formShown();
-      await waitFor(() => {
-        expect(api.listInternetGateways).toHaveBeenCalled();
-      });
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
-      await openChoices();
-      expect(optionText('vpc-x')).not.toContain('Has ');
-      expect(optionText('vpc-d')).not.toContain('Has ');
-      if (words !== undefined) {
-        expect(text(document.querySelector('main') ?? document.body)).not.toMatch(words);
+      await waitFor(() => expect(api.getVpc).toHaveBeenCalled());
+      await waitFor(() => expect(api.listInternetGateways).toHaveBeenCalled());
+      const answerVpc = () => act(() => finishVpc(APP_READ));
+      const answerOccupancy = () => answerGateways(isOccupied ? [attachment] : []);
+      if (order === 'VPC first') {
+        answerVpc();
+        await waitFor(() => expect(vpcSelect().isDisabled()).toBe(false));
+      } else {
+        answerOccupancy();
+        await waitFor(() => expect(screen.queryByText(CHECKING)).not.toBeInTheDocument());
       }
-      expect(alertText()).toBe('');
-      vpcSelect().selectOptionByValue('vpc-x');
-      submit();
-      await waitFor(() => {
-        expect(router.state.location.pathname).toBe(LIST_PATH);
-      });
-      expect(vi.mocked(changes.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'igw-1', 'vpc-x']);
+      expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+      if (order === 'VPC first') answerOccupancy();
+      else answerVpc();
+      if (isOccupied) {
+        expect(await screen.findByText(occupied)).toBeInTheDocument();
+        expect(errorOf('VPC')).toBe(occupied);
+        expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+      } else {
+        expect(await screen.findByText('vpc-x')).toBeInTheDocument();
+        expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+        expect(attachButton()).toBeEnabled();
+      }
     });
-  }
+  });
+
+  it.each([false, true])('rechecks a chosen VPC on opening (newly occupied: %s)', async (isOccupied) => {
+    open();
+    await formShown();
+    await chooseVpc('vpc-x');
+    const previousReads = vi.mocked(api.listInternetGateways).mock.calls.length;
+    const answer = holdAttachments();
+    await openChoices();
+    await waitFor(() => expect(api.listInternetGateways).toHaveBeenCalledTimes(previousReads + 1));
+    expect(screen.getByText(CHECKING)).toBeInTheDocument();
+    expect(attachButton()).toBeDisabled();
+    expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    answer(isOccupied ? [attachment] : []);
+    if (isOccupied) {
+      expect(await screen.findByText(occupied)).toBeInTheDocument();
+      expect(errorOf('VPC')).toBe(occupied);
+      expect(optionDisabled('vpc-x')).toBe(true);
+      expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+    } else {
+      await waitFor(() => expect(attachButton()).toBeEnabled());
+      expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    }
+  });
 
   it('the page names its resources "internet gateways" to the frame', async () => {
     open();
@@ -723,12 +783,19 @@ describe('Attach internet gateway', () => {
       act(() => {
         reads[1]?.({ items: [] });
       });
-      await chooseVpc('vpc-x');
+      vpcSelect().openDropdown();
+      await waitFor(() => {
+        expect(reads).toHaveLength(3);
+      });
+      act(() => {
+        reads[2]?.({ items: [] });
+      });
+      await chooseOpenVpc('vpc-x');
       submit();
       await waitFor(() => {
         expect(router.state.location.pathname).toBe(LIST_PATH);
       });
-      // The attach reads the gateways again: S14's read of the VPCs that hold one, then S12's list, both answered newer.
+      // The hand-over opens the gateways list and reads it again.
       await waitFor(() => {
         expect(reads).toHaveLength(4);
       });
@@ -736,12 +803,10 @@ describe('Attach internet gateway', () => {
       const newer = { items: [gateway('igw-1', 'newer', 'vpc-x')] };
       act(() => {
         if (order === 'the newest first') {
-          reads[2]?.(newer);
           reads[3]?.(newer);
           reads[0]?.(older);
         } else {
           reads[0]?.(older);
-          reads[2]?.(newer);
           reads[3]?.(newer);
         }
       });
