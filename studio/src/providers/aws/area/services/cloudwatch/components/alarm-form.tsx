@@ -211,6 +211,7 @@ export function AlarmForm({
       return;
     }
     busy.current = true;
+    setAsking(false);
     setSubmitting(true);
     try {
       await onSubmit(values);
@@ -241,9 +242,11 @@ export function AlarmForm({
             <SpaceBetween direction="horizontal" size="xs">
               <Button
                 ref={cancelRef}
+                disabled={entriesLocked}
                 variant="link"
                 formAction="none"
                 onClick={() => {
+                  if (pending || busy.current) return;
                   if (differs(values, initialValues)) setAsking(true);
                   else onCancel();
                 }}
@@ -443,9 +446,10 @@ export function AlarmForm({
         </Form>
       </form>
       <DiscardDialog
-        visible={asking}
+        visible={asking && !entriesLocked}
         onAnswer={(answer) => {
           setAsking(false);
+          if (pending || busy.current) return;
           if (answer === 'discard') onCancel();
           else setKept((count) => count + 1);
         }}

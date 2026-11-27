@@ -293,6 +293,32 @@ it('shows the operation and refusal, keeps the entries, and blocks a second subm
   await act(async () => complete());
 });
 
+it.each(['create', 'edit'] as const)('blocks Cancel and Discard while %s submits, then restores them', async (mode) => {
+  let complete!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  const onSubmit = vi.fn(() => pending);
+  const { cancelled } = open({ mode, start: ready(), onSubmit });
+  control('Description').findTextarea()?.setTextareaValue('Changed description');
+
+  await act(async () => button(mode === 'create' ? 'Create alarm' : 'Save changes').click());
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+  expect(button('Cancel').getElement()).toBeDisabled();
+  await act(async () => button('Cancel').click());
+  expect(PAGE.findModal()).toBeNull();
+  expect(cancelled).not.toHaveBeenCalled();
+
+  await act(async () => complete());
+  expect(button('Cancel').getElement()).toBeEnabled();
+  await act(async () => button('Cancel').click());
+  await waitFor(() =>
+    expect(PAGE.findModal()?.findHeader().getElement().textContent).toBe('Discard what you entered?'),
+  );
+  await act(async () => button('Discard').click());
+  expect(cancelled).toHaveBeenCalledTimes(1);
+});
+
 it('cancels immediately for unchanged entries or an entry typed and cleared again', () => {
   const { cancelled } = open();
   button('Cancel').click();
