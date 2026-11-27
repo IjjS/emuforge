@@ -350,4 +350,5 @@ are in `providers/aws/area/components/`: the value element (`value-text.tsx`), t
    spaces, tabs or line terminators. A link, heading or dialog header that takes its accessible name from this text
    gets the exact identity alone in the name's place. Use `nameIdentity` for a string that names a control, option,
    crumb or title. The area's shared choice fields and frame already apply it to option labels, crumbs and titles.
-   Use the stored name in requests and addresses, when copying, and for typed confirmation.
+   Use the stored name in requests, addresses and copies. Typed confirmation follows the action's existing rule.
+   Logs normalizes line feeds for comparison, and S3 uses a JSON representation for certain version keys.

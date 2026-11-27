@@ -1,7 +1,7 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
-import { useState, type Ref } from 'react';
+import { useLayoutEffect, useState, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
@@ -75,9 +75,18 @@ interface FieldParts<T> {
     | 'filteringPlaceholder'
     | 'filteringAriaLabel'
     | 'onLoadItems'
+    | 'renderDropdownHeader'
     | 'renderDropdownFooter'
     | 'onFocus'
   >;
+}
+
+/** Apply Cloudscape's current input text before the browser can select from the dropdown. */
+function LocalFilterText({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  useLayoutEffect(() => {
+    onChange(text);
+  }, [text, onChange]);
+  return null;
 }
 
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
@@ -144,10 +153,13 @@ export function useChoiceField<T>(
           // "Retry" asks again for the page that failed, the first or a further one.
           choices.retry();
         }
-        if (filtering !== 'none') {
+        if (filtering === 'sent') {
           setText(detail.filteringText);
         }
       },
+      // Cloudscape publishes each input change to the dropdown renderer. onLoadItems is delayed for remote reads.
+      renderDropdownHeader: ({ filterText }) =>
+        filtering === 'local' && filterText !== text ? <LocalFilterText text={filterText} onChange={setText} /> : null,
       renderDropdownFooter: () =>
         more ? (
           <Box padding={{ vertical: 'xs', horizontal: 's' }}>
