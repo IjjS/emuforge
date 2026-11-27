@@ -1509,14 +1509,26 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     expect(titles.at(-1)).toBe('Edit sg-123');
   });
 
-  it.each([
-    ['a\nb', 'a\\nb'],
-    ['a  b', 'a\\u0020\\u0020b'],
-  ])('uses the exact identity for a linked crumb without changing its address (%j)', (name, identity) => {
-    const { wrapper } = open(`${thingPath(name)}/edit`);
+  it('uses the exact identity for a linked crumb with a line feed without changing its address', () => {
+    const path = '/aws/kinesis/saved-thing';
+    const href = `${THINGS_PATH}?name=a%0Ab`;
+    registry.screens.push({
+      ...EDIT_THING,
+      paths: [path],
+      crumbs: [{ text: 'a\nb', href }, { text: 'Edit' }],
+    });
+    const { wrapper } = open(path);
 
-    expect(breadcrumbs(wrapper).at(-2)).toEqual([identity, thingPath(name)]);
-    expect(screen.getByRole('link', { name: identity })).toHaveAttribute('href', thingPath(name));
+    expect(breadcrumbs(wrapper).at(-2)).toEqual(['a\\nb', href]);
+    expect(screen.getByRole('link', { name: 'a\\nb' })).toHaveAttribute('href', href);
+  });
+
+  it('uses the exact identity for a two-space folder crumb without changing its address', () => {
+    const href = thingPath('a  b');
+    const { wrapper } = open(`${href}/edit`);
+
+    expect(breadcrumbs(wrapper).at(-2)).toEqual(['a\\u0020\\u0020b', href]);
+    expect(screen.getByRole('link', { name: 'a\\u0020\\u0020b' })).toHaveAttribute('href', href);
   });
 
   it('a name that holds /, ?, #, % and a space, each percent-encoded: shown decoded once, as text, in the h1 and the crumb', () => {
