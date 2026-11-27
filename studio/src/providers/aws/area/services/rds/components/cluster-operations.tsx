@@ -352,7 +352,7 @@ function ClusterStorageType({
 }
 
 type FailoverTarget = Awaited<ReturnType<typeof readFailoverTargets>>[number];
-type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure };
+type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure; loading?: boolean };
 const NO_READER = 'Failover requires a reader DB instance in this cluster.';
 
 function FailoverDialog({
@@ -370,22 +370,30 @@ function FailoverDialog({
     operation: OPERATIONS.describeDBInstances,
     read: (at, signal) => readFailoverTargets(at, cluster.id, signal),
   });
-  // An empty answer retires older data even if closing the picker cancels the new read.
   const [latest, setLatest] = useState<TargetRead>();
-  const [refreshing, setRefreshing] = useState<AbortSignal>();
+  const targetRead = useRef<AbortController>(null);
+  useEffect(() => () => targetRead.current?.abort(), []);
   const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
   const [targetError, setTargetError] = useState<string>();
   const targets = latest === undefined ? initial.value : latest.targets;
   const failure = latest === undefined ? initial.failure : latest.failure;
-  const loading = refreshing !== undefined || (latest === undefined && initial.loading);
+  const loading = latest === undefined ? initial.loading : latest.loading === true;
   const selected = targets?.find(({ id }) => id === target?.id);
   if (!loading && targets !== undefined && target !== undefined && selected === undefined) {
     setTargetError(`${target.id} is no longer a reader of this DB cluster.`);
     setTarget(undefined);
   }
 
-  const source = failoverTargetChoices(endpoint, cluster.id, async (at, id, signal) => {
-    setRefreshing(signal);
+  const handleTargetOpen = () => {
+    targetRead.current?.abort();
+    setLatest({ loading: true });
+  };
+  const source = failoverTargetChoices(endpoint, cluster.id, async (at, id) => {
+    handleTargetOpen();
+    // The dialog still needs this answer after the picker closes.
+    const controller = new AbortController();
+    targetRead.current = controller;
+    const { signal } = controller;
     try {
       const fresh = await readFailoverTargets(at, id, signal);
       signal.throwIfAborted();
@@ -394,8 +402,6 @@ function FailoverDialog({
     } catch (error) {
       if (!signal.aborted) setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
       throw error;
-    } finally {
-      setRefreshing((current) => (current === signal ? undefined : current));
     }
   });
   return (
@@ -426,7 +432,7 @@ function FailoverDialog({
             none="No reader DB instances"
             value={selected ?? target}
             invalid={targetError !== undefined}
-            onOpen={() => setLatest({})}
+            onOpen={handleTargetOpen}
             onChange={(choice) => {
               setTarget(choice);
               setTargetError(undefined);
