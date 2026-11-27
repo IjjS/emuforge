@@ -189,6 +189,12 @@ function vpcSelect() {
 const errorOf = (label: string) => text(field(label).findError()?.getElement());
 const constraintOf = (label: string) => text(field(label).findConstraint()?.getElement());
 
+function addTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
+}
+
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: 'Create route table' }));
 }
@@ -223,6 +229,16 @@ describe('Create route table', () => {
     expect(api.getVpc).not.toHaveBeenCalled();
   });
 
+  it('shows the block on a VPC option', async () => {
+    open();
+    await opened();
+    const select = vpcSelect();
+    select.openDropdown();
+    await waitFor(() => {
+      expect(text(select.findDropdown().findOptionByValue('vpc-x')?.getElement())).toContain('10.0.0.0/16');
+    });
+  });
+
   it('with ?vpc= of a VPC the emulator holds → that VPC is chosen', async () => {
     vi.mocked(api.getVpc).mockResolvedValue({ found: true, value: vpc('vpc-x') });
     open(`${CREATE_PATH}?vpc=vpc-x`);
@@ -250,6 +266,26 @@ describe('Create route table', () => {
     expect(changes.createRouteTable).not.toHaveBeenCalled();
   });
 
+  it('shows optional tags and rejects a Name row when the name field is filled', async () => {
+    open();
+    await opened();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
+    await chooseVpc('vpc-x');
+    type('Name - optional', 'app');
+    addTag('Name', 'duplicate');
+    submit();
+    expect(await screen.findByText('This key is already used.')).toBeInTheDocument();
+    expect(changes.createRouteTable).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding an added tag row', async () => {
+    open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
+  });
+
   it('a VPC and a name → one create with them; the new table\'s page with "Created route table {id}"', async () => {
     const router = open();
     await opened();
@@ -264,6 +300,24 @@ describe('Create route table', () => {
     expect(vi.mocked(changes.createRouteTable).mock.calls[0]?.slice(0, 2)).toEqual([
       ENGINE,
       { vpcId: 'vpc-x', name: 'web' },
+    ]);
+  });
+
+  it('a tag with the other fields → one create with them; the new table\'s page with "Created route table {id}"', async () => {
+    const router = open();
+    await opened();
+    await chooseVpc('vpc-x');
+    type('Name - optional', 'web');
+    addTag('team', 'core');
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Created route table rtb-0new')).toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe('/aws/vpc/route-tables/route-table/rtb-0new');
+    expect(changes.createRouteTable).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(changes.createRouteTable).mock.calls[0]?.slice(0, 2)).toEqual([
+      ENGINE,
+      { vpcId: 'vpc-x', name: 'web', tags: [{ key: 'team', value: 'core' }] },
     ]);
   });
 

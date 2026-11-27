@@ -7,6 +7,7 @@ import {
   listGroupChoices,
   listImageChoices,
   listInstanceTypeChoices,
+  listInstanceTypeOfferings,
   listKeyPairChoices,
 } from './choices-api';
 
@@ -117,14 +118,14 @@ describe('the images', () => {
       page(
         'DescribeImages',
         'imagesSet',
-        `<item><imageId>ami-1</imageId><name>al2023</name><architecture>x86_64</architecture><platformDetails>Linux/UNIX</platformDetails></item>
+        `<item><imageId>ami-1</imageId><name>al2023</name><architecture>x86_64</architecture><description>Amazon Linux</description></item>
          <item><imageId>ami-2</imageId></item><item><name>no id</name></item>`,
         'img-2',
       ),
     );
     const first = await listImageChoices(endpoint, '', undefined, signal());
     expect(first).toEqual({
-      choices: [{ id: 'ami-1', name: 'al2023', architecture: 'x86_64', platform: 'Linux/UNIX' }, { id: 'ami-2' }],
+      choices: [{ id: 'ami-1', name: 'al2023', architecture: 'x86_64', description: 'Amazon Linux' }, { id: 'ami-2' }],
       nextToken: 'img-2',
     });
     const sent = engine.of('DescribeImages')[0]?.params;
@@ -170,12 +171,30 @@ describe('the instance types', () => {
   });
 });
 
+it('reads both pages of the zone’s instance type offerings', async () => {
+  const operation = 'DescribeInstanceTypeOfferings';
+  const item = (type: string) => `<item><instanceType>${type}</instanceType><location>us-east-1b</location></item>`;
+  engine.on(operation, ({ params }) =>
+    params.has('NextToken')
+      ? page(operation, 'instanceTypeOfferingSet', item('c7g.large'))
+      : page(operation, 'instanceTypeOfferingSet', item('t3.micro'), 'more'),
+  );
+
+  expect(await listInstanceTypeOfferings(endpoint, 'us-east-1b', signal())).toEqual(new Set(['t3.micro', 'c7g.large']));
+  const calls = engine.of(operation);
+  expect(calls.map(({ params }) => params.get('NextToken'))).toEqual([null, 'more']);
+  for (const { params } of calls) {
+    expect(params.get('LocationType')).toBe('availability-zone');
+    expect(filters(params)).toEqual({ location: ['us-east-1b'] });
+  }
+});
+
 describe('the default VPC', () => {
-  it('the default VPC: the filter is-default true → its ID; an answer with none → none', async () => {
+  it('the default VPC: the filter is-default true → the VPC; an answer with none → none', async () => {
     engine.on('DescribeVpcs', () =>
       page('DescribeVpcs', 'vpcSet', '<item><vpcId>vpc-d</vpcId><isDefault>true</isDefault></item>'),
     );
-    expect(await getDefaultVpc(endpoint, signal())).toBe('vpc-d');
+    expect(await getDefaultVpc(endpoint, signal())).toEqual({ id: 'vpc-d', isDefault: true });
     expect(filters(engine.of('DescribeVpcs')[0]?.params ?? new URLSearchParams())).toEqual({ 'is-default': ['true'] });
 
     engine.on('DescribeVpcs', () => page('DescribeVpcs', 'vpcSet', ''));
@@ -219,10 +238,10 @@ describe('the key pairs', () => {
       page(
         'DescribeKeyPairs',
         'keySet',
-        '<item><keyName>dev</keyName><keyPairId>key-1</keyPairId></item><item><keyName>ci</keyName></item>',
+        '<item><keyName>dev</keyName><keyPairId>key-1</keyPairId><keyType>ed25519</keyType></item><item><keyName>ci</keyName></item>',
       ),
     );
-    expect(await listKeyPairChoices(endpoint, signal())).toEqual([{ name: 'dev' }, { name: 'ci' }]);
+    expect(await listKeyPairChoices(endpoint, signal())).toEqual([{ name: 'dev', type: 'ed25519' }, { name: 'ci' }]);
     const sent = engine.of('DescribeKeyPairs');
     expect(sent).toHaveLength(1);
     expect(sent[0]?.params.has('MaxResults')).toBe(false);

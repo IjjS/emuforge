@@ -176,6 +176,12 @@ const constraintOf = (label: string) => text(field(label).findConstraint()?.getE
 const NAME = 'Name - optional';
 const BLOCK = 'IPv4 CIDR block';
 
+function addTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
+}
+
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: 'Create VPC' }));
 }
@@ -263,6 +269,26 @@ describe('Create VPC', () => {
     });
   }
 
+  it('shows optional tags and rejects a Name row when the name field is filled', async () => {
+    open();
+    await opened();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
+    type(BLOCK, '10.0.0.0/16');
+    type(NAME, 'app');
+    addTag('Name', 'duplicate');
+    submit();
+    expect(await screen.findByText('This key is already used.')).toBeInTheDocument();
+    expect(changes.createVpc).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding an added tag row', async () => {
+    open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
+  });
+
   it('a name and a block → one create with them; the new VPC\'s page with "Created VPC {id}"', async () => {
     const router = open();
     await opened();
@@ -277,6 +303,24 @@ describe('Create VPC', () => {
     expect(vi.mocked(changes.createVpc).mock.calls[0]?.slice(0, 2)).toEqual([
       ENGINE,
       { cidr: '10.0.0.0/16', name: 'app' },
+    ]);
+  });
+
+  it('a tag with the other fields → one create with them; the new VPC\'s page with "Created VPC {id}"', async () => {
+    const router = open();
+    await opened();
+    type(NAME, 'app');
+    type(BLOCK, '10.0.0.0/16');
+    addTag('team', 'core');
+    submit();
+    expect(await screen.findByText('Created VPC vpc-0new')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/vpc/vpcs/vpc/vpc-0new');
+    });
+    expect(changes.createVpc).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(changes.createVpc).mock.calls[0]?.slice(0, 2)).toEqual([
+      ENGINE,
+      { cidr: '10.0.0.0/16', name: 'app', tags: [{ key: 'team', value: 'core' }] },
     ]);
   });
 

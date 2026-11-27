@@ -2,6 +2,8 @@ import { CreateSubnetCommand, DeleteSubnetCommand, ModifySubnetAttributeCommand 
 
 import { DESCRIBE_AVAILABILITY_ZONES } from '../../lib/ec2-availability-zones';
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
+import { tagSpecifications } from './form';
 
 // The calls of a subnet's screens (issue 574, design task 2): `CreateSubnet` from S5;
 // `ModifySubnetAttribute` of the public addresses on launch from S6; and
@@ -19,17 +21,17 @@ export const SUBNET_CHANGE_OPERATIONS = {
   deleteSubnet: 'DeleteSubnet',
 } as const;
 
-/** What S5 sends: the VPC and the block; a zone and a name when they are given. */
+/** What S5 sends: the VPC and the block, with an optional zone and optional tags. */
 export interface NewSubnet {
   vpcId: string;
   cidr: string;
   zone?: string;
   name?: string;
+  tags?: readonly TagRow[];
 }
 
 /**
- * `CreateSubnet` with `VpcId` and `CidrBlock`, `AvailabilityZone` when one is chosen, and the tag `Name` in
- * `TagSpecifications` when named; the new subnet's ID.
+ * `CreateSubnet` with `VpcId` and `CidrBlock`, an optional `AvailabilityZone` and optional tags; the new subnet's ID.
  */
 export async function createSubnet(endpoint: string, subnet: NewSubnet, signal: AbortSignal): Promise<string> {
   const output = await sendEc2(
@@ -41,9 +43,7 @@ export async function createSubnet(endpoint: string, subnet: NewSubnet, signal: 
           VpcId: subnet.vpcId,
           CidrBlock: subnet.cidr,
           ...(subnet.zone === undefined || subnet.zone === '' ? {} : { AvailabilityZone: subnet.zone }),
-          ...(subnet.name === undefined || subnet.name === ''
-            ? {}
-            : { TagSpecifications: [{ ResourceType: 'subnet', Tags: [{ Key: 'Name', Value: subnet.name }] }] }),
+          ...tagSpecifications('subnet', subnet.name, subnet.tags),
         }),
         { abortSignal },
       ),

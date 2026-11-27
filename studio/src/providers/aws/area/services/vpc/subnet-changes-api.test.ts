@@ -125,6 +125,29 @@ describe('create a subnet', () => {
     expect(sent.get('TagSpecification.1.Tag.1.Value')).toBe('app');
   });
 
+  it.each(['app', ''])('sends two tag rows with the Name tag first when supplied (%j)', async (name) => {
+    engine.on('CreateSubnet', () => ok('CreateSubnet', '<subnet><subnetId>subnet-0new</subnetId></subnet>'));
+    const tags = [
+      { key: 'team', value: 'core' },
+      { key: 'tier', value: 'app' },
+    ];
+    await createSubnet(endpoint, { vpcId: 'vpc-1', cidr: '10.0.1.0/24', name, tags }, signal());
+
+    expect(engine.of('CreateSubnet')).toHaveLength(1);
+    const sent = engine.of('CreateSubnet')[0]?.params ?? new URLSearchParams();
+    const expected = [...(name === '' ? [] : [{ key: 'Name', value: name }]), ...tags];
+    const entries = [...sent.entries()].filter(([key]) => key.startsWith('TagSpecification'));
+    expect(entries.sort()).toEqual(
+      [
+        ['TagSpecification.1.ResourceType', 'subnet'],
+        ...expected.flatMap(({ key, value }, index) => [
+          [`TagSpecification.1.Tag.${index + 1}.Key`, key],
+          [`TagSpecification.1.Tag.${index + 1}.Value`, value],
+        ]),
+      ].sort(),
+    );
+  });
+
   it('no zone and no name → neither AvailabilityZone nor TagSpecifications', async () => {
     engine.on('CreateSubnet', () => ok('CreateSubnet', '<subnet><subnetId>subnet-0new</subnetId></subnet>'));
     await createSubnet(endpoint, { vpcId: 'vpc-1', cidr: '10.0.1.0/24' }, signal());

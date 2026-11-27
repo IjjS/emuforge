@@ -3,7 +3,6 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RequestError } from '../../../../../lib/aws/request';
 import { usePagedChoices, type ChoiceSource } from '../../components/use-paged-choices';
 import * as network from '../../lib/ec2-network-choices';
 import * as api from './choices-api';
@@ -13,7 +12,7 @@ import {
   instanceTypeChoices,
   keyPairChoices,
   subnetChoices,
-  useLaunchGroups,
+  useInstanceTypeOfferings,
   vpcChoices,
 } from './choices-queries';
 
@@ -28,7 +27,7 @@ vi.mock('./choices-api', async (importOriginal) => {
     listInstanceTypeChoices: vi.fn(),
     listGroupChoices: vi.fn(),
     listKeyPairChoices: vi.fn(),
-    getDefaultVpc: vi.fn(),
+    listInstanceTypeOfferings: vi.fn(),
   };
 });
 
@@ -112,11 +111,11 @@ describe("EC2's choices", () => {
       ]);
     });
 
-    const subnets = read(subnetChoices(ENDPOINT), 'zz');
+    const subnets = read(subnetChoices(ENDPOINT, 'vpc-1'), 'zz');
     await waitFor(() => {
       expect(subnets.result.current.choices).toEqual([{ id: 'subnet-1' }]);
     });
-    expect(vi.mocked(network.listSubnetChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
+    expect(network.listSubnetChoices).toHaveBeenCalledWith(ENDPOINT, undefined, expect.any(AbortSignal), 'vpc-1');
     act(() => {
       subnets.result.current.loadMore();
     });
@@ -129,7 +128,7 @@ describe("EC2's choices", () => {
       expect(vpcs.result.current.choices).toEqual([{ id: 'vpc-1', isDefault: true }]);
     });
     expect(vi.mocked(network.listVpcChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
-    expect(subnetChoices(ENDPOINT).filtering).toBe('none');
+    expect(subnetChoices(ENDPOINT, 'vpc-1').filtering).toBe('none');
     expect(vpcChoices(ENDPOINT).filtering).toBe('none');
   });
 
@@ -145,58 +144,74 @@ describe("EC2's choices", () => {
     expect(api.listKeyPairChoices).toHaveBeenCalledTimes(1);
   });
 
-  it("the groups' choices for another VPC are another list; with the default VPC's read failed or empty → asked without vpc-id", async () => {
-    vi.mocked(api.listGroupChoices).mockImplementation((_at, filters) =>
-      Promise.resolve({ choices: [{ id: `sg-of-${filters.vpcId ?? 'any'}` }] }),
+  it('describes VPCs, subnets, types, images and key pairs using the values supplied', () => {
+    const vpcs = vpcChoices(ENDPOINT);
+    const subnets = subnetChoices(ENDPOINT, 'vpc-1');
+    const images = imageChoices(ENDPOINT);
+    const groups = groupChoices(ENDPOINT, 'vpc-1');
+    const keys = keyPairChoices(ENDPOINT);
+    expect(vpcs.optionOf({ id: 'vpc-1', isDefault: true, cidr: '10.0.0.0/16' })).toEqual({
+      value: 'vpc-1',
+      label: 'vpc-1',
+      description: '10.0.0.0/16',
+      tags: ['Default VPC'],
+    });
+    expect(vpcs.optionOf({ id: 'vpc-2', isDefault: false })).toEqual({ value: 'vpc-2', label: 'vpc-2' });
+    expect(
+      subnets.optionOf({ id: 'subnet-1', zone: 'zone-a', cidr: '10.0.0.0/24', availableIpAddressCount: 0 }).description,
+    ).toBe('zone-a · 10.0.0.0/24 · 0 free addresses');
+    expect(subnets.optionOf({ id: 'subnet-1', cidr: '10.0.0.0/24' }).description).toBe('10.0.0.0/24');
+    expect(images.optionOf({ id: 'ami-1', architecture: 'arm64', description: 'Amazon Linux' }).description).toBe(
+      'arm64 · Amazon Linux',
     );
-    expect(groupChoices(ENDPOINT, 'vpc-1').key).not.toEqual(groupChoices(ENDPOINT, 'vpc-2').key);
+    expect(keys.optionOf({ name: 'dev', type: 'ed25519' }).description).toBe('ed25519');
+    expect(
+      instanceTypeChoices(ENDPOINT).optionOf({
+        type: 't3.micro',
+        vcpus: 2,
+        memoryMiB: 512,
+        architectures: ['x86_64', 'i386'],
+      }).description,
+    ).toBe('2 vCPU · 0.5 GiB · x86_64, i386');
+    for (const source of [vpcs, subnets, images, groups, keys]) expect(source.readAgainOnOpen).toBe(true);
+    expect(groups.key).not.toEqual(groupChoices(ENDPOINT, 'vpc-2').key);
+  });
 
-    // No subnet: the default VPC's groups.
-    vi.mocked(api.getDefaultVpc).mockResolvedValue('vpc-d');
-    const launch = renderHook(({ subnetVpc }) => useLaunchGroups(ENDPOINT, subnetVpc), {
+  it('filters each instance type page and advances past a page with no offered types', async () => {
+    const excluded = { type: 't3.micro', architectures: [] };
+    const included = { type: 'c7g.large', architectures: ['arm64'] };
+    vi.mocked(api.listInstanceTypeChoices)
+      .mockResolvedValueOnce({ choices: [excluded], nextToken: 'next' })
+      .mockResolvedValueOnce({ choices: [included, excluded], nextToken: 'later' });
+    const source = instanceTypeChoices(ENDPOINT, 'zone-a', new Set([included.type]));
+    const signal = new AbortController().signal;
+    expect(await source.read(ENDPOINT, 'text', undefined, signal)).toEqual({ items: [included], next: 'later' });
+    expect(api.listInstanceTypeChoices).toHaveBeenNthCalledWith(1, ENDPOINT, 'text', undefined, signal);
+    expect(api.listInstanceTypeChoices).toHaveBeenNthCalledWith(2, ENDPOINT, 'text', 'next', signal);
+  });
+
+  it('keeps the current zone’s offerings when an earlier zone answers last', async () => {
+    let answerFirst: (types: ReadonlySet<string>) => void = () => undefined;
+    const first = new Promise<ReadonlySet<string>>((resolve) => {
+      answerFirst = resolve;
+    });
+    vi.mocked(api.listInstanceTypeOfferings)
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce(new Set(['c7g.large']));
+    const { result, rerender } = renderHook(({ zone }) => useInstanceTypeOfferings(ENDPOINT, zone), {
       wrapper,
-      initialProps: { subnetVpc: undefined as string | undefined },
+      initialProps: { zone: 'zone-a' },
     });
-    expect(launch.result.current.source.ready).toBe(false);
-    await waitFor(() => {
-      expect(launch.result.current.vpcId).toBe('vpc-d');
+    await waitFor(() =>
+      expect(api.listInstanceTypeOfferings).toHaveBeenCalledWith(ENDPOINT, 'zone-a', expect.any(AbortSignal)),
+    );
+    rerender({ zone: 'zone-b' });
+    await waitFor(() => expect(result.current.types).toEqual(new Set(['c7g.large'])));
+    await act(async () => {
+      answerFirst(new Set(['t3.micro']));
+      await first;
     });
-    const ofDefault = read(launch.result.current.source);
-    await waitFor(() => {
-      expect(ofDefault.result.current.choices).toEqual([{ id: 'sg-of-vpc-d' }]);
-    });
-    // A subnet's VPC: another list.
-    launch.rerender({ subnetVpc: 'vpc-2' });
-    expect(launch.result.current.vpcId).toBe('vpc-2');
-    expect(launch.result.current.vpcFor(undefined)).toBe('vpc-d');
-    const ofSubnet = read(launch.result.current.source);
-    await waitFor(() => {
-      expect(ofSubnet.result.current.choices).toEqual([{ id: 'sg-of-vpc-2' }]);
-    });
-    launch.unmount();
-
-    // The default VPC's read failed, then answered none: every group's.
-    for (const answer of ['failed', 'none'] as const) {
-      vi.mocked(api.listGroupChoices).mockClear();
-      if (answer === 'failed') {
-        vi.mocked(api.getDefaultVpc).mockRejectedValue(
-          new RequestError({ kind: 'access-denied', operation: 'DescribeVpcs', message: 'no' }),
-        );
-      } else {
-        vi.mocked(api.getDefaultVpc).mockResolvedValue(undefined);
-      }
-      const without = renderHook(() => useLaunchGroups(ENDPOINT, undefined), { wrapper });
-      await waitFor(() => {
-        expect(without.result.current.source.ready).toBe(true);
-      });
-      expect(without.result.current.vpcId).toBeUndefined();
-      const every = read(without.result.current.source);
-      await waitFor(() => {
-        expect(every.result.current.choices).toEqual([{ id: 'sg-of-any' }]);
-      });
-      expect(vi.mocked(api.listGroupChoices).mock.calls[0]?.[1]).toEqual({});
-      without.unmount();
-      every.unmount();
-    }
+    expect(result.current.types).toEqual(new Set(['c7g.large']));
+    expect(vi.mocked(api.listInstanceTypeOfferings).mock.calls[0]?.[2].aborted).toBe(true);
   });
 });
