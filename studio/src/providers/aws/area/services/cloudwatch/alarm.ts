@@ -102,8 +102,13 @@ export function alarmConditionText(alarm: Alarm): string {
       const evaluation =
         EvaluationPeriods === undefined
           ? undefined
-          : `${String(DatapointsToAlarm ?? EvaluationPeriods)} out of ${String(EvaluationPeriods)}${Period === undefined ? '' : ` × ${periodText(Period)}`}`;
-      const parts = [MetricName, comparison?.toLowerCase(), Threshold, evaluation && `(${evaluation})`];
+          : `${String(DatapointsToAlarm ?? EvaluationPeriods)} out of ${String(EvaluationPeriods)} periods${Period === undefined ? '' : `, ${periodText(Period)} each`}`;
+      const parts = [
+        MetricName,
+        comparison?.toLowerCase(),
+        Threshold,
+        evaluation === undefined ? undefined : `(${evaluation})`,
+      ];
       return parts.filter((part) => part !== undefined).join(' ') || '-';
     }
   }

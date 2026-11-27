@@ -78,6 +78,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
+      minWidth: '28ch',
       cell: ({ data }) =>
         data.AlarmName === undefined ? (
           '-'

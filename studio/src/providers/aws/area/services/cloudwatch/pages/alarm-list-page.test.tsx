@@ -49,7 +49,12 @@ const log: Alarm = {
   type: 'log',
   data: {
     AlarmName: 'c-log',
-    ScheduledQueryConfiguration: { QueryString: 'fields @message' },
+    ScheduledQueryConfiguration: {
+      QueryString: 'fields @message',
+      ScheduledQueryRoleARN: undefined,
+      ScheduleConfiguration: undefined,
+      AggregationExpression: undefined,
+    },
     StateValue: 'INSUFFICIENT_DATA',
     ActionsEnabled: true,
   },
@@ -108,7 +113,7 @@ it('shows the three types with their links, states, conditions, actions and stat
       'a-metric',
       'Metric alarm',
       'In alarm',
-      'Errors greater than 1 (2 out of 3 × 1 minute)',
+      'Errors greater than 1 (2 out of 3 periods, 1 minute each)',
       'On',
       creationDateText(changedAt),
     ],
@@ -188,7 +193,7 @@ it('starts the state filter from page one, combines filters, and clears the stat
   await waitFor(() => expect(linkAt(table, 1)).toBeVisible());
 
   const select = present(table.findFilterSlot()?.findSelect());
-  fireEvent.click(select.findTrigger().getElement());
+  select.openDropdown();
   const options = present(select.findDropdown().findOptions());
   expect(options.map((option) => option.findLabel().getElement().textContent)).toEqual([
     'Any state',
@@ -196,14 +201,14 @@ it('starts the state filter from page one, combines filters, and clears the stat
     'In alarm',
     'Insufficient data',
   ]);
-  fireEvent.click(present(select.findDropdown().findOptionByValue('ALARM')).getElement());
+  select.selectOptionByValue('ALARM');
   await waitFor(() => expectRead({ state: 'ALARM' }));
   expect(table.findPagination()?.findPageNumberByIndex(1)?.getElement()).toHaveAttribute('aria-current', 'true');
 
   changePrefix(table, 'a-');
   await waitFor(() => expectRead({ prefix: 'a-', state: 'ALARM' }));
-  fireEvent.click(select.findTrigger().getElement());
-  fireEvent.click(present(select.findDropdown().findOption(1)).getElement());
+  select.openDropdown();
+  select.selectOption(1);
   await waitFor(() => expectRead({ prefix: 'a-' }));
 });
 

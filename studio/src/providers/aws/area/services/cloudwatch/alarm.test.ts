@@ -16,7 +16,6 @@ const metric: MetricAlarm = {
 it('combines the three answer lists in name order by code point and labels their types', () => {
   expect(
     alarmsFromAnswer({
-      $metadata: {},
       MetricAlarms: [
         { AlarmName: '😀' },
         { AlarmName: '_math', Metrics: [] },
@@ -35,11 +34,11 @@ it('combines the three answer lists in name order by code point and labels their
   ]);
 });
 
-it.each<{ alarm: Alarm; text: string }>([
-  { alarm: { type: 'metric', data: metric }, text: 'Errors greater than 0 (3 out of 3 × 1 minute)' },
+it.each([
+  { alarm: { type: 'metric', data: metric }, text: 'Errors greater than 0 (3 out of 3 periods, 1 minute each)' },
   {
     alarm: { type: 'metric', data: { ...metric, DatapointsToAlarm: 2 } },
-    text: 'Errors greater than 0 (2 out of 3 × 1 minute)',
+    text: 'Errors greater than 0 (2 out of 3 periods, 1 minute each)',
   },
   {
     alarm: { type: 'metric-math', data: { Metrics: [{ Id: 'm1' }, { Id: 'e1', Expression: 'm1 / 10' }] } },
@@ -47,14 +46,24 @@ it.each<{ alarm: Alarm; text: string }>([
   },
   { alarm: { type: 'composite', data: { AlarmRule: 'ALARM("one")' } }, text: 'ALARM("one")' },
   {
-    alarm: { type: 'log', data: { ScheduledQueryConfiguration: { QueryString: 'fields @message' } } },
+    alarm: {
+      type: 'log',
+      data: {
+        ScheduledQueryConfiguration: {
+          QueryString: 'fields @message',
+          ScheduledQueryRoleARN: undefined,
+          ScheduleConfiguration: undefined,
+          AggregationExpression: undefined,
+        },
+      },
+    },
     text: 'fields @message',
   },
   {
     alarm: { type: 'metric', data: { EvaluationCriteria: { PromQLCriteria: { Query: 'sum(up)' } } } },
     text: 'sum(up)',
   },
-])('writes the condition $text for the alarm', ({ alarm, text }) => {
+] satisfies { alarm: Alarm; text: string }[])('writes the condition $text for the alarm', ({ alarm, text }) => {
   expect(alarmConditionText(alarm)).toBe(text);
 });
 
