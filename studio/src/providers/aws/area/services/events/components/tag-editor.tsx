@@ -1,7 +1,7 @@
 import AttributeEditor from '@cloudscape-design/components/attribute-editor';
 import FormField from '@cloudscape-design/components/form-field';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
-import { useImperativeHandle, useLayoutEffect, useRef, type Ref } from 'react';
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, type Ref } from 'react';
 
 import { MAX_TAGS, TAG_LIMIT_MESSAGE, type Tag, type validateTags } from '../../../components/tags';
 
@@ -22,17 +22,16 @@ export function TagEditor({ tags, errors, disabled = false, onChange, ref }: Tag
   const addedRow = useRef<number>(undefined);
   const atLimit = tags.length >= MAX_TAGS;
 
-  useImperativeHandle(ref, () => ({ focus }));
+  const focus = useCallback((index: number, part: keyof Tag) => {
+    inputs.current.get(`${String(index)}-${part}`)?.focus();
+  }, []);
+  useImperativeHandle(ref, () => ({ focus }), [focus]);
 
   useLayoutEffect(() => {
     const index = addedRow.current;
     addedRow.current = undefined;
     if (index !== undefined && index < tags.length) focus(index, 'key');
-  }, [tags.length]);
-
-  function focus(index: number, part: keyof Tag) {
-    inputs.current.get(`${String(index)}-${part}`)?.focus();
-  }
+  }, [focus, tags.length]);
 
   function field(tag: Tag, index: number, part: keyof Tag) {
     const id = `${String(index)}-${part}`;
