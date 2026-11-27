@@ -399,7 +399,9 @@ it('keeps the 501 visible and reopens Set state with confirmation unavailable', 
     ),
   );
   page.findModal()?.findFooter()?.findAllButtons()[0]?.click();
-  expect(screen.getByText('Not implemented by the emulator (SetAlarmState).')).toBeVisible();
+  const description = page.findContentLayout()?.findHeader()?.findHeader()?.findDescription();
+  expect(description?.getElement()).toBeVisible();
+  expect(description?.getElement().textContent).toBe('Not implemented by the emulator (SetAlarmState).');
   const second = await openState();
   expect(second.findContent().findAlert()?.getElement()).toHaveTextContent('501 Not Implemented for SetAlarmState');
   const confirm = second.findFooter()?.findAllButtons()[1];
