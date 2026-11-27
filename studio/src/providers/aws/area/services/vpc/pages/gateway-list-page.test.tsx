@@ -223,6 +223,41 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the internet gateway list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = gateway('igw-b', 'p664 a b');
+    const doubleSpace = gateway('igw-c', 'p664 a  b', 'vpc-a');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, SPARE] } });
+    open();
+
+    const selectedName = await screen.findByRole('radio', { name: identity });
+    expect(screen.getByRole('radio', { name: 'p664 a b' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: SPARE.id })).toBeInTheDocument();
+    expect(rows()).toContainEqual(SPARE_ROW);
+    const name = screen.getByText('p664 a  b', exactText);
+    expect(name.closest('tr')).toBe(selectedName.closest('tr'));
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    selectRow(identity);
+    fireEvent.click(action('Detach'));
+    const detach = await screen.findByRole('dialog', { name: 'Detach internet gateway?' });
+    expect(within(detach).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(detach)).toContain('is detached from vpc-a.');
+
+    vi.mocked(changes.detachInternetGateway).mockResolvedValue(undefined);
+    answer({ '|': { items: [singleSpace, gateway('igw-c', 'p664 a  b'), SPARE] } });
+    await confirmDetach();
+    expect(await screen.findByText('Detached igw-c from vpc-a')).toBeInTheDocument();
+
+    selectRow(identity);
+    fireEvent.click(action('Delete'));
+    const deletion = await screen.findByRole('dialog', { name: 'Delete internet gateway?' });
+    expect(within(deletion).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletion)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per gateway with name, internet gateway ID, "Attached" or "Detached", and the VPC ID (to the VPC) or "-"', async () => {
     answer({ '|': { items: [EDGE, SPARE] } });
     const router = open();

@@ -150,7 +150,7 @@ export function SubnetListPage({ connection }: { connection: AreaConnection }) {
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <NameText name={resourceName(row.tags)} none={NONE} />,
+      cell: (row) => <NameText name={resourceName(row.tags)} />,
     },
     {
       id: 'id',

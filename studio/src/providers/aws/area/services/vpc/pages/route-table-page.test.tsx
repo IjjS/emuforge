@@ -233,6 +233,16 @@ const nextPage = (title: string) => {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a route table', () => {
+  it('shows the exact Name tag and identifies the heading by its escaped name', async () => {
+    vi.mocked(api.getRouteTable).mockResolvedValue(found(routeTable({ tags: [{ key: 'Name', value: 'p664 a  b' }] })));
+    open();
+    await loaded();
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    const name = within(heading).getByText('p664 a  b', { normalizer: (value) => value });
+    expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
+  });
+
   it('the heading is its name; "Route table details" with the ID and a copy control, the VPC ID linked and "Main"', async () => {
     open();
     await loaded();
