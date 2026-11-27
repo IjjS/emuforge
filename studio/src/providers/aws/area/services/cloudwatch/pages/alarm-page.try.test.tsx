@@ -35,6 +35,7 @@ const connection = {
 } as const;
 const name = 'local-alarm';
 const stateResult = `State of ${name} set to In alarm.`;
+const stateFlash = `${stateResult} View history`;
 const actionsResult = `Actions of ${name} turned off.`;
 const read = vi.mocked(readAlarm);
 const history = vi.mocked(readAlarmHistory);
@@ -77,7 +78,7 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function open() {
+function open(alarmName = name) {
   let navigate: NavigateFunction | undefined;
   function Area() {
     navigate = useNavigate();
@@ -92,7 +93,7 @@ function open() {
     );
   }
   render(
-    <MemoryRouter initialEntries={[alarmPath(name)]}>
+    <MemoryRouter initialEntries={[alarmPath(alarmName)]}>
       <QueryClientProvider client={new QueryClient()}>
         <Area />
       </QueryClientProvider>
@@ -161,6 +162,37 @@ it.each<AlarmType>(['metric', 'metric-math', 'composite'])('opens Set state for 
   expect(changeState).not.toHaveBeenCalled();
 });
 
+it('preserves the alarm name in a span that inherits the page heading’s typography', async () => {
+  const exactName = ' checkout  alarm\n ';
+  read.mockResolvedValueOnce(alarm(true, 'metric', exactName));
+  open(exactName);
+  await screen.findByRole('button', { name: 'Set state' });
+  const heading = page.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+  const nameWrapper = heading?.firstElementChild;
+  expect(heading?.textContent).toBe(exactName);
+  expect(nameWrapper).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(nameWrapper?.className).toBe('');
+});
+
+it('keeps the success sentence whole and focuses the existing History section from its link', async () => {
+  open();
+  await setState();
+  await waitFor(() => expect(findFlashContent()).toEqual([stateFlash]));
+  const flashContent = page.findFlashbar()?.findItemsByType('success')[0]?.findContent();
+  const link = flashContent?.findLink()?.getElement();
+  const section = screen.getByRole('region', { name: 'History' });
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });
+  expect(link).toHaveAccessibleName('View history');
+  expect(link).toHaveAttribute('href', `#${section.id}`);
+  expect(link?.previousElementSibling?.textContent).toBe(stateResult);
+  expect(createWrapper(section).findTable()).not.toBeNull();
+  if (!link) throw new Error('View history link missing');
+  fireEvent.click(link);
+  expect(section).toHaveFocus();
+  expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'start' });
+});
+
 it('disables Set state on a log alarm and explains why', async () => {
   read.mockResolvedValueOnce(alarm(true, 'log'));
   open();
@@ -193,7 +225,7 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
   open();
   await expectHistory('State', 'Opening history');
   await setState();
-  await waitFor(() => expect(findFlashContent()).toEqual([stateResult]));
+  await waitFor(() => expect(findFlashContent()).toEqual([stateFlash]));
   expect(page.findModal()).toBeNull();
   expect(changeState).toHaveBeenCalledExactlyOnceWith(
     engine,
@@ -212,7 +244,7 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
   if (order === 'history first') {
     await act(async () => freshHistory.resolve(historyPage('State', 'Just set')));
     await expectHistory('State', 'Just set');
-    expect(findFlashContent()).toEqual([stateResult]);
+    expect(findFlashContent()).toEqual([stateFlash]);
   }
   await act(async () => freshAlarm.resolve(order === 'alarm missing' ? undefined : current));
   if (order === 'alarm missing') {
@@ -224,11 +256,11 @@ it.each(['history first', 'alarm first', 'alarm missing'])('keeps the set-state 
     expect(summaryValue('State')?.findStatusIndicator()?.getElement()).toHaveTextContent('In alarm');
   }
   if (order === 'alarm first') {
-    expect(findFlashContent()).toEqual([stateResult]);
+    expect(findFlashContent()).toEqual([stateFlash]);
     await act(async () => freshHistory.resolve(historyPage('State', 'Just set')));
     await expectHistory('State', 'Just set');
   }
-  expect(findFlashContent()).toEqual([stateResult]);
+  expect(findFlashContent()).toEqual([stateFlash]);
   expect(page.findModal()).toBeNull();
 });
 
@@ -403,5 +435,5 @@ it('keeps the new first history page and its token when the earlier request answ
   pagination?.findNextPageButton().click();
   await expectHistory('Configuration', 'Next fresh page');
   expect(history).toHaveBeenLastCalledWith(engine, name, 'fresh-token', expect.any(AbortSignal));
-  expect(findFlashContent()).toEqual([stateResult]);
+  expect(findFlashContent()).toEqual([stateFlash]);
 });

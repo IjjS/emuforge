@@ -7,7 +7,7 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -15,6 +15,7 @@ import { ReadFailure, readFailureState, useAnnouncer } from '../../../components
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { isEditableAlarm } from '../alarm';
 import { useAlarm, useAlarmHistory, useAlarmTags } from '../alarm-queries';
@@ -33,6 +34,8 @@ import type { TagOperation } from '../tags-api';
 import { SET_ALARM_STATE } from '../try-api';
 import { useActionsSwitch } from '../use-actions-switch';
 
+const HISTORY_ID = 'cloudwatch-alarm-history';
+
 export function AlarmPage({ connection }: ScreenPageProps) {
   useShowsResources('alarms');
   const { search } = useLocation();
@@ -43,6 +46,7 @@ export function AlarmPage({ connection }: ScreenPageProps) {
 function AlarmDetail({ name, connection }: { name: string | undefined; connection: AreaConnection }) {
   const follow = useFollow();
   const flash = usePageFlash();
+  const historySection = useRef<HTMLElement>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
   const [stateDialog, setStateDialog] = useState<{ currentState: StateValue | undefined }>();
@@ -88,7 +92,22 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
         type: 'success',
         content: (
           <>
-            State of <AlarmName name={name} /> set to {alarmStateText(state)}.
+            <span>
+              State of <AlarmName name={name} /> set to {alarmStateText(state)}.
+            </span>{' '}
+            <Link
+              color="inverted"
+              variant="primary"
+              href={`#${HISTORY_ID}`}
+              onFollow={(event) => {
+                event.preventDefault();
+                const section = historySection.current;
+                section?.focus({ preventScroll: true });
+                section?.scrollIntoView?.({ block: 'start' });
+              }}
+            >
+              View history
+            </Link>
           </>
         ),
       },
@@ -172,7 +191,13 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
             )
           }
         >
-          {name === undefined ? 'Alarm not found' : <AlarmName name={name} />}
+          {name === undefined ? (
+            'Alarm not found'
+          ) : (
+            <span style={{ whiteSpace: 'pre-wrap' }}>
+              <ValueText kind="name" value={name} />
+            </span>
+          )}
         </Header>
       }
     >
@@ -181,7 +206,9 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           <AlarmSummary alarm={alarm} />
           <AlarmCondition alarm={alarm} />
           <AlarmActions alarm={alarm} />
-          <AlarmHistory connection={connection} listing={history} />
+          <section id={HISTORY_ID} aria-label="History" tabIndex={-1} ref={historySection}>
+            <AlarmHistory connection={connection} listing={history} />
+          </section>
           <AlarmTags
             connection={connection}
             tags={tags}
