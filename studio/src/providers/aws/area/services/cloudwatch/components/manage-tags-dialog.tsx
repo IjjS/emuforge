@@ -95,15 +95,15 @@ export function ManageTagsDialog({
     removalsSaved && refusal
       ? (refusalMessage(refusal) ?? (refusal.kind === 'other' ? refusal.code : undefined))
       : undefined;
-  const partialCode = removalsSaved && refusal ? reportedServiceCode(refusal) : undefined;
+  const serviceCode = refusal && reportedServiceCode(refusal);
   const partialResult = removalsSaved && refusal && (
     <>
       The removals were saved. The added and changed tags were not: {refusal.operation}:{' '}
       {partialReason ?? feedback?.header}
-      {partialCode !== undefined && partialCode !== partialReason && (
+      {serviceCode !== undefined && serviceCode !== partialReason && (
         <>
           {' '}
-          (<Code>{partialCode}</Code>)
+          (<Code>{serviceCode}</Code>)
         </>
       )}
     </>
@@ -113,6 +113,12 @@ export function ManageTagsDialog({
       {(refusal.kind === 'engine-did-not-answer' || refusal.kind === 'emulator-did-not-answer') &&
         `${refusal.operation} failed. `}
       {feedback.content}
+      {refusal.kind === 'access-denied' && serviceCode !== undefined && (
+        <>
+          {' '}
+          (<Code>{serviceCode}</Code>)
+        </>
+      )}
     </>
   );
   const readState = failedRead?.failure && readFailureState(failedRead.failure, connection, 'tags');
