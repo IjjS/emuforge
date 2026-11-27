@@ -92,6 +92,7 @@ function renderPage(query = '') {
   }
   return {
     layout,
+    form,
     content,
     select,
     button,
@@ -124,9 +125,12 @@ it('opens with the addressed bus, an empty JSON object, the routing description 
     "The bus's enabled rules whose pattern matches route the event to their targets. A target receives it only if it allows EventBridge to deliver. The event ID says the emulator accepted the event, not that a rule matched or a target received it.",
   );
   expect(page.resources).toHaveBeenCalledWith({ word: 'event buses' });
+  for (const control of [page.source, page.type, page.text]) {
+    expect(control).toHaveAttribute('aria-required', 'true');
+  }
 });
 
-it('checks the bus again, sends the event, and flashes each accepted ID without clearing the form', async () => {
+it('checks the bus again and shows each accepted ID in one flash and beside Send without clearing the form', async () => {
   const page = renderPage('?bus=orders');
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
   read.mockClear();
@@ -138,6 +142,10 @@ it('checks the bus again, sends the event, and flashes each accepted ID without 
   expect(send).toHaveBeenCalledExactlyOnceWith(endpoint, { ...event, EventBusName: 'orders' }, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledBefore(send);
   expect(flashText(page.show)).toBe('The emulator accepted the event for orders. Event ID event-1.');
+  await waitFor(() => {
+    const receipt = page.form.findActions()?.find('[aria-hidden="true"]')?.findStatusIndicator();
+    expect(receipt?.getElement().textContent).toBe('The emulator accepted the event for orders. Event ID event-1.');
+  });
   expect(page.select.findTrigger().getElement().textContent).toBe('orders');
   page.expectFilled();
 
@@ -153,6 +161,10 @@ it('checks the bus again, sends the event, and flashes each accepted ID without 
     expect.any(AbortSignal),
   );
   expect(flashText(page.show)).toBe('The emulator accepted the event for orders. Event ID event-2.');
+  await waitFor(() => {
+    const receipt = page.form.findActions()?.find('[aria-hidden="true"]')?.findStatusIndicator();
+    expect(receipt?.getElement().textContent).toBe('The emulator accepted the event for orders. Event ID event-2.');
+  });
 });
 
 it('marks a bus deleted before send as missing and sends nothing', async () => {

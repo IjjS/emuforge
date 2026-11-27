@@ -16,6 +16,9 @@ import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { rulePath, ruleStateText, ruleTriggerText } from '../format';
 import { listRules, RULE_OPERATIONS } from '../rule-api';
+import { useOverflowHint } from '../use-overflow-hint';
+
+const OVERFLOW_HINT = 'Scroll sideways to see the trigger and description.';
 
 interface RulesTableProps {
   connection: AreaConnection;
@@ -47,6 +50,7 @@ export function RulesTable({ connection, bus, holdListing = false, readsEnabled 
   }
   const shown = holdListing ? lastShown : page;
   const loading = !holdListing && listing.loading;
+  const { tableSection, showOverflow } = useOverflowHint(!loading && (shown?.items?.length ?? 0) > 0);
   const failure =
     !holdListing && listing.failure ? readFailureState(listing.failure, connection, 'rule list') : undefined;
   const message = failure?.firstText ?? (!holdListing && pastEnd ? 'No more rules.' : '');
@@ -90,9 +94,9 @@ export function RulesTable({ connection, bus, holdListing = false, readsEnabled 
   ];
 
   return (
-    <>
+    <div ref={tableSection}>
       <Table
-        ariaLabels={{ tableLabel: 'Rules' }}
+        ariaLabels={{ tableLabel: showOverflow ? `Rules. ${OVERFLOW_HINT}` : 'Rules' }}
         items={shown?.items ?? []}
         trackBy="Name"
         columnDefinitions={columns}
@@ -102,6 +106,7 @@ export function RulesTable({ connection, bus, holdListing = false, readsEnabled 
         header={
           <Header
             variant="h2"
+            description={showOverflow ? OVERFLOW_HINT : undefined}
             actions={<Button ariaLabel="Refresh" iconName="refresh" loading={loading} onClick={listing.refresh} />}
           >
             Rules
@@ -145,6 +150,6 @@ export function RulesTable({ connection, bus, holdListing = false, readsEnabled 
         }
       />
       {announcement}
-    </>
+    </div>
   );
 }

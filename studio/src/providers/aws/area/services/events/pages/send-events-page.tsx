@@ -7,8 +7,9 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type ReactElement } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
@@ -47,6 +48,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [receipt, setReceipt] = useState<ReactElement>();
   const [notice, setNotice] = useState<FlashItem>();
   const busy = useRef(false);
   const sourceInput = useRef<InputProps.Ref>(null);
@@ -66,6 +68,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
 
     setTried(true);
     setNotice(undefined);
+    setReceipt(undefined);
     const faults = validateSendForm(form);
     if (choice.kind !== 'chosen') return;
     if (faults.source !== undefined) return sourceInput.current?.focus();
@@ -110,17 +113,14 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
         });
         return;
       }
-      flash.show([
-        {
-          type: 'success',
-          content: (
-            <>
-              The emulator accepted the event for <ValueText kind="name" value={bus} />. Event ID{' '}
-              <ValueText kind="name" value={result.id} />.
-            </>
-          ),
-        },
-      ]);
+      const accepted = (
+        <>
+          The emulator accepted the event for <ValueText kind="name" value={bus} />. Event ID{' '}
+          <ValueText kind="name" value={result.id} />.
+        </>
+      );
+      setReceipt(accepted);
+      flash.show([{ type: 'success', content: accepted }]);
     } catch (error) {
       if (signal.aborted) return;
       const failure = failureOf(error, operation);
@@ -157,15 +157,23 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
       <form onSubmit={(event) => void handleSubmit(event)} noValidate>
         <Form
           actions={
-            <Button
-              formAction="submit"
-              variant="primary"
-              disabled={unavailable}
-              loading={pending}
-              loadingText="Sending"
-            >
-              Send
-            </Button>
+            <SpaceBetween size="xs">
+              {receipt && (
+                // The area's flash announces the receipt. This copy stays beside Send for sighted users.
+                <div aria-hidden="true">
+                  <StatusIndicator type="success">{receipt}</StatusIndicator>
+                </div>
+              )}
+              <Button
+                formAction="submit"
+                variant="primary"
+                disabled={unavailable}
+                loading={pending}
+                loadingText="Sending"
+              >
+                Send
+              </Button>
+            </SpaceBetween>
           }
         >
           <SpaceBetween size="l">
@@ -175,6 +183,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
                 <FormField label="Source" constraintText={SOURCE_CONSTRAINT} errorText={errors.source}>
                   <Input
                     ref={sourceInput}
+                    ariaRequired
                     value={form.source}
                     invalid={errors.source !== undefined}
                     disabled={pending}
@@ -184,6 +193,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
                 <FormField label="Detail type" errorText={errors.detailType}>
                   <Input
                     ref={typeInput}
+                    ariaRequired
                     value={form.detailType}
                     invalid={errors.detailType !== undefined}
                     disabled={pending}
@@ -193,6 +203,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
                 <FormField label="Detail" constraintText={DETAIL_CONSTRAINT} errorText={errors.detail} stretch>
                   <Textarea
                     ref={detailInput}
+                    ariaRequired
                     value={form.detail}
                     rows={6}
                     invalid={errors.detail !== undefined}
