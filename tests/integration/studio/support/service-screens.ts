@@ -4,7 +4,8 @@
 // engine's `ListBuckets` that `safety.spec.ts` counts. They were S3's (`services/s3/s3.ts`, issue 56) and are read
 // from here by every check, S3's own included; nothing in a service's folder exports them again.
 
-import type { Page } from '@playwright/test';
+import createWrapper from '@cloudscape-design/components/test-utils/selectors';
+import type { Locator, Page } from '@playwright/test';
 
 import type { Ctx } from './check';
 
@@ -81,4 +82,57 @@ export async function scrollsSideways(page: Page): Promise<boolean> {
 export function isListBuckets(url: string, method: string, engineOrigin: string): boolean {
   const u = new URL(url);
   return u.origin === engineOrigin && method === 'GET' && u.pathname === '/';
+}
+
+// --- Names that differ only by white space a browser hides (issue 664) ------------------------------------------
+
+/**
+ * How the area writes, in a name's exact identity, a space that stands next to another space or at an end of the
+ * name: a backslash, `u0020`. Six characters of text, not a space.
+ */
+export const SPACE_ESCAPE = '\\' + 'u0020';
+
+/** The exact identity of `<stem> a  b` (two spaces): `<stem> a`, the escape twice, `b`. */
+export function twoSpaceIdentity(stem: string): string {
+  return `${stem} a${SPACE_ESCAPE}${SPACE_ESCAPE}b`;
+}
+
+/**
+ * The text of the one element `locator` as it is drawn: the text a reader sees, in order. Text that takes no room
+ * on the screen is left out (an element not displayed, hidden, of opacity 0 or of font size 0, as the area's text
+ * for assistive technology beside a name); where the browser collapses white space a run of it is one space, and
+ * where it keeps it the spaces and tabs stay as they are. Spaces at the two ends are trimmed.
+ */
+export async function drawnText(locator: Locator): Promise<string> {
+  return locator.evaluate((root) => {
+    let out = '';
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      let drawn = true;
+      for (let e = node.parentElement; e !== null; e = e === root ? null : e.parentElement) {
+        const style = getComputedStyle(e);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.fontSize === '0px') {
+          drawn = false;
+          break;
+        }
+      }
+      if (!drawn || node.parentElement === null) continue;
+      const style = getComputedStyle(node.parentElement) as CSSStyleDeclaration & { whiteSpaceCollapse?: string };
+      const collapse = style.whiteSpaceCollapse ?? (style.whiteSpace.startsWith('pre') || style.whiteSpace === 'break-spaces' ? 'preserve' : 'collapse');
+      const text = node.textContent ?? '';
+      out += collapse === 'collapse' ? text.replace(/[ \t\n\r\f]+/g, ' ') : text;
+    }
+    return out.replace(/^ +| +$/g, '');
+  }, undefined, { timeout: 15_000 });
+}
+
+/** The `h1` of the page's Cloudscape header: found from the header's heading text, for its accessible name. */
+export function headerHeading(page: Page): Locator {
+  const text = createWrapper().findHeader().findHeadingText().toSelector();
+  return page.locator(text).first().locator('xpath=ancestor::h1');
+}
+
+/** The open modal's element of the role `dialog`, for its accessible name. */
+export function modalDialog(page: Page): Locator {
+  return page.locator(createWrapper().findModal().toSelector()).filter({ visible: true }).locator('xpath=descendant-or-self::*[@role="dialog"]');
 }

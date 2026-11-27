@@ -823,3 +823,16 @@ export async function expectResults(page: Page, want: { stream: string; message:
     20_000,
   );
 }
+
+// --- The "Log stream" choice of S5 (issue 664) ------------------------------------------------------------------
+
+/** The parts of the select inside `scope` a check of its options acts on; an option is found by its value. */
+export function choiceOf(scope: Locator) {
+  const select = scope.locator(SELECT).first();
+  return {
+    trigger: select.locator(SELECT_TRIGGER),
+    filter: select.locator(SELECT_FILTER),
+    list: select.locator(SELECT_OPEN),
+    option: (value: string) => select.locator(optionByValue(value)),
+  };
+}
