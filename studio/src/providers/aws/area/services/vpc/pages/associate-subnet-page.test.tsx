@@ -184,7 +184,7 @@ function select() {
 }
 
 const dropdownText = () => text(select().findDropdown().getElement());
-const shown = () => (select().findDropdown().findOptions() ?? []).map((option) => text(option.getElement()));
+const shown = () => select().findDropdown().findOptions();
 
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: /^(Associate subnet|Associating)$/ }));
@@ -246,15 +246,14 @@ describe('Associate subnet', () => {
     await waitFor(() => {
       expect(shown()).toHaveLength(2);
     });
-    const [first, second] = shown();
-    expect(first).toContain('us-east-1a · 10.0.1.0/24');
-    expect(second).toContain('us-east-1b · 10.0.2.0/24');
-    for (const part of ['subnet-1', 'web', '10.0.1.0/24', 'us-east-1a']) {
-      expect(first).toContain(part);
-    }
-    for (const part of ['subnet-2', '10.0.2.0/24', 'us-east-1b']) {
-      expect(second).toContain(part);
-    }
+    const dropdown = select().findDropdown();
+    const web = dropdown.findOptionByValue('subnet-1');
+    expect(text(web?.findLabel().getElement())).toBe('subnet-1');
+    expect(text(web?.findDescription()?.getElement())).toBe('web');
+    expect(web?.findTags().map((tag) => text(tag.getElement()))).toContain('us-east-1a · 10.0.1.0/24');
+    const subnet = dropdown.findOptionByValue('subnet-2');
+    expect(text(subnet?.findLabel().getElement())).toBe('subnet-2');
+    expect(subnet?.findTags().map((tag) => text(tag.getElement()))).toContain('us-east-1b · 10.0.2.0/24');
   });
 
   it('none → "No subnets"; a typed text that matches none → "No subnets match"', async () => {
