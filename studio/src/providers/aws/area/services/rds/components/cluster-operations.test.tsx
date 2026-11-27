@@ -255,16 +255,35 @@ describe('modify a DB cluster', () => {
     );
   });
 
-  it('shows Not set when no storage type was reported and omits it when saving another field', async () => {
+  it('restores Not set after a storage edit and omits the type when saving another field', async () => {
     const cluster = { ...CLUSTER };
     delete cluster.storageType;
     renderControls(cluster);
     const modal = await open('modify');
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('Not set');
     expect(modal.getByText('The cluster has no storage type.')).toBeInTheDocument();
+    const save = modal.getByRole('button', { name: 'Save changes' });
+    await pick('Storage type', 'aurora');
+    expect(save).toBeEnabled();
+    await pick('Storage type', '');
+    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('Not set');
+    expect(save).toBeDisabled();
+
     fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
-    fireEvent.click(modal.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(save);
     expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'modify', changes: { deletionProtection: false } });
+  });
+
+  it('omits Not set from the storage options when the cluster already has a type', async () => {
+    renderControls();
+    await open('modify');
+    await pick('Storage type', 'aurora-iopt1');
+
+    const picker = select('Storage type');
+    picker.openDropdown();
+    const options = picker.findDropdown();
+    expect(options.findOptionByValue('aurora')).not.toBeNull();
+    expect(options.findOptionByValue('')).toBeNull();
   });
 
   it('offers only upgrade targets and holds a version whose rows require a different storage type', async () => {
