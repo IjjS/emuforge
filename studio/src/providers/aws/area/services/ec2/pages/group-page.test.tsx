@@ -272,6 +272,21 @@ describe("a security group's page", () => {
     expect(vi.mocked(api.getSecurityGroup).mock.calls[0]?.[1]).toBe('sg-a');
   });
 
+  it('draws both spaces in a security group heading and names it by its exact identity', async () => {
+    const name = 'dev  group';
+    const identity = 'dev\\u0020\\u0020group';
+    groupIs({ found: true, group: { ...GROUP, name } });
+    rulesAre({});
+    open(PATH);
+
+    await waitFor(() => {
+      const heading = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+      const title = heading?.closest('h1');
+      expect(title).toHaveAccessibleName(identity);
+      expect(title?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    });
+  });
+
   it("rules → a row each; a group source links to that group's page, a range is text; the Rules description", async () => {
     groupIs({ found: true, group: GROUP });
     rulesAre({ 'sg-a|': { rules: [IN_RANGE, IN_GROUP, OUT_ALL] } });

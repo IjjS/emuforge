@@ -6,6 +6,7 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
+import { NameText } from '../../../components/name-text';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { GROUP_OPERATIONS } from '../group-api';
@@ -84,7 +85,7 @@ function Dialog({
       header="Delete security group?"
       body={
         <>
-          <ValueText kind="name" value={group.name} />
+          <NameText name={group.name} />
           <ValueText kind="text" value={SENTENCE} />
           {failure !== undefined && (
             <Failure

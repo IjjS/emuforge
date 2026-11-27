@@ -183,6 +183,33 @@ it.each(['selectable', 'read-only'])('distinguishes stored names in the %s listi
   }
 });
 
+it('distinguishes one space from two in the link and selection names', async () => {
+  read.mockResolvedValueOnce({ items: [{ logStreamName: 'a b' }, { logStreamName: 'a  b' }] });
+  const onChange = vi.fn();
+  renderSection(connected, { name: undefined, onChange });
+
+  const identity = 'a\\u0020\\u0020b';
+  const table = await waitFor(() => {
+    const wrapper = streamTable();
+    expect(wrapper?.findRows()).toHaveLength(2);
+    return wrapper;
+  });
+  const oneSpaceLink = table?.findBodyCell(1, 2)?.findLink()?.getElement();
+  const twoSpaceLink = table?.findBodyCell(2, 2)?.findLink()?.getElement();
+  expect(oneSpaceLink).toBeVisible();
+  expect(oneSpaceLink?.textContent).toBe('a b');
+  expect(oneSpaceLink).toHaveAccessibleName('a b');
+  expect(twoSpaceLink).toBeVisible();
+  expect(twoSpaceLink?.textContent).toBe(`a  b (${identity})`);
+  expect(twoSpaceLink).toHaveAccessibleName(identity);
+  const oneSpaceRadio = table?.findRowSelectionArea(1)?.find('input')?.getElement();
+  const twoSpaceRadio = table?.findRowSelectionArea(2)?.find('input')?.getElement();
+  expect(oneSpaceRadio).toHaveAccessibleName('a b');
+  expect(twoSpaceRadio).toHaveAccessibleName(identity);
+  fireEvent.click(requiredElement(twoSpaceRadio));
+  expect(onChange).toHaveBeenCalledExactlyOnceWith('a  b');
+});
+
 it('sends the typed prefix and explains that prefix matches are listed by name', async () => {
   read
     .mockResolvedValueOnce({ items: [{ logStreamName: 'initial' }] })

@@ -14,7 +14,8 @@ modules called for, one line per called-for module with the reason. Kinds:
   main   the head is main's commit or an ancestor (the main checkout, a new branch): the product modules
          engine, studio and integration; the harness guards are left out
   unit   the fast check of a unit of an issue branch: what its own paths against feat/<id> call for, except
-         integration, which is left to the issue branch: its step is recorded "deferred" (0 s, no log)
+         integration, which is left to the issue branch: its step is recorded "deferred" (0 s, no log).
+         Studio unit tests use Vitest related when the changed inputs can be selected (below).
   full   --full, or the changes cannot be read (no branch main, no commit shared with the target, git failed):
          every module, nothing deferred
   only   --only: the named modules; a partial run, which never passes
@@ -32,6 +33,11 @@ for integration. The steps, for each module that exists in the checkout:
                keyed by each module's own text, so it can hold the result of an earlier tree)
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
   harness      .pm/bin/tests/run (the harness guards, issue 523: unittest discovery, under 30 s in all)
+Studio selection (issue 686). A fast check uses Vitest related for changed Studio source paths and the discovered
+test inputs that read files outside the import graph (_pmstudio.py). Shared test setup or a change that cannot be
+placed in this selection calls for the whole suite. Whenever studio-unit runs, its step records `selection`:
+{mode: "related", paths, extra_paths} (repository-relative inputs, with the base and target in `scope`) or
+{mode: "full", reason}. Every check with a scope other than a fast check runs the whole suite when Studio is called.
 Before its Studio steps, pm-check uses the digest of studio/bun.lock in studio/node_modules/.pm-bun-lock.sha256
 to tell whether a frozen install is current. A missing or different stamp calls for bun install --frozen-lockfile
 as studio-install, which stamps the tree only on success. A preparation error records studio-install as "error"
@@ -174,7 +180,8 @@ from _pmbuildcache import cache_activity, prune_if_idle
 from _pmitrun import SWEEP_BOUND, sweep_earlier, sweep_log
 from _pmlib import (CHECKS, ROOT, caller, check_room, cpu_pct, end_check, machine_room, note_check, now, record_duration, save,
                     wait_for_check_room)
-from _pmscope import called, deferred, lines, manifest_parts, scope, services_file
+from _pmscope import called, deferred, lines, manifest_parts, scope_and_paths, services_file
+from _pmstudio import related_command, unit_selection
 from _pmtest import STEP_SUITE, end_group, try_slot
 
 STEPS = {
@@ -669,7 +676,7 @@ def run_check(a, co, ids, cache_fd):
     if not other_run(record):  # what an earlier stopped integration run left (issue 342)
         for line in sweep_earlier(co, BIN_DIR):
             print(line, flush=True)
-    sc = scope(co, full=a.full, only=a.only, checks=a.checks)
+    sc, paths = scope_and_paths(co, full=a.full, only=a.only, checks=a.checks)
     print("\n".join(lines(sc)), flush=True)
     if a.checks:
         return checks_run(co, out, logs, env, record, commit, dirty, ports, sc, a.checks, ids, cache_fd)
@@ -691,17 +698,16 @@ def run_check(a, co, ids, cache_fd):
         waited_file(co).unlink(missing_ok=True)
     results = []
     try:
-        results = run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held, sc["target"],
-                          services_file(sc))
+        results = run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, sc, paths)
     finally:
         record.unlink(missing_ok=True)
         done()
     return finish(co, out, commit, dirty, ports, sc, results, cpu, bool(a.on_request), waited)
 
 
-def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held=(), target="main", services=None):
-    """Run the called-for steps. `services` is the services file's object (services_file) when the integration
-    step is narrowed to a set of services, else None."""
+def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, sc, paths):
+    """Run the called-for steps using the recorded scope and its input paths."""
+    held, target, services = deferred(sc), sc["target"], services_file(sc)
     results = []
     for mod in mods:
         sub, manifest, steps = STEPS[mod]
@@ -735,6 +741,15 @@ def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held=(), ta
             else:
                 services_json.write_text(json.dumps(services, indent=1) + "\n")
         for name, cmd in steps:
+            selection = None
+            if name == "studio-unit":
+                selection = unit_selection(co, sc["kind"], paths)
+                if selection["mode"] == "related":
+                    cmd = related_command(selection)
+                    print(f"  {name:18} related  {len(paths)} changed and "
+                          f"{len(selection['extra_paths'])} file-reading inputs", flush=True)
+                else:
+                    print(f"  {name:18} full  {selection['reason']}", flush=True)
             if mod == "integration" and a.on_request:
                 cmd = cmd + ["--on-request"]
             if mod == "integration" and a.full and suite_knows_full(co):
@@ -747,6 +762,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held=(), ta
                 code = run_step(cmd, str(co / sub), env, log, record, name, cache_fd, slot_fds)
             status = "error" if code == 127 else "failed" if code != 0 else "passed"
             results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
+            if selection is not None:
+                results[-1]["selection"] = selection
             record_duration(name, results[-1]["seconds"], status)
             if mod == "integration":
                 results[-1]["checks"] = read_report(co, commit, started)

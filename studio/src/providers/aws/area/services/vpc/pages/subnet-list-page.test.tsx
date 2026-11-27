@@ -218,6 +218,50 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the subnet list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = subnet('subnet-b', 'p664 a b');
+    const doubleSpace = subnet('subnet-c', 'p664 a  b');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, BARE] } });
+    open();
+
+    const radio = (row: number) => table().findRowSelectionArea(row)?.find('input[type="radio"]');
+    await waitFor(() => {
+      expect(radio(2)?.getElement()).toHaveAccessibleName(identity);
+    });
+    expect(radio(1)?.getElement()).toHaveAccessibleName('p664 a b');
+    expect(radio(3)?.getElement()).toHaveAccessibleName(BARE.id);
+    expect(
+      BARE_ROW.map(
+        (_, column) =>
+          table()
+            .findBodyCell(3, column + 2)
+            ?.getElement().textContent,
+      ),
+    ).toEqual(BARE_ROW);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    if (cell === undefined) throw new Error('Missing Name cell');
+    expect(cell).toHaveAccessibleName(identity);
+    const name = within(cell).getByText('p664 a  b', exactText);
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    const control = radio(2)?.getElement();
+    if (control === undefined) throw new Error('Missing row selection control');
+    fireEvent.click(control);
+    fireEvent.click(action('Delete'));
+    const deletion = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null || !modal.isVisible()) throw new Error('Missing deletion dialog');
+      return modal;
+    });
+    expect(deletion.getElement()).toHaveAccessibleName('Delete subnet?');
+    const deletionContent = deletion.findContent().getElement();
+    expect(within(deletionContent).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletionContent)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per subnet with name, subnet ID (to its page), VPC ID (to the VPC), IPv4 CIDR, Availability Zone and free addresses', async () => {
     answer({ '|': { items: [APP, BARE] } });
     const router = open();

@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { ROUTE_TABLE_CHANGE_OPERATIONS } from '../route-table-changes-api';
 import { useDeleteRouteTable } from '../route-table-changes';
@@ -85,7 +86,7 @@ function Dialog({
       header="Delete route table?"
       body={
         <>
-          <ValueText kind="name" value={table.label} />
+          <NameText name={table.label} />
           <ValueText kind="text" value={SENTENCE} />
           {failure !== undefined && (
             <Failure

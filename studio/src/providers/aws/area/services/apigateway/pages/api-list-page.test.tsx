@@ -1,10 +1,10 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -174,6 +174,48 @@ it('shows one sorted table with the model-specific links and metadata', async ()
       metadata,
     );
   });
+});
+
+it('distinguishes REST API names and selection controls when the names differ by spaces', async () => {
+  vi.mocked(readRestApis).mockResolvedValue({
+    items: [
+      { ...rest, name: 'a b' },
+      { ...rest2, name: 'a  b' },
+    ],
+  });
+  const { container } = open();
+
+  const identity = 'a\\u0020\\u0020b';
+  const table = await waitFor(() => {
+    const found = createWrapper(container).findTable();
+    assert(found);
+    expect(found.findRows()).toHaveLength(3);
+    return found;
+  });
+  const rowNumbers = table.findRows().map((_, index) => index + 1);
+  for (const [api, name, path] of [
+    [rest, 'a b', '/aws/apigateway/apis/rest/api-shared'],
+    [rest2, identity, '/aws/apigateway/apis/rest/rest2'],
+  ] as const) {
+    const row = rowNumbers.find(
+      (number) =>
+        table.findBodyCell(number, 3)?.getElement().textContent === api.id &&
+        table.findBodyCell(number, 4)?.getElement().textContent === api.kind,
+    );
+    assert(row !== undefined);
+    const link = table.findBodyCell(row, 2)?.findLink()?.getElement();
+    assert(link);
+    expect(link).toHaveRole('link');
+    expect(link).toHaveAccessibleName(name);
+    expect(link).toHaveAttribute('href', path);
+    const radio = table.findRowSelectionArea(row)?.findRadioButton()?.findNativeInput().getElement();
+    expect(radio).toHaveRole('radio');
+    expect(radio).toHaveAccessibleName(`Select ${name} (REST)`);
+    if (api === rest2) {
+      expect(within(link).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
+      expect(within(link).getByText(`(${identity})`)).toBeVisible();
+    }
+  }
 });
 
 it('shows loading until the lists answer, then offers Create API when both are empty', async () => {

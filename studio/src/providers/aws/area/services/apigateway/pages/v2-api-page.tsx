@@ -6,6 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { ReactNode } from 'react';
 
+import { NameText } from '../../../components/name-text';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -51,7 +52,7 @@ export function V2ApiPage({ connection, params }: ScreenPageProps) {
       </Container>
     );
 
-  let heading: ReactNode = <ValueText kind="name" value={api?.Name ?? id} />;
+  let heading: ReactNode = <NameText name={api?.Name ?? id} />;
   let content;
   if (api === undefined && failure !== null) {
     content = failure;

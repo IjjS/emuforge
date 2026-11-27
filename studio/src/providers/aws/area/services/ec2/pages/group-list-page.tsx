@@ -10,6 +10,8 @@ import { useCallback, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer, type ReadFailureState } from '../../../components/failure-states';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -149,7 +151,7 @@ export function GroupListPage({ connection }: { connection: AreaConnection }) {
       minWidth: NAME_MIN_WIDTH,
       cell: (row) => (
         <Link href={securityGroupHref(row.id)} onFollow={handleFollow}>
-          <ValueText kind="name" value={row.name} none={row.id} />
+          <NameText name={row.name} none={row.id} />
         </Link>
       ),
     },
@@ -217,7 +219,7 @@ export function GroupListPage({ connection }: { connection: AreaConnection }) {
         }}
         ariaLabels={{
           selectionGroupLabel: 'Security group selection',
-          itemSelectionLabel: (_, row) => (row.name === '' ? row.id : row.name),
+          itemSelectionLabel: (_, row) => nameIdentity(row.name || row.id),
         }}
         columnDefinitions={columns}
         wrapLines

@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_BUCKET } from '../api';
@@ -298,7 +300,7 @@ function CurrentObjects({
           href={row.kind === 'folder' ? objectsPath(name, row.id) : objectPath(name, row.id)}
           onFollow={handleFollow}
         >
-          <ValueText kind="name" value={row.name} />
+          <NameText name={row.name} />
         </Link>
       ),
     },
@@ -346,7 +348,7 @@ function CurrentObjects({
         ariaLabels={{
           selectionGroupLabel: 'Object selection',
           allItemsSelectionLabel: () => 'Select every object and folder on this page',
-          itemSelectionLabel: (_, row) => `Select ${row.name}`,
+          itemSelectionLabel: (_, row) => `Select ${nameIdentity(row.name)}`,
         }}
         wrapLines={preferences.wrapLines}
         loading={state.kind === 'loading'}

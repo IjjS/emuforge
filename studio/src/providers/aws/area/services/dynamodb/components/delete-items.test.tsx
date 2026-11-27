@@ -425,6 +425,48 @@ describe('"Delete" and its dialog', () => {
     expect(text(modal().findHeader().getElement())).toBe('Delete 1 item from orders?');
     expect(text(modal().getElement())).toContain('It is deleted from your local emulator. This cannot be undone.');
   });
+
+  it.each([
+    { row: 1, name: 'a b', identity: 'a b' },
+    { row: 2, name: 'a  b', identity: 'a\\u0020\\u0020b' },
+  ])('shows the selected key for row $row and deletes the stored key', async ({ row, name, identity }) => {
+    const oneSpace = order('a b', 1);
+    const twoSpaces = order('a  b', 1);
+    await openOrders(oneSpace, twoSpaces);
+    select(row);
+    await openDialog();
+
+    const dialog = modal();
+    expect(dialog.getElement()).toHaveAccessibleName('Delete 1 item from orders?');
+    expect(text(dialog.findHeader().getElement())).toBe('Delete 1 item from orders?');
+    const list = within(dialog.findContent().getElement()).getByRole('list');
+    const entry = within(list).getByRole('listitem');
+    expect(entry).toBeVisible();
+    expect(entry.textContent).toBe(KEY_TEXT(identity, 1));
+    expect(isDisabled(dialogButton('Delete'))).toBe(true);
+    typeWord('delete');
+    fireEvent.click(dialogButton('Delete'));
+
+    await expectFlash([['success', '', '1 item deleted from orders.']]);
+    expect(engine.of('DeleteItem').map((sent) => sent.body)).toEqual([{ TableName: 'orders', Key: order(name, 1) }]);
+    expect(engine.items.get('orders')).toEqual([row === 1 ? twoSpaces : oneSpace]);
+  });
+
+  it('lists every selected key in page order', async () => {
+    await openOrders(order('a b', 1), B, order('a  b', 1));
+    select(3, 1);
+    await openDialog();
+
+    const dialog = modal();
+    expect(dialog.getElement()).toHaveAccessibleName('Delete 2 items from orders?');
+    expect(text(dialog.findHeader().getElement())).toBe('Delete 2 items from orders?');
+    const list = within(dialog.findContent().getElement()).getByRole('list');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((entry) => entry.textContent),
+    ).toEqual([KEY_TEXT('a b', 1), KEY_TEXT('a\\u0020\\u0020b', 1)]);
+  });
 });
 
 describe('the deletes and their report', () => {
