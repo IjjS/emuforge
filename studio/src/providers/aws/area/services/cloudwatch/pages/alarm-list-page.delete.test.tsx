@@ -174,6 +174,28 @@ it('requires one selected alarm and opens the confirmation for it', async () => 
   expect(remove).not.toHaveBeenCalled();
 });
 
+it('keeps focus on the loading delete and focuses the refusal in the list dialog', async () => {
+  let refuse!: (error: RequestError) => void;
+  remove.mockReturnValueOnce(
+    new Promise<void>((_resolve, reject) => {
+      refuse = reject;
+    }),
+  );
+  open();
+  const modal = await openDelete();
+  const submit = modalButton(modal, 'Delete');
+  confirm(modal);
+  expect(submit).toHaveFocus();
+  expect(modal.findDismissButton()).toBeNull();
+  await act(async () =>
+    refuse(new RequestError({ kind: 'access-denied', operation: 'DeleteAlarms', message: 'Delete was refused.' })),
+  );
+  const alert = modal.findContent().findAlert();
+  expect(alert?.findContent().getElement()).toHaveTextContent('DeleteAlarms was refused: Delete was refused.');
+  expect(alert?.getElement().contains(document.activeElement)).toBe(true);
+  expect(modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
+});
+
 it('closes after deletion, reports success, and refreshes the shown page with no selection', async () => {
   read
     .mockReset()

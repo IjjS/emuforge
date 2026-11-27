@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -155,6 +155,32 @@ it('shows loading, no alarms, and no alarms matching a filter', async () => {
   changePrefix(table, 'Missing');
   await waitFor(() => expect(table.findEmptySlot()?.getElement()).toHaveTextContent(/^No alarms match$/));
   expectRead({ prefix: 'Missing' });
+});
+
+it('announces each pending read once and reserves refreshing for the Refresh button', async () => {
+  let finishInitialRead!: () => void;
+  read
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishInitialRead = () => resolve({ items: [metric] });
+      }),
+    )
+    .mockReturnValueOnce(new Promise(() => {}));
+  const { table } = open();
+  const announcements = () =>
+    createWrapper(document.body)
+      .findAll('[aria-live="polite"]')
+      .map((region) => region.getElement().textContent)
+      .filter((text) => text === 'Loading alarms' || text === 'Refreshing alarms');
+
+  expect(table.findLoadingText()?.getElement()).toHaveTextContent(/^Loading alarms$/);
+  await waitFor(() => expect(announcements()).toEqual(['Loading alarms']), { timeout: 3000 });
+  await act(async () => finishInitialRead());
+  await waitFor(() => expect(linkAt(table, 1)).toBeVisible());
+
+  buttonIn(table.findHeaderSlot(), 'Refresh').click();
+  expect(table.findLoadingText()?.getElement()).toHaveTextContent(/^Refreshing alarms$/);
+  await waitFor(() => expect(announcements()).toEqual(['Refreshing alarms']), { timeout: 3000 });
 });
 
 it('uses the next token and refreshes with the shown page token', async () => {

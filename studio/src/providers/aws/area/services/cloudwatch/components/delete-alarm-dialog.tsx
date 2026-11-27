@@ -1,10 +1,10 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -32,12 +32,20 @@ export function DeleteAlarmDialog({
 }: DeleteAlarmDialogProps) {
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
+  const submitRef = useRef<ButtonProps.Ref>(null);
+  const failureRef = useRef<AlertProps.Ref>(null);
   const [pending, setPending] = useState(false);
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<RequestFailure>();
   const shownFailure = unavailable ? ({ kind: 'not-implemented', operation: DELETE_ALARMS } as const) : failure;
   const feedback = shownFailure && actionFailureItem(shownFailure, DELETE_ALARMS, endpoint);
   const disabled = typed !== 'delete' || unavailable || shownFailure?.kind === 'not-implemented';
+
+  useEffect(() => {
+    // Cloudscape moves focus to the heading when the dismiss button is hidden.
+    if (pending) submitRef.current?.focus();
+    if (failure) failureRef.current?.focus();
+  }, [failure, pending]);
 
   const handleDismiss = () => {
     if (!inFlight.current) onDismiss();
@@ -72,6 +80,7 @@ export function DeleteAlarmDialog({
         </>
       }
       closeAriaLabel="Close dialog"
+      hideDismissButton={pending}
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
@@ -80,8 +89,9 @@ export function DeleteAlarmDialog({
               Cancel
             </Button>
             <Button
+              ref={submitRef}
               variant="primary"
-              disabled={disabled || pending}
+              disabled={disabled}
               loading={pending}
               loadingText="Deleting alarm"
               onClick={() => void handleConfirm()}
@@ -96,7 +106,7 @@ export function DeleteAlarmDialog({
         <Box variant="p">The alarm is removed from your local emulator. This cannot be undone.</Box>
         {feedback && (
           <div role="alert">
-            <Alert type={feedback.type} header={feedback.header}>
+            <Alert ref={failureRef} type={feedback.type} header={feedback.header}>
               {(shownFailure?.kind === 'emulator-did-not-answer' || shownFailure?.kind === 'engine-did-not-answer') &&
                 `${DELETE_ALARMS} failed. `}
               {feedback.content}

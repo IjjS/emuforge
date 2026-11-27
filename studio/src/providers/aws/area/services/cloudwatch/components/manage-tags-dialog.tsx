@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { Tag } from '@aws-sdk/client-cloudwatch';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { refusalMessage, reportedServiceCode, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -125,8 +125,13 @@ export function ManageTagsDialog({
   const inFlight = pending || reading;
   const saveDisabled = failedRead !== undefined || (!inFlight && unsupported !== undefined);
 
-  useLayoutEffect(() => {
-    if (inFlight || !saveFailure) return;
+  useEffect(() => {
+    // Cloudscape moves focus to the heading when the dismiss button is hidden.
+    if (inFlight) {
+      (failedRead ? retryButton : saveButton).current?.focus();
+      return;
+    }
+    if (!saveFailure) return;
     if (failedRead) {
       retryButton.current?.focus();
     } else if (!retrySucceeded) {
@@ -224,6 +229,7 @@ export function ManageTagsDialog({
       size="large"
       header="Manage tags"
       closeAriaLabel="Close dialog"
+      hideDismissButton={inFlight}
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
