@@ -18,6 +18,7 @@ import { ContentTarget } from './components/content-target';
 import { targetOf } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
+import { nameIdentity } from './components/name-identity';
 import { PageFlashContext } from './components/page-flash';
 import { PageHelpContext } from './components/page-help';
 import { PageResourcesContext, type PageResources } from './components/page-resources';
@@ -241,7 +242,7 @@ export function AreaLayout({
   useModalReport(root, onModal);
 
   const page = useMemo(() => areaPage(pathname), [pathname]);
-  const title = areaPageTitle(page, query);
+  const title = nameIdentity(areaPageTitle(page, query));
   useEffect(() => {
     onPageTitle(title);
   }, [onPageTitle, title]);
@@ -354,7 +355,10 @@ export function AreaLayout({
             ariaLabels={helpOpen ? APP_LAYOUT_LABELS_HELP_OPEN : APP_LAYOUT_LABELS}
             breadcrumbs={
               <BreadcrumbGroup
-                items={breadcrumbs(page, pathname, query)}
+                items={breadcrumbs(page, pathname, query).map((crumb) => ({
+                  ...crumb,
+                  text: nameIdentity(crumb.text),
+                }))}
                 ariaLabel="Breadcrumbs"
                 onFollow={handleFollow}
               />

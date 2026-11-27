@@ -6,6 +6,7 @@ import { useState, type Ref } from 'react';
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
 import { readFailureState } from './failure-states';
+import { identityOption, optionMatches } from './name-identity';
 import { usePagedChoices, type ChoiceSource, type PagedChoices } from './use-paged-choices';
 
 // A form's field of one choice, read a page at a time (issue 553, design "What is shared"): a Cloudscape `Select`
@@ -90,7 +91,11 @@ export function useChoiceField<T>(
   const filtering = source.filtering ?? 'none';
   const choices = usePagedChoices(source, opened, text);
   const items = choices.choices ?? [];
-  const options = [...(fixed === undefined ? [] : [fixed]), ...items.map(source.optionOf)];
+  const suppliedOptions = [...(fixed === undefined ? [] : [fixed]), ...items.map(source.optionOf)];
+  // The local filter sees the original label so it can find a pasted name without displaying it twice.
+  const options = (
+    filtering === 'local' ? suppliedOptions.filter((option) => optionMatches(option, text)) : suppliedOptions
+  ).map(identityOption);
 
   let statusType: NonNullable<SelectProps['statusType']> = 'finished';
   if (choices.failure !== undefined) {
@@ -116,13 +121,13 @@ export function useChoiceField<T>(
           ? ''
           : `The ${things} could not be loaded: ${failureWords(choices.failure, connection, things)}`,
       recoveryText: 'Retry',
-      empty: none,
+      empty: filtering === 'local' && text !== '' ? `No ${things} match` : none,
       ...(finishedText === undefined ? {} : { finishedText }),
       noMatch: `No ${things} match`,
       ...(filtering === 'none'
         ? {}
         : {
-            filteringType: filtering === 'sent' ? ('manual' as const) : ('auto' as const),
+            filteringType: 'manual' as const,
             filteringPlaceholder: `Find ${things}`,
             filteringAriaLabel: `Find ${things}`,
           }),
@@ -139,7 +144,7 @@ export function useChoiceField<T>(
           // "Retry" asks again for the page that failed, the first or a further one.
           choices.retry();
         }
-        if (filtering === 'sent') {
+        if (filtering !== 'none') {
           setText(detail.filteringText);
         }
       },
@@ -177,9 +182,9 @@ export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
 
   let selected: SelectProps.Option | null = null;
   if (value !== undefined) {
-    selected = source.optionOf(value);
+    selected = identityOption(source.optionOf(value));
   } else if (fixedOption !== undefined) {
-    selected = fixedOption;
+    selected = identityOption(fixedOption);
   }
 
   return (

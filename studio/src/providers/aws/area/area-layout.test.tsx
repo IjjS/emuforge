@@ -1490,6 +1490,35 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     expect(h1()).toHaveTextContent(/^Step 1: Edit settings$/);
   });
 
+  it('reports the exact identity of a two-space name in the current crumb and title', () => {
+    const { wrapper } = open(thingPath('a  b'));
+
+    expect(breadcrumbs(wrapper).at(-1)).toEqual(['a\\u0020\\u0020b', null]);
+    expect(titles.at(-1)).toBe('a\\u0020\\u0020b');
+  });
+
+  it('preserves a fixed crumb, a resource id and an ordinary name in the frame', () => {
+    const { wrapper } = open(`${thingPath('sg-123')}/edit`);
+
+    expect(breadcrumbs(wrapper)).toEqual([
+      ...KINESIS_CRUMBS,
+      ['Things', THINGS_PATH],
+      ['sg-123', thingPath('sg-123')],
+      ['Edit', null],
+    ]);
+    expect(titles.at(-1)).toBe('Edit sg-123');
+  });
+
+  it.each([
+    ['a\nb', 'a\\nb'],
+    ['a  b', 'a\\u0020\\u0020b'],
+  ])('uses the exact identity for a linked crumb without changing its address (%j)', (name, identity) => {
+    const { wrapper } = open(`${thingPath(name)}/edit`);
+
+    expect(breadcrumbs(wrapper).at(-2)).toEqual([identity, thingPath(name)]);
+    expect(screen.getByRole('link', { name: identity })).toHaveAttribute('href', thingPath(name));
+  });
+
   it('a name that holds /, ?, #, % and a space, each percent-encoded: shown decoded once, as text, in the h1 and the crumb', () => {
     const name = 'a/b?c#d%e f';
     const { wrapper } = open(`${THINGS_PATH}/thing/a%2Fb%3Fc%23d%25e%20f`);

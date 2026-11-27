@@ -269,7 +269,7 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
 
 ## What earlier critiques found
 
-Five things that four critiques of AWS screens repeated, written down on 2026-11-18. They are guidance, not rules: what
+The first five entries came from four critiques of AWS screens, written down on 2026-11-18. They are guidance: what
 the area's shared parts carry and what a worker may start from. A worker may depart from any of them where its task is
 better served; the critique judges the screen, not its agreement with this list. The shared parts that carry them
 are in `providers/aws/area/components/`: the value element (`value-text.tsx`), the value with its copy control
@@ -344,3 +344,10 @@ are in `providers/aws/area/components/`: the value element (`value-text.tsx`), t
    not asked about.
    Reason: "Cancel" sits beside the submit button and is one press, and a wizard holds steps of work, a create form
    many sections.
+6. **Names keep their white space.** Draw a resource name with `ValueText kind="name"` to keep its spaces and tabs
+   (issue 664). Where a row, link, heading or dialog needs to distinguish names with hidden white space, use
+   `NameText`. It shows the name with its exact identity in parentheses when it has repeated, leading or trailing
+   spaces, tabs or line terminators. A link, heading or dialog header that takes its accessible name from this text
+   gets the exact identity alone in the name's place. Use `nameIdentity` for a string that names a control, option,
+   crumb or title. The area's shared choice fields and frame already apply it to option labels, crumbs and titles.
+   Use the stored name in requests and addresses, when copying, and for typed confirmation.
