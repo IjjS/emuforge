@@ -9,7 +9,7 @@
 // emulator holds is read directly. Words, direct calls and readers: `services/logs/logs.ts`.
 
 import { expect, startStack, test } from './support';
-import { crumbs } from './support/aws-area';
+import { crumbAt, crumbs } from './support/aws-area';
 import { ACTION, addressOf, titleOf } from './support/frame';
 import { Lines } from './support/lines';
 import {
@@ -96,7 +96,7 @@ test('studio.logs-streams-that-differ-by-spaces-are-told-apart', async ({ ctx, p
         timeout: 15_000,
       });
       await expectMessages(page, [IN_TWO], "the two-space stream's event, alone");
-      expect((await crumbs(page)).at(-1), 'the last crumb').toBe(identity);
+      expect(await drawnText(crumbAt(page, (await crumbs(page)).length - 1)), 'the last crumb as drawn').toBe(identity);
       expect(await page.title(), "the document's title").toBe(titleOf(identity));
     },
   );
@@ -144,17 +144,24 @@ test('studio.logs-stream-choice-tells-names-apart', async ({ ctx, page }) => {
     await chooseOption(s.group, group, p);
     const choice = choiceOf(s.stream);
     await choice.trigger.click(ACTION);
-    await expect(choice.option(one), 'the option of the one-space value').toBeVisible({ timeout: 20_000 });
-    await expect(choice.option(two), 'the option of the two-space value').toBeVisible({ timeout: 20_000 });
+    // One reading of the list once it has read: both options seen together, each showing its label.
+    await expect
+      .poll(() => offeredNow(page, [one, two]), { message: 'the options of both values, offered', timeout: 20_000 })
+      .toEqual({
+        reading: false,
+        offered: [
+          { value: one, text: one },
+          { value: two, text: identity },
+        ],
+      });
     return choice;
   };
 
   await lines.line(
     '(regression) On Log events, choose the group and open "Log stream" → the options of both values are offered, the two-space one labelled by its identity, the one-space one by its name',
     async () => {
-      const choice = await opened();
-      expect(await drawnText(choice.option(two)), 'the label of the option of the two-space value').toBe(identity);
-      expect(await drawnText(choice.option(one)), 'the label of the option of the one-space value').toBe(one);
+      // `opened` holds the line: both options seen in one reading, labelled by the identity and by the name.
+      await opened();
     },
   );
 

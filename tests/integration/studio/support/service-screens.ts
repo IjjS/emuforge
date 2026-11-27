@@ -206,7 +206,7 @@ export interface OfferedOption {
 /**
  * What the open list of the page's one open select or multiselect offers at one moment: whether it says it is still
  * reading (its status line), and which of `values` have an option a user sees in it, in the order given, each with
- * its text as drawn. An option is seen when it takes room on the screen and neither it nor an element around it is
+ * its text as drawn. An option is seen when a box of it has a width and a height and neither it nor an element around it is
  * hidden or of opacity 0; its text is read as `drawnText` reads one (the rendered text, without what takes no room).
  * All of it is read in one step, so a check asserts on one list and not on two states of it.
  */
@@ -216,7 +216,7 @@ export async function offeredNow(page: Page, values: string[]): Promise<{ readin
   return page.evaluate(
     ({ status, options }) => {
       const seen = (element: Element) =>
-        element.getClientRects().length > 0 &&
+        [...element.getClientRects()].some((box) => box.width > 0 && box.height > 0) &&
         (element as Element & { checkVisibility(options: object): boolean }).checkVisibility({
           opacityProperty: true,
           visibilityProperty: true,

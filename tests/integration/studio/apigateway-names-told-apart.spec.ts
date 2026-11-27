@@ -60,14 +60,18 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
   const optionOf = (label: string, id: string) => ({ value: id, text: `${label}\n${id}` });
   /** Of the two APIs' options the two-space one's alone, seen, showing the identity and that ID, in a list that is not reading. */
   const filtered = { reading: false, offered: [optionOf(identity, idTwo)] };
+  /** Both APIs' options, seen, each showing its label and its ID, in a list that is not reading. */
+  const both = { reading: false, offered: [optionOf(one, idOne), optionOf(identity, idTwo)] };
   /** Opens the page that asks which REST API to open, and its choice, with the options of both APIs offered. */
   const asked = async () => {
     await page.goto(entryOf('Resources').path);
     await expect(pageHeading(page), 'the h1 "Resources"').toHaveText('Resources');
     const choice = choiceParts(page);
     await choice.trigger.click();
-    await expect(choice.option(idOne), "the option of the one-space API's ID").toBeVisible({ timeout: 20_000 });
-    await expect(choice.option(idTwo), "the option of the two-space API's ID").toBeVisible({ timeout: 20_000 });
+    // One reading of the list once it has read: both options seen together, each showing its label and its ID.
+    await expect
+      .poll(() => offeredNow(page, [idOne, idTwo]), { message: "the options of both APIs' IDs, offered", timeout: 20_000 })
+      .toEqual(both);
     return choice;
   };
   /** The ID the REST API's page shows. */
@@ -125,7 +129,7 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
       await choice.filter.fill('');
       await expect
         .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list, the filter cleared', timeout: 20_000 })
-        .toEqual({ reading: false, offered: [optionOf(one, idOne), optionOf(identity, idTwo)] });
+        .toEqual(both);
       await choice.filter.fill(idTwo);
       // The list as it stands once it has read for the ID.
       await expect
@@ -134,7 +138,7 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
       expect(await drawnText(choice.label(idTwo)), 'the label of the option left').toBe(identity);
       await choice.option(idTwo).click();
       await expect(choice.option(idTwo), 'the list after the choice').toHaveCount(0);
-      expect(await drawnText(choice.trigger), 'what the closed field shows').toContain(identity);
+      expect(await drawnText(choice.trigger), 'what the closed field shows').toBe(identity);
       await button(page, 'Open').click();
       await expect(page, "the two-space API's address").toHaveURL(at(`${restApiPath(idTwo)}?show=resources`));
       await expect.poll(shownId, { message: 'the API ID shown', timeout: 15_000 }).toContain(idTwo);

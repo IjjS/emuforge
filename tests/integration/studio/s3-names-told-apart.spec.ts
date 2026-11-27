@@ -118,7 +118,9 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
       await link(await rowOfFolderTwo(), `${folderTwoIdentity}/`).click(ACTION);
       await expect(tab.keyLink('in-two'), "the two-space folder's object").toBeVisible({ timeout: 15_000 });
       await expect(tab.keyLink('in-one'), "the one-space folder's object").toHaveCount(0);
-      expect((await crumbs(page)).at(-1), 'the last crumb').toBe(folderTwoIdentity);
+      expect(await drawnText(crumbAt(page, (await crumbs(page)).length - 1)), 'the last crumb as drawn').toBe(
+        folderTwoIdentity,
+      );
       await tab.keyLink('in-two').click(ACTION);
       await expect(objectPage(page).section(OVERVIEW), `"${OVERVIEW}"`).toBeVisible({ timeout: 15_000 });
       // The folder's crumb is the one before the object's, the last; it is found by its place among the crumbs.
@@ -138,7 +140,7 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
     async () => {
       await objectOfTwo();
       await expect(headerHeading(page), "the heading's accessible name").toHaveAccessibleName(identity);
-      expect((await crumbs(page)).at(-1), 'the last crumb').toBe(identity);
+      expect(await drawnText(crumbAt(page, (await crumbs(page)).length - 1)), 'the last crumb as drawn').toBe(identity);
       expect(await page.title(), "the document's title").toBe(titleOf(identity));
       await expect
         .poll(async () => (await sectionPairs(page, OVERVIEW)).Size, { message: 'the size shown', timeout: 15_000 })
