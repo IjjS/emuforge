@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|unit-test-environment|happy-dom
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit
 Issue-Commit: 1e50de9d7c26c7c5a2cdeb31cf95c318235b4d3f
 
 # Measure Studio's unit tests on happy-dom and move to it if they hold
