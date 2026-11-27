@@ -156,6 +156,12 @@ const NAME = 'Name - optional';
 const errorOf = (label: string) => text(field(label).findError()?.getElement());
 const constraintOf = (label: string) => text(field(label).findConstraint()?.getElement());
 
+function addTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
+}
+
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: 'Create internet gateway' }));
 }
@@ -187,6 +193,25 @@ describe('Create internet gateway', () => {
     expect(changes.createInternetGateway).not.toHaveBeenCalled();
   });
 
+  it('shows optional tags and rejects a Name row when the name field is filled', async () => {
+    open();
+    await opened();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
+    type(NAME, 'app');
+    addTag('Name', 'duplicate');
+    submit();
+    expect(await screen.findByText('This key is already used.')).toBeInTheDocument();
+    expect(changes.createInternetGateway).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding an added tag row', async () => {
+    open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
+  });
+
   it('a name → one create with the tag; the gateways list with "Created internet gateway {id}"', async () => {
     const router = open();
     await opened();
@@ -198,6 +223,23 @@ describe('Create internet gateway', () => {
     expect(router.state.location.pathname).toBe(LIST_PATH);
     expect(changes.createInternetGateway).toHaveBeenCalledTimes(1);
     expect(vi.mocked(changes.createInternetGateway).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, { name: 'edge' }]);
+  });
+
+  it('a name and a tag → one create with both; the gateways list with "Created internet gateway {id}"', async () => {
+    const router = open();
+    await opened();
+    type(NAME, 'edge');
+    addTag('team', 'core');
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Created internet gateway igw-0new')).toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe(LIST_PATH);
+    expect(changes.createInternetGateway).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(changes.createInternetGateway).mock.calls[0]?.slice(0, 2)).toEqual([
+      ENGINE,
+      { name: 'edge', tags: [{ key: 'team', value: 'core' }] },
+    ]);
   });
 
   it('no name → a create with no tag', async () => {

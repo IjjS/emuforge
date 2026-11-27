@@ -14,8 +14,10 @@ import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-d
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { failureOf } from '../../../components/use-token-listing';
 import type { VpcChoice } from '../../../lib/ec2-network-choices';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import { CHOOSE_A_VPC, VpcField } from '../components/vpc-field';
 import { CREATE_ROUTE_TABLE_TITLE, routeTableHref, ROUTE_TABLES_PATH, ROUTE_TABLES_WORD, VPC_QUERY } from '../format';
@@ -70,12 +72,14 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
   const [form, setForm] = useState<TableFormState>({ vpc: undefined, name: '' });
   // What the form opened with: the VPC of `?vpc=` once its read has answered, else none.
   const [opening, setOpening] = useState<VpcChoice | undefined>();
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
 
   const vpcRef = useRef<SelectProps.Ref>(null);
   const nameRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -112,6 +116,8 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
 
   const messages = tried ? messagesOf(form) : {};
 
+  const checkedTags = checkTagRows(tags, form.name === '' ? undefined : 'Name');
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current) {
@@ -128,6 +134,11 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
       nameRef.current?.focus();
       return;
     }
+    if (checkedTags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(checkedTags.firstInvalid);
+      return;
+    }
+    const extraTags = checkedTags.tags.length === 0 ? {} : { tags: checkedTags.tags };
     const operation = ROUTE_TABLE_CHANGE_OPERATIONS.createRouteTable;
     const what = 'Creating route table';
     if (engineOrigin === undefined) {
@@ -144,7 +155,7 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
       setPending(false);
     };
     try {
-      const id = await create(tableOf(form.vpc, form), controller.signal);
+      const id = await create({ ...tableOf(form.vpc, form), ...extraTags }, controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -168,7 +179,7 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
       cancelRef.current?.focus();
     }
   }, [kept]);
-  const differs = form.name !== '' || form.vpc?.id !== opening?.id;
+  const differs = tags.length > 0 || form.name !== '' || form.vpc?.id !== opening?.id;
   const handleCancel = () => {
     if (differs) {
       setAsking(true);
@@ -230,6 +241,7 @@ export function CreateRouteTablePage({ connection }: ScreenPageProps) {
                 </FormField>
               </SpaceBetween>
             </Container>
+            <TagsField ref={tagsRef} rows={tags} onChange={setTags} errors={tried ? checkedTags.errors : undefined} />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>

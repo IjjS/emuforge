@@ -1,6 +1,7 @@
 import { RunInstancesCommand, type _InstanceType } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
 
 // The launch of S2 (issue 553, design task 2): one `RunInstances` of one instance, through `sendEc2` with its
 // operation's name, so a refusal rejects with its `RequestError` carrying the emulator's code and message as they
@@ -19,11 +20,36 @@ export interface NewInstance {
   subnetId?: string;
   /** None sent when absent or empty: the emulator then gives the group `default`. */
   securityGroupIds?: readonly string[];
+  instanceProfileName?: string;
+  terminationProtection?: boolean;
+  userData?: string;
+  tags?: readonly TagRow[];
+}
+
+/** RunInstances takes a base64 string, rather than a blob for the SDK to encode. */
+export function encodeLaunchUserData(value: string): string | undefined {
+  if (value === '') return undefined;
+  const bytes = new TextEncoder().encode(value);
+  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
 }
 
 /** `RunInstances` with `MinCount` and `MaxCount` 1; the ID of the instance it answers with. */
 export async function launchInstance(endpoint: string, launch: NewInstance, signal: AbortSignal): Promise<string> {
-  const { imageId, instanceType, name, keyName, subnetId, securityGroupIds } = launch;
+  const {
+    imageId,
+    instanceType,
+    name,
+    keyName,
+    subnetId,
+    securityGroupIds,
+    instanceProfileName,
+    terminationProtection,
+  } = launch;
+  const tags = [
+    ...(name === undefined || name === '' ? [] : [{ Key: 'Name', Value: name }]),
+    ...(launch.tags ?? []).map(({ key, value }) => ({ Key: key, Value: value })),
+  ];
+  const userData = encodeLaunchUserData(launch.userData ?? '');
   const output = await sendEc2(
     endpoint,
     LAUNCH_OPERATION,
@@ -40,9 +66,10 @@ export async function launchInstance(endpoint: string, launch: NewInstance, sign
           ...(securityGroupIds === undefined || securityGroupIds.length === 0
             ? {}
             : { SecurityGroupIds: [...securityGroupIds] }),
-          ...(name === undefined || name === ''
-            ? {}
-            : { TagSpecifications: [{ ResourceType: 'instance', Tags: [{ Key: 'Name', Value: name }] }] }),
+          ...(instanceProfileName === undefined ? {} : { IamInstanceProfile: { Name: instanceProfileName } }),
+          ...(terminationProtection === true ? { DisableApiTermination: true } : {}),
+          ...(userData === undefined ? {} : { UserData: userData }),
+          ...(tags.length === 0 ? {} : { TagSpecifications: [{ ResourceType: 'instance', Tags: tags }] }),
         }),
         { abortSignal },
       ),

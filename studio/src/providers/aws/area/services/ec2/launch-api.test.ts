@@ -131,7 +131,7 @@ describe('the launch', () => {
     });
   });
 
-  it("with a name, a key pair, a subnet and two groups → the Name tag, KeyName, SubnetId, SecurityGroupIds; the answer's instance ID", async () => {
+  it('sends all selected fields and returns the launched instance ID', async () => {
     engine.on('RunInstances', () => LAUNCHED);
     const id = await launchInstance(
       endpoint,
@@ -142,6 +142,10 @@ describe('the launch', () => {
         keyName: 'dev',
         subnetId: 'subnet-1',
         securityGroupIds: ['sg-1', 'sg-2'],
+        instanceProfileName: 'web-profile',
+        terminationProtection: true,
+        userData: 'a\nbé',
+        tags: [{ key: 'Team', value: 'Web' }],
       },
       signal(),
     );
@@ -155,9 +159,38 @@ describe('the launch', () => {
       SubnetId: 'subnet-1',
       'SecurityGroupId.1': 'sg-1',
       'SecurityGroupId.2': 'sg-2',
+      'IamInstanceProfile.Name': 'web-profile',
+      DisableApiTermination: 'true',
+      UserData: 'YQpiw6k=',
       'TagSpecification.1.ResourceType': 'instance',
+      'TagSpecification.1.Tag.2.Key': 'Team',
+      'TagSpecification.1.Tag.2.Value': 'Web',
       'TagSpecification.1.Tag.1.Key': 'Name',
       'TagSpecification.1.Tag.1.Value': 'web-1',
+    });
+  });
+
+  it('sends the Name tag when networking and profile use defaults and user data and tag rows are empty', async () => {
+    engine.on('RunInstances', () => LAUNCHED);
+    await launchInstance(
+      endpoint,
+      {
+        imageId: 'ami-1',
+        instanceType: 't3.micro',
+        name: 'web',
+        userData: '',
+        tags: [],
+      },
+      signal(),
+    );
+    expect(sentParams(engine.of('RunInstances')[0]?.params ?? new URLSearchParams())).toEqual({
+      ImageId: 'ami-1',
+      InstanceType: 't3.micro',
+      MinCount: '1',
+      MaxCount: '1',
+      'TagSpecification.1.ResourceType': 'instance',
+      'TagSpecification.1.Tag.1.Key': 'Name',
+      'TagSpecification.1.Tag.1.Value': 'web',
     });
   });
 

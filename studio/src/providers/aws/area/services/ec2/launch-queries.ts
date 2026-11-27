@@ -19,7 +19,9 @@ export function useLaunchInstance(
         noEndpoint();
       }
       const id = await launchInstance(endpoint, launch, signal);
-      void client.invalidateQueries({ queryKey: EC2_KEYS.instances() });
+      const lists = { queryKey: EC2_KEYS.instances() };
+      await client.cancelQueries(lists);
+      void client.invalidateQueries(lists);
       return id;
     },
     [endpoint, client],
