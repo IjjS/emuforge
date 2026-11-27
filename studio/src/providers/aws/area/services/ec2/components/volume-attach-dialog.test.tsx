@@ -61,7 +61,7 @@ async function open() {
   const dialog = await screen.findByRole('dialog', { name: 'Attach volume' });
   const select = createWrapper(dialog).findSelect();
   if (select === null) throw new Error('Missing instance selector');
-  return { dialog: within(dialog), select };
+  return { dialog: within(dialog), select, wrapper: createWrapper(dialog) };
 }
 
 describe('attach volume dialog', () => {
@@ -75,6 +75,9 @@ describe('attach volume dialog', () => {
   });
 
   it('keeps Device name editable and shows only the chosen instance’s devices', async () => {
+    vi.mocked(listVolumeInstances).mockResolvedValueOnce({
+      items: [{ id: 'i-1', state: 'running', type: 't3.micro', devices: ['/dev/sda1', '/dev/sdf'] }],
+    });
     const { dialog, select } = await open();
     const device = dialog.getByRole('textbox', { name: 'Device name' });
     expect(device).toHaveAccessibleDescription('For example, /dev/sdf.');
@@ -97,14 +100,18 @@ describe('attach volume dialog', () => {
         message: 'Device is in use.',
       }),
     );
-    const { dialog, select } = await open();
+    const { dialog, select, wrapper } = await open();
     act(() => select.openDropdown());
     await waitFor(() => expect(select.findDropdown().findOptionByValue('i-1')).not.toBeNull());
     act(() => select.selectOptionByValue('i-1'));
     const device = dialog.getByRole('textbox', { name: 'Device name' });
     fireEvent.change(device, { target: { value: '/dev/sdf' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Attach volume' }));
-    expect(await dialog.findByText(/InvalidParameterValue: Device is in use/)).toBeVisible();
+    await waitFor(() => {
+      const alert = wrapper.findAlert()?.findContent().getElement();
+      expect(alert).toBeVisible();
+      expect(alert).toHaveTextContent('InvalidParameterValue: Device is in use.');
+    });
     expect(attachVolume).toHaveBeenCalledExactlyOnceWith(
       endpoint,
       id,
