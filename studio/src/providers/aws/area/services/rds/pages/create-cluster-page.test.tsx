@@ -308,8 +308,16 @@ function engines() {
   return found;
 }
 
-function chosenEngine() {
-  return screen.getAllByRole<HTMLInputElement>('radio').find((radio) => radio.checked);
+function engineRadio(value: string) {
+  const radio = engines().findInputByValue(value)?.getElement();
+  if (radio === undefined) {
+    throw new Error(`no engine radio for ${value}`);
+  }
+  return radio;
+}
+
+function chosenEngine(value: string) {
+  return engineRadio(value).checked;
 }
 
 function chooseEngine(value: string) {
@@ -339,9 +347,16 @@ async function chooseGroup(value: string) {
   groups.closeDropdown();
 }
 
-function shownVersions(): string[] {
-  const select = selectIn('Engine version - optional');
-  return (select.findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()));
+function expectShownVersions(version: string) {
+  const dropdown = selectIn('Engine version - optional').findDropdown();
+  const defaultOption = dropdown.findOptionByValue('');
+  const versionOption = dropdown.findOptionByValue(version);
+  expect(text(defaultOption?.findLabel().getElement())).toBe("The emulator's default");
+  expect(text(versionOption?.findLabel().getElement())).toBe(version);
+  expect(dropdown.findOptions()?.map((option) => option.getElement())).toEqual([
+    defaultOption?.getElement(),
+    versionOption?.getElement(),
+  ]);
 }
 
 function submit() {
@@ -382,14 +397,23 @@ describe('Create DB cluster', () => {
     open();
     await opened();
     expect(inputOf('DB cluster identifier').value).toBe('');
-    expect(chosenEngine()).toHaveAccessibleName('Aurora PostgreSQL');
-    const engineOptions = screen.getAllByRole('radio');
-    expect(engineOptions).toHaveLength(2);
-    expect(engineOptions[0]).toHaveAccessibleName('Aurora PostgreSQL');
-    expect(engineOptions[1]).toHaveAccessibleName('Aurora MySQL');
-    expect(engineOptions[0]).toHaveAccessibleDescription(
+    const postgres = engineRadio('aurora-postgresql');
+    const mysql = engineRadio('aurora-mysql');
+    expect(postgres).toBeChecked();
+    expect(mysql).not.toBeChecked();
+    expect(postgres).toHaveAccessibleName('Aurora PostgreSQL');
+    expect(mysql).toHaveAccessibleName('Aurora MySQL');
+    expect(postgres).toHaveAccessibleDescription(
       "Aurora, PostgreSQL-compatible. The emulator's default version is 16.4.",
     );
+    expect(mysql).toHaveAccessibleDescription(
+      "Aurora, MySQL-compatible. The emulator's default version is 8.0.mysql_aurora.3.08.0.",
+    );
+    expect(
+      engines()
+        .findButtons()
+        .map((button) => button.findNativeInput().getElement()),
+    ).toEqual([postgres, mysql]);
     expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     expect(inputOf('Master user name').value).toBe('');
     expect(inputOf('Master password').value).toBe('');
@@ -426,7 +450,7 @@ describe('Create DB cluster', () => {
     expect(triggerOf('Engine version - optional')).toContain("The emulator's default");
     selectIn('Engine version - optional').openDropdown();
     await waitFor(() => {
-      expect(shownVersions()).toEqual(["The emulator's default", '8.0.mysql_aurora.3.08.0']);
+      expectShownVersions('8.0.mysql_aurora.3.08.0');
     });
     expect(vi.mocked(choices.listEngineVersionChoices).mock.lastCall?.[1]).toBe('aurora-mysql');
   });
@@ -636,7 +660,7 @@ describe('Create DB cluster', () => {
       expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
     });
     expect(router.state.location.pathname).toBe(CREATE_PATH);
-    expect(chosenEngine()).toHaveAccessibleName('Aurora MySQL');
+    expect(chosenEngine('aurora-mysql')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() => {
