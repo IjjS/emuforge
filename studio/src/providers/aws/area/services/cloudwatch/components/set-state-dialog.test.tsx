@@ -64,7 +64,7 @@ async function open(currentState: StateValue = 'OK') {
 
 it.each<StateValue>(['OK', 'ALARM', 'INSUFFICIENT_DATA'])(
   'offers and describes the states other than %s',
-  (current) => {
+  async (current) => {
     const { state } = await open(current);
     state.openDropdown();
     const dropdown = state.findDropdown();
