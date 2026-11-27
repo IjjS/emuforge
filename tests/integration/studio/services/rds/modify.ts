@@ -22,7 +22,7 @@ export async function openModify(page: Page) {
     storage: input('storage'),
     password: input('password'),
     // A toggle since issue 651; the standalone dialog has "Multi-AZ" beside it.
-    protection: dialog.getByRole('switch', { name: 'Deletion protection', exact: true }),
+    protection: dialog.getByRole('checkbox', { name: 'Deletion protection', exact: true }),
     save: page.locator(wrapper.findButton('#rds-modify-save').toSelector()),
     cancel: page.locator(wrapper.findButton('#rds-modify-cancel').toSelector()),
     failure: page.locator(modal.findAlert().findContent().toSelector()),
