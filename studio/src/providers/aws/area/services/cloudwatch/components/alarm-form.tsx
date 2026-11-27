@@ -140,7 +140,7 @@ export function AlarmForm({
   const [kept, setKept] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const busy = useRef(false);
-  const controls = useRef<Partial<Record<FormFieldName, { focus: () => void }>>>({});
+  const controls = useRef<Partial<Record<FormFieldName, { focus: () => void } | null>>>({});
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
@@ -156,8 +156,7 @@ export function AlarmForm({
   }, [fieldErrors]);
 
   function register(field: FormFieldName, control: { focus: () => void } | null) {
-    if (control) controls.current[field] = control;
-    else delete controls.current[field];
+    controls.current[field] = control;
   }
 
   function validate(): AlarmFormErrors {
@@ -171,9 +170,11 @@ export function AlarmForm({
     onChange({ ...values, [field]: value });
   }
 
+  const writeUnavailable = failure?.kind === 'not-implemented' && failure.operation === 'PutMetricAlarm';
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (pending || busy.current) return;
+    if (pending || busy.current || writeUnavailable) return;
     setTried(true);
     const invalid = validate();
     const first = FIELD_ORDER.find((field) => invalid[field] !== undefined);
@@ -223,6 +224,7 @@ export function AlarmForm({
               <Button
                 variant="primary"
                 loading={pending || submitting}
+                disabled={writeUnavailable}
                 loadingText={mode === 'create' ? 'Creating alarm' : 'Saving changes'}
               >
                 {submitLabel}

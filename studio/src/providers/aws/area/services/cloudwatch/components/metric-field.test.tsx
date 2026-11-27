@@ -4,7 +4,8 @@ import { act, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { RequestError } from '../../../../../../lib/aws/request';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { emptyMetric, type MetricEntry } from '../alarm-form';
 import { dimensionSetKey, listDimensionSets, listMetricNames, listNamespaces } from '../metric-api';
 import { MetricField } from './metric-field';
@@ -12,16 +13,57 @@ import { MetricField } from './metric-field';
 vi.mock('../metric-api', { spy: true });
 
 const endpoint = 'http://127.0.0.1:9682';
-const connection = { engineOrigin: endpoint, result: undefined };
+const operation = 'ListMetrics';
+const emulator = { port: 9382, endpoint: 'https://127.0.0.1:9382' };
+const disconnected = (reason: string): AreaConnection['result'] => ({
+  kind: 'emulator-unreachable',
+  checkedAt: 0,
+  emulator,
+  reason,
+  message: '',
+});
+const failures: { failure: RequestFailure; result: AreaConnection['result']; message: string }[] = [
+  {
+    failure: { kind: 'not-implemented', operation },
+    result: undefined,
+    message: `501 Not Implemented for ${operation}`,
+  },
+  {
+    failure: { kind: 'access-denied', operation, message: 'denied' },
+    result: undefined,
+    message: `${operation} was refused: denied`,
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: '' },
+    result: disconnected('not_started'),
+    message: 'Not started on port 9382',
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: '' },
+    result: disconnected('timeout'),
+    message: 'Not answering at https://127.0.0.1:9382',
+  },
+  {
+    failure: { kind: 'engine-did-not-answer', operation },
+    result: { kind: 'engine-unreachable', checkedAt: 0, lastEmulatorPort: 9382 },
+    message: `The EmuForge engine at ${endpoint} is not answering`,
+  },
+  {
+    failure: { kind: 'other', operation, code: 'InvalidParameterValue', message: 'bad filter' },
+    result: undefined,
+    message: 'InvalidParameterValue: bad filter',
+  },
+];
+
 const host = [{ Name: 'Host', Value: 'a' }];
 const PAGE = createWrapper(document.body);
 let form: MetricEntry;
 
-function Field({ initial }: { initial: MetricEntry }) {
+function Field({ initial, result }: { initial: MetricEntry; result: AreaConnection['result'] }) {
   const [value, setValue] = useState(initial);
   return (
     <MetricField
-      connection={connection}
+      connection={{ engineOrigin: endpoint, result }}
       value={value}
       onChange={(metric) => {
         form = metric;
@@ -31,11 +73,11 @@ function Field({ initial }: { initial: MetricEntry }) {
   );
 }
 
-function open(initial = emptyMetric()) {
+function open(initial = emptyMetric(), result?: AreaConnection['result']) {
   form = initial;
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <Field initial={initial} />
+      <Field initial={initial} result={result} />
     </QueryClientProvider>,
   );
 }
@@ -131,11 +173,11 @@ it('reuses the read while focused and starts another after returning focus', asy
   act(() => trigger.focus());
   namespace.openDropdown();
   await checkOption('Namespace', 'App');
-  namespace.closeDropdown();
+  namespace.openDropdown();
   namespace.openDropdown();
   await checkOption('Namespace', 'App');
   expect(listNamespaces).toHaveBeenCalledTimes(1);
-  namespace.closeDropdown();
+  namespace.openDropdown();
   act(() => {
     trigger.blur();
     trigger.focus();
@@ -180,10 +222,11 @@ it('opens a metric absent from its listing in the text fields with the switch on
   expect(control('Metric name').findInput()?.getInputValue()).toBe('Before-data');
 });
 
-it.each([
-  { label: 'Namespace', read: listNamespaces, prepare: async () => {} },
+const choices = [
+  { label: 'Namespace', option: 'App', read: listNamespaces, prepare: async () => {} },
   {
     label: 'Metric name',
+    option: 'Jobs',
     read: listMetricNames,
     prepare: async () => {
       await pick('Namespace', 'App');
@@ -191,24 +234,24 @@ it.each([
   },
   {
     label: 'Dimensions',
+    option: '[]',
     read: listDimensionSets,
     prepare: async () => {
       await pick('Namespace', 'App');
       await pick('Metric name', 'Jobs');
     },
   },
-])('shows read failures and Retry at $label', async ({ label, read, prepare }) => {
-  vi.mocked(read)
-    .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'ListMetrics' }))
-    .mockRejectedValueOnce(new RequestError({ kind: 'access-denied', operation: 'ListMetrics', message: 'denied' }));
-  open();
-  await prepare();
-  select(label).openDropdown();
-  await waitFor(() =>
-    expect(select(label).findStatusIndicator()?.getElement()).toHaveTextContent('501 Not Implemented for ListMetrics'),
-  );
-  select(label).findErrorRecoveryButton()?.click();
-  await waitFor(() =>
-    expect(select(label).findStatusIndicator()?.getElement()).toHaveTextContent('ListMetrics was refused: denied'),
-  );
-});
+];
+it.each(choices.flatMap((choice) => failures.map((failure) => ({ ...choice, ...failure }))))(
+  'shows $failure.kind at $label and retries the read',
+  async ({ label, option, read, prepare, failure, result, message }) => {
+    vi.mocked(read).mockRejectedValueOnce(new RequestError(failure));
+    open(undefined, result);
+    await prepare();
+    select(label).openDropdown();
+    await waitFor(() => expect(select(label).findStatusIndicator()?.getElement()).toHaveTextContent(message));
+    select(label).findErrorRecoveryButton()?.click();
+    await checkOption(label, option);
+    expect(read).toHaveBeenCalledTimes(2);
+  },
+);

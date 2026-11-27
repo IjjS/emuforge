@@ -33,7 +33,9 @@ export function ActionTopicsField({
 }: ActionTopicsFieldProps) {
   const id = useId();
   const endpoint = connection.engineOrigin;
-  const [hasOpeningActions] = useState(() => value.length !== 0);
+  const [openingActions] = useState(() => value);
+  const [removedOpeningActions, setRemovedOpeningActions] = useState<readonly string[]>([]);
+  const hasOpeningActions = openingActions.length !== 0;
   const opening = useQuery({
     queryKey: ['cloudwatch', LIST_TOPICS, 'opening', openingKey ?? id, endpoint],
     enabled: hasOpeningActions && endpoint !== undefined,
@@ -66,13 +68,17 @@ export function ActionTopicsField({
             value: arn,
             label: arn.split(':').at(-1) || arn,
             description: arn,
-            ...(topics && !topics.includes(arn) && value.includes(arn)
+            ...(topics && openingActions.includes(arn) && !topics.includes(arn) && !removedOpeningActions.includes(arn)
               ? { tags: ['Not a topic in the emulator'] }
               : {}),
           }),
         }}
         value={value}
-        onChange={onChange}
+        onChange={(arns) => {
+          const removed = openingActions.filter((arn) => value.includes(arn) && !arns.includes(arn));
+          if (removed.length) setRemovedOpeningActions((previous) => [...previous, ...removed]);
+          onChange(arns);
+        }}
       />
       {openingFailure && (
         <Alert

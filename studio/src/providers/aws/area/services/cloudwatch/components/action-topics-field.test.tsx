@@ -4,13 +4,56 @@ import { render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { RequestError } from '../../../../../../lib/aws/request';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { listTopicArns, listTopics } from '../topic-api';
 import { ActionTopicsField } from './action-topics-field';
 
 vi.mock('../topic-api');
 
 const endpoint = 'http://127.0.0.1:9682';
+const operation = 'ListTopics';
+const emulator = { port: 9382, endpoint: 'https://127.0.0.1:9382' };
+const disconnected = (reason: string): AreaConnection['result'] => ({
+  kind: 'emulator-unreachable',
+  checkedAt: 0,
+  emulator,
+  reason,
+  message: '',
+});
+const failures: { failure: RequestFailure; result: AreaConnection['result']; message: string }[] = [
+  {
+    failure: { kind: 'not-implemented', operation },
+    result: undefined,
+    message: `501 Not Implemented for ${operation}`,
+  },
+  {
+    failure: { kind: 'access-denied', operation, message: 'denied' },
+    result: undefined,
+    message: `${operation} was refused: denied`,
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: '' },
+    result: disconnected('not_started'),
+    message: 'Not started on port 9382',
+  },
+  {
+    failure: { kind: 'emulator-did-not-answer', operation, message: '' },
+    result: disconnected('timeout'),
+    message: 'Not answering at https://127.0.0.1:9382',
+  },
+  {
+    failure: { kind: 'engine-did-not-answer', operation },
+    result: { kind: 'engine-unreachable', checkedAt: 0, lastEmulatorPort: 9382 },
+    message: `The EmuForge engine at ${endpoint} is not answering`,
+  },
+  {
+    failure: { kind: 'other', operation, code: 'InvalidParameterValue', message: 'bad filter' },
+    result: undefined,
+    message: 'InvalidParameterValue: bad filter',
+  },
+];
+
 const arn = (name: string) => `arn:aws:sns:us-east-1:000000000000:${name}`;
 const first = arn('first');
 const second = arn('second');
@@ -18,12 +61,12 @@ const absent = 'arn:aws:lambda:us-east-1:000000000000:function:old';
 const PAGE = createWrapper(document.body);
 const changed = vi.fn();
 
-function renderField(initial: string[] = []) {
+function renderField(initial: string[] = [], result?: AreaConnection['result']) {
   function Field() {
     const [value, setValue] = useState(initial);
     return (
       <ActionTopicsField
-        connection={{ engineOrigin: endpoint, result: undefined }}
+        connection={{ engineOrigin: endpoint, result }}
         label="In alarm"
         value={value}
         onChange={(arns) => {
@@ -84,19 +127,17 @@ it('marks a selected non-topic and lets it be removed without offering it again'
   expect(field.findDropdown().findOptionByValue(absent)).toBeNull();
 });
 
-it('reports a topics failure with the reason and preserves the chosen values', async () => {
-  vi.mocked(listTopics)
-    .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'ListTopics' }))
-    .mockRejectedValueOnce(new RequestError({ kind: 'access-denied', operation: 'ListTopics', message: 'denied' }));
-  const field = renderField([first]);
-  field.openDropdown();
-  await waitFor(() =>
-    expect(field.findStatusIndicator()?.getElement()).toHaveTextContent('501 Not Implemented for ListTopics'),
-  );
-  field.findErrorRecoveryButton()?.click();
-  await waitFor(() =>
-    expect(field.findStatusIndicator()?.getElement()).toHaveTextContent('ListTopics was refused: denied'),
-  );
-  expect(field.findToken(1)?.findLabel().getElement()).toHaveTextContent('first');
-  expect(changed).not.toHaveBeenCalled();
-});
+it.each(failures)(
+  'reports $failure.kind at the topic picker and preserves its choices',
+  async ({ failure, result, message }) => {
+    vi.mocked(listTopics).mockRejectedValueOnce(new RequestError(failure));
+    const field = renderField([first], result);
+    field.openDropdown();
+    await waitFor(() => expect(field.findStatusIndicator()?.getElement()).toHaveTextContent(message));
+    field.findErrorRecoveryButton()?.click();
+    await waitFor(() => expect(field.findDropdown().findOptionByValue(first)).not.toBeNull());
+    expect(listTopics).toHaveBeenCalledTimes(2);
+    expect(field.findToken(1)?.findLabel().getElement()).toHaveTextContent('first');
+    expect(changed).not.toHaveBeenCalled();
+  },
+);

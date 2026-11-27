@@ -101,13 +101,14 @@ it('names ListMetrics when a later page fails', async () => {
 
 it('stops when the signal aborts between pages', async () => {
   const controller = new AbortController();
+  const reason = new DOMException('Cancelled between pages', 'AbortError');
   answer.mockReturnValueOnce({
     $metadata: {},
     get NextToken() {
-      controller.abort();
+      controller.abort(reason);
       return 'next';
     },
   });
-  await expect(listNamespaces(endpoint, controller.signal)).rejects.toBe(controller.signal.reason);
+  await expect(listNamespaces(endpoint, controller.signal)).rejects.toBe(reason);
   expect(requests).toEqual([{}]);
 });

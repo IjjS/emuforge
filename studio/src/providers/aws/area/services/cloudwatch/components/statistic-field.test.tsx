@@ -32,11 +32,11 @@ it('describes each statistic and reports extended text only for Other', () => {
     ['Maximum', 'Maximum', 'The highest value in a period.'],
     ['SampleCount', 'Sample count', 'How many values a period holds.'],
     ['Other', 'Other', 'A percentile or another extended statistic, such as p99.'],
-  ];
+  ] as const;
   for (const [value, label, description] of options) {
-    const option = select?.findDropdown().findOptionByValue(value!);
-    expect(option?.findLabel().getElement()).toHaveTextContent(label!);
-    expect(option?.findDescription()?.getElement()).toHaveTextContent(description!);
+    const option = select?.findDropdown().findOptionByValue(value);
+    expect(option?.findLabel().getElement()).toHaveTextContent(label);
+    expect(option?.findDescription()?.getElement()).toHaveTextContent(description);
   }
   select?.selectOptionByValue('Other');
   PAGE.findInput()?.setInputValue('p99');
