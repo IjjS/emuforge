@@ -4,7 +4,9 @@ import { useRef, useState } from 'react';
 import { RequestError } from '../../../../../../lib/aws/request';
 import { ConfirmDialog } from '../../../components/confirm-dialog';
 import { actionFailureItem, Code } from '../../../components/failure-states';
+import { nameIdentity } from '../../../components/name-identity';
 import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
+import { ValueText } from '../../../components/value-text';
 import type { Item, Keys } from '../api';
 import { compactText } from '../item-json';
 import { useDeleteItems } from '../queries';
@@ -104,9 +106,21 @@ export function DeleteItemsDialog({ table, keys, items, engineOrigin, onDeleted,
       visible={items !== undefined}
       header={count === 1 ? `Delete 1 item from ${table}?` : `Delete ${String(count)} items from ${table}?`}
       body={
-        count === 1
-          ? 'It is deleted from your local emulator. This cannot be undone.'
-          : 'They are deleted from your local emulator. This cannot be undone.'
+        <>
+          {count === 1
+            ? 'It is deleted from your local emulator. This cannot be undone.'
+            : 'They are deleted from your local emulator. This cannot be undone.'}
+          <Box variant="span" display="block" margin={{ top: 'xs' }} nativeAttributes={{ role: 'list' }}>
+            {items?.map((item) => {
+              const key = keyText(item, keys);
+              return (
+                <Box variant="span" display="block" key={key} nativeAttributes={{ role: 'listitem' }}>
+                  <ValueText kind="name" value={nameIdentity(key)} />
+                </Box>
+              );
+            })}
+          </Box>
+        </>
       }
       word="delete"
       action="Delete"
