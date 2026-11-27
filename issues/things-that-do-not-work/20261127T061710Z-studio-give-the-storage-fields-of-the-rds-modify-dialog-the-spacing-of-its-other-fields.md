@@ -18,6 +18,10 @@ above it than the dialog's other rows sit to each other (`studio/src/providers/a
 by the impeccable critique of issue 651 (`final`, P3). The reference is the spacing of the same dialog's other
 fields.
 
+The critique's fifth and sixth `final` found a second fault of the same dialog at 390 px, which is this issue's as
+well: in the dialog of a cluster member, the guidance sentence about the master credentials leaves the word
+"credentials." alone on its last line, in both themes (`studio/src/providers/aws/area/services/rds/components/modify-instance-dialog.tsx:331`).
+
 ## Evidence
 
 `.pm/issue-651/review-final.md`, section P3 (RDS s4), on the built app of `feat/651` at `356536ce`, captures at
@@ -34,6 +38,7 @@ issue is archived: capture the dialog again on `main`).
 
 - The storage fields of the dialog are separated from their neighbours as its other fields are, at 390 px and
   at 1280 px.
+- At 390 px the member dialog's guidance sentence does not leave "credentials." alone on a line.
 
 ## Out of scope
 

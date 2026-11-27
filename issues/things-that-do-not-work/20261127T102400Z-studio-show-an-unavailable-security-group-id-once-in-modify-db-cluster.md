@@ -18,6 +18,10 @@ shown by its ID twice inside the selection (`studio/src/providers/aws/area/servi
 critique of issue 651 (third `final`, P3). The reference is the same field in the DB instance's modify dialog and
 issue 651's design: the ID once, with "Not in the emulator's list".
 
+The critique's fifth and sixth `final` found a neighbouring repetition, which is this issue's as well: in the
+"Modify" dialog of a standalone DB instance, the token of a named security group shows the group's ID both in its
+description and among its tags (`studio/src/providers/aws/area/components/security-group-choices.ts:152`).
+
 ## Evidence
 
 `.pm/issue-651/review-final.md` (third `final`, section P3), on the built app of `feat/651` at `9ca6568b`; the critique's
@@ -34,6 +38,7 @@ archived: reproduce on `main`.
 ## Expected
 
 - The unavailable group is shown once: its ID with "Not in the emulator's list".
+- The token of a named security group shows the group's ID once.
 
 ## Out of scope
 

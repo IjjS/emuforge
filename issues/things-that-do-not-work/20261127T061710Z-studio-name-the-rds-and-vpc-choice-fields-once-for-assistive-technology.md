@@ -22,7 +22,9 @@ once, by its form field.
 
 The critique's second `final` found the same repetition in one EC2 field, "KMS key" of the create volume form
 (`studio/src/providers/aws/area/services/ec2/pages/create-volume-page.tsx:316`); it is this issue's as well. The fourth `final` found it in the "Target DB instance" field of the RDS "Fail over" dialog
-(`studio/src/providers/aws/area/services/rds/components/cluster-operations.tsx:438`), which is this issue's too.
+(`studio/src/providers/aws/area/services/rds/components/cluster-operations.tsx:438`), which is this issue's too. The fifth and sixth `final` found it in "Engine version" of the RDS modify dialogs
+(`studio/src/providers/aws/area/services/rds/components/choice-fields.tsx:280`) and in "Storage type" of "Modify" of a DB cluster
+(`studio/src/providers/aws/area/services/rds/components/cluster-operations.tsx:335`), which are this issue's too.
 
 ## Evidence
 
@@ -39,7 +41,9 @@ critique's accessibility tree dump is `output/crit-b/field-choices-final.json` i
 
 ## Expected
 
-- Each of the four controls, the create volume form's "KMS key" and the fail over dialog's "Target DB instance", has its label once in its accessible name.
+- Each of the four controls, the create volume form's "KMS key", the fail over dialog's "Target DB instance", and
+  "Engine version" and the cluster's "Storage type" of the RDS modify dialogs, has its label once in its
+  accessible name.
 - The chosen value of each is still exposed to assistive technology.
 
 ## Out of scope
