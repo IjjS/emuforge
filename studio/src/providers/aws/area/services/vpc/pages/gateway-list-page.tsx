@@ -22,6 +22,8 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal, type TokenListing } from '../../../components/use-token-listing';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import type { InternetGateway } from '../api';
 import { DeleteGatewayDialog, type GatewayTarget } from '../components/delete-gateway-dialog';
@@ -213,7 +215,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={resourceName(row.tags)} />,
+      cell: (row) => <NameText name={resourceName(row.tags)} />,
     },
     {
       id: 'id',
@@ -309,7 +311,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
         }}
         ariaLabels={{
           selectionGroupLabel: 'Internet gateway selection',
-          itemSelectionLabel: (_, row) => nameOrId(row.id, row.tags),
+          itemSelectionLabel: (_, row) => nameIdentity(nameOrId(row.id, row.tags)),
         }}
         columnDefinitions={columns}
         wrapLines
@@ -404,7 +406,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
         body={
           detaching === undefined ? null : (
             <>
-              <ValueText kind="name" value={detaching.label} />
+              <NameText name={detaching.label} />
               <ValueText kind="text" value=" is detached from " />
               <ValueText kind="name" value={detaching.vpcId} />
               <ValueText

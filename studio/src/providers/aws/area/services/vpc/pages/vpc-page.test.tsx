@@ -253,6 +253,16 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe("a VPC's page", () => {
+  it('shows the exact Name tag and identifies the heading by its escaped name', async () => {
+    answerAll({ found: true, value: vpc('vpc-a', 'p664 a  b') });
+    open();
+    await loaded();
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    const name = within(heading).getByText('p664 a  b', { normalizer: (value) => value });
+    expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
+  });
+
   it('a VPC with a name → its name as the heading and "VPC details" with every value', async () => {
     open();
     await loaded();

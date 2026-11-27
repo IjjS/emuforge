@@ -18,6 +18,7 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import type { TokenListing } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { InternetGateway, RouteTable, Subnet, Vpc } from '../api';
@@ -531,7 +532,7 @@ export function VpcPage({ connection, params }: ScreenPageProps) {
               </SpaceBetween>
             }
           >
-            <ValueText kind="name" value={vpc === undefined ? id : nameOrId(vpc.id, vpc.tags)} />
+            <NameText name={vpc === undefined ? id : nameOrId(vpc.id, vpc.tags)} />
           </Header>
         }
       >
