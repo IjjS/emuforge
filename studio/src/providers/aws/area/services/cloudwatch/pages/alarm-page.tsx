@@ -261,6 +261,7 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
       {tagDialog !== undefined && engineOrigin !== undefined && (
         <ManageTagsDialog
           endpoint={engineOrigin}
+          connection={connection}
           arn={tagDialog.arn}
           initialTags={tagDialog.initialTags}
           tags={tags}
