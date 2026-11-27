@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import type { FlashItem, FlashResult, PageFlash } from './page-flash';
+import type { FlashItem, FlashResult, HandOverNote, PageFlash } from './page-flash';
 
 /** A result the area holds: for the visit and the path it belongs to, its items each under a key of their own. */
 export interface HeldResult {
@@ -10,6 +10,7 @@ export interface HeldResult {
   visit: number;
   /** The path it is shown at. */
   path: string;
+  handOver?: { note: HandOverNote; targetGeneration: number };
   items: { key: string; item: FlashItem }[];
 }
 
@@ -22,6 +23,7 @@ function pathOf(to: string): string {
 export interface AreaFlashState {
   /** What a screen's page is handed to show a result (`PageFlashContext`). */
   pageFlash: PageFlash;
+  note: HandOverNote | undefined;
   /** The result to show now; `null` when there is none, and the region renders nothing. */
   shown: HeldResult | null;
   /** Removes one item of the result shown. */
@@ -40,15 +42,26 @@ export interface AreaFlashState {
  * after one to anywhere else it never is (R5.6). Everything is held in the layout's state; nothing is stored, so a
  * reload of the document shows none.
  */
-export function useAreaFlash(pathname: string, routeChanges: number, isScreen: boolean): AreaFlashState {
+export function useAreaFlash(
+  pathname: string,
+  routeChanges: number,
+  isScreen: boolean,
+  targetGeneration = 0,
+): AreaFlashState {
   const navigate = useNavigate();
   const lastId = useRef(0);
   const [held, setHeld] = useState<HeldResult | null>(null);
 
-  const hold = useCallback((visit: number, path: string, result: FlashResult) => {
+  const hold = useCallback((visit: number, path: string, result: FlashResult, handOver?: HeldResult['handOver']) => {
     lastId.current += 1;
     const id = lastId.current;
-    setHeld({ id, visit, path, items: result.map((item, index) => ({ key: `${String(id)}-${String(index)}`, item })) });
+    setHeld({
+      id,
+      visit,
+      path,
+      items: result.map((item, index) => ({ key: `${String(id)}-${String(index)}`, item })),
+      ...(handOver && { handOver }),
+    });
   }, []);
 
   const pageFlash = useMemo<PageFlash>(
@@ -56,14 +69,19 @@ export function useAreaFlash(pathname: string, routeChanges: number, isScreen: b
       show: (result) => {
         hold(routeChanges, pathname, result);
       },
-      handOver: (to, result) => {
+      handOver: (to, result, note) => {
         const path = pathOf(to);
         // To the path shown already there is no route change to wait for: the result is this visit's.
-        hold(path === pathname ? routeChanges : routeChanges + 1, path, result);
+        hold(
+          path === pathname ? routeChanges : routeChanges + 1,
+          path,
+          result,
+          note === undefined ? undefined : { note, targetGeneration },
+        );
         void navigate(to);
       },
     }),
-    [hold, navigate, pathname, routeChanges],
+    [hold, navigate, pathname, routeChanges, targetGeneration],
   );
 
   const dismiss = useCallback((key: string) => {
@@ -75,10 +93,15 @@ export function useAreaFlash(pathname: string, routeChanges: number, isScreen: b
     setSaid({ id, text });
   }, []);
 
-  const shown =
-    isScreen && held !== null && held.visit === routeChanges && held.path === pathname && held.items.length > 0
+  const current =
+    isScreen &&
+    held !== null &&
+    held.visit === routeChanges &&
+    held.path === pathname &&
+    (held.handOver === undefined || held.handOver.targetGeneration === targetGeneration)
       ? held
       : null;
+  const shown = current !== null && current.items.length > 0 ? current : null;
   const announcement = shown !== null && said.id === shown.id ? said : { id: 0, text: '' };
-  return { pageFlash, shown, dismiss, announce, announcement };
+  return { pageFlash, note: current?.handOver?.note, shown, dismiss, announce, announcement };
 }

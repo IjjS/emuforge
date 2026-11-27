@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|events|event-buses-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.events-buses-made-outside-are-listed studio.events-bus-list-pages studio.events-create-bus-with-description-and-tags studio.events-create-bus-existing-name-is-refused studio.events-bus-description-and-tags-change studio.events-delete-bus-from-the-list studio.events-delete-bus-with-rules-is-refused studio.events-delete-bus-from-its-page studio.events-bus-page-shows-its-rules studio.events-rules-entry-lists-a-chosen-bus studio.events-rule-page-shows-rule-and-targets studio.events-rule-names-of-dots-open-by-their-address studio.events-missing-bus-and-rule-are-not-found studio.events-create-rule-with-targets studio.events-create-rule-existing-name-is-refused studio.events-create-rule-refused-pattern-leaves-no-rule studio.events-create-schedule-rule-on-default studio.events-rule-switch-off-and-on studio.events-add-and-remove-target studio.events-delete-rule-with-targets studio.events-sent-event-reaches-a-matching-rules-queue studio.events-bus-from-the-address-must-be-in-the-emulator studio.events-entries-lead-to-a-screen-or-no-screen-yet
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's EventBridge event buses: the Event buses screen

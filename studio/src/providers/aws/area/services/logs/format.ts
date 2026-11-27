@@ -1,6 +1,9 @@
 import type { LogGroupClass } from '@aws-sdk/client-cloudwatch-logs';
 
 import { nameIdentity } from '../../components/name-identity';
+import { nameSegment, normalizeLineBreaks } from '../../components/name-segment';
+
+export { LINE_BREAK, nameFromSegment, nameSegment, normalizeLineBreaks } from '../../components/name-segment';
 
 export const LOGS_PATH = '/aws/logs';
 export const LOG_GROUPS_PATH = `${LOGS_PATH}/log-groups`;
@@ -13,39 +16,12 @@ export const LOG_STREAMS_PATH = `${LOGS_PATH}/log-streams`;
 export const LOG_GROUPS_TITLE = 'Log groups';
 export const CREATE_LOG_GROUP_TITLE = 'Create log group';
 
-const LINE_BREAK_SEGMENT_PREFIX = '**';
-export const LINE_BREAK = /\r\n|[\r\n\u2028\u2029]/;
-const LINE_BREAKS = new RegExp(LINE_BREAK, 'g');
-
-export function nameSegment(name: string): string {
-  if (name === '.' || name === '..') return `*${name}`;
-  const encoded = encodeURIComponent(name);
-  // React Router decodes the path for matching, and its splat excludes the four JavaScript line terminators.
-  return LINE_BREAK.test(name) ? `${LINE_BREAK_SEGMENT_PREFIX}${encodeURIComponent(encoded)}` : encoded;
-}
-
-/** The area has already percent-decoded the parameter once. */
-export function nameFromSegment(segment: string): string {
-  if (segment.startsWith(LINE_BREAK_SEGMENT_PREFIX)) {
-    try {
-      return decodeURIComponent(segment.slice(LINE_BREAK_SEGMENT_PREFIX.length));
-    } catch {
-      return segment;
-    }
-  }
-  return segment.startsWith('*') ? segment.slice(1) : segment;
-}
-
 export function logGroupPath(group: string): string {
   return `${LOG_GROUPS_PATH}/group/${nameSegment(group)}`;
 }
 
 export function logStreamPath(group: string, stream: string): string {
   return `${logGroupPath(group)}/stream/${nameSegment(stream)}`;
-}
-
-export function normalizeLineBreaks(name: string): string {
-  return name.replace(LINE_BREAKS, '\n');
 }
 
 export const streamNameForDisplay = normalizeLineBreaks;
