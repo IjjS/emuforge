@@ -14,11 +14,12 @@ import type { SecurityGroupChoice } from '../../../components/security-group-cho
 import { ChoiceSelect, optional } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { failureOf } from '../../../components/use-token-listing';
+import type { ChoiceSource } from '../../../components/use-paged-choices';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
 import { useOrderableRows, useSubnetGroup, type ChoiceRead } from '../choices-queries';
-import { failoverTargetChoices, readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
+import { readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
 import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
 import { afterParent, canSave, changes, draftField, editField, NOT_IN_LIST } from '../modify-draft';
 import { storageTypes } from '../orderable';
@@ -388,22 +389,30 @@ function FailoverDialog({
     targetRead.current?.abort();
     setLatest({ loading: true });
   };
-  const source = failoverTargetChoices(endpoint, cluster.id, async (at, id) => {
+  const readPickerTargets = async (at: string) => {
     handleTargetOpen();
     // The dialog still needs this answer after the picker closes.
     const controller = new AbortController();
     targetRead.current = controller;
     const { signal } = controller;
     try {
-      const fresh = await readFailoverTargets(at, id, signal);
+      const fresh = await readFailoverTargets(at, cluster.id, signal);
       signal.throwIfAborted();
       setLatest({ targets: fresh });
-      return fresh;
+      return { items: fresh };
     } catch (error) {
       if (!signal.aborted) setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
       throw error;
     }
-  });
+  };
+  const source: ChoiceSource<FailoverTarget> = {
+    endpoint,
+    key: RDS_KEYS.choices('failover-targets', cluster.id),
+    operation: OPERATIONS.describeDBInstances,
+    readAgainOnOpen: true,
+    read: readPickerTargets,
+    optionOf: ({ id: value, description }) => ({ value, label: value, ...optional({ description }) }),
+  };
   return (
     <OperationDialog
       header="Fail over DB cluster"
