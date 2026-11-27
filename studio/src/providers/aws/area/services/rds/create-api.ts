@@ -1,6 +1,9 @@
 import { CreateDBClusterCommand, CreateDBInstanceCommand } from '@aws-sdk/client-rds';
 
+import type { TagRow } from '../../lib/tag-rows';
+
 import { sendRds, text } from './api';
+import { requiresIops } from './form';
 
 // The two creates of S2 and S5 (issue 573, design tasks 2 and 4): one `CreateDBInstance` or one `CreateDBCluster`,
 // through `sendRds` with its operation's name, so a refusal rejects with its `RequestError` carrying the emulator's
@@ -19,9 +22,14 @@ interface Optional {
   engineVersion?: string | undefined;
   subnetGroupName?: string | undefined;
   securityGroupIds?: readonly string[] | undefined;
+  storageType?: string | undefined;
+  encrypted?: boolean | undefined;
+  kmsKeyId?: string | undefined;
+  deletionProtection?: boolean | undefined;
+  tags?: readonly TagRow[] | undefined;
 }
 
-/** What S2 creates. */
+/** The settings for a standalone DB instance. */
 export interface NewInstance extends Optional {
   identifier: string;
   /** `postgres`, `mysql` or `mariadb`, as the API names it. */
@@ -29,13 +37,16 @@ export interface NewInstance extends Optional {
   instanceClass: string;
   /** In GiB. */
   allocatedStorage: number;
+  iops?: number | undefined;
+  availabilityZone?: string | undefined;
+  multiAz?: boolean | undefined;
   masterUsername: string;
   masterPassword: string;
   /** Sent as `DBName`. */
   dbName?: string | undefined;
 }
 
-/** What S5 creates. */
+/** The settings for an Aurora DB cluster. */
 export interface NewCluster extends Optional {
   identifier: string;
   /** `aurora-postgresql` or `aurora-mysql`, as the API names it. */
@@ -44,19 +55,35 @@ export interface NewCluster extends Optional {
   masterPassword: string;
   /** Sent as `DatabaseName`. */
   databaseName?: string | undefined;
+  availabilityZones?: readonly string[] | undefined;
 }
 
 function given(value: string | undefined): value is string {
   return value !== undefined && value !== '';
 }
 
-function optional({ engineVersion, subnetGroupName, securityGroupIds }: Optional) {
+function optional({
+  engineVersion,
+  subnetGroupName,
+  securityGroupIds,
+  storageType,
+  encrypted,
+  kmsKeyId,
+  deletionProtection,
+  tags,
+}: Optional) {
   return {
     ...(given(engineVersion) ? { EngineVersion: engineVersion } : {}),
     ...(given(subnetGroupName) ? { DBSubnetGroupName: subnetGroupName } : {}),
     ...(securityGroupIds === undefined || securityGroupIds.length === 0
       ? {}
       : { VpcSecurityGroupIds: [...securityGroupIds] }),
+    ...(given(storageType) ? { StorageType: storageType } : {}),
+    ...(encrypted === true ? { StorageEncrypted: true, ...(given(kmsKeyId) ? { KmsKeyId: kmsKeyId } : {}) } : {}),
+    ...(deletionProtection === true ? { DeletionProtection: true } : {}),
+    ...(tags === undefined || tags.length === 0
+      ? {}
+      : { Tags: tags.map(({ key, value }) => ({ Key: key, Value: value })) }),
   };
 }
 
@@ -75,6 +102,12 @@ export async function createInstance(endpoint: string, values: NewInstance, sign
           MasterUsername: values.masterUsername,
           MasterUserPassword: values.masterPassword,
           ...(given(values.dbName) ? { DBName: values.dbName } : {}),
+          ...(requiresIops(values.storageType) && values.iops !== undefined ? { Iops: values.iops } : {}),
+          ...(values.multiAz === true
+            ? { MultiAZ: true }
+            : given(values.availabilityZone)
+              ? { AvailabilityZone: values.availabilityZone }
+              : {}),
           ...optional(values),
         }),
         { abortSignal },
@@ -101,6 +134,9 @@ export async function createCluster(endpoint: string, values: NewCluster, signal
           MasterUsername: values.masterUsername,
           MasterUserPassword: values.masterPassword,
           ...(given(values.databaseName) ? { DatabaseName: values.databaseName } : {}),
+          ...(values.availabilityZones === undefined || values.availabilityZones.length === 0
+            ? {}
+            : { AvailabilityZones: [...values.availabilityZones] }),
           ...optional(values),
         }),
         { abortSignal },

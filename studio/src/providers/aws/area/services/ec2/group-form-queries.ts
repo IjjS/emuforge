@@ -20,8 +20,11 @@ export function useCreateSecurityGroup(
         noEndpoint();
       }
       const id = await createSecurityGroup(endpoint, group, signal);
-      void client.invalidateQueries({ queryKey: EC2_KEYS.securityGroups() });
-      void client.invalidateQueries({ queryKey: EC2_KEYS.choices('security-groups') });
+      const lists = { queryKey: EC2_KEYS.securityGroups() };
+      const choices = { queryKey: EC2_KEYS.choices('security-groups') };
+      await Promise.all([client.cancelQueries(lists), client.cancelQueries(choices)]);
+      void client.invalidateQueries(lists);
+      void client.invalidateQueries(choices);
       return id;
     },
     [endpoint, client],
@@ -39,7 +42,9 @@ export function useAddRule(
         noEndpoint();
       }
       await addSecurityGroupRule(endpoint, groupId, rule, signal);
-      void client.invalidateQueries({ queryKey: EC2_KEYS.rules(groupId) });
+      const rules = { queryKey: EC2_KEYS.rules(groupId) };
+      await client.cancelQueries(rules);
+      void client.invalidateQueries(rules);
     },
     [endpoint, client],
   );
