@@ -12,7 +12,7 @@ Issue-Commit: fab7ba7217133ac83b9d3844d380d1db51565c41
 > Identified against commit `fab7ba7217133ac83b9d3844d380d1db51565c41`. The code may have drifted since; trace the issue to the current code before fixing.
 
 ## Description
-The entries "Global endpoints" and "Partner event sources" of EventBridge lead to the area's page for an entry without a screen. The emulator lists both and the probe could make neither. Reference: the same requests sent straight to aws-emulator (`CreateEndpoint`, `ListEndpoints`, `ListEventSources`, `ListPartnerEventSources`). Found while planning issue 75, which builds the event bus, rule, target and send screens.
+The entry "Endpoints" of EventBridge leads to the area's page for an entry without a screen, and partner event sources have no entry at all. The emulator lists both and the probe could make neither. Reference: the same requests sent straight to aws-emulator (`CreateEndpoint`, `ListEndpoints`, `ListEventSources`, `ListPartnerEventSources`). Found while planning issue 75, which builds the event bus, rule, target and send screens.
 
 ## Evidence
 Called on aws-emulator 1.0.633, a fresh one started for the probe and signed with its own files, while planning issue 75 (EventBridge):
@@ -31,12 +31,12 @@ An endpoint with a health check that exists was not tried.
 
 ## Steps to Reproduce
 1. Start EmuForge with a fresh emulator and open `/aws/events`.
-2. Follow "Global endpoints" or "Partner event sources" in the navigation.
+2. Follow "Endpoints" in the navigation.
 3. The page says there is no screen yet.
 
 ## Expected
 - The requirement first makes a Route 53 health check in the emulator and calls `CreateEndpoint` with it; if an endpoint can be made, endpoints are listed, made, described and deleted.
-- Partner event sources: the list is shown if the emulator can hold one; if none can ever exist locally the entry says so in the area's own words instead of an empty screen.
+- Partner event sources: an entry and a list only if the requirement finds a way the emulator can hold one; otherwise they stay without an entry and the requirement records why.
 - The requirement first calls every operation it uses with real arguments and records what comes back.
 - Resources made outside Studio appear; every read goes to the emulator through the engine.
 - Loading, empty, a failure, the emulator not reachable and an operation answered 501 ("Not implemented by the emulator", with the operation's name) each have their own state.

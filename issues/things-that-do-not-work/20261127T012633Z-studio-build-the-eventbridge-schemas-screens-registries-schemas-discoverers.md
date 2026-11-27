@@ -39,7 +39,7 @@ Whether a discoverer writes a schema for an event put on its bus was not observe
 
 ## Steps to Reproduce
 1. Start EmuForge with a fresh emulator and open `/aws/events`.
-2. Follow "Schema registries", "Schemas" or "Discoverers" in the navigation.
+2. Follow "Registries", "Schemas" or "Discoverers" in the navigation.
 3. The page says there is no screen yet.
 
 ## Expected
