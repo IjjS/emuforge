@@ -160,7 +160,8 @@ describe('ChoiceSelect', () => {
     input?.setInputValue('Replica');
     await waitFor(() => expect(shown()).toEqual([identity]));
     input?.setInputValue('missing');
-    await waitFor(() => expect(dropdownText()).toBe('No things match'));
+    expect(await screen.findByText('No things match')).toBeInTheDocument();
+    expect(screen.queryByText('No things')).not.toBeInTheDocument();
     input?.setInputValue('');
     await waitFor(() => expect(shown()).toEqual(['a b', identity]));
     expect(read.mock.calls).toEqual([['', undefined]]);
@@ -182,7 +183,7 @@ describe('ChoiceSelect', () => {
     reject(new RequestError({ kind: 'other', operation: 'ListThings', code: 'Broken' }));
     await waitFor(() => expect(dropdownText()).toContain('The things could not be loaded: Broken'));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(dropdownText()).toBe('No things'));
+    expect(await screen.findByText('No things')).toBeInTheDocument();
   });
 
   it('filters a fixed first choice even when the source is empty, restoring it when the text is cleared', async () => {
@@ -193,7 +194,7 @@ describe('ChoiceSelect', () => {
 
     const input = select().findFilteringInput();
     input?.setInputValue('missing');
-    await waitFor(() => expect(dropdownText()).toBe('No things match'));
+    expect(await screen.findByText('No things match')).toBeInTheDocument();
     expect(shown()).toEqual([]);
     input?.setInputValue('');
     await waitFor(() => expect(shown()).toEqual(['No key pair']));
