@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
@@ -23,6 +24,7 @@ import { ValueText } from '../../../components/value-text';
 import { alarmConditionText, isEditableAlarm, type Alarm } from '../alarm';
 import { DESCRIBE_ALARMS, listAlarms, type AlarmFilters } from '../alarms-api';
 import { AlarmName } from '../components/alarm-name';
+import { DeleteAlarmDialog } from '../components/delete-alarm-dialog';
 import { actionsEnabledText, alarmStateText, alarmTypeText } from '../format';
 import { alarmPath, CREATE_ALARM_PATH, editAlarmPath } from '../paths';
 
@@ -45,10 +47,14 @@ interface FilterState {
 export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('alarms');
   const handleFollow = useFollow();
+  const flash = usePageFlash();
   const [announcement, announce] = useAnnouncer();
   const [filterText, setFilterText] = useState('');
   const [filters, setFilters] = useState<FilterState>({ prefix: '', state: undefined, visit: 0 });
   const [selectedName, setSelectedName] = useState<string>();
+  const [deleteName, setDeleteName] = useState<string>();
+  const [deleteUnavailable, setDeleteUnavailable] = useState(false);
+  const { engineOrigin } = connection;
   const { prefix, state, visit } = filters;
   const requested: AlarmFilters = { prefix, ...(state === undefined ? {} : { state }) };
 
@@ -71,6 +77,21 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   const handleRefresh = () => {
     setSelectedName(undefined);
     listing.refresh();
+  };
+
+  const handleDeleted = (name: string) => {
+    setDeleteName(undefined);
+    flash.show([
+      {
+        type: 'success',
+        content: (
+          <>
+            Alarm <AlarmName name={name} /> deleted.
+          </>
+        ),
+      },
+    ]);
+    handleRefresh();
   };
 
   const columns: TableProps.ColumnDefinition<Alarm>[] = [
@@ -160,6 +181,12 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
                     Edit
                   </Button>
                 )}
+                <Button
+                  disabled={selected === undefined || engineOrigin === undefined}
+                  onClick={() => setDeleteName(selectedName)}
+                >
+                  Delete
+                </Button>
                 <Button variant="primary" href={CREATE_ALARM_PATH} onFollow={handleFollow}>
                   Create alarm
                 </Button>
@@ -235,6 +262,16 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
           )
         }
       />
+      {deleteName !== undefined && engineOrigin !== undefined && (
+        <DeleteAlarmDialog
+          endpoint={engineOrigin}
+          name={deleteName}
+          unavailable={deleteUnavailable}
+          onUnavailable={() => setDeleteUnavailable(true)}
+          onDeleted={handleDeleted}
+          onDismiss={() => setDeleteName(undefined)}
+        />
+      )}
       {announcement}
     </>
   );

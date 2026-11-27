@@ -6,11 +6,12 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState, useAnnouncer } from '../../../components/failure-states';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import type { ScreenPageProps } from '../../../screens';
@@ -22,6 +23,7 @@ import { AlarmHistory } from '../components/alarm-history';
 import { AlarmName } from '../components/alarm-name';
 import { AlarmSummary } from '../components/alarm-summary';
 import { AlarmTags } from '../components/alarm-tags';
+import { DeleteAlarmDialog } from '../components/delete-alarm-dialog';
 import { alarmNameFromSearch, ALARMS_PATH, editAlarmPath } from '../paths';
 
 export function AlarmPage({ connection }: ScreenPageProps) {
@@ -33,6 +35,10 @@ export function AlarmPage({ connection }: ScreenPageProps) {
 
 function AlarmDetail({ name, connection }: { name: string | undefined; connection: AreaConnection }) {
   const follow = useFollow();
+  const flash = usePageFlash();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteUnavailable, setDeleteUnavailable] = useState(false);
+  const { engineOrigin } = connection;
   const [announcement, announce] = useAnnouncer();
   const read = useAlarm(connection.engineOrigin, name);
   const alarm = read.value;
@@ -54,6 +60,20 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
     }
   };
 
+  const handleDeleted = (deletedName: string) => {
+    setDeleteOpen(false);
+    flash.handOver(ALARMS_PATH, [
+      {
+        type: 'success',
+        content: (
+          <>
+            Alarm <AlarmName name={deletedName} /> deleted.
+          </>
+        ),
+      },
+    ]);
+  };
+
   return (
     <ContentLayout
       header={
@@ -66,6 +86,11 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
                 {alarm !== undefined && isEditableAlarm(alarm) && (
                   <Button href={editAlarmPath(name)} onFollow={follow}>
                     Edit
+                  </Button>
+                )}
+                {alarm !== undefined && (
+                  <Button disabled={engineOrigin === undefined} onClick={() => setDeleteOpen(true)}>
+                    Delete
                   </Button>
                 )}
               </SpaceBetween>
@@ -99,6 +124,16 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
             </SpaceBetween>
           )}
         </Container>
+      )}
+      {deleteOpen && name !== undefined && engineOrigin !== undefined && (
+        <DeleteAlarmDialog
+          endpoint={engineOrigin}
+          name={name}
+          unavailable={deleteUnavailable}
+          onUnavailable={() => setDeleteUnavailable(true)}
+          onDeleted={handleDeleted}
+          onDismiss={() => setDeleteOpen(false)}
+        />
       )}
       {announcement}
     </ContentLayout>
