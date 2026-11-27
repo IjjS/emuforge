@@ -768,3 +768,15 @@ export const responsesOf = (method: Locator) => method.locator(sel(ui.findExpand
 export const expandHeader = (method: Locator) => method.locator(sel(ui.findExpandableSection().findHeader()));
 /** The key and value groups drawn below `scope`, in order. */
 export const pairGroups = (scope: Locator) => scope.locator(sel(ui.findKeyValuePairs()));
+
+// -- a choice's options, for what they offer and show (issue 664) --------------------------------------------------
+
+/** The parts of the one Cloudscape select below `scope` a check of its options acts on; an option is found by its value. */
+export function choiceParts(scope: Page | Locator) {
+  return {
+    trigger: scope.locator(sel(select.findTrigger())),
+    filter: scope.locator(sel(select.findFilteringInput().findNativeInput())),
+    option: (value: string) => scope.locator(sel(select.findDropdown().findOptionByValue(value))),
+    label: (value: string) => scope.locator(sel(select.findDropdown().findOptionByValue(value).findLabel())),
+  };
+}

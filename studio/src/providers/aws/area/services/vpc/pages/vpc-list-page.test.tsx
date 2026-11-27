@@ -210,6 +210,50 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the VPC list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = vpc('vpc-b', 'p664 a b');
+    const doubleSpace = vpc('vpc-c', 'p664 a  b');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, DEFAULT] } });
+    open();
+
+    const radio = (row: number) => table().findRowSelectionArea(row)?.find('input[type="radio"]');
+    await waitFor(() => {
+      expect(radio(2)?.getElement()).toHaveAccessibleName(identity);
+    });
+    expect(radio(1)?.getElement()).toHaveAccessibleName('p664 a b');
+    expect(radio(3)?.getElement()).toHaveAccessibleName(DEFAULT.id);
+    expect(
+      DEFAULT_ROW.map(
+        (_, column) =>
+          table()
+            .findBodyCell(3, column + 2)
+            ?.getElement().textContent,
+      ),
+    ).toEqual(DEFAULT_ROW);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    if (cell === undefined) throw new Error('Missing Name cell');
+    expect(cell).toHaveAccessibleName(identity);
+    const name = within(cell).getByText('p664 a  b', exactText);
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    const control = radio(2)?.getElement();
+    if (control === undefined) throw new Error('Missing row selection control');
+    fireEvent.click(control);
+    fireEvent.click(action('Delete'));
+    const deletion = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null || !modal.isVisible()) throw new Error('Missing deletion dialog');
+      return modal;
+    });
+    expect(deletion.getElement()).toHaveAccessibleName('Delete VPC?');
+    const deletionContent = deletion.findContent().getElement();
+    expect(within(deletionContent).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletionContent)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per VPC with name ("-" without one), VPC ID, state, IPv4 CIDR and Yes or No under "Default"; the ID links to the VPC', async () => {
     answer({ '|': { items: [APP, DEFAULT] } });
     const router = open('/aws/vpc');
