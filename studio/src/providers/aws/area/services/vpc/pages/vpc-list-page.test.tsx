@@ -219,19 +219,39 @@ describe('the VPC list', () => {
     answer({ '|': { items: [singleSpace, doubleSpace, DEFAULT] } });
     open();
 
-    const selectedName = await screen.findByRole('radio', { name: identity });
-    expect(screen.getByRole('radio', { name: 'p664 a b' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: DEFAULT.id })).toBeInTheDocument();
-    expect(rows()).toContainEqual(DEFAULT_ROW);
-    const name = screen.getByText('p664 a  b', exactText);
-    expect(name.closest('tr')).toBe(selectedName.closest('tr'));
+    const radio = (row: number) => table().findRowSelectionArea(row)?.find('input[type="radio"]');
+    await waitFor(() => {
+      expect(radio(2)?.getElement()).toHaveAccessibleName(identity);
+    });
+    expect(radio(1)?.getElement()).toHaveAccessibleName('p664 a b');
+    expect(radio(3)?.getElement()).toHaveAccessibleName(DEFAULT.id);
+    expect(
+      DEFAULT_ROW.map(
+        (_, column) =>
+          table()
+            .findBodyCell(3, column + 2)
+            ?.getElement().textContent,
+      ),
+    ).toEqual(DEFAULT_ROW);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    if (cell === undefined) throw new Error('Missing Name cell');
+    expect(cell).toHaveAccessibleName(identity);
+    const name = within(cell).getByText('p664 a  b', exactText);
     expect(name.parentElement?.textContent).toBe(drawnName);
 
-    selectRow(identity);
+    const control = radio(2)?.getElement();
+    if (control === undefined) throw new Error('Missing row selection control');
+    fireEvent.click(control);
     fireEvent.click(action('Delete'));
-    const deletion = await screen.findByRole('dialog', { name: 'Delete VPC?' });
-    expect(within(deletion).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
-    expect(text(deletion)).toContain('is deleted from the local emulator');
+    const deletion = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null || !modal.isVisible()) throw new Error('Missing deletion dialog');
+      return modal;
+    });
+    expect(deletion.getElement()).toHaveAccessibleName('Delete VPC?');
+    const deletionContent = deletion.findContent().getElement();
+    expect(within(deletionContent).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletionContent)).toContain('is deleted from the local emulator');
   });
 
   it('a row per VPC with name ("-" without one), VPC ID, state, IPv4 CIDR and Yes or No under "Default"; the ID links to the VPC', async () => {
