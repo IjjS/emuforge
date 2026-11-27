@@ -149,7 +149,14 @@ describe('a modify draft', () => {
     const subnetA = draftField('subnet-group-a');
     const subnetB = editField(subnetA, 'subnet-group-b');
     const pruned = afterSubnetGroup(groups, subnetB, 'vpc-shared');
-    const restored = afterSubnetGroup(editField(pruned, [replacement]), subnetA, 'vpc-shared');
+    const waiting = afterSubnetGroup(editField(pruned, [replacement]), subnetA, undefined);
+    const draft = { subnetGroup: subnetA, groups: waiting, identifier: editField(identifier, 'renamed') };
+    expect(waiting.value).toEqual([starting]);
+    expect(waiting.cleared).toBeUndefined();
+    expect(canSave(draft, undefined, [])).toBe(true);
+    expect(changes(draft)).toEqual({ identifier: 'renamed' });
+
+    const restored = afterSubnetGroup(waiting, subnetA, 'vpc-shared');
     const refreshed = afterSubnetGroup(restored, subnetA, 'vpc-shared');
 
     expect(refreshed.value).toEqual([starting, replacement]);
