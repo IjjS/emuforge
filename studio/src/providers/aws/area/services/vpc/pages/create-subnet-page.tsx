@@ -227,7 +227,11 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
     [navigate],
   );
 
-  const zoneFixed: SelectProps.Option = { value: NO_ZONE, label: CHOSEN_BY_EMULATOR };
+  const zoneFixed: SelectProps.Option = {
+    value: NO_ZONE,
+    label: CHOSEN_BY_EMULATOR,
+    description: 'The request omits the zone so the emulator chooses it.',
+  };
   const zoneOptions: SelectProps.Option[] = [
     zoneFixed,
     ...(zones.zoneDetails ?? []).map(({ name, id }) => ({

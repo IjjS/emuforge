@@ -333,6 +333,21 @@ describe('Create subnet', () => {
     expect(availability.listAvailabilityZones).toHaveBeenCalledTimes(1);
   });
 
+  it('explains how the default Availability Zone is chosen', async () => {
+    open();
+    await opened();
+    await waitFor(() => {
+      expect(screen.queryByText('Loading Availability Zones')).toBeNull();
+    });
+    const select = selectOf('Availability Zone - optional');
+    select.openDropdown();
+    const defaultZone = select.findDropdown().findOptions()?.[0];
+    expect(text(defaultZone?.findLabel().getElement())).toBe('Chosen by the emulator');
+    expect(text(defaultZone?.findDescription()?.getElement())).toBe(
+      'The request omits the zone so the emulator chooses it.',
+    );
+  });
+
   it('their read failed → "The Availability Zones could not be loaded" with "Retry", and the form can still be sent', async () => {
     vi.mocked(availability.listAvailabilityZones).mockRejectedValue(
       new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
