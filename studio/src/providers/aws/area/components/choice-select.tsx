@@ -52,6 +52,10 @@ export interface ChoiceFieldProps<T> {
   /** The plural of what is chosen, as the states name it: "images" → "Loading images", "No images match". */
   things: string;
   placeholder?: string | undefined;
+  /** The fixed first choice, selected when no choice from the source is selected. */
+  fixed?: string | undefined;
+  /** The sentence shown with the fixed first choice. */
+  fixedDescription?: string | undefined;
   /** The field is shown as failing a check. */
   invalid?: boolean | undefined;
   ariaLabel?: string | undefined;
@@ -69,6 +73,7 @@ export interface ChoiceFieldProps<T> {
 interface FieldParts<T> {
   choices: PagedChoices<T>;
   fieldRef: RefObject<HTMLDivElement | null>;
+  fixedOption: SelectProps.Option | undefined;
   items: T[];
   options: SelectProps.Option[];
   props: Pick<
@@ -91,10 +96,17 @@ interface FieldParts<T> {
 
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
 // eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
-export function useChoiceField<T>(
-  { source, connection, things, lockedBy, none, held, onOpen }: ChoiceFieldProps<T>,
-  fixed: SelectProps.Option | undefined,
-): FieldParts<T> {
+export function useChoiceField<T>({
+  source,
+  connection,
+  things,
+  fixed,
+  fixedDescription,
+  lockedBy,
+  none,
+  held,
+  onOpen,
+}: ChoiceFieldProps<T>): FieldParts<T> {
   const [opened, setOpened] = useState(false);
   const [text, setText] = useState('');
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -135,7 +147,9 @@ export function useChoiceField<T>(
     return () => observer.disconnect();
   }, []);
   const items = choices.choices ?? [];
-  const available = [...(fixed === undefined ? [] : [fixed]), ...items.map(source.optionOf)];
+  const fixedOption =
+    fixed === undefined ? undefined : { value: FIXED, label: fixed, ...optional({ description: fixedDescription }) };
+  const available = [...(fixedOption === undefined ? [] : [fixedOption]), ...items.map(source.optionOf)];
   const options = held === undefined ? available : available.map((option) => ({ ...option, disabled: true }));
 
   let statusType: NonNullable<SelectProps['statusType']> = 'finished';
@@ -148,11 +162,13 @@ export function useChoiceField<T>(
   const more = statusType === 'finished' && choices.more;
   const empty = choices.text === '' ? (none ?? `No ${things}`) : `No ${things} match`;
   // With a fixed first choice the list is never empty, so the words that it holds nothing stand at its end.
-  const finishedText = fixed !== undefined && choices.choices !== undefined && items.length === 0 ? empty : undefined;
+  const finishedText =
+    fixedOption !== undefined && choices.choices !== undefined && items.length === 0 ? empty : undefined;
 
   return {
     choices,
     fieldRef,
+    fixedOption,
     items,
     options,
     props: {
@@ -200,10 +216,6 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
   /** The choice made; `undefined` for none, or for the fixed first choice when there is one. */
   value: T | undefined;
   onChange: (choice: T | undefined) => void;
-  /** The label of a fixed first choice ("No key pair"), offered above the others and the choice at start. */
-  fixed?: string | undefined;
-  /** The sentence shown with the fixed first choice. */
-  fixedDescription?: string | undefined;
   selectRef?: Ref<SelectProps.Ref> | undefined;
   /**
    * What the closed field shows of the choice made: its label alone (`label`, the default), or its label with its
@@ -212,27 +224,26 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
   triggerVariant?: SelectProps.TriggerVariant | undefined;
 }
 
+export function FixedChoiceDescription({ children }: { children: string }) {
+  return (
+    <Box
+      variant="span"
+      display="block"
+      fontSize="body-s"
+      color="text-body-secondary"
+      nativeAttributes={{ style: { whiteSpace: 'normal', overflowWrap: 'anywhere' } }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 /** A field of one choice of `source`, read a page at a time. */
 export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
-  const {
-    source,
-    value,
-    onChange,
-    fixed,
-    fixedDescription,
-    placeholder,
-    invalid,
-    ariaLabel,
-    selectRef,
-    triggerVariant,
-    lockedBy,
-    held,
-  } = props;
-  const fixedOption =
-    fixed === undefined ? undefined : { value: FIXED, label: fixed, ...optional({ description: fixedDescription }) };
-  const { fieldRef, items, options, props: parts } = useChoiceField(props, fixedOption);
+  const { source, value, onChange, placeholder, invalid, ariaLabel, selectRef, triggerVariant, lockedBy, held } = props;
+  const { fieldRef, fixedOption, items, options, props: parts } = useChoiceField(props);
   const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
-  const variant = value === undefined && fixedOption?.description !== undefined ? 'option' : triggerVariant;
+  const description = value === undefined && lockedBy === undefined ? fixedOption?.description : undefined;
 
   return (
     <div ref={fieldRef}>
@@ -244,9 +255,18 @@ export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
         {...optional({
           placeholder: lockedBy === undefined ? placeholder : `Choose ${lockedBy} first`,
           invalid,
-          ariaLabel,
-          triggerVariant: variant,
+          // Cloudscape's custom trigger content does not get the ID it uses to name the selected value.
+          ariaLabel: description ? [ariaLabel, fixedOption?.label, description].filter(Boolean).join(' ') : ariaLabel,
+          triggerVariant: description ? ('option' as const) : triggerVariant,
         })}
+        renderOption={({ item }) =>
+          item.type === 'trigger' && description ? (
+            <Box variant="span" display="block" padding={{ vertical: 'xxxs', left: 's' }} color="inherit">
+              {item.option.label}
+              <FixedChoiceDescription>{description}</FixedChoiceDescription>
+            </Box>
+          ) : null
+        }
         dropdownRole="dialog"
         onChange={({ detail }) => {
           const selectedValue = detail.selectedOption.value;

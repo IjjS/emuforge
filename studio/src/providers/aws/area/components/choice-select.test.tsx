@@ -332,15 +332,23 @@ describe('ChoiceSelect', () => {
 });
 
 describe('described and dependent choices', () => {
-  it('shows the fixed choice and its description when closed and when open', async () => {
-    read.mockResolvedValue({ items: [] });
-    open({ fixed: 'No key', fixedDescription: 'No key is sent.' });
-    expect(triggerText()).toContain('No key');
-    expect(triggerText()).toContain('No key is sent.');
+  it.each([
+    ["The emulator's default", '18.3, the version the emulator creates when none is sent.'],
+    ['Chosen by the emulator', 'The emulator puts the cluster in its subnet group named default.'],
+    ['Default VPC', 'The emulator creates the group in its default VPC, vpc-0123456789abcdef0.'],
+  ])('wraps the selected %s description and retains it in the open list', async (fixed, description) => {
+    read.mockResolvedValue({ items: [thing('a')] });
+    open({ fixed, fixedDescription: description });
+    expect(triggerText()).toContain(fixed);
+    const help = screen.getByText(description);
+    expect(select().findTrigger().getElement()).toContainElement(help);
+    expect(help).toHaveStyle({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
+
     select().openDropdown();
-    await waitFor(() => {
-      expect(text(select().findDropdown().findOption(1)?.getElement())).toContain('No key is sent.');
-    });
+    await waitFor(() => expect(shown()).toEqual([fixed, 'a']));
+    expect(text(select().findDropdown().findOption(1)?.getElement())).toContain(description);
+    select().selectOptionByValue('a');
+    expect(triggerText()).not.toContain(description);
   });
 
   it('shows a disabled option and its reason and does not choose it', async () => {
