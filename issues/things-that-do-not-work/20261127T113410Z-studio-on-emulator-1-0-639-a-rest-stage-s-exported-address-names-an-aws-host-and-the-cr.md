@@ -36,7 +36,8 @@ expect(received).toBe(expected) // Object.is equality", "Expected: "127.0.0.1"",
 "ln8y20yi3e.execute-api.us-east-1.amazonaws.com"". The assertion is line 239 of
 `tests/integration/studio/apigateway-rest-build.spec.ts`; the helper is `exportedAddress` in
 `tests/integration/studio/services/apigateway/apigateway.ts`. Every other check of the run passed. The run on
-1.0.635: https://github.com/IjjS/emuforge/actions/runs/45976016323 (passed). Not reproduced locally: the machine's
+1.0.635: https://github.com/IjjS/emuforge/actions/runs/45976016323 (passed). A second push run on
+1.0.639 failed the same one check and nothing else: https://github.com/IjjS/emuforge/actions/runs/45991664536. Not reproduced locally: the machine's
 image is 1.0.633, and refreshing it changes the emulator under the issues in flight.
 
 ## Steps to Reproduce
