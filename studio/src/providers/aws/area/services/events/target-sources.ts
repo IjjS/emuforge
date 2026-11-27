@@ -1,11 +1,11 @@
-import { CloudWatchLogsClient, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { ListTopicsCommand } from '@aws-sdk/client-sns';
 import { GetQueueAttributesCommand, ListQueuesCommand } from '@aws-sdk/client-sqs';
 
-import { createAwsClient } from '../../../../../lib/aws/client-factory';
-import { RequestError, sendRequest } from '../../../../../lib/aws/request';
+import { RequestError } from '../../../../../lib/aws/request';
 import type { ChoiceSource } from '../../components/use-paged-choices';
 import type { TokenPage } from '../../components/use-token-listing';
+import { sendLogs } from '../../lib/cloudwatch-logs-client';
 import { sendSns, sendSqs } from './clients';
 import type { TargetKind, TargetResource } from './target-form';
 
@@ -78,10 +78,10 @@ export function listTargetTopics(endpoint: string, token: string | undefined, si
 }
 
 export function listTargetLogGroups(endpoint: string, token: string | undefined, signal: AbortSignal) {
-  return sendRequest(
+  return sendLogs(
+    endpoint,
     TARGET_READS.logs,
-    async (abortSignal) => {
-      const client = createAwsClient(CloudWatchLogsClient, { endpoint });
+    async (client, abortSignal) => {
       const { logGroups, nextToken } = await client.send(
         new DescribeLogGroupsCommand({ limit: 25, nextToken: token }),
         { abortSignal },
