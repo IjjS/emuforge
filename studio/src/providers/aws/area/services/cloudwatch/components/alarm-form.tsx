@@ -117,7 +117,7 @@ export interface AlarmFormProps {
   onCancel: () => void;
   pending?: boolean;
   failure?: RequestFailure | undefined;
-  fieldErrors?: AlarmFormErrors | undefined;
+  fieldErrors?: (Omit<AlarmFormErrors, 'name'> & { name?: ReactNode }) | undefined;
   feedback?: ReactNode;
 }
 
@@ -192,7 +192,8 @@ export function AlarmForm({
     }
   }
 
-  const errors = { ...(tried ? validate() : {}), ...fieldErrors };
+  const { name: nameError, ...otherFieldErrors } = fieldErrors ?? {};
+  const errors = { ...(tried ? validate() : {}), ...otherFieldErrors };
   const periods = [...new Set([...PERIODS, initialValues.period, values.period])]
     .sort((a, b) => a - b)
     .map(periodOption);
@@ -236,7 +237,7 @@ export function AlarmForm({
             <Container header={<Header variant="h2">Details</Header>}>
               <SpaceBetween size="m">
                 {mode === 'create' ? (
-                  <FormField label="Name" constraintText={NAME_RULE} errorText={errors.name}>
+                  <FormField label="Name" constraintText={NAME_RULE} errorText={nameError ?? errors.name}>
                     <Input
                       ref={(control) => register('name', control)}
                       value={values.name}
