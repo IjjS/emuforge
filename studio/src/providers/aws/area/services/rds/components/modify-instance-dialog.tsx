@@ -386,6 +386,7 @@ export function ModifyInstanceDialog({
                 error={errors.groups}
                 placement={{
                   data: groupsReady ? placement.data : undefined,
+                  loading: placement.loading || (!groupsReady && startingGroups.loading),
                   failure: startingGroups.failure ?? placement.failure,
                   retry: startingGroups.failure === undefined ? placement.retry : startingGroups.refresh,
                 }}

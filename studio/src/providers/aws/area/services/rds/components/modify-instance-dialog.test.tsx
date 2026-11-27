@@ -20,6 +20,7 @@ vi.mock('../choices-api', async (importOriginal) => ({
   readUpgradeTargets: vi.fn(),
   listEngineVersionChoices: vi.fn(),
   listSubnetGroupChoices: vi.fn(),
+  readDefaultVpcId: vi.fn(),
 }));
 
 vi.mock('../cluster-api', async (importOriginal) => ({
@@ -580,6 +581,52 @@ describe('choices for a standalone DB instance', () => {
 describe('security groups on a standalone DB instance', () => {
   const mixedGroups = { ...INSTANCE, securityGroups: [{ id: 'sg-a' }, { id: 'sg-b' }] };
   const missingGroup = { ...INSTANCE, securityGroups: [{ id: 'sg-b' }, { id: 'sg-missing' }] };
+  const emptySubnetGroup = { ...INSTANCE, subnetGroup: { name: 'default', vpcId: 'vpc-a', subnets: [] } };
+
+  it('announces the subnet group VPC lookup and offers its groups in the open picker when it finishes', async () => {
+    const pending = held<string>();
+    vi.mocked(choices.readDefaultVpcId).mockReturnValueOnce(pending.promise);
+    open(emptySubnetGroup);
+    await opened();
+
+    expect(trigger('DB subnet group')).toHaveTextContent('default');
+    expect(screen.getByText("Checking the DB subnet group's VPC")).toHaveAttribute('role', 'status');
+    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    const groups = groupField();
+    groups.openDropdown();
+    expect(groups.findTrigger().getElement()).toHaveAttribute('aria-expanded', 'true');
+    expect(groups.findDropdown().findOptionByValue('sg-b')).toBeNull();
+
+    await act(async () => pending.resolve('vpc-b'));
+    await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-b')).not.toBeNull());
+    expect(groups.findDropdown().findOptionByValue('sg-a')).toBeNull();
+    expect(screen.queryByText("Checking the DB subnet group's VPC")).not.toBeInTheDocument();
+  });
+
+  it('keeps the placement lookup error and retries the lookup from the security groups field', async () => {
+    vi.mocked(choices.readDefaultVpcId)
+      .mockRejectedValueOnce(
+        new RequestError({
+          kind: 'other',
+          operation: 'DescribeVpcs',
+          code: 'Unavailable',
+          message: 'VPC lookup failed',
+        }),
+      )
+      .mockResolvedValueOnce('vpc-b');
+    open(emptySubnetGroup);
+    await opened();
+
+    expect(await screen.findByText('The security groups could not be read')).toBeVisible();
+    expect(screen.getByText(/VPC lookup failed/)).toBeVisible();
+    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    expect(groupField().findTrigger().getElement()).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(groupField().findTrigger().getElement()).toBeEnabled());
+    const groups = groupField();
+    groups.openDropdown();
+    await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-b')).not.toBeNull());
+  });
 
   it('reads the starting ids and replaces them with names after the answer', async () => {
     const pending = held<security.SecurityGroupChoice[]>();
@@ -592,8 +639,12 @@ describe('security groups on a standalone DB instance', () => {
       expect.any(AbortSignal),
     );
     expect(groupNames()).toEqual(['sg-a', 'sg-b']);
+    expect(trigger('DB subnet group')).toHaveTextContent('default');
+    expect(screen.getByText("Checking the DB subnet group's VPC")).toHaveAttribute('role', 'status');
+    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
     await act(async () => pending.resolve(GROUPS.slice(0, 2)));
     await waitFor(() => expect(groupNames()).toEqual(['Group A', 'Group B']));
+    expect(screen.queryByText("Checking the DB subnet group's VPC")).not.toBeInTheDocument();
   });
 
   it('keeps groups by their own VPC when changing the subnet group', async () => {
