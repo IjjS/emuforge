@@ -1,4 +1,4 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
@@ -6,7 +6,7 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -102,6 +102,7 @@ function EditAlarm({ name, connection }: { name: string | undefined; connection:
   const failure = read.failure && readFailureState(read.failure, connection, 'alarm');
   const alarm = read.value;
   const editable = alarm !== undefined && isEditableAlarm(alarm);
+  const backToAlarm = alarm !== undefined && name !== undefined;
 
   return (
     <ContentLayout header={<Header variant="h1">Edit alarm</Header>}>
@@ -117,8 +118,8 @@ function EditAlarm({ name, connection }: { name: string | undefined; connection:
             <SpaceBetween size="s">
               <Box variant="h2">{alarm === undefined ? 'Alarm not found' : NOT_EDITABLE}</Box>
               {alarm !== undefined && <Box variant="p">{REASON}</Box>}
-              <Link href={name === undefined ? ALARMS_PATH : alarmPath(name)} onFollow={follow}>
-                {name === undefined ? 'Alarms' : 'Back to alarm'}
+              <Link href={backToAlarm ? alarmPath(name) : ALARMS_PATH} onFollow={follow}>
+                {backToAlarm ? 'Back to alarm' : 'Alarms'}
               </Link>
             </SpaceBetween>
           )}
@@ -139,6 +140,11 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
   const [feedback, setFeedback] = useState<ReactNode>();
   const [openingMetricKey, setOpeningMetricKey] = useState(() => metricKey(values.metric));
   const initialValues = alarmEditValues(name, baseline);
+  const conflictRef = useRef<AlertProps.Ref>(null);
+
+  useEffect(() => {
+    if (feedback) conflictRef.current?.focus();
+  }, [feedback]);
 
   async function handleSubmit(submitted: AlarmFormValues) {
     setFailure(undefined);
@@ -173,7 +179,11 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
           setBaseline(result.baseline);
           setValues(result.values);
           setFeedback(
-            <Alert type="warning" header="This alarm changed while you were editing it">
+            <Alert ref={conflictRef} type="warning" header="This alarm changed while you were editing it">
+              <Box variant="p">
+                Nothing was saved. Save changes again to apply your form entries over the conflicting values shown
+                below.
+              </Box>
               <ul>
                 {result.fields.map((field) => (
                   <li key={field}>
