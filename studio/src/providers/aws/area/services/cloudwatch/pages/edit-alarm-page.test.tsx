@@ -310,7 +310,7 @@ it('shows every conflict, keeps changed entries, adopts untouched ones and allow
 
   const alert = page.wrapper.findAlert();
   expect(alert?.findHeader()?.getElement().textContent).toBe('This alarm changed while you were editing it');
-  expect(alert?.getElement()).toContainElement(document.activeElement);
+  expect(alert?.getElement().contains(document.activeElement)).toBe(true);
   expect(alert?.findContent().getElement()).toHaveTextContent(
     'Nothing was saved. Save changes again to apply your form entries over the conflicting values shown below.',
   );
