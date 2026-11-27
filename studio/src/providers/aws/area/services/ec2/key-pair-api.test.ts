@@ -178,6 +178,22 @@ describe('create, import, delete', () => {
     expect(new TextDecoder().decode(Uint8Array.from(atob(material), (c) => c.charCodeAt(0)))).toBe(PUBLIC_KEY);
   });
 
+  it('sends key-pair tag specifications for both operations only when there are tags', async () => {
+    const tags = [{ key: 'team', value: 'core' }];
+    const pair = { name: 'dev', type: 'rsa', format: 'pem' } as const;
+    await createKeyPair(endpoint, { ...pair, tags }, signal());
+    await createKeyPair(endpoint, pair, signal());
+    await importKeyPair(endpoint, 'imp', PUBLIC_KEY, signal(), tags);
+    await importKeyPair(endpoint, 'imp', PUBLIC_KEY, signal(), []);
+    for (const operation of ['CreateKeyPair', 'ImportKeyPair']) {
+      const [tagged, untagged] = engine.of(operation);
+      expect(tagged?.params.get('TagSpecification.1.ResourceType')).toBe('key-pair');
+      expect(tagged?.params.get('TagSpecification.1.Tag.1.Key')).toBe('team');
+      expect(tagged?.params.get('TagSpecification.1.Tag.1.Value')).toBe('core');
+      expect([...(untagged?.params.keys() ?? [])].some((name) => name.startsWith('TagSpecification.'))).toBe(false);
+    }
+  });
+
   it('delete → DeleteKeyPair with the name', async () => {
     engine.on('DeleteKeyPair', () => ok('DeleteKeyPair', '<return>true</return>'));
     await deleteKeyPair(endpoint, 'dev key', signal());
