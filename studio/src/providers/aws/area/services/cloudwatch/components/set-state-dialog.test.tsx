@@ -1,6 +1,6 @@
 import type { StateValue } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -53,9 +53,11 @@ async function open(currentState: StateValue = 'OK') {
     );
   }
   render(<Area />);
-  await screen.findByRole('dialog');
-  const modal = page.findModal();
-  if (!modal) throw new Error('Set state dialog missing');
+  const modal = await waitFor(() => {
+    const dialog = page.findModal();
+    if (!dialog?.isVisible()) throw new Error('Set state dialog missing');
+    return dialog;
+  });
   const state = modal.findContent().findSelect();
   const reason = modal.findContent().findTextarea();
   const [cancel, submit] = modal.findFooter()?.findAllButtons() ?? [];
@@ -82,16 +84,18 @@ it.each<StateValue>(['OK', 'ALARM', 'INSUFFICIENT_DATA'])(
 it('fills the reason and shows the rule and when actions run', async () => {
   const { modal, reason } = await open();
   expect(reason.getTextareaValue()).toBe(defaultReason);
-  expect(page.findAllFormFields()[1]?.findConstraint()?.getElement()).toHaveTextContent('1 to 1023 characters.');
+  expect(modal.findContent().findAllFormFields()[1]?.findConstraint()?.getElement()).toHaveTextContent(
+    '1 to 1023 characters.',
+  );
   expect(modal.findContent().getElement()).toHaveTextContent(
     "When the state changes and the alarm's actions are on, the actions of the new state run. The history records the change and each action that ran.",
   );
 });
 
 it('requires a state and between 1 and 1023 reason characters', async () => {
-  const { state, reason, submit, onSet } = await open();
+  const { modal, state, reason, submit, onSet } = await open();
   submit.click();
-  const fields = page.findAllFormFields();
+  const fields = modal.findContent().findAllFormFields();
   expect(fields[0]?.findError()?.getElement()).toHaveTextContent('Choose a state.');
   expect(send).not.toHaveBeenCalled();
   state.openDropdown();
@@ -140,9 +144,13 @@ it.each([
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).not.toBeDisabled();
     expect(modal.findDismissButton()).toBeNull();
-    expect(
-      await screen.findByText('Setting alarm state', { selector: '[aria-live="polite"]' }, { timeout: 3000 }),
-    ).toBeInTheDocument();
+    await waitFor(
+      () =>
+        expect(page.findAll('[aria-live="polite"]').map((region) => region.getElement().textContent)).toContain(
+          'Setting alarm state',
+        ),
+      { timeout: 3000 },
+    );
     await user.keyboard('{Enter}');
     await user.keyboard('{Escape}');
     expect(send).toHaveBeenCalledOnce();
