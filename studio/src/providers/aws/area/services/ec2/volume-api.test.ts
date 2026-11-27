@@ -105,7 +105,7 @@ describe('volume requests', () => {
   });
 
   it('sends the selected settings, omits size when inherited and sends a key only for encryption', async () => {
-    for (const _ of [1, 2, 3]) answer('CreateVolume', '<volumeId>vol-new</volumeId>');
+    for (let call = 0; call < 3; call += 1) answer('CreateVolume', '<volumeId>vol-new</volumeId>');
     const base = { zone: 'us-east-1b', type: 'gp3', snapshotId: 'snap-1' } as const;
     await createVolume(
       endpoint,
