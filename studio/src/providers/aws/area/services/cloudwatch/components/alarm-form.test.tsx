@@ -7,6 +7,7 @@ import { expect, it, vi } from 'vitest';
 import { AreaRootContext } from '../../../area-root';
 import { NAME_RULE, newAlarmForm, type AlarmFormValues } from '../alarm-form';
 import { AlarmForm, type AlarmFormProps } from './alarm-form';
+import { AlarmName } from './alarm-name';
 
 vi.mock('../metric-api', { spy: true });
 import { listDimensionSets } from '../metric-api';
@@ -195,10 +196,32 @@ it.each(['create', 'edit'] as const)(
   },
 );
 
+it('preserves the alarm name white space in an external Name error', () => {
+  const start = ready();
+  open({
+    start,
+    fieldErrors: {
+      name: (
+        <>
+          An alarm named <AlarmName name={start.name} /> already exists.
+        </>
+      ),
+    },
+  });
+
+  const name = field('Name');
+  const error = name.findError();
+  expect(error?.getElement().textContent).toBe(`An alarm named ${start.name} already exists.`);
+  expect(error?.find('span[style*="white-space"]')?.getElement()).toHaveStyle({ whiteSpace: 'pre-wrap' });
+  expect(name.findConstraint()?.getElement().textContent).toBe(NAME_RULE);
+  expect(control('Name').findInput()?.findNativeInput().getElement()).toHaveFocus();
+});
+
 it('shows every invalid field and focuses the first, then reports the complete valid form once', async () => {
   const { submitted } = open();
   button('Create alarm').click();
   expect(control('Name').findInput()?.findNativeInput().getElement()).toHaveFocus();
+  expect(field('Name').findError()?.getElement().textContent).toBe(NAME_RULE);
   for (const label of ['Name', 'Namespace', 'Metric name', 'Dimensions', 'Threshold']) {
     expect(field(label).findError()?.getElement()).not.toHaveTextContent(/^$/);
   }
