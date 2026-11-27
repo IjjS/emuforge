@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { MAX_TAGS, validateTags, type Tag } from '../../../components/tags';
 import { TagEditor } from './tag-editor';
 
-it('reports added, changed and removed tag rows', () => {
+it('reports added, changed and removed tag rows and focuses the new key', () => {
   const change = vi.fn();
   function Editor() {
     const [tags, setTags] = useState<Tag[]>([]);
@@ -22,9 +22,14 @@ it('reports added, changed and removed tag rows', () => {
   render(<Editor />);
   fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
   expect(change).toHaveBeenLastCalledWith([{ key: '', value: '' }]);
+  expect(screen.getByRole('textbox', { name: 'Key' })).toHaveFocus();
   fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: 'team' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Value' }), { target: { value: 'core' } });
   expect(change).toHaveBeenLastCalledWith([{ key: 'team', value: 'core' }]);
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  const [, addedKey] = screen.getAllByRole('textbox', { name: 'Key' });
+  expect(addedKey).toHaveFocus();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove tag', exact: true }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove tag team' }));
   expect(change).toHaveBeenLastCalledWith([]);
 });

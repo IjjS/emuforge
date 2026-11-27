@@ -83,6 +83,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
     {
       id: 'description',
       header: 'Description',
+      minWidth: '24ch',
       cell: ({ Description }) => <ValueText kind="text" value={Description || '-'} />,
     },
     {

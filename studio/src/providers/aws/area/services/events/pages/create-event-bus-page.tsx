@@ -154,7 +154,7 @@ export function CreateEventBusPage({ connection }: ScreenPageProps) {
                   />
                 </FormField>
                 <FormField
-                  label="Description"
+                  label="Description - optional"
                   constraintText={BUS_DESCRIPTION_RULE}
                   errorText={tried && descriptionError}
                 >
@@ -167,7 +167,7 @@ export function CreateEventBusPage({ connection }: ScreenPageProps) {
                 </FormField>
               </SpaceBetween>
             </Container>
-            <Container header={<Header variant="h2">Tags</Header>}>
+            <Container header={<Header variant="h2">Tags - optional</Header>}>
               <TagEditor
                 ref={tagEditor}
                 tags={form.tags}
