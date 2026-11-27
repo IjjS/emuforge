@@ -187,6 +187,14 @@ function field(label: string) {
   return found;
 }
 
+function waitForFieldError(label: string, message: string) {
+  return waitFor(
+    () => expect(field(label).findError()?.getElement()).toHaveTextContent(message),
+    // Cloudscape's scoped selector temporarily adds an attribute to the field on every lookup.
+    { mutationObserverOptions: { subtree: true, childList: true, characterData: true } },
+  );
+}
+
 function select(label: string) {
   const found = field(label).findControl()?.findSelect();
   if (found == null) throw new Error(`Missing select: ${label}`);
@@ -458,9 +466,7 @@ describe('choices for a standalone DB instance', () => {
     expect(onSave).toHaveBeenLastCalledWith({ engineVersion: { version: '16.13', major: false } });
 
     await choose('Engine version', '17.9');
-    await waitFor(() =>
-      expect(field('DB instance class').findError()?.getElement()).toHaveTextContent('Choose a class for 17.9'),
-    );
+    await waitForFieldError('DB instance class', 'Choose a class for 17.9');
     expect(save()).toBeDisabled();
     await choose('Engine version', '');
     await waitFor(() => expect(trigger('DB instance class')).toHaveTextContent('db.t3.micro'));
@@ -468,9 +474,7 @@ describe('choices for a standalone DB instance', () => {
     expect(save()).toBeDisabled();
 
     await choose('Engine version', '17.9');
-    await waitFor(() =>
-      expect(field('DB instance class').findError()?.getElement()).toHaveTextContent('Choose a class for 17.9'),
-    );
+    await waitForFieldError('DB instance class', 'Choose a class for 17.9');
     await choose('DB instance class', 'db.t3.small');
     expect(trigger('Storage type')).toHaveTextContent('gp2');
     expect(save()).toBeEnabled();
@@ -538,9 +542,7 @@ describe('choices for a standalone DB instance', () => {
       await opened();
       await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
       await choose('Engine version', '17.9');
-      await waitFor(() =>
-        expect(field('DB instance class').findError()?.getElement()).toHaveTextContent('Choose a class for 17.9'),
-      );
+      await waitForFieldError('DB instance class', 'Choose a class for 17.9');
       if (replace) {
         await choose('DB instance class', 'db.upgrade');
         await choose('Storage type', 'gp3');
@@ -572,11 +574,7 @@ describe('choices for a standalone DB instance', () => {
     await opened();
     await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
     await choose('Engine version', '17.9');
-    await waitFor(() =>
-      expect(field('Storage type').findError()?.getElement()).toHaveTextContent(
-        'Choose a storage type for db.t3.micro',
-      ),
-    );
+    await waitForFieldError('Storage type', 'Choose a storage type for db.t3.micro');
     await choose('Engine version', '');
 
     const storageTrigger = select('Storage type').findTrigger();
