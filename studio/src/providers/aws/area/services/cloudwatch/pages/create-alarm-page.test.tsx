@@ -2,7 +2,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -56,6 +56,12 @@ function denied(operation: string, message: string) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   create.mockReset().mockResolvedValue('created');
   read.mockReset().mockResolvedValue(alarm);
   vi.mocked(listAlarms).mockReset().mockResolvedValue({ items: [] });
@@ -63,6 +69,8 @@ beforeEach(() => {
   tags.mockReset().mockResolvedValue(tagItems);
   topics.mockReset().mockResolvedValue({ items: [] });
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function open(inArea = false) {
   const handOver = vi.fn();
@@ -238,7 +246,8 @@ it.each(['history first', 'tags first', 'history failure', 'tags failure'])(
     enterAlarm(page);
     await submit(page);
     expect(page.address()).toBe(destination);
-    expect(page.wrapper.findStatusIndicator()?.getElement().textContent).toBe('Loading alarm');
+    const content = page.wrapper.findContentLayout()?.findContent();
+    expect(content?.findStatusIndicator()?.getElement().textContent).toBe('Loading alarm');
     expectFlash(page);
 
     await act(async () => alarmRead.resolve(alarm));
