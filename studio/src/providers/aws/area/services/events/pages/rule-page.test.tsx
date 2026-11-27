@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { StrictMode, useRef, useState } from 'react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaLayout } from '../../../area-layout';
@@ -84,6 +84,8 @@ beforeEach(() => {
   add.mockReset().mockResolvedValue(undefined);
   readTargets.mockReset().mockResolvedValue([]);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function open() {
   const resources = vi.fn();
@@ -576,9 +578,7 @@ it('shows why Add target is unavailable after reading five targets', async () =>
   );
   const { page } = open();
   await waitFor(() =>
-    expect(headerAction(page, 'Add target').findDisabledReason()?.getElement()).toHaveTextContent(
-      'A rule holds at most 5 targets.',
-    ),
+    expect(headerButton(page, 'Add target')).toHaveAccessibleDescription('A rule holds at most 5 targets.'),
   );
   expect(headerAction(page, 'Add target').isDisabled()).toBe(true);
 });
@@ -657,6 +657,13 @@ function openFrame({
   strict?: boolean;
   note?: HandOverNote;
 } = {}) {
+  vi.stubGlobal('matchMedia', () => ({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  }));
   offeredNote = note;
   const initialPath = path.split('?')[0];
   const connection = {
