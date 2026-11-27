@@ -260,16 +260,18 @@ describe('Add route', () => {
     expect(target.isDisabled()).toBe(true);
     expect(text(target.findTrigger().getElement())).toBe('Choose Target type first');
     targets.openDropdown();
-    const options = targets
-      .findDropdown()
-      .findOptions()
-      .map((option) => text(option.getElement()));
-    expect(options).toEqual([
-      "Internet gatewayAn internet gateway attached to this table's VPC.",
-      "NAT gatewayA NAT gateway of this table's VPC.",
-      "InstanceAn instance of this table's VPC.",
-      "Network interfaceA network interface of this table's VPC.",
-    ]);
+    const dropdown = targets.findDropdown();
+    expect(dropdown.findOptions()).toHaveLength(4);
+    for (const [value, label, description] of [
+      ['GatewayId', 'Internet gateway', "An internet gateway attached to this table's VPC."],
+      ['NatGatewayId', 'NAT gateway', "A NAT gateway of this table's VPC."],
+      ['InstanceId', 'Instance', "An instance of this table's VPC."],
+      ['NetworkInterfaceId', 'Network interface', "A network interface of this table's VPC."],
+    ] as const) {
+      const option = dropdown.findOptionByValue(value);
+      expect(text(option?.findLabel().getElement())).toBe(label);
+      expect(text(option?.findDescription()?.getElement())).toBe(description);
+    }
     expect(readTargets).not.toHaveBeenCalled();
   });
 

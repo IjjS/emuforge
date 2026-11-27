@@ -203,13 +203,16 @@ async function chooseVpc(id: string) {
   await chooseOpenVpc(id);
 }
 
-function vpcOption(id: string) {
-  return screen.getByRole('option', { name: (name) => name.includes(id) });
+function expectVpcDisabled(id: string) {
+  const option = vpcSelect().findDropdown().findOptionByValue(id);
+  expect(option?.getElement().closest('[role="option"]')).toHaveAttribute('aria-disabled', 'true');
 }
 
 async function chooseOpenVpc(id: string) {
-  await waitFor(() => expect(vpcOption(id)).not.toHaveAttribute('aria-disabled', 'true'));
-  vpcSelect().selectOptionByValue(id);
+  const select = vpcSelect();
+  const dropdown = select.findDropdown();
+  await waitFor(() => expect(dropdown.findOptionByValue(id)?.isDisabled()).toBe(false));
+  select.selectOptionByValue(id);
 }
 
 function attachButton() {
@@ -552,9 +555,6 @@ describe('Attach internet gateway', () => {
     expect(addressOf(plain)).toBe(LIST_PATH);
   });
 
-  const optionText = (id: string) => text(vpcSelect().findDropdown().findOptionByValue(id)?.getElement());
-  const optionDisabled = (id: string) => vpcOption(id).getAttribute('aria-disabled') === 'true';
-
   async function openChoices() {
     const select = vpcSelect();
     select.openDropdown();
@@ -586,7 +586,7 @@ describe('Attach internet gateway', () => {
     expect(attachButton()).toBeDisabled();
     await openChoices();
     for (const id of ['vpc-x', 'vpc-d']) {
-      expect(optionDisabled(id)).toBe(true);
+      expectVpcDisabled(id);
       vpcSelect().selectOptionByValue(id);
     }
     expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
@@ -598,9 +598,12 @@ describe('Attach internet gateway', () => {
     open();
     await formShown();
     await openChoices();
-    await waitFor(() => expect(optionText('vpc-x')).toContain('Has igw-other'));
-    expect(optionDisabled('vpc-x')).toBe(true);
-    expect(optionText('vpc-d')).not.toContain('Has ');
+    const dropdown = vpcSelect().findDropdown();
+    await waitFor(() => {
+      expect(dropdown.findOptionByValue('vpc-x')?.getElement()).toHaveTextContent('Has igw-other');
+    });
+    expectVpcDisabled('vpc-x');
+    expect(dropdown.findOptionByValue('vpc-d')?.getElement()).not.toHaveTextContent('Has ');
     vpcSelect().selectOptionByValue('vpc-x');
     expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
     await chooseOpenVpc('vpc-d');
@@ -617,7 +620,10 @@ describe('Attach internet gateway', () => {
     await formShown();
     await waitFor(() => expect(attachButton()).toBeEnabled());
     await openChoices();
-    await waitFor(() => expect(optionText('vpc-x')).toContain('Has igw-other'));
+    const dropdown = vpcSelect().findDropdown();
+    await waitFor(() => {
+      expect(dropdown.findOptionByValue('vpc-x')?.getElement()).toHaveTextContent('Has igw-other');
+    });
     expect(vi.mocked(api.listInternetGateways).mock.calls.map((call) => call[2])).toEqual([
       undefined,
       'tok-g',
@@ -641,7 +647,7 @@ describe('Attach internet gateway', () => {
     await waitFor(() => expect(text(field('VPC').getElement())).toContain('InternalError'));
     expect(attachButton()).toBeDisabled();
     for (const id of ['vpc-x', 'vpc-d']) {
-      expect(optionDisabled(id)).toBe(true);
+      expectVpcDisabled(id);
     }
     vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [attachment] });
     fireEvent.click(within(field('VPC').getElement()).getByRole('button', { name: 'Retry' }));
@@ -661,8 +667,8 @@ describe('Attach internet gateway', () => {
       expect(text(field('VPC').getElement())).toMatch(/Not implemented by the emulator.*DescribeInternetGateways/);
     });
     expect(text(field('VPC').getElement())).not.toContain('Retry');
-    expect(optionDisabled('vpc-x')).toBe(true);
-    expect(optionDisabled('vpc-d')).toBe(true);
+    expectVpcDisabled('vpc-x');
+    expectVpcDisabled('vpc-d');
     expect(attachButton()).toBeDisabled();
   });
 
@@ -697,9 +703,8 @@ describe('Attach internet gateway', () => {
         expect(errorOf('VPC')).toBe(occupied);
         expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
       } else {
-        expect(await screen.findByText('vpc-x')).toBeInTheDocument();
+        await waitFor(() => expect(attachButton()).toBeEnabled());
         expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
-        expect(attachButton()).toBeEnabled();
       }
     });
   });
@@ -719,7 +724,7 @@ describe('Attach internet gateway', () => {
     if (isOccupied) {
       expect(await screen.findByText(occupied)).toBeInTheDocument();
       expect(errorOf('VPC')).toBe(occupied);
-      expect(optionDisabled('vpc-x')).toBe(true);
+      expectVpcDisabled('vpc-x');
       expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
     } else {
       await waitFor(() => expect(attachButton()).toBeEnabled());
