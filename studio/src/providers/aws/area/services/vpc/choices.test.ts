@@ -74,7 +74,7 @@ describe('the VPC choices', () => {
     expect(vpcChoices(ENGINE).filtering).toBe('local');
   });
 
-  it('a choice\'s label is its ID and it shows its name, its block and "default VPC" for the default one; no name without one', async () => {
+  it('a choice\'s label is its ID and it shows its name, its block and "Default VPC" for the default one; no name without one', async () => {
     vi.mocked(network.listVpcChoices).mockResolvedValue({
       choices: [
         { id: 'vpc-1', name: 'app', cidr: '10.0.0.0/16', isDefault: false },
@@ -91,8 +91,9 @@ describe('the VPC choices', () => {
     expect(source.optionOf({ id: 'vpc-d', cidr: '172.31.0.0/16', isDefault: true })).toEqual({
       value: 'vpc-d',
       label: 'vpc-d',
-      tags: ['172.31.0.0/16', 'default VPC'],
+      tags: ['172.31.0.0/16', 'Default VPC'],
     });
+    expect(source.readAgainOnOpen).toBe(true);
     const select = open(source);
     await waitFor(() => {
       expect(select.findDropdown().findOptions()).toHaveLength(2);
@@ -101,7 +102,7 @@ describe('the VPC choices', () => {
     expect(options[0]).toContain('vpc-1');
     expect(options[0]).toContain('app');
     expect(options[0]).toContain('10.0.0.0/16');
-    expect(options[1]).toContain('default VPC');
+    expect(options[1]).toContain('Default VPC');
   });
 });
 
@@ -111,6 +112,7 @@ describe('the subnet choices of a VPC', () => {
       choices: [{ id: 'subnet-1', name: 'app-a', cidr: '10.0.1.0/24', zone: 'us-east-1a', vpcId: 'vpc-1' }],
     });
     const source = subnetChoices(ENGINE, 'vpc-1');
+    expect(source.readAgainOnOpen).toBe(true);
     const select = open(source);
     await waitFor(() => {
       expect(select.findDropdown().findOptions()).toHaveLength(1);
@@ -123,7 +125,7 @@ describe('the subnet choices of a VPC', () => {
       value: 'subnet-1',
       label: 'subnet-1',
       description: 'app-a',
-      tags: ['10.0.1.0/24', 'us-east-1a'],
+      tags: ['us-east-1a · 10.0.1.0/24'],
     });
     expect(source.optionOf({ id: 'subnet-2' })).toEqual({ value: 'subnet-2', label: 'subnet-2', tags: [] });
     expect(source.filtering).toBe('local');

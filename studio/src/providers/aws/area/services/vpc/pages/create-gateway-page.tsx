@@ -13,7 +13,9 @@ import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-d
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { failureOf } from '../../../components/use-token-listing';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import { CREATE_INTERNET_GATEWAY_TITLE, INTERNET_GATEWAYS_WORD, internetGatewaysHref, VPC_QUERY } from '../format';
 import { NAME_CONSTRAINT, nameMessage } from '../form';
@@ -45,11 +47,13 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
   const create = useCreateGateway(engineOrigin);
 
   const [name, setName] = useState('');
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
 
   const nameRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -71,6 +75,8 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
 
   const message = tried ? nameMessage(name) : undefined;
 
+  const checkedTags = checkTagRows(tags, name === '' ? undefined : 'Name');
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current) {
@@ -82,6 +88,11 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
       nameRef.current?.focus();
       return;
     }
+    if (checkedTags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(checkedTags.firstInvalid);
+      return;
+    }
+    const extraTags = checkedTags.tags.length === 0 ? {} : { tags: checkedTags.tags };
     const operation = GATEWAY_CHANGE_OPERATIONS.createInternetGateway;
     const what = 'Creating internet gateway';
     if (engineOrigin === undefined) {
@@ -98,7 +109,7 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
       setPending(false);
     };
     try {
-      const id = await create(name === '' ? {} : { name }, controller.signal);
+      const id = await create({ ...(name === '' ? {} : { name }), ...extraTags }, controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -123,7 +134,7 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
     }
   }, [kept]);
   const handleCancel = () => {
-    if (name !== '') {
+    if (name !== '' || tags.length > 0) {
       setAsking(true);
       return;
     }
@@ -172,6 +183,7 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
                 />
               </FormField>
             </Container>
+            <TagsField ref={tagsRef} rows={tags} onChange={setTags} errors={tried ? checkedTags.errors : undefined} />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>
