@@ -9,10 +9,12 @@
 // (`twoSpaceIdentity`). What the emulator holds is read directly. Words, direct calls and readers:
 // `services/ec2/ec2.ts`.
 
+import type { Locator } from '@playwright/test';
+
 import { expect, startStack, test } from './support';
 import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
-import { cellOfRowWith, checkPrefix, drawnText, headerHeading, twoSpaceIdentity } from './support/service-screens';
+import { checkPrefix, drawnText, headerHeading, rowReading, twoSpaceIdentity } from './support/service-screens';
 import {
   button,
   chooseOption,
@@ -33,6 +35,7 @@ import {
   open,
   openSelect,
   optionLabel,
+  rowsOf,
   selectOf,
   TABLE,
   tableOf,
@@ -58,20 +61,26 @@ test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page
   const groupTwo = await seeded.group(two, `two spaces ${p}`, own.vpcId);
   const main = page.getByRole('main');
   const table = main.locator(TABLE).first();
-  const rowControl = (name: string) => table.getByRole('radio', { name, exact: true });
-  const rowLink = (name: string) => table.getByRole('link', { name, exact: true });
+  const control = (row: Locator, name: string) => row.getByRole('radio', { name, exact: true });
+  const link = (row: Locator, name: string) => row.getByRole('link', { name, exact: true });
+  // On Key pairs and on Security groups column 1 is the selection control's, column 2 the name. A row is found by
+  // the name it reads; its link and its selection control are that row's.
+  /** Narrows the list to the check's two rows and waits until it holds those alone. */
+  const narrowed = async () => {
+    await findBy(table, p);
+    await expect.poll(async () => (await rowsOf(table)).length, { message: "the check's two rows, alone", timeout: 15_000 }).toBe(2);
+  };
+  const rowOfOne = async () => (await rowReading(table, 2, one)).row;
+  const rowOfTwo = async () => (await rowReading(table, 2, `${two} (${identity})`)).row;
   let launched = '';
 
   await lines.line(
     'Open Key pairs → selection controls of both names, the two-space one named by its identity; the row of the two-space key pair reads the name with its two spaces, followed by the identity in brackets',
     async () => {
       await open(page, KEY_PAIRS_PATH, KEY_PAIRS_H1);
-      await findBy(table, p);
-      await expect(rowControl(one), `the selection control named "${one}"`).toHaveCount(1, { timeout: 15_000 });
-      await expect(rowControl(identity), `the selection control named "${identity}"`).toHaveCount(1);
-      // Column 1 is the selection control's, column 2 the name.
-      const cell = await cellOfRowWith(table, page.getByRole('radio', { name: identity, exact: true }), 2);
-      expect(await drawnText(cell), "the two-space key pair's name as drawn").toBe(`${two} (${identity})`);
+      await narrowed();
+      await expect(control(await rowOfTwo(), identity), `the two-space row's control, named "${identity}"`).toHaveCount(1);
+      await expect(control(await rowOfOne(), one), `the one-space row's control, named "${one}"`).toHaveCount(1);
     },
   );
 
@@ -79,15 +88,14 @@ test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page
     "Open Security groups → links and selection controls of both names, and the row of the two-space group reads the name with its two spaces, followed by the identity in brackets; follow the link named by the identity → the heading is named by the identity and the group ID shown is the two-space group's",
     async () => {
       await open(page, GROUPS_PATH, GROUPS_H1);
-      await findBy(table, p);
-      await expect(rowLink(one), `the link named "${one}"`).toHaveCount(1, { timeout: 15_000 });
-      await expect(rowLink(identity), `the link named "${identity}"`).toHaveCount(1);
-      await expect(rowControl(one), `the selection control named "${one}"`).toHaveCount(1);
-      await expect(rowControl(identity), `the selection control named "${identity}"`).toHaveCount(1);
-      // Column 1 is the selection control's, column 2 the name.
-      const cell = await cellOfRowWith(table, page.getByRole('link', { name: identity, exact: true }), 2);
-      expect(await drawnText(cell), "the two-space group's name as drawn").toBe(`${two} (${identity})`);
-      await rowLink(identity).click(ACTION);
+      await narrowed();
+      const rowTwo = await rowOfTwo();
+      await expect(link(rowTwo, identity), `the two-space row's link, named "${identity}"`).toHaveCount(1);
+      await expect(control(rowTwo, identity), `the two-space row's control, named "${identity}"`).toHaveCount(1);
+      const rowOne = await rowOfOne();
+      await expect(link(rowOne, one), `the one-space row's link, named "${one}"`).toHaveCount(1);
+      await expect(control(rowOne, one), `the one-space row's control, named "${one}"`).toHaveCount(1);
+      await link(rowTwo, identity).click(ACTION);
       await expect(page, "the two-space group's address").toHaveURL(addressOf(groupPath(groupTwo)));
       await expect(headerHeading(page), "the heading's accessible name").toHaveAccessibleName(identity, {
         timeout: 15_000,

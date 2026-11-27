@@ -12,7 +12,15 @@ import { expect, startStack, test } from './support';
 import { crumbs } from './support/aws-area';
 import { ACTION, addressOf, titleOf } from './support/frame';
 import { Lines } from './support/lines';
-import { cellOfRowWith, checkPrefix, drawnText, headerHeading, modalDialog, twoSpaceIdentity } from './support/service-screens';
+import {
+  checkPrefix,
+  drawnText,
+  headerHeading,
+  modalDialog,
+  offeredNow,
+  rowReading,
+  twoSpaceIdentity,
+} from './support/service-screens';
 import {
   answered,
   choiceOf,
@@ -60,19 +68,21 @@ test('studio.logs-streams-that-differ-by-spaces-are-told-apart', async ({ ctx, p
     await open(page, groupPath(group), group);
     await expect(rowsIn(groupScreen(page).streamTable), 'the two streams listed').toHaveCount(2, { timeout: 15_000 });
   };
+  // Column 1 is the selection control's, column 2 the stream's name.
+  /** The row of the two-space stream: the one whose name reads with its two spaces, then the identity. */
+  const rowOfTwo = async () => (await rowReading(groupScreen(page).streamTable, 2, `${two} (${identity})`)).row;
 
   await lines.line(
     "(regression) Open the group's page → a link and a selection control of each name, the two-space ones named by the identity; the two-space row reads the name with its two spaces, followed by the identity in brackets",
     async () => {
-      const s = groupScreen(page);
       await listed();
-      await expect(s.streamLink(one), `the link named "${one}"`).toHaveCount(1);
-      await expect(s.streamLink(identity), `the link named "${identity}"`).toHaveCount(1);
-      await expect(s.streamRadio(one), `the selection control named "${one}"`).toHaveCount(1);
-      await expect(s.streamRadio(identity), `the selection control named "${identity}"`).toHaveCount(1);
-      // Column 1 is the selection control's, column 2 the stream's name.
-      const cell = await cellOfRowWith(s.streamTable, page.getByRole('link', { name: identity, exact: true }), 2);
-      expect(await drawnText(cell), "the two-space row's name as drawn").toBe(`${two} (${identity})`);
+      // Each stream's row is found by the name it reads; its link and its selection control are that row's.
+      const rowTwo = await rowOfTwo();
+      await expect(rowTwo.getByRole('link', { name: identity, exact: true }), `the two-space row's link`).toHaveCount(1);
+      await expect(rowTwo.getByRole('radio', { name: identity, exact: true }), `the two-space row's control`).toHaveCount(1);
+      const rowOne = (await rowReading(groupScreen(page).streamTable, 2, one)).row;
+      await expect(rowOne.getByRole('link', { name: one, exact: true }), `the one-space row's link`).toHaveCount(1);
+      await expect(rowOne.getByRole('radio', { name: one, exact: true }), `the one-space row's control`).toHaveCount(1);
     },
   );
 
@@ -80,7 +90,7 @@ test('studio.logs-streams-that-differ-by-spaces-are-told-apart', async ({ ctx, p
     "Follow the link named by the identity → the heading, the last crumb and the document's title are the identity, and the event shown is the two-space stream's",
     async () => {
       await listed();
-      await groupScreen(page).streamLink(identity).click(ACTION);
+      await (await rowOfTwo()).getByRole('link', { name: identity, exact: true }).click(ACTION);
       await expect(page, "the two-space stream's address").toHaveURL(addressOf(streamPath(group, two)));
       await expect(headerHeading(page), "the heading's accessible name").toHaveAccessibleName(identity, {
         timeout: 15_000,
@@ -97,7 +107,7 @@ test('studio.logs-streams-that-differ-by-spaces-are-told-apart', async ({ ctx, p
       const s = groupScreen(page);
       expect(await namesDirect(), 'the streams before the delete, directly').toEqual([one, two].sort());
       await listed();
-      await s.streamRadio(identity).check(ACTION);
+      await (await rowOfTwo()).getByRole('radio', { name: identity, exact: true }).check(ACTION);
       await s.streams.getByRole('button', { name: DELETE_LOG_STREAM, exact: true }).click(ACTION);
       await expect(modalDialog(page), "the dialog's accessible name").toHaveAccessibleName(
         `${DELETE_LOG_STREAM} ${identity}?`,
@@ -153,9 +163,13 @@ test('studio.logs-stream-choice-tells-names-apart', async ({ ctx, page }) => {
     async () => {
       const choice = await opened();
       await choice.filter.fill(two, ACTION);
-      await expect(choice.option(one), 'the option of the one-space value, after the filter').toHaveCount(0);
-      await expect(choice.option(two), 'the option of the two-space value, after the filter').toBeVisible();
+      // The list as it stands once it has read for the filter: of the two values, the two-space one alone.
+      const filtered = { reading: false, offered: [two] };
+      await expect
+        .poll(() => offeredNow(page, [one, two]), { message: 'the list after the filter', timeout: 20_000 })
+        .toEqual(filtered);
       expect(await drawnText(choice.option(two)), 'what the option left shows').toBe(identity);
+      expect(await offeredNow(page, [one, two]), 'the same list, after it was read').toEqual(filtered);
       await choice.option(two).click(ACTION);
       await expect(choice.list, 'the list after the choice').toHaveCount(0);
       expect(await drawnText(selectOf(searchScreen(page).stream)), 'what the closed field shows').toBe(identity);

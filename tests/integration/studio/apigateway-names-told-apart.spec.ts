@@ -8,9 +8,18 @@
 // exact identity of the two-space name is `<p> a`, a backslash and `u0020` twice, `b` (`twoSpaceIdentity`). What the
 // emulator holds is read directly. Words, direct calls and readers: `services/apigateway/apigateway.ts`.
 
+import type { Locator } from '@playwright/test';
+
 import { expect, test } from './support';
 import { Lines } from './support/lines';
-import { cellOfRowWith, drawnText, headerHeading, modalDialog, twoSpaceIdentity } from './support/service-screens';
+import {
+  drawnText,
+  headerHeading,
+  modalDialog,
+  offeredNow,
+  rowReading,
+  twoSpaceIdentity,
+} from './support/service-screens';
 import {
   APIS,
   apisRead,
@@ -37,15 +46,18 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
   const identity = twoSpaceIdentity(p);
   const idOne = (await f.rest.createRestApi({ name: one })).id!;
   const idTwo = (await f.rest.createRestApi({ name: two, description: `${p} x  y` })).id!;
-  const link = (name: string) => page.getByRole('link', { name, exact: true });
-  const control = (name: string) => page.getByRole('radio', { name: `Select ${name} (REST)`, exact: true });
-  /** Opens APIs and waits for the two-space API's row. */
+  const link = (row: Locator, name: string) => row.getByRole('link', { name, exact: true });
+  const control = (row: Locator, name: string) =>
+    row.getByRole('radio', { name: `Select ${name} (REST)`, exact: true });
+  // Column 1 is the selection control's; then Name, ID, Kind, Description.
+  /** Opens APIs and waits for the two-space API's row: the one whose name reads with its two spaces, then the identity. */
   const listed = async () => {
     await page.goto(APIS);
     const list = (await apisRead(page)).first();
-    await expect(list.locator(link(identity)), `the link named "${identity}"`).toHaveCount(1, { timeout: 15_000 });
-    return list;
+    return { list, rowTwo: (await rowReading(list, 2, `${two} (${identity})`)).row };
   };
+  /** Of the two APIs' IDs, the two-space one's alone, in a list that is not reading. */
+  const filtered = { reading: false, offered: [idTwo] };
   /** Opens the page that asks which REST API to open, and its choice, with the options of both APIs offered. */
   const asked = async () => {
     await page.goto(entryOf('Resources').path);
@@ -62,25 +74,23 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
   await lines.line(
     'Open APIs → links and selection controls of both names, the two-space ones named by the identity; the row of the second reads the name with its two spaces, followed by the identity in brackets; its description reads with one space, as on `main`',
     async () => {
-      const list = await listed();
-      await expect(list.locator(link(one)), `the link named "${one}"`).toHaveCount(1);
-      await expect(list.locator(control(one)), `the selection control "Select ${one} (REST)"`).toHaveCount(1);
-      await expect(list.locator(control(identity)), `the selection control "Select ${identity} (REST)"`).toHaveCount(1);
-      // Column 1 is the selection control's; then Name, ID, Kind, Description.
-      expect(await drawnText(await cellOfRowWith(list, link(identity), 2)), "the second API's name as drawn").toBe(
-        `${two} (${identity})`,
-      );
-      expect(await drawnText(await cellOfRowWith(list, link(identity), 5)), "the second API's description as drawn").toBe(
-        `${p} x y`,
-      );
+      // Each API's row is found by the name it reads; its link, its selection control and its cells are that row's.
+      const { list, rowTwo } = await listed();
+      await expect(link(rowTwo, identity), `the second row's link, named "${identity}"`).toHaveCount(1);
+      await expect(control(rowTwo, identity), `the second row's control "Select ${identity} (REST)"`).toHaveCount(1);
+      const rowOne = (await rowReading(list, 2, one)).row;
+      await expect(link(rowOne, one), `the first row's link, named "${one}"`).toHaveCount(1);
+      await expect(control(rowOne, one), `the first row's control "Select ${one} (REST)"`).toHaveCount(1);
+      const described = (await rowReading(list, 5, `${p} x y`)).row;
+      await expect(link(described, identity), "the row whose description reads with one space is the second's").toHaveCount(1);
     },
   );
 
   await lines.line(
     "Follow the link named by the identity → the page's heading is named by the identity and the API ID shown is the two-space API's",
     async () => {
-      const list = await listed();
-      await list.locator(link(identity)).click();
+      const { rowTwo } = await listed();
+      await link(rowTwo, identity).click();
       await expect(page, "the two-space API's address").toHaveURL(at(restApiPath(idTwo)));
       await expect(headerHeading(page), "the heading's accessible name").toHaveAccessibleName(identity, {
         timeout: 15_000,
@@ -94,11 +104,14 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
     async () => {
       const choice = await asked();
       await choice.filter.fill(two);
-      await expect(choice.option(idOne), "the option of the one-space API's ID, after the filter").toHaveCount(0);
-      await expect(choice.option(idTwo), "the option of the two-space API's ID, after the filter").toBeVisible();
+      // The list as it stands once it has read for the filter.
+      await expect
+        .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list after the name', timeout: 20_000 })
+        .toEqual(filtered);
       expect(await drawnText(choice.label(idTwo)), "the label of the option left").toBe(identity);
       const whole = await drawnText(choice.option(idTwo));
       expect(whole.replace(identity, '').trim(), `what the option shows beside its label, of "${whole}"`).toBe(idTwo);
+      expect(await offeredNow(page, [idOne, idTwo]), 'the same list, after it was read').toEqual(filtered);
     },
   );
 
@@ -107,14 +120,20 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
     async () => {
       const choice = await asked();
       await choice.filter.fill(two);
-      await expect(choice.option(idOne), "the option of the one-space API's ID, after the name").toHaveCount(0);
+      await expect
+        .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list after the name', timeout: 20_000 })
+        .toEqual(filtered);
       await choice.filter.fill('');
-      await expect(choice.option(idOne), "the option of the one-space API's ID, the filter cleared").toBeVisible();
-      await expect(choice.option(idTwo), "the option of the two-space API's ID, the filter cleared").toBeVisible();
+      await expect
+        .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list, the filter cleared', timeout: 20_000 })
+        .toEqual({ reading: false, offered: [idOne, idTwo] });
       await choice.filter.fill(idTwo);
-      await expect(choice.option(idOne), "the option of the one-space API's ID, after the ID").toHaveCount(0);
-      await expect(choice.option(idTwo), "the option of the two-space API's ID, after the ID").toBeVisible();
+      // The list as it stands once it has read for the ID.
+      await expect
+        .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list after the ID', timeout: 20_000 })
+        .toEqual(filtered);
       expect(await drawnText(choice.label(idTwo)), 'the label of the option left').toBe(identity);
+      expect(await offeredNow(page, [idOne, idTwo]), 'the same list, after it was read').toEqual(filtered);
       await choice.option(idTwo).click();
       await expect(choice.option(idTwo), 'the list after the choice').toHaveCount(0);
       expect(await drawnText(choice.trigger), 'what the closed field shows').toContain(identity);
@@ -127,8 +146,8 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
   await lines.line(
     'On APIs select the two-space API and choose to delete it → the dialog is named "Delete API <identity>?"; type the name with its two spaces and confirm → the emulator holds the one-space API and not the two-space one',
     async () => {
-      const list = await listed();
-      await list.locator(control(identity)).check();
+      const { rowTwo } = await listed();
+      await control(rowTwo, identity).check();
       await button(page, 'Delete').click();
       await expect(modalDialog(page), "the dialog's accessible name").toHaveAccessibleName(`Delete API ${identity}?`);
       await dialogContent(page).getByRole('textbox').fill(two);

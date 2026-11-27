@@ -10,17 +10,19 @@
 // Words, readers and direct calls: `services/s3/`.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
+import type { Locator } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
-import { crumbLink, crumbs } from './support/aws-area';
+import { crumbAt, crumbs } from './support/aws-area';
 import { ACTION, addressOf, titleOf } from './support/frame';
 import { Lines } from './support/lines';
 import {
-  cellOfRowWith,
   checkPrefix,
   drawnText,
   headerHeading,
+  modalContent,
   modalDialog,
+  rowReading,
   SPACE_ESCAPE,
   twoSpaceIdentity,
 } from './support/service-screens';
@@ -32,7 +34,6 @@ import {
   objectAddress,
   objectPage,
   OVERVIEW,
-  rowCheckbox,
   sectionPairs,
 } from './services/s3/s3-object-page';
 import { showHistory } from './services/s3/object-versions';
@@ -40,6 +41,8 @@ import { objectsAddress, objectsTab } from './services/s3/s3-objects';
 
 const BODY_ONE = 'one';
 const BODY_TWO = 'the two-space body';
+/** The name of the delete dialog's list of what is selected. */
+const SELECTED_LIST = 'Selected objects and folders';
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }) => {
@@ -70,10 +73,15 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
     await openObjectsTab(page, bucket, prefix);
     await expect(tab.keyLink(shown), `the link named "${shown}"`).toBeVisible({ timeout: 15_000 });
   };
-  /** Opens the two-space object's page by its link on Objects and waits for its overview. */
+  const link = (row: Locator, name: string) => row.getByRole('link', { name, exact: true });
+  const selection = (row: Locator, name: string) => row.getByRole('checkbox', { name: `Select ${name}`, exact: true });
+  // On Objects column 1 is the selection control's, column 2 the key.
+  /** The row of the two-space object on Objects: the one whose key reads with its two spaces, then the identity. */
+  const rowOfTwo = async () => (await rowReading(tab.table, 2, `${two} (${identity})`)).row;
+  /** Opens the two-space object's page by the link of its row on Objects and waits for its overview. */
   const objectOfTwo = async () => {
     await objects(identity);
-    await tab.keyLink(identity).click(ACTION);
+    await link(await rowOfTwo(), identity).click(ACTION);
     await expect(page, "the two-space object's address").toHaveURL(addressOf(objectAddress(bucket, two)));
     await expect(objectPage(page).section(OVERVIEW), `"${OVERVIEW}"`).toBeVisible({ timeout: 15_000 });
   };
@@ -82,14 +90,16 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
     "Open the bucket's Objects → links and selection controls of each object, the two-space and the tab ones named by their identities, and the two folders' links; the two-space row reads the name with its two spaces, followed by the identity in brackets",
     async () => {
       await objects(identity);
-      for (const name of [one, identity, tabIdentity, folderOne, `${folderTwoIdentity}/`]) {
+      // Each object's row is found by the key it reads; its link and its selection control are that row's.
+      const rowTwo = await rowOfTwo();
+      await expect(link(rowTwo, identity), `the two-space row's link, named "${identity}"`).toHaveCount(1);
+      await expect(selection(rowTwo, identity), `the two-space row's control "Select ${identity}"`).toHaveCount(1);
+      const rowOne = (await rowReading(tab.table, 2, one)).row;
+      await expect(link(rowOne, one), `the one-space row's link, named "${one}"`).toHaveCount(1);
+      await expect(selection(rowOne, one), `the one-space row's control "Select ${one}"`).toHaveCount(1);
+      for (const name of [tabIdentity, folderOne, `${folderTwoIdentity}/`]) {
         await expect(tab.keyLink(name), `the link named "${name}"`).toHaveCount(1);
       }
-      await expect(rowCheckbox(page, one), `the selection control "Select ${one}"`).toHaveCount(1);
-      await expect(rowCheckbox(page, identity), `the selection control "Select ${identity}"`).toHaveCount(1);
-      // Column 1 is the selection control's, column 2 the key.
-      const cell = await cellOfRowWith(tab.table, page.getByRole('link', { name: identity, exact: true }), 2);
-      expect(await drawnText(cell), "the two-space row's key as drawn").toBe(`${two} (${identity})`);
     },
   );
 
@@ -103,9 +113,12 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
       expect((await crumbs(page)).at(-1), 'the last crumb').toBe(folderTwoIdentity);
       await tab.keyLink('in-two').click(ACTION);
       await expect(objectPage(page).section(OVERVIEW), `"${OVERVIEW}"`).toBeVisible({ timeout: 15_000 });
-      const link = crumbLink(page, folderTwoIdentity);
-      await expect(link, "the folder's crumb, a link").toHaveCount(1);
-      const target = new URL((await link.getAttribute('href')) ?? '', 'http://127.0.0.1');
+      // The folder's crumb is the one before the object's, the last; it is found by its place among the crumbs.
+      const shown = await crumbs(page);
+      const crumb = crumbAt(page, shown.length - 2);
+      expect(await drawnText(crumb), "the folder's crumb as drawn").toBe(folderTwoIdentity);
+      await expect(crumb, "the folder's crumb, a link").toHaveAttribute('href', /./);
+      const target = new URL((await crumb.getAttribute('href')) ?? '', 'http://127.0.0.1');
       expect(
         { path: target.pathname, prefix: target.searchParams.get('prefix') },
         "where the folder's crumb leads",
@@ -133,9 +146,12 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
       const control = page.getByRole('radio', { name: new RegExp(`^Select ${escaped(identity)} version `) });
       await expect(control, 'the selection control of the two-space key').toHaveCount(1, { timeout: 15_000 });
       const versions = page.locator(createWrapper().findTable().toSelector()).filter({ has: control });
-      // Column 1 is the selection control's, column 2 the key.
-      const cell = await cellOfRowWith(versions, control, 2);
-      expect(await drawnText(cell), "the two-space key's cell as drawn").toBe(`${two} (${identity})`);
+      // Column 1 is the selection control's, column 2 the key: the row is found by the key it reads.
+      const { row } = await rowReading(versions, 2, `${two} (${identity})`);
+      await expect(
+        row.getByRole('radio', { name: new RegExp(`^Select ${escaped(identity)} version `) }),
+        "the selection control of the two-space key's row",
+      ).toHaveCount(1);
     },
   );
 
@@ -160,13 +176,17 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
     "On Objects select the key with a tab and choose to delete → the dialog's list of what is selected reads the key followed by its identity in brackets; confirm → the emulator holds no object of that key and still the one-space object",
     async () => {
       await objects(tabIdentity);
-      await rowCheckbox(page, tabIdentity).check(ACTION);
+      const { row } = await rowReading(tab.table, 2, `${tabKey} (${tabIdentity})`);
+      await selection(row, tabIdentity).check(ACTION);
       await tab.table.getByRole('button', { name: 'Delete', exact: true }).click(ACTION);
       await expect(dialog.confirm, 'the dialog').toBeVisible(ACTION);
-      // The dialog fades in: its text is read until it is drawn.
+      // What is selected is the dialog's list of that name, in its content; one key is selected, so one entry.
+      const entries = modalContent(page).getByRole('list', { name: SELECTED_LIST, exact: true }).getByRole('listitem');
+      await expect(entries, 'the entries of the list of what is selected').toHaveCount(1);
+      // The dialog fades in: the entry is read until it is drawn.
       await expect
-        .poll(() => drawnText(modalDialog(page)), { message: 'what the dialog lists as selected', ...ACTION })
-        .toContain(`${tabKey} (${tabIdentity})`);
+        .poll(() => drawnText(entries), { message: 'the entry of the selected key', ...ACTION })
+        .toBe(`${tabKey} (${tabIdentity})`);
       await dialog.confirm.fill(CONFIRM_WORD);
       await dialog.delete.click(ACTION);
       await expect(tab.keyLink(tabIdentity), 'the row after the deletion').toHaveCount(0, { timeout: 15_000 });

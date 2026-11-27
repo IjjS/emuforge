@@ -9,10 +9,12 @@
 // which a space next to another is written as a backslash and `u0020` (`SPACE_ESCAPE`). What the emulator holds is
 // read directly. Words, direct calls and readers: `services/dynamodb/dynamodb.ts`.
 
+import type { Locator } from '@playwright/test';
+
 import { expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
 import { Lines } from './support/lines';
-import { cellOfRowWith, checkPrefix, drawnText, SPACE_ESCAPE } from './support/service-screens';
+import { checkPrefix, rowReading, SPACE_ESCAPE } from './support/service-screens';
 import {
   closeDialog,
   confirmWith,
@@ -42,8 +44,13 @@ test('studio.dynamodb-item-keys-that-differ-by-spaces-are-told-apart', async ({ 
   /** An item's name on the screen: its key as JSON, the sort key's value written as `sort`. */
   const keyName = (sort: string) => `{"pk":{"S":"${p}"},"sk":{"S":"${sort}"}}`;
   const s = tableScreen(page);
-  const opener = (sort: string) => s.table.getByRole('button', { name: keyName(sort), exact: true });
-  const control = (sort: string) => s.table.getByRole('checkbox', { name: `Select ${keyName(sort)}`, exact: true });
+  const opener = (row: Locator, sort: string) => row.getByRole('button', { name: keyName(sort), exact: true });
+  const control = (row: Locator, sort: string) =>
+    row.getByRole('checkbox', { name: `Select ${keyName(sort)}`, exact: true });
+  // Column 1 is the selection control's, column 2 `pk`, column 3 `sk`; a cell starts with the value's type, `S`. A
+  // row is found by the sort key it reads; its button and its selection control are that row's.
+  const rowOfOne = async () => (await rowReading(s.table, 3, 'S a b')).row;
+  const rowOfTwo = async () => (await rowReading(s.table, 3, `S a  b (${sortIdentity})`)).row;
   /** Opens the table's items and waits for its two rows. */
   const listed = async () => {
     await open(page, tablePath(name), name);
@@ -54,19 +61,18 @@ test('studio.dynamodb-item-keys-that-differ-by-spaces-are-told-apart', async ({ 
     "Open the table's items → a button and a selection control named by each item's key, the two-space one by its identity; the sort key's cell of the two-space row reads the value with its two spaces, followed by the identity in brackets",
     async () => {
       await listed();
-      await expect(opener('a b'), `the button named ${keyName('a b')}`).toHaveCount(1);
-      await expect(opener(sortIdentity), `the button named ${keyName(sortIdentity)}`).toHaveCount(1);
-      await expect(control('a b'), `the selection control "Select ${keyName('a b')}"`).toHaveCount(1);
-      await expect(control(sortIdentity), `the selection control "Select ${keyName(sortIdentity)}"`).toHaveCount(1);
-      // Column 1 is the selection control's, column 2 `pk`, column 3 `sk`; a cell starts with the value's type, `S`.
-      const cell = await cellOfRowWith(s.table, page.getByRole('checkbox', { name: `Select ${keyName(sortIdentity)}`, exact: true }), 3);
-      expect(await drawnText(cell), "the two-space item's sort key as drawn").toBe(`S a  b (${sortIdentity})`);
+      const rowTwo = await rowOfTwo();
+      await expect(opener(rowTwo, sortIdentity), `the two-space row's button, named ${keyName(sortIdentity)}`).toHaveCount(1);
+      await expect(control(rowTwo, sortIdentity), `the two-space row's control "Select ${keyName(sortIdentity)}"`).toHaveCount(1);
+      const rowOne = await rowOfOne();
+      await expect(opener(rowOne, 'a b'), `the one-space row's button, named ${keyName('a b')}`).toHaveCount(1);
+      await expect(control(rowOne, 'a b'), `the one-space row's control "Select ${keyName('a b')}"`).toHaveCount(1);
     },
   );
 
   await lines.line("Press the button of the two-space key → the item opened holds the two-space item's attribute", async () => {
     await listed();
-    await opener(sortIdentity).click(ACTION);
+    await opener(await rowOfTwo(), sortIdentity).click(ACTION);
     await expect(s.editor, "the item's editor").toBeVisible(ACTION);
     expect(await editorItem(page), 'the item opened').toEqual(itemTwo);
     await closeDialog(page);
@@ -76,7 +82,7 @@ test('studio.dynamodb-item-keys-that-differ-by-spaces-are-told-apart', async ({ 
     "Select the two-space item and delete it → the emulator's table holds the one-space item and not the two-space one",
     async () => {
       await listed();
-      await control(sortIdentity).check(ACTION);
+      await control(await rowOfTwo(), sortIdentity).check(ACTION);
       await s.del.click(ACTION);
       await confirmWith(page, 'delete', 'Delete');
       await expectFlash(page, 'success', itemsDeleted(1, name));

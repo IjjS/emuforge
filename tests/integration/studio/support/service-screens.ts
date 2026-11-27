@@ -7,7 +7,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 
-import type { Ctx } from './check';
+import { expect, type Ctx } from './check';
 
 /**
  * The check's own prefix `<p>`: `efit-<run id>-<tag>`. Each check passes its own `tag`, none of which starts with
@@ -98,32 +98,36 @@ export function twoSpaceIdentity(stem: string): string {
 }
 
 /**
- * The text of the one element `locator` as it is drawn: the text a reader sees, in order. Text that takes no room
- * on the screen is left out (an element not displayed, hidden, of opacity 0 or of font size 0, as the area's text
- * for assistive technology beside a name); where the browser collapses white space a run of it is one space, and
- * where it keeps it the spaces and tabs stay as they are. Spaces at the two ends are trimmed.
+ * The text of the one element `locator` as the browser draws it: its rendered text (`innerText`), which the layout
+ * decides, so white space the browser collapses is one space, also across two elements side by side, and the spaces
+ * and tabs it keeps stay as they are. Text that takes no room on the screen is left out: what is not displayed or
+ * hidden is none of an element's rendered text, and an element of opacity 0 or of font size 0 (the area's text for
+ * assistive technology beside a name) is taken out of the layout for the length of the read, in the one task that
+ * reads, and put back as it was. White space at the two ends is trimmed.
  */
 export async function drawnText(locator: Locator): Promise<string> {
-  return locator.evaluate((root) => {
-    let out = '';
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      let drawn = true;
-      for (let e = node.parentElement; e !== null; e = e === root ? null : e.parentElement) {
-        const style = getComputedStyle(e);
-        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.fontSize === '0px') {
-          drawn = false;
-          break;
+  return locator.evaluate(
+    (root) => {
+      const unseen: { element: HTMLElement; style: string | null }[] = [];
+      for (const element of root.querySelectorAll<HTMLElement>('*')) {
+        const style = getComputedStyle(element);
+        if (style.opacity === '0' || style.fontSize === '0px') {
+          unseen.push({ element, style: element.getAttribute('style') });
         }
       }
-      if (!drawn || node.parentElement === null) continue;
-      const style = getComputedStyle(node.parentElement) as CSSStyleDeclaration & { whiteSpaceCollapse?: string };
-      const collapse = style.whiteSpaceCollapse ?? (style.whiteSpace.startsWith('pre') || style.whiteSpace === 'break-spaces' ? 'preserve' : 'collapse');
-      const text = node.textContent ?? '';
-      out += collapse === 'collapse' ? text.replace(/[ \t\n\r\f]+/g, ' ') : text;
-    }
-    return out.replace(/^ +| +$/g, '');
-  }, undefined, { timeout: 15_000 });
+      try {
+        for (const { element } of unseen) element.style.setProperty('display', 'none', 'important');
+        return (root as HTMLElement).innerText.replace(/^[ \n]+|[ \n]+$/g, '');
+      } finally {
+        for (const { element, style } of unseen) {
+          if (style === null) element.removeAttribute('style');
+          else element.setAttribute('style', style);
+        }
+      }
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
 }
 
 /** The `h1` of the page's Cloudscape header: found from the header's heading text, for its accessible name. */
@@ -137,25 +141,86 @@ export function modalDialog(page: Page): Locator {
   return page.locator(createWrapper().findModal().toSelector()).filter({ visible: true }).locator('xpath=descendant-or-self::*[@role="dialog"]');
 }
 
+/** The content of the open modal: what the dialog says and asks, without its header and footer. */
+export function modalContent(page: Page): Locator {
+  return page.locator(createWrapper().findModal().findContent().toSelector()).filter({ visible: true });
+}
+
+/** A data row of a Cloudscape table and one of its cells. */
+export interface TableRow {
+  /** The row: its links, buttons and selection control are found by role within it. */
+  row: Locator;
+  /** The cell the row was found by. */
+  cell: Locator;
+}
+
 /**
- * In the Cloudscape table whose root is `table`: the cell under column `column` (1 the first, the selection column
- * counted) of the one data row that holds `control`. The rows and the cell are found with Cloudscape's selectors;
- * `control` is a link, a button or a selection control found by role and name.
+ * In the Cloudscape table whose root is `table`: the one data row whose cell under column `column` (1 the first, the
+ * selection column counted) reads `text` as drawn (`drawnText`), waited for. The rows and the cell are found with
+ * Cloudscape's selectors. A failure says what the column's cells read last.
  */
-export async function cellOfRowWith(table: Locator, control: Locator, column: number): Promise<Locator> {
+export async function rowReading(table: Locator, column: number, text: string): Promise<TableRow> {
   const below = (selector: { toSelector(): string }) =>
     selector
       .toSelector()
       .replace(/^body /, '')
       .replace(/^\[class\*="awsui_root_\w+"\] /, '');
   const rows = table.locator(below(createWrapper().findTable().findRows()));
-  const row = rows.filter({ has: control });
-  await row.waitFor({ state: 'visible', timeout: 15_000 });
-  const count = await rows.count();
-  for (let i = 0; i < count; i++) {
-    if ((await rows.nth(i).filter({ has: control }).count()) === 1) {
-      return table.locator(below(createWrapper().findTable().findBodyCell(i + 1, column)));
-    }
+  const cellOf = (index: number) => table.locator(below(createWrapper().findTable().findBodyCell(index + 1, column)));
+  let read: string[] = [];
+  let found: number[] = [];
+  try {
+    await expect
+      .poll(
+        async () => {
+          try {
+            const count = await rows.count();
+            read = [];
+            for (let i = 0; i < count; i++) read.push(await drawnText(cellOf(i)));
+          } catch {
+            // The table drew its rows again during the read: it is read once more.
+            read = [];
+          }
+          found = read.flatMap((each, i) => (each === text ? [i] : []));
+          return found.length;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(1);
+  } catch {
+    throw new Error(
+      `the table has ${String(found.length)} rows whose column ${String(column)} reads ${JSON.stringify(text)}; the column reads ${JSON.stringify(read)}`,
+    );
   }
-  throw new Error('the table holds no row with the control asked for');
+  return { row: rows.nth(found[0]!), cell: cellOf(found[0]!) };
+}
+
+/**
+ * What the open list of the page's one open select or multiselect offers at one moment: whether it says it is still
+ * reading (its status line), and which of `values` have an option drawn in it, in the order given. Read in one step,
+ * so a check asserts on one list and not on two states of it.
+ */
+export async function offeredNow(page: Page, values: string[]): Promise<{ reading: boolean; offered: string[] }> {
+  const select = createWrapper().findSelect();
+  const multiselect = createWrapper().findMultiselect();
+  return page.evaluate(
+    ({ status, options }) => {
+      const drawn = (selector: string) =>
+        [...document.querySelectorAll(selector)].some((element) => element.getClientRects().length > 0);
+      return {
+        reading: status.some(drawn),
+        offered: options.filter((each) => each.selectors.some(drawn)).map((each) => each.value),
+      };
+    },
+    {
+      status: [select.findStatusIndicator().toSelector(), multiselect.findStatusIndicator().toSelector()],
+      options: values.map((value) => ({
+        value,
+        selectors: [
+          select.findDropdown().findOptionByValue(value).toSelector(),
+          multiselect.findDropdown().findOptionByValue(value).toSelector(),
+        ],
+      })),
+    },
+  );
 }
