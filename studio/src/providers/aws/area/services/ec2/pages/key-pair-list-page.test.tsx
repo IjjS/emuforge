@@ -341,6 +341,32 @@ describe('the key pairs list', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('distinguishes key pairs with repeated spaces and deletes by the stored name', async () => {
+    const name = 'dev  key';
+    const identity = 'dev\\u0020\\u0020key';
+    vi.mocked(api.listKeyPairs).mockResolvedValue([keyPair('dev key'), keyPair(name)]);
+    vi.mocked(api.deleteKeyPair).mockResolvedValue(undefined);
+    open();
+
+    expect(await screen.findByRole('radio', { name: 'dev key' })).toBeInTheDocument();
+    const selection = screen.getByRole('radio', { name: identity });
+    const row = selection.closest('tr');
+    expect(row?.querySelector('.aws-area-value-name')?.parentElement?.textContent).toBe(`${name} (${identity})`);
+
+    fireEvent.click(selection);
+    fireEvent.click(action('Delete'));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete key pair?' });
+    const drawn = within(dialog).getByText(`(${identity})`).parentElement;
+    expect(drawn?.textContent).toBe(`${name} (${identity})`);
+    expect(drawn?.parentElement?.textContent).toContain(' is deleted from the local emulator.');
+    vi.mocked(api.listKeyPairs).mockResolvedValue([keyPair('dev key')]);
+    await confirmDelete();
+    await waitFor(() => {
+      expect(api.deleteKeyPair).toHaveBeenCalledWith(ENGINE, name, expect.any(AbortSignal));
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('a failed delete → the failure in the flash, the dialog closed and the row stays', async () => {
     vi.mocked(api.listKeyPairs).mockResolvedValue([keyPair('dev')]);
     vi.mocked(api.deleteKeyPair).mockRejectedValue(

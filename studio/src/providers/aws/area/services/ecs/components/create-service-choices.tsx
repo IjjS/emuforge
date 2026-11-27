@@ -12,6 +12,7 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { optional } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { Code, readFailureState } from '../../../components/failure-states';
+import { identityOption } from '../../../components/name-identity';
 import { useFollow } from '../../../components/use-follow';
 import { usePagedChoices, type ChoiceSource, type PagedChoices } from '../../../components/use-paged-choices';
 import { revealBelowBreadcrumbs } from './reveal-below-breadcrumbs';
@@ -127,7 +128,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   const controls = {
     ...optional({ placeholder, invalid: error === undefined ? undefined : true }),
     disabled,
-    options: disabled ? [] : items.map(source.optionOf),
+    options: disabled ? [] : items.map((item) => identityOption(source.optionOf(item))),
     statusType: listing.loading ? ('loading' as const) : ('finished' as const),
     loadingText: `Loading ${label.toLowerCase()}`,
     renderDropdownFooter: () =>
@@ -167,7 +168,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
               key={disabled ? 'unavailable' : 'available'}
               {...controls}
               ref={multiRef}
-              selectedOptions={value.map(source.optionOf)}
+              selectedOptions={value.map((item) => identityOption(source.optionOf(item)))}
               deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
               onChange={({ detail }) => {
                 if (disabled) return;
@@ -186,7 +187,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
               {...controls}
               ref={selectRef}
               dropdownRole="dialog"
-              selectedOption={value === undefined ? null : source.optionOf(value)}
+              selectedOption={value === undefined ? null : identityOption(source.optionOf(value))}
               onChange={({ detail }) => {
                 if (disabled) return;
                 const found = items.find((item) => source.optionOf(item).value === detail.selectedOption.value);

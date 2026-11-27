@@ -49,6 +49,16 @@ describe('"Terminate instance?"', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it('draws the Name tag with both spaces and its identity in the confirmation sentence', async () => {
+    const name = 'dev  instance';
+    const identity = 'dev\\u0020\\u0020instance';
+    render(<InArea visible label={name} pending={false} onConfirm={vi.fn()} onDismiss={vi.fn()} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Terminate instance?' });
+    const drawn = within(dialog).getByText(`(${identity})`).parentElement;
+    expect(drawn?.textContent).toBe(`${name} (${identity})`);
+    expect(drawn?.parentElement?.textContent).toContain(' is terminated in the local emulator. This cannot be undone.');
+  });
+
   it('an instance without a name is named by its ID', async () => {
     render(<InArea visible label="i-0abc" pending={false} onConfirm={vi.fn()} onDismiss={vi.fn()} />);
     const dialog = await screen.findByRole('dialog');
