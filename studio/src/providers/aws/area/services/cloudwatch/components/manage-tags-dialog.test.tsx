@@ -1,8 +1,10 @@
 import type { Tag } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useRef } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { AreaRootContext } from '../../../area-root';
 import { ManageTagsDialog } from './manage-tags-dialog';
 
 const endpoint = 'http://127.0.0.1:8310';
@@ -60,24 +62,32 @@ afterEach(() => vi.unstubAllGlobals());
 async function open(initialTags: Tag[] = initial) {
   const onSaved = vi.fn();
   const onDismiss = vi.fn();
-  const view = render(
-    <ManageTagsDialog
-      endpoint={endpoint}
-      arn={arn}
-      initialTags={initialTags}
-      tags={{ value: undefined, failure: undefined, loading: false, refresh }}
-      unavailable={new Set()}
-      onUnavailable={vi.fn()}
-      onSaved={() => {
-        onSaved();
-        view.unmount();
-      }}
-      onDismiss={() => {
-        onDismiss();
-        view.unmount();
-      }}
-    />,
-  );
+  function Area() {
+    const root = useRef<HTMLDivElement>(null);
+    return (
+      <AreaRootContext.Provider value={root}>
+        <div ref={root}>
+          <ManageTagsDialog
+            endpoint={endpoint}
+            arn={arn}
+            initialTags={initialTags}
+            tags={{ value: undefined, failure: undefined, loading: false, refresh }}
+            unavailable={new Set()}
+            onUnavailable={vi.fn()}
+            onSaved={() => {
+              onSaved();
+              view.unmount();
+            }}
+            onDismiss={() => {
+              onDismiss();
+              view.unmount();
+            }}
+          />
+        </div>
+      </AreaRootContext.Provider>
+    );
+  }
+  const view = render(<Area />);
   await screen.findByRole('dialog');
   const modal = page.findModal()!;
   const content = modal.findContent();
