@@ -157,7 +157,7 @@ export function EngineVersionField({
         fixed="The emulator's default"
         fixedDescription={
           defaultVersion === undefined
-            ? undefined
+            ? 'The emulator uses its default version when none is sent.'
             : `${defaultVersion}, the version the emulator creates when none is sent.`
         }
         value={value}
