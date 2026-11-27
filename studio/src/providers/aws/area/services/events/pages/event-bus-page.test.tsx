@@ -66,10 +66,9 @@ it('reads its bus, then the tags by returned ARN and rules by name, and offers l
   expect(layout.findContent().findStatusIndicator()?.getElement().textContent).toBe('Loading event bus');
 
   await act(async () => answer(bus));
-  await waitFor(() => {
-    expect(listResourceTags).toHaveBeenCalledExactlyOnceWith(endpoint, arn, expect.any(AbortSignal));
-    expect(listRules).toHaveBeenCalledExactlyOnceWith(endpoint, '..', '', undefined, expect.any(AbortSignal));
-  });
+  await waitFor(() => expect(layout.findContent().findAllTables()).toHaveLength(2));
+  expect(listResourceTags).toHaveBeenCalledExactlyOnceWith(endpoint, arn, expect.any(AbortSignal));
+  expect(listRules).toHaveBeenCalledExactlyOnceWith(endpoint, '..', '', undefined, expect.any(AbortSignal));
   const header = layout.findHeader();
   const create = header?.findButton('a[href^="/aws/events/rules/create"]')?.getElement();
   expect(create).toHaveAccessibleName('Create rule');

@@ -66,8 +66,9 @@ it.each([
   ['?bus=orders', 'orders'],
 ])('lists the chosen bus for %j', async (query, bus) => {
   vi.mocked(getEventBus).mockResolvedValueOnce(returnedBus);
-  const { select, resources } = renderPage(query);
-  await waitFor(() => expect(select.findTrigger().getElement().textContent).toBe(bus));
+  const { page, select, resources } = renderPage(query);
+  await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement().textContent).toBe('No rules'));
+  expect(select.findTrigger().getElement().textContent).toBe(bus);
   expect(listRules).toHaveBeenCalledExactlyOnceWith(endpoint, bus, '', undefined, expect.any(AbortSignal));
   expect(resources).toHaveBeenCalledWith({ word: 'rules' });
   if (query) expect(getEventBus).toHaveBeenCalledExactlyOnceWith(endpoint, bus, expect.any(AbortSignal));
@@ -89,9 +90,8 @@ it('choosing a bus changes the query, empties the filter, starts on page one and
   const next = page.findPagination()?.findNextPageButton();
   if (!next) throw new Error('Expected the next page control');
   fireEvent.click(next.getElement());
-  await waitFor(() =>
-    expect(listRules).toHaveBeenLastCalledWith(endpoint, 'default', 'ship', 'page2', expect.any(AbortSignal)),
-  );
+  await waitFor(() => expect(page.findTable()?.findRows()[0]?.findLink()?.getElement().textContent).toBe('shipping'));
+  expect(listRules).toHaveBeenLastCalledWith(endpoint, 'default', 'ship', 'page2', expect.any(AbortSignal));
 
   select.openDropdown();
   await waitFor(() => expect(select.findDropdown().findOption(1)?.findLabel().getElement().textContent).toBe('orders'));
@@ -118,8 +118,8 @@ it.each([
     name === ''
       ? 'The address names no event bus. Choose an event bus.'
       : `Event bus ${name} is not in your local emulator. Choose an event bus.`;
-  await waitFor(() => expect(field.findError()?.getElement().textContent).toBe(message));
-  expect(select.findTrigger().getElement().textContent).toBe(name || 'Choose an event bus');
+  await waitFor(() => expect(select.findTrigger().getElement().textContent).toBe(name || 'Choose an event bus'));
+  expect(field.findError()?.getElement().textContent).toBe(message);
   const panels = layout.findContent().findAllContainers();
   expect(panels.at(-1)?.findContent().getElement().textContent).toBe(message);
   expect(listRules).not.toHaveBeenCalled();
@@ -141,8 +141,7 @@ it('reports an unimplemented DescribeEventBus at the field and waits for Retry b
   const retry = page.findContainer()?.findContent().findButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
   retry?.click();
-  await waitFor(() =>
-    expect(listRules).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', '', undefined, expect.any(AbortSignal)),
-  );
+  await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement().textContent).toBe('No rules'));
+  expect(listRules).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', '', undefined, expect.any(AbortSignal));
   expect(getEventBus).toHaveBeenCalledTimes(2);
 });
