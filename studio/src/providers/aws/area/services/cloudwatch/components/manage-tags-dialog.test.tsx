@@ -173,6 +173,12 @@ it('keeps the draft and reads again when the removal is refused', async () => {
   fireEvent.click(edit.save);
   await waitFor(() => expect(edit.alertText()).toEqual([expect.stringContaining('UntagResource failed')]));
   expect(edit.alertText()[0]).toContain('Tag change refused.');
+  await waitFor(() => {
+    expect(edit.content.findAlert()?.find('[role="group"]')?.getElement()).toHaveFocus();
+    expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent(
+      'UntagResource failed ValidationException: Tag change refused.',
+    );
+  });
   expect(edit.field(1, 1)).toHaveValue('b');
   expect(edit.field(2, 1)).toHaveValue('c');
   expect(edit.onSaved).not.toHaveBeenCalled();
@@ -186,9 +192,11 @@ it('keeps outside additions and retries only the outstanding addition after a pa
     200,
     Response.json({ __type: 'InvalidParameterValueException', message: reason }, { status: 400 }),
   );
-  refresh.mockResolvedValue({ value: [...removed, { Key: 'outside', Value: 'external value' }] });
+  const read = deferred<ReadResult>();
+  refresh.mockReturnValueOnce(read.promise);
   const edit = await open();
   edit.replaceA();
+  edit.save.focus();
   fireEvent.click(edit.save);
   await waitFor(() => {
     const partial = edit.content.findAlert()?.findContent().getElement();
@@ -198,6 +206,13 @@ it('keeps outside additions and retries only the outstanding addition after a pa
     expect(partial).toHaveTextContent('InvalidParameterValueException');
   });
   expect(refresh).toHaveBeenCalledOnce();
+  expect(edit.save).toHaveFocus();
+  expect(edit.content.find('[role="alert"]')?.getElement()).toBeEmptyDOMElement();
+  await act(async () => read.resolve({ value: [...removed, { Key: 'outside', Value: 'external value' }] }));
+  expect(edit.content.findAlert()?.find('[role="group"]')?.getElement()).toHaveFocus();
+  expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent(
+    `The removals were saved. The added and changed tags were not: TagResource: ${reason} (InvalidParameterValueException)`,
+  );
   expect(edit.field(2, 1)).toHaveValue('c');
   expect(edit.content.getElement()).toHaveTextContent('Added outside this dialog');
   expect(edit.content.getElement()).toHaveTextContent('outside');

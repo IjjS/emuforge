@@ -1,4 +1,4 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import AttributeEditor from '@cloudscape-design/components/attribute-editor';
 import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
@@ -61,6 +61,7 @@ export function ManageTagsDialog({
   const saveButton = useRef<ButtonProps.Ref>(null);
   const cancelButton = useRef<ButtonProps.Ref>(null);
   const retryButton = useRef<ButtonProps.Ref>(null);
+  const writeFailureAlert = useRef<AlertProps.Ref>(null);
   const fields = useRef(new Map<string, InputProps.Ref>());
   const [opened] = useState(() => tagRows(initialTags));
   const [draft, setDraft] = useState(opened);
@@ -69,6 +70,7 @@ export function ManageTagsDialog({
   const [pending, setPending] = useState(false);
   const [reading, setReading] = useState(false);
   const [failedRead, setFailedRead] = useState<{ failure?: RequestFailure }>();
+  const [retrySucceeded, setRetrySucceeded] = useState(false);
   const [saveFailure, setSaveFailure] = useState<{ refusal: RequestFailure; removalsSaved: boolean }>();
 
   const current = tags.value === undefined ? latest : tagRows(tags.value);
@@ -106,6 +108,13 @@ export function ManageTagsDialog({
       )}
     </>
   );
+  const writeFailureDetail = feedback && refusal && (
+    <>
+      {(refusal.kind === 'engine-did-not-answer' || refusal.kind === 'emulator-did-not-answer') &&
+        `${refusal.operation} failed. `}
+      {feedback.content}
+    </>
+  );
   const readState = failedRead?.failure && readFailureState(failedRead.failure, connection, 'tags');
   const inFlight = pending || reading;
   const saveDisabled = failedRead !== undefined || (!inFlight && unsupported !== undefined);
@@ -114,12 +123,14 @@ export function ManageTagsDialog({
     if (inFlight || !saveFailure) return;
     if (failedRead) {
       retryButton.current?.focus();
+    } else if (!retrySucceeded) {
+      writeFailureAlert.current?.focus();
     } else if (saveFailure.refusal.kind === 'not-implemented') {
       cancelButton.current?.focus();
     } else {
       saveButton.current?.focus();
     }
-  }, [failedRead, inFlight, saveFailure]);
+  }, [failedRead, inFlight, retrySucceeded, saveFailure]);
 
   async function reread(signal: AbortSignal) {
     setReading(true);
@@ -127,6 +138,7 @@ export function ManageTagsDialog({
     if (signal.aborted) return;
     if (result && 'value' in result) {
       setLatest(tagRows(result.value));
+      setRetrySucceeded(failedRead !== undefined);
       setFailedRead(undefined);
     } else {
       setFailedRead(result ?? {});
@@ -160,6 +172,7 @@ export function ManageTagsDialog({
     const signal = pageSignal();
     busy.current = true;
     setPending(true);
+    setRetrySucceeded(false);
     setSaveFailure(undefined);
     try {
       await saveAlarmTags(endpoint, arn, owed, signal);
@@ -226,12 +239,14 @@ export function ManageTagsDialog({
       }
     >
       <SpaceBetween size="m">
-        {partialResult && <Alert type="warning">{partialResult}</Alert>}
+        {partialResult && (
+          <Alert type="warning" ref={writeFailureAlert}>
+            {partialResult}
+          </Alert>
+        )}
         {feedback && refusal && partialReason === undefined && (
-          <Alert type={feedback.type} header={feedback.header}>
-            {(refusal.kind === 'engine-did-not-answer' || refusal.kind === 'emulator-did-not-answer') &&
-              `${refusal.operation} failed. `}
-            {feedback.content}
+          <Alert type={feedback.type} header={feedback.header} ref={partialResult ? undefined : writeFailureAlert}>
+            {writeFailureDetail}
           </Alert>
         )}
         {reading && <StatusIndicator type="loading">Loading tags</StatusIndicator>}
@@ -304,6 +319,15 @@ export function ManageTagsDialog({
         )}
       </SpaceBetween>
       <div className="aws-area-announcer" role="alert" aria-atomic="true">
+        {!inFlight &&
+          !failedRead &&
+          !retrySucceeded &&
+          saveFailure &&
+          (partialResult || (
+            <>
+              {feedback?.header} {writeFailureDetail}
+            </>
+          ))}
         {failedRead && !reading && (
           <>
             {partialResult}
