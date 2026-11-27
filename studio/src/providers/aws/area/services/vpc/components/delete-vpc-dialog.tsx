@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { VPC_CHANGE_OPERATIONS } from '../vpc-changes-api';
 import { useDeleteVpc } from '../vpc-changes';
@@ -80,7 +81,7 @@ function Dialog({ vpc, connection, onDeleted, onDismiss }: Omit<DeleteVpcDialogP
       header="Delete VPC?"
       body={
         <>
-          <ValueText kind="name" value={vpc.label} />
+          <NameText name={vpc.label} />
           <ValueText kind="text" value={SENTENCE} />
           {failure !== undefined && (
             <Failure

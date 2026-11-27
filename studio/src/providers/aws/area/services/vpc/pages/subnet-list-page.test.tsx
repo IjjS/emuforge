@@ -218,6 +218,30 @@ async function settled() {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the subnet list', () => {
+  it('distinguishes Name tags with repeated spaces in the row, selection control and dialogs', async () => {
+    const singleSpace = subnet('subnet-b', 'p664 a b');
+    const doubleSpace = subnet('subnet-c', 'p664 a  b');
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const drawnName = `p664 a  b (${identity})`;
+    const exactText = { normalizer: (value: string) => value };
+    answer({ '|': { items: [singleSpace, doubleSpace, BARE] } });
+    open();
+
+    const selectedName = await screen.findByRole('radio', { name: identity });
+    expect(screen.getByRole('radio', { name: 'p664 a b' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: BARE.id })).toBeInTheDocument();
+    expect(rows()).toContainEqual(BARE_ROW);
+    const name = screen.getByText('p664 a  b', exactText);
+    expect(name.closest('tr')).toBe(selectedName.closest('tr'));
+    expect(name.parentElement?.textContent).toBe(drawnName);
+
+    selectRow(identity);
+    fireEvent.click(action('Delete'));
+    const deletion = await screen.findByRole('dialog', { name: 'Delete subnet?' });
+    expect(within(deletion).getByText('p664 a  b', exactText).parentElement?.textContent).toBe(drawnName);
+    expect(text(deletion)).toContain('is deleted from the local emulator');
+  });
+
   it('a row per subnet with name, subnet ID (to its page), VPC ID (to the VPC), IPv4 CIDR, Availability Zone and free addresses', async () => {
     answer({ '|': { items: [APP, BARE] } });
     const router = open();

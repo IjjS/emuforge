@@ -245,6 +245,15 @@ const refusal = (operation: string, code: string, message: string) =>
   new RequestError({ kind: 'other', operation, code, message });
 
 describe("a subnet's page", () => {
+  it('shows the exact Name tag and identifies the heading by its escaped name', async () => {
+    subnetIs({ found: true, value: subnet({ tags: [{ key: 'Name', value: 'p664 a  b' }] }) });
+    open();
+    const identity = String.raw`p664 a\u0020\u0020b`;
+    const heading = await screen.findByRole('heading', { level: 1, name: identity });
+    const name = within(heading).getByText('p664 a  b', { normalizer: (value) => value });
+    expect(name.parentElement?.textContent).toBe(`p664 a  b (${identity})`);
+  });
+
   it('the heading is its name; "Subnet details" with copy controls for the ID and the ARN, the VPC ID a link, and the public addresses with what they decide', async () => {
     open();
     await loaded();
