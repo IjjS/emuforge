@@ -1,10 +1,10 @@
 import type { Stage } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { assert, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
@@ -13,7 +13,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { PageFlashContext } from '../../../components/page-flash';
 import { useAreaFlash } from '../../../components/use-area-flash';
-import { readRestStages, readStageAddress } from '../rest-api';
+import { readRestStages } from '../rest-api';
 import { deleteRestStage, deployRestApi } from '../rest-stage-api';
 import { RestStages } from './rest-stages';
 
@@ -32,21 +32,20 @@ const stages: Stage[] = [
   { stageName: 'dev', deploymentId: 'deploy-dev', lastUpdatedDate: changed },
   { stageName: 'prod', deploymentId: 'deploy-prod' },
 ];
-const invokeUrl = (stage: string) => `${endpoint}/_aws/execute-api/${apiId}/${stage}`;
+const invokeUrl = (stage: string, base = endpoint) => `${base}/_aws/execute-api/${apiId}/${stage}`;
 const readStages = vi.mocked(readRestStages);
-const readAddress = vi.mocked(readStageAddress);
 const deploy = vi.mocked(deployRestApi);
 const remove = vi.mocked(deleteRestStage);
 
 beforeEach(() => {
   readStages.mockReset();
-  readAddress.mockReset();
   deploy.mockReset().mockResolvedValue(undefined);
   remove.mockReset().mockResolvedValue(undefined);
   readStages.mockResolvedValue(stages);
-  readAddress.mockImplementation(async (_, __, name) => invokeUrl(name));
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function StagesWithFlash({ connection }: { connection: AreaConnection }) {
   const { shown, pageFlash, dismiss, announce } = useAreaFlash('/aws/apigateway/apis/rest/api-1', 0, true);
@@ -61,8 +60,9 @@ function StagesWithFlash({ connection }: { connection: AreaConnection }) {
 function open(activeConnection = connection) {
   const user = userEvent.setup();
   const root = { current: null as HTMLDivElement | null };
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const client = new QueryClient();
+  const app = (active: AreaConnection) => (
+    <QueryClientProvider client={client}>
       <MemoryRouter>
         <AreaRootContext.Provider value={root}>
           <div
@@ -70,13 +70,14 @@ function open(activeConnection = connection) {
               root.current = element;
             }}
           >
-            <StagesWithFlash connection={activeConnection} />
+            <StagesWithFlash connection={active} />
           </div>
         </AreaRootContext.Provider>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return user;
+  const { rerender } = render(app(activeConnection));
+  return { user, setConnection: (active: AreaConnection) => rerender(app(active)) };
 }
 
 const root = () => createWrapper(document.body);
@@ -112,31 +113,130 @@ async function retryFailure(user: User, failure: HTMLElement, recovery: boolean)
   await user.click(retry);
 }
 
-it('shows stages, deployment IDs, last change and copyable invoke URLs as plain text', async () => {
-  const user = open();
+function expectAddresses(expectedNames: readonly string[], base = endpoint) {
+  expect(expectedNames.map((_, index) => addressCell(index + 1)?.textContent)).toEqual(
+    expectedNames.map((name) => invokeUrl(name, base)),
+  );
+}
+
+function expectNoAddresses() {
+  for (const row of [1, 2]) {
+    const address = addressCell(row);
+    assert(address);
+    expect(address.textContent).toBe('No local address');
+    expect(createWrapper(address).findCopyToClipboard()).toBeNull();
+  }
+  expect(table()?.getElement()).not.toHaveTextContent('amazonaws.com');
+}
+
+it('shows the two stage addresses as plain text with just one GetStages request', async () => {
+  readStages.mockReset();
+  const requests = vi.fn<(method: string, path: string) => void>();
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const { pathname } = new URL(request.url);
+    if (pathname === '/__emuforge/session') return Response.json({ token: 'test-session' });
+    requests(request.method, pathname);
+    return Response.json({ item: [{ ...stages[0], lastUpdatedDate: changed.getTime() / 1000 }, stages[1]] });
+  });
+
+  const { user } = open();
   await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
   expect(table()?.findHeaderSlot()?.getElement()).toHaveTextContent(
     'A stage serves the API as it was when last deployed. Deploy again after you change resources or methods.',
   );
-  expect(cell(1, 3)).toHaveTextContent('deploy-dev');
-  expect(cell(1, 4)).toHaveTextContent(creationDateText(changed));
-  const copyDeployment = table()?.findBodyCell(1, 3)?.findCopyToClipboard()?.findCopyButton().getElement();
-  assert(copyDeployment);
-  expect(copyDeployment).toHaveAccessibleName('Copy Deployment ID');
-  await user.click(copyDeployment);
-  expect(await navigator.clipboard.readText()).toBe('deploy-dev');
+  expectAddresses(['dev', 'prod']);
+  for (const [index, stage] of stages.entries()) {
+    const row = index + 1;
+    expect(cell(row, 3)).toHaveTextContent(stage.deploymentId ?? '');
+    expect(cell(row, 4)).toHaveTextContent(creationDateText(stage.lastUpdatedDate));
+    const copyDeployment = table()?.findBodyCell(row, 3)?.findCopyToClipboard()?.findCopyButton().getElement();
+    assert(copyDeployment);
+    expect(copyDeployment).toHaveAccessibleName('Copy Deployment ID');
+    await user.click(copyDeployment);
+    expect(await navigator.clipboard.readText()).toBe(stage.deploymentId);
 
-  await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
-  const address = addressCell(1);
+    const address = addressCell(row);
+    assert(address);
+    expect(address.style.minWidth).toBe('28ch');
+    expect(createWrapper(address).find('a')).toBeNull();
+  }
+  expect(requests).toHaveBeenCalledExactlyOnceWith('GET', `/restapis/${apiId}/stages`);
+});
+
+it('copies exactly the invoke URL shown in the row and confirms the copy', async () => {
+  const { user } = open();
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  const address = addressCell(2);
   assert(address);
-  expect(address.style.minWidth).toBe('28ch');
-  const addressWrapper = createWrapper(address);
-  expect(addressWrapper.find('a')).toBeNull();
-  const copyAddress = addressWrapper.findCopyToClipboard()?.findCopyButton().getElement();
+  const copyAddress = createWrapper(address).findCopyToClipboard()?.findCopyButton().getElement();
   assert(copyAddress);
   expect(copyAddress).toHaveAccessibleName('Copy Invoke URL');
+  const shownAddress = address.textContent;
+  expect(shownAddress).toBe(invokeUrl('prod'));
   await user.click(copyAddress);
-  expect(await navigator.clipboard.readText()).toBe(invokeUrl('dev'));
+  expect(await navigator.clipboard.readText()).toBe(shownAddress);
+  expect(await screen.findByText('Invoke URL copied')).toBeVisible();
+});
+
+const unreachable = {
+  kind: 'emulator-unreachable',
+  checkedAt: 1,
+  message: 'No response.',
+  emulator: { port: 9682, endpoint },
+} as const;
+
+it.each<{ state: string; result: AreaConnection['result'] }>([
+  { state: 'no answer yet', result: undefined },
+  { state: 'emulator not started', result: { ...unreachable, reason: 'not_started' } },
+  { state: 'emulator not answering', result: { ...unreachable, reason: 'timeout' } },
+  { state: 'engine not answering', result: { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9682 } },
+  {
+    state: 'engine error',
+    result: { kind: 'engine-error', checkedAt: 1, status: 500, code: undefined, message: endpoint },
+  },
+])('shows no local addresses with $state', async ({ result }) => {
+  open({ engineOrigin, result });
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  expectNoAddresses();
+});
+
+function connectedAt(endpoint: string, port = 9682): AreaConnection {
+  return { engineOrigin, result: { kind: 'connected', checkedAt: 1, emulator: { port, endpoint } } };
+}
+
+it.each([
+  'https://api-1.execute-api.us-east-1.amazonaws.com',
+  'https://localhost:9682',
+  'https://192.168.0.5:9682',
+  'not-a-url',
+  '',
+])('shows no local addresses when the connected endpoint is %j', async (endpoint) => {
+  open(connectedAt(endpoint));
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  expectNoAddresses();
+});
+
+it('hides and restores both addresses as the emulator stops answering and reconnects', async () => {
+  const { setConnection } = open();
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  expectAddresses(['dev', 'prod']);
+  setConnection({ engineOrigin, result: { ...unreachable, reason: 'timeout' } });
+  expect(names()).toEqual(['dev', 'prod']);
+  expectNoAddresses();
+  setConnection(connection);
+  expectAddresses(['dev', 'prod']);
+  expect(readStages).toHaveBeenCalledOnce();
+});
+
+it('updates both addresses when the connected endpoint changes', async () => {
+  const { setConnection } = open();
+  await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+  expectAddresses(['dev', 'prod']);
+  const replacement = 'https://127.0.0.1:9700';
+  setConnection(connectedAt(replacement, 9700));
+  expectAddresses(['dev', 'prod'], replacement);
+  expect(readStages).toHaveBeenCalledOnce();
 });
 
 it('shows why a stage is needed when none exist', async () => {
@@ -144,10 +244,10 @@ it('shows why a stage is needed when none exist', async () => {
   open();
   await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent('No stages'));
   expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent('Deploy the API to a stage to get an invoke URL.');
-  expect(readAddress).not.toHaveBeenCalled();
 });
 
-function readFailures(operation: 'GetExport' | 'GetStages', thing: string) {
+function readFailures() {
+  const operation = 'GetStages';
   const stopped: AreaConnection = {
     engineOrigin,
     result: {
@@ -196,7 +296,7 @@ function readFailures(operation: 'GetExport' | 'GetStages', thing: string) {
     },
     {
       failure: { kind: 'other', operation, code: 'BadRequestException', message: 'Invalid request.' },
-      first: `The ${thing} could not be read`,
+      first: 'The stages could not be read',
       detail: `${operation}: BadRequestException: Invalid request.`,
       connection,
       recovery: false,
@@ -210,49 +310,22 @@ function readFailures(operation: 'GetExport' | 'GetStages', thing: string) {
   }[];
 }
 
-it.each(readFailures('GetExport', 'invoke URL'))(
-  'keeps healthy addresses and can recover GetExport after $first',
-  async ({ failure, first, detail, connection, recovery }) => {
-    let failDev = true;
-    readAddress.mockImplementation(async (_, __, name) => {
-      if (name === 'dev' && failDev) throw new RequestError(failure);
-      return invokeUrl(name);
-    });
-    const user = open(connection);
-    await waitFor(() => expect(addressCell(1)).toHaveTextContent(detail));
-    const failedCell = addressCell(1);
-    assert(failedCell);
-    expect(failedCell).toHaveTextContent(first);
-    expect(failedCell).not.toHaveTextContent(invokeUrl('dev'));
-    await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
-    expect(stageAction('Refresh')).toBeEnabled();
-
-    failDev = false;
-    await retryFailure(user, failedCell, recovery);
-    await waitFor(() => expect(addressCell(1)).toHaveTextContent(invokeUrl('dev')));
-    readAddress.mockImplementation(async (_, __, name) => invokeUrl(name) + '?deployment=latest');
-    await user.click(stageAction('Refresh'));
-    await waitFor(() =>
-      expect([addressCell(1)?.textContent, addressCell(2)?.textContent]).toEqual([
-        invokeUrl('dev') + '?deployment=latest',
-        invokeUrl('prod') + '?deployment=latest',
-      ]),
-    );
-    expect(readStages).toHaveBeenCalledTimes(3);
-  },
-);
-
-it.each(readFailures('GetStages', 'stages'))(
+it.each(readFailures())(
   'shows and retries the failed GetStages state after $first',
   async ({ failure, first, detail, connection, recovery }) => {
     readStages.mockRejectedValueOnce(new RequestError(failure));
-    const user = open(connection);
+    const { user, setConnection } = open(connection);
     await waitFor(() => expect(table()?.findEmptySlot()?.getElement()).toHaveTextContent(detail));
     const empty = table()?.findEmptySlot()?.getElement();
     assert(empty);
     expect(empty).toHaveTextContent(first);
     await retryFailure(user, empty, recovery);
     await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
+    if (connection.result?.kind !== 'connected') {
+      expectNoAddresses();
+      setConnection(connectedAt(endpoint));
+    }
+    expectAddresses(['dev', 'prod']);
   },
 );
 
@@ -312,7 +385,6 @@ const changes = [
     message: 'API deployed to stage sandbox.',
     updated: [...stages, { stageName: 'sandbox', deploymentId: 'deploy-sandbox' }],
     expectedNames: ['dev', 'prod', 'sandbox'],
-    prodRow: 2,
   },
   {
     action: 'delete',
@@ -321,47 +393,31 @@ const changes = [
     message: 'Stage dev deleted.',
     updated: stages.slice(1),
     expectedNames: ['prod'],
-    prodRow: 1,
   },
 ];
 
-it.each(changes)(
-  'shows the $action result and closes the dialog before refreshing stages and exports',
-  async (change) => {
-    const user = open();
-    await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
-    expect(stageAction('Delete')).toBeDisabled();
-    const feedbackAtRead = () => ({
-      flash: success()?.textContent,
-      modalOpen: Boolean(root().findModal()?.isVisible()),
+it.each(changes)('shows the $action result and closes the dialog before refreshing stages', async (change) => {
+  const { user } = open();
+  await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
+  expect(stageAction('Delete')).toBeDisabled();
+  const feedbackAtRead = () => ({
+    flash: success()?.textContent,
+    modalOpen: Boolean(root().findModal()?.isVisible()),
+  });
+  const stagesAtRefresh: ReturnType<typeof feedbackAtRead>[] = [];
+  change.mutate.mockImplementationOnce(async () => {
+    readStages.mockImplementationOnce(async () => {
+      stagesAtRefresh.push(feedbackAtRead());
+      return change.updated;
     });
-    const stagesAtRefresh: ReturnType<typeof feedbackAtRead>[] = [];
-    const exportsAtRefresh: ReturnType<typeof feedbackAtRead>[] = [];
-    change.mutate.mockImplementationOnce(async () => {
-      readStages.mockImplementationOnce(async () => {
-        stagesAtRefresh.push(feedbackAtRead());
-        return change.updated;
-      });
-      readAddress.mockImplementation(async (_, __, name) => {
-        exportsAtRefresh.push(feedbackAtRead());
-        return invokeUrl(name) + '?deployment=latest';
-      });
-    });
-    await change.submit(user);
-    await waitFor(() => expect(names()).toEqual(change.expectedNames));
-    await waitFor(() =>
-      expect(change.expectedNames.map((_, index) => addressCell(index + 1)?.textContent)).toEqual(
-        change.expectedNames.map((name) => invokeUrl(name) + '?deployment=latest'),
-      ),
-    );
-    const feedback = { flash: change.message, modalOpen: false };
-    expect(stagesAtRefresh).toEqual([feedback]);
-    expect(exportsAtRefresh.length).toBeGreaterThan(0);
-    for (const state of exportsAtRefresh) expect(state).toEqual(feedback);
-    expect(success()).toHaveTextContent(change.message);
-    if (change.action === 'delete') expect(stageAction('Delete')).toBeDisabled();
-  },
-);
+  });
+  await change.submit(user);
+  await waitFor(() => expect(names()).toEqual(change.expectedNames));
+  expectAddresses(change.expectedNames);
+  expect(stagesAtRefresh).toEqual([{ flash: change.message, modalOpen: false }]);
+  expect(success()).toHaveTextContent(change.message);
+  if (change.action === 'delete') expect(stageAction('Delete')).toBeDisabled();
+});
 
 const orderCases = changes.flatMap((change) => (['older', 'newer'] as const).map((first) => ({ ...change, first })));
 
@@ -369,42 +425,30 @@ it.each(orderCases)(
   'keeps the newer stages, addresses and $action result with the $first reads answering first',
   async (change) => {
     const staleStages = deferred<Stage[]>();
-    const staleAddress = deferred<string>();
     const freshStages = deferred<Stage[]>();
-    const freshAddress = deferred<string>();
     const readFreshStages = vi.fn(() => freshStages.promise);
-    const user = open();
+    const { user } = open();
     await waitFor(() => expect(addressCell(2)).toHaveTextContent(invokeUrl('prod')));
     readStages.mockReturnValueOnce(staleStages.promise);
-    readAddress.mockImplementation(async (_, __, name) => (name === 'prod' ? staleAddress.promise : invokeUrl(name)));
     await user.click(stageAction('Refresh'));
     await waitFor(() => expect(readStages).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(2));
     const stageSignal = readStages.mock.calls[1]?.[2];
-    const exportSignal = readAddress.mock.calls.filter(([, , name]) => name === 'prod')[1]?.[3];
     change.mutate.mockImplementationOnce(async () => {
       readStages.mockImplementationOnce(readFreshStages);
-      readAddress.mockImplementation(async (_, __, name) => (name === 'prod' ? freshAddress.promise : invokeUrl(name)));
     });
     await change.submit(user);
     await waitFor(() => expect(success()).toHaveTextContent(change.message));
     await waitFor(() => expect(readFreshStages).toHaveBeenCalledOnce());
-    await waitFor(() => expect(readAddress.mock.calls.filter(([, , name]) => name === 'prod')).toHaveLength(3));
     expect(stageSignal?.aborted).toBe(true);
-    expect(exportSignal?.aborted).toBe(true);
 
     const finishOlder = () =>
       act(async () => {
         staleStages.resolve([...stages, { stageName: 'stale', deploymentId: 'stale' }]);
-        staleAddress.resolve(invokeUrl('prod') + '?deployment=stale');
       });
     const finishNewer = async () => {
       await act(async () => freshStages.resolve(change.updated));
       await waitFor(() => expect(names()).toEqual(change.expectedNames));
-      await act(async () => freshAddress.resolve(invokeUrl('prod') + '?deployment=latest'));
-      await waitFor(() =>
-        expect(addressCell(change.prodRow)).toHaveTextContent(invokeUrl('prod') + '?deployment=latest'),
-      );
+      expectAddresses(change.expectedNames);
     };
     if (change.first === 'older') {
       await finishOlder();
@@ -415,7 +459,7 @@ it.each(orderCases)(
     }
 
     expect(names()).toEqual(change.expectedNames);
-    expect(addressCell(change.prodRow)).toHaveTextContent(invokeUrl('prod') + '?deployment=latest');
+    expectAddresses(change.expectedNames);
     expect(success()).toHaveTextContent(change.message);
   },
 );

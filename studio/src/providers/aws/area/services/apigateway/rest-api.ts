@@ -1,5 +1,4 @@
 import {
-  GetExportCommand,
   GetResourceCommand,
   GetResourcesCommand,
   GetRestApiCommand,
@@ -17,7 +16,6 @@ export const GET_REST_API = 'GetRestApi';
 export const GET_RESOURCE = 'GetResource';
 export const GET_RESOURCES = 'GetResources';
 export const GET_REST_STAGES = 'GetStages';
-export const GET_STAGE_ADDRESS = 'GetExport';
 
 async function find<T>(read: Promise<T>): Promise<T | null> {
   try {
@@ -81,34 +79,4 @@ export async function readRestStages(endpoint: string, restApiId: string, signal
     signal,
   );
   return response.item ?? [];
-}
-
-interface OpenApiExport {
-  servers?: { url?: string; variables?: { basePath?: { default?: string } } }[];
-}
-
-export async function readStageAddress(
-  endpoint: string,
-  restApiId: string,
-  stageName: string,
-  signal: AbortSignal,
-): Promise<string | null> {
-  const { body } = await sendRest(
-    endpoint,
-    GET_STAGE_ADDRESS,
-    (client, abortSignal) =>
-      client.send(new GetExportCommand({ restApiId, stageName, exportType: 'oas30', accepts: 'application/json' }), {
-        abortSignal,
-      }),
-    signal,
-  );
-  if (body === undefined) return null;
-
-  const exported = JSON.parse(new TextDecoder().decode(body)) as OpenApiExport | null;
-  const server = exported?.servers?.[0];
-  const url = server?.url;
-  if (typeof url !== 'string' || url === '') return null;
-  if (!url.includes('{basePath}')) return url;
-  const basePath = server?.variables?.basePath?.default;
-  return typeof basePath === 'string' ? url.replaceAll('{basePath}', () => basePath) : null;
 }

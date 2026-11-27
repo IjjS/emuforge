@@ -1,5 +1,6 @@
 import type { Integration, Resource } from '@aws-sdk/client-api-gateway';
 
+import type { AreaConnection } from '../../components/emulator-line';
 import { integrationTypeText } from './format';
 
 export function orderedResources(resources: readonly Resource[]) {
@@ -33,4 +34,19 @@ export function restIntegration(integration: Integration | undefined): RestInteg
     return { kind: integrationTypeText('AWS_PROXY'), target: arn, label: 'Lambda function ARN' };
   }
   return { kind: type ?? '-', target: uri, label: 'Integration URI' };
+}
+
+export function restStageAddress({ result }: AreaConnection, apiId: string, stageName: string | undefined) {
+  if (result?.kind !== 'connected' || !stageName) return undefined;
+
+  const { endpoint } = result.emulator;
+  let hostname: string;
+  try {
+    hostname = new URL(endpoint).hostname;
+  } catch {
+    return undefined;
+  }
+  if (hostname !== '[::1]' && !/^127(?:\.\d{1,3}){3}$/.test(hostname)) return undefined;
+
+  return `${endpoint.replace(/\/+$/, '')}/_aws/execute-api/${apiId}/${stageName}`;
 }
