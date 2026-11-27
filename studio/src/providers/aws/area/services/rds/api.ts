@@ -136,6 +136,8 @@ export interface DbInstance {
   dbName?: string;
   allocatedStorage?: number;
   storageType?: string;
+  iops?: number;
+  multiAz?: boolean;
   zone?: string;
   arn?: string;
   resourceId?: string;
@@ -182,6 +184,8 @@ export function instanceOf(raw: SdkInstance): DbInstance | undefined {
       dbName: text(raw.DBName),
       allocatedStorage: numberOf(raw.AllocatedStorage),
       storageType: text(raw.StorageType),
+      iops: numberOf(raw.Iops),
+      multiAz: raw.MultiAZ,
       zone: text(raw.AvailabilityZone),
       arn: text(raw.DBInstanceArn),
       resourceId: text(raw.DbiResourceId),
