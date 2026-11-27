@@ -308,6 +308,25 @@ export class EventsSeeded {
     ctx.own(this);
   }
 
+  /** Whether the removal was already made: it is made once, by the check's own end or else by the teardown. */
+  private removed = false;
+
+  /**
+   * The removal as the check's own last act (`finish`): what could not be removed fails the check. The shared
+   * teardown only logs an error of `dispose`, so a check that ends by itself does not leave it to that.
+   */
+  async removeAll(): Promise<void> {
+    this.removed = true;
+    await this.remove();
+  }
+
+  /** The teardown's removal, for a check that stopped before its end; nothing is done after `removeAll`. */
+  async dispose(): Promise<void> {
+    if (this.removed) return;
+    this.removed = true;
+    await this.remove();
+  }
+
   private under(name: string): void {
     if (!name.startsWith(this.prefix)) throw new Error(`${name} is not under the check's prefix ${this.prefix}`);
   }
@@ -434,7 +453,7 @@ export class EventsSeeded {
    * rules, then the queues, topics and log groups it made. One thing that could not be removed does not stop the
    * rest; what is still there at the end is an error that names it.
    */
-  async dispose(): Promise<void> {
+  private async remove(): Promise<void> {
     const refused: string[] = [];
     const attempt = async (what: string, act: () => Promise<Answer | null>): Promise<void> => {
       try {
@@ -491,6 +510,26 @@ export class EventsSeeded {
       );
     }
   }
+}
+
+/**
+ * The end of a check: removes what it made, then fails the check when a criteria line failed or when something
+ * could not be removed (both are named when both happened). The removal is attempted whatever the lines did.
+ */
+export async function finish(lines: { end(): void }, seeded: EventsSeeded): Promise<void> {
+  let cleanup: Error | undefined;
+  try {
+    await seeded.removeAll();
+  } catch (e) {
+    cleanup = e as Error;
+  }
+  try {
+    lines.end();
+  } catch (e) {
+    if (cleanup === undefined) throw e;
+    throw new Error(`${(e as Error).message}\n${cleanup.message}`);
+  }
+  if (cleanup !== undefined) throw cleanup;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1340,15 +1379,16 @@ export async function sentEvent(page: Page, act: () => Promise<void>): Promise<S
 }
 
 /**
- * Waits until the one success flash is on the screen, visible, with the receipt of `bus` holding the event ID `id`.
- * `expectFlash` reads the text of the flash; this is that text being shown.
+ * Waits until the page shows one success flash and its content, found with Cloudscape's selector and taken only
+ * where it is visible, is, whole, the receipt of `bus` with the event ID `id`. A receipt that is in the page but
+ * hidden does not hold this, nor does a visible content of another bus with the same ID.
  */
 export async function expectReceiptVisible(page: Page, bus: string, id: string): Promise<void> {
   await expectFlash(page, 'success', eventAccepted(bus, id));
   await expect(
-    flashItems(page, 'success').locator(FLASH_CONTENT).filter({ hasText: id }),
-    `the receipt with the event ID ${id}, visible`,
-  ).toBeVisible({ timeout: 15_000 });
+    flashItems(page, 'success').locator(FLASH_CONTENT).locator('visible=true'),
+    `the visible receipt of ${bus} with the event ID ${id}, whole`,
+  ).toHaveText(norm(eventAccepted(bus, id)), { timeout: 15_000 });
 }
 
 /**

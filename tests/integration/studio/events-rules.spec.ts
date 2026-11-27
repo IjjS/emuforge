@@ -31,6 +31,7 @@ import {
   expectTargetIds,
   expectUnavailable,
   filterRules,
+  finish,
   open,
   pairsIn,
   REMOVE,
@@ -114,7 +115,7 @@ test('studio.events-rules-entry-lists-a-chosen-bus', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -247,7 +248,7 @@ test('studio.events-rule-page-shows-rule-and-targets', async ({ ctx, page }) => 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -289,5 +290,5 @@ test('studio.events-rule-names-of-dots-open-by-their-address', async ({ ctx, pag
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

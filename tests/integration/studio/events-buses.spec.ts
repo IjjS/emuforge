@@ -33,15 +33,16 @@ import {
   expectRules,
   filterBuses,
   filterRules,
+  finish,
   NO_BUSES_MATCH,
   NO_RULES,
   NO_RULES_MATCH,
   open,
   refusalDirect,
+  rowsOf,
   RULE_NOT_FOUND,
   rulePath,
   rulesDirect,
-  rowsOf,
   SEND_EVENTS,
   SEND_EVENTS_PATH,
   shownRule,
@@ -118,7 +119,7 @@ test('studio.events-buses-made-outside-are-listed', async ({ ctx, page }) => {
       .toContainEqual(expect.objectContaining({ name: 'default', created: '-' }));
   });
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -146,7 +147,7 @@ test('studio.events-bus-list-pages', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -227,7 +228,7 @@ test('studio.events-bus-page-shows-its-rules', async ({ ctx, page }) => {
     }
   });
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -269,5 +270,5 @@ test('studio.events-missing-bus-and-rule-are-not-found', async ({ ctx, page }) =
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

@@ -41,6 +41,7 @@ import {
   expectFlash,
   expectTargetIds,
   fieldError,
+  finish,
   flashItems,
   open,
   refusalDirect,
@@ -55,10 +56,10 @@ import {
   RULES,
   RULES_PATH,
   ruleScreen,
-  selectOf,
   rulesDirect,
   rulesNamedDirect,
   ruleSwitched,
+  selectOf,
   TARGET_ID_HELD,
   targetAdded,
   targetRemoved,
@@ -162,7 +163,7 @@ test('studio.events-create-rule-with-targets', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -208,7 +209,7 @@ test('studio.events-create-rule-existing-name-is-refused', async ({ ctx, page })
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -249,7 +250,7 @@ test('studio.events-create-rule-refused-pattern-leaves-no-rule', async ({ ctx, p
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -303,7 +304,7 @@ test('studio.events-create-schedule-rule-on-default', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -349,7 +350,7 @@ test('studio.events-rule-switch-off-and-on', async ({ ctx, page }) => {
     if ((await stateDirect()) !== 'DISABLED') await seeded.rule(bus, 'flip', { pattern: '{"source":["shop"]}', disabled: true });
   }
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -441,7 +442,7 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -489,5 +490,5 @@ test('studio.events-delete-rule-with-targets', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

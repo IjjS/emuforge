@@ -33,6 +33,7 @@ import {
   expectReceiptVisible,
   expectRules,
   fieldError,
+  finish,
   flashItems,
   open,
   receiveDirect,
@@ -196,7 +197,7 @@ test('studio.events-sent-event-reaches-a-matching-rules-queue', async ({ ctx, pa
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -271,5 +272,5 @@ test('studio.events-bus-from-the-address-must-be-in-the-emulator', async ({ ctx,
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });

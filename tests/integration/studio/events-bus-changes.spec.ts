@@ -43,6 +43,7 @@ import {
   expectRows,
   expectUnavailable,
   filterBuses,
+  finish,
   flashItems,
   MANAGE_TAGS,
   NO_BUSES_MATCH,
@@ -63,7 +64,7 @@ test('studio.events-create-bus-with-description-and-tags', async ({ ctx, page })
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'ec-new');
-  new EventsSeeded(ctx, port, p);
+  const seeded = new EventsSeeded(ctx, port, p);
   const name = `${p}-new.bus_1`;
 
   await lines.line(
@@ -99,7 +100,7 @@ test('studio.events-create-bus-with-description-and-tags', async ({ ctx, page })
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -136,7 +137,7 @@ test('studio.events-create-bus-existing-name-is-refused', async ({ ctx, page }) 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -222,7 +223,7 @@ test('studio.events-bus-description-and-tags-change', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -267,7 +268,7 @@ test('studio.events-delete-bus-from-the-list', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -304,7 +305,7 @@ test('studio.events-delete-bus-with-rules-is-refused', async ({ ctx, page }) => 
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -338,5 +339,5 @@ test('studio.events-delete-bus-from-its-page', async ({ ctx, page }) => {
     },
   );
 
-  lines.end();
+  await finish(lines, seeded);
 });
