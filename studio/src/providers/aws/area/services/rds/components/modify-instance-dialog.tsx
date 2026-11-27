@@ -35,6 +35,7 @@ import {
   changes,
   draftField,
   editField,
+  editSecurityGroups,
   sameSecurityGroups,
 } from '../modify-draft';
 import { instanceClasses, type StorageTypeChoice } from '../orderable';
@@ -161,8 +162,10 @@ export function ModifyInstanceDialog({
   }>();
   const typeChoices = classes?.find(({ name }) => name === instanceClass.value)?.storageTypes ?? [];
   if (
-    rows.data !== undefined &&
-    (seenRows?.rows !== rows.data || seenRows.version !== version || seenRows.instanceClass !== instanceClass)
+    seenRows === undefined ||
+    seenRows.rows !== rows.data ||
+    seenRows.version !== version ||
+    seenRows.instanceClass !== instanceClass
   ) {
     const nextClass = afterParent(
       instanceClass,
@@ -173,12 +176,13 @@ export function ModifyInstanceDialog({
     setSeenRows({ rows: rows.data, version, instanceClass: nextClass });
     setInstanceClass(nextClass);
     if (!member && nextClass.cleared === undefined) {
-      const types = classes?.find(({ name }) => name === nextClass.value)?.storageTypes ?? [];
+      const types =
+        classes === undefined ? undefined : (classes.find(({ name }) => name === nextClass.value)?.storageTypes ?? []);
       setStorageType(
         afterParent(
           storageType,
           nextClass,
-          types.map(({ type }) => type),
+          types?.map(({ type }) => type),
           `Choose a storage type for ${nextClass.value ?? 'the selected class'}`,
           changed(version),
         ),
@@ -390,7 +394,7 @@ export function ModifyInstanceDialog({
                   failure: startingGroups.failure ?? placement.failure,
                   retry: startingGroups.failure === undefined ? placement.retry : startingGroups.refresh,
                 }}
-                onChange={(value) => setGroups(editField(groups, value))}
+                onChange={(value) => setGroups(editSecurityGroups(groups, value))}
               />
             </>
           )}
