@@ -14,6 +14,8 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import type { TokenListing } from '../../../components/use-token-listing';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import type { Vpc } from '../api';
 import { DeleteVpcDialog, type VpcTarget } from '../components/delete-vpc-dialog';
@@ -147,7 +149,7 @@ export function VpcListPage({ connection }: { connection: AreaConnection }) {
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={resourceName(row.tags)} />,
+      cell: (row) => <NameText name={resourceName(row.tags)} none={NONE} />,
     },
     {
       id: 'id',
@@ -224,7 +226,7 @@ export function VpcListPage({ connection }: { connection: AreaConnection }) {
         }}
         ariaLabels={{
           selectionGroupLabel: 'VPC selection',
-          itemSelectionLabel: (_, row) => nameOrId(row.id, row.tags),
+          itemSelectionLabel: (_, row) => nameIdentity(nameOrId(row.id, row.tags)),
         }}
         columnDefinitions={columns}
         wrapLines

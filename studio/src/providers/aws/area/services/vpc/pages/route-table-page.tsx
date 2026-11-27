@@ -20,6 +20,7 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { useFollow } from '../../../components/use-follow';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { Association, Route, RouteTable } from '../api';
@@ -537,7 +538,7 @@ export function RouteTablePage({ connection, params }: ScreenPageProps) {
               </SpaceBetween>
             }
           >
-            <ValueText kind="name" value={table === undefined ? id : nameOrId(table.id, table.tags)} />
+            <NameText name={table === undefined ? id : nameOrId(table.id, table.tags)} />
           </Header>
         }
       >
