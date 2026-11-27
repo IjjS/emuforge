@@ -255,7 +255,9 @@ export class PageHosts {
 }
 
 /** An answer of a direct call, or the error that kept it from arriving. */
-export type DirectAnswer = { status: number; body: string } | { error: string };
+export type DirectAnswer =
+  | { status: number; body: string; headers?: Record<string, string | string[] | undefined> }
+  | { error: string };
 
 function sha256Hex(data: string): string {
   return createHash('sha256').update(data).digest('hex');
@@ -332,7 +334,7 @@ async function direct(
         let text = '';
         response.setEncoding('utf8');
         response.on('data', (chunk: string) => (text += chunk));
-        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text }));
+        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text, headers: response.headers }));
         response.on('error', (e) => resolve({ error: e.message }));
       },
     );
@@ -464,6 +466,20 @@ export function directLogs(ctx: Ctx, port: number, action: string, input: object
     'content-type': 'application/x-amz-json-1.1',
     'x-amz-target': `Logs_20140328.${action}`,
   });
+}
+
+/**
+ * `POST /` with `body` and `headers` straight to the emulator on `port`, signed for the signing name `service`: for
+ * a service's own support, which holds its protocol's target and headers itself (`services/<service>/`).
+ */
+export function directPost(
+  ctx: Ctx,
+  port: number,
+  service: string,
+  body: string,
+  headers: Record<string, string>,
+): Promise<DirectAnswer> {
+  return direct(ctx, port, service, 'POST', '/', {}, body, headers);
 }
 
 /** An ECS action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 575: ECS's checks). */
