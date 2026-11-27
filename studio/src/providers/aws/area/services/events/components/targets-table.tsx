@@ -1,4 +1,5 @@
 import type { Target } from '@aws-sdk/client-eventbridge';
+import Button from '@cloudscape-design/components/button';
 import Box from '@cloudscape-design/components/box';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
@@ -86,9 +87,11 @@ const columns: TableProps.ColumnDefinition<Target>[] = [
 interface TargetsTableProps {
   connection: AreaConnection;
   targets: ReturnType<typeof useRuleTargets>;
+  removeDisabledReason?: string | undefined;
+  onRemove: (id: string) => void;
 }
 
-export function TargetsTable({ connection, targets }: TargetsTableProps) {
+export function TargetsTable({ connection, targets, removeDisabledReason, onRemove }: TargetsTableProps) {
   const [announcement, announce] = useAnnouncer();
   const failure = targets.failure && readFailureState(targets.failure, connection, 'targets');
   const message = failure?.firstText ?? '';
@@ -97,13 +100,31 @@ export function TargetsTable({ connection, targets }: TargetsTableProps) {
     announce(message);
   }, [announce, message]);
 
+  const actions: TableProps.ColumnDefinition<Target> = {
+    id: 'actions',
+    header: 'Actions',
+    cell: ({ Id }) =>
+      Id === undefined ? (
+        '-'
+      ) : (
+        <Button
+          ariaLabel={`Remove target ${Id}`}
+          disabled={removeDisabledReason !== undefined}
+          disabledReason={removeDisabledReason}
+          onClick={() => onRemove(Id)}
+        >
+          Remove
+        </Button>
+      ),
+  };
+
   return (
     <>
       <Table
         header={<Header variant="h2">Targets</Header>}
         items={targets.value ?? []}
         trackBy="Id"
-        columnDefinitions={columns}
+        columnDefinitions={[...columns, actions]}
         wrapLines
         loading={targets.loading}
         loadingText="Loading targets"

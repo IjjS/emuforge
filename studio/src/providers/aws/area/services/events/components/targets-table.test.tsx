@@ -17,14 +17,19 @@ const roleArn = 'arn:aws:iam::000000000000:role/deliver';
 
 function open({ value, failure, loading = false }: { value?: Target[]; failure?: RequestFailure; loading?: boolean }) {
   const refresh = vi.fn();
+  const onRemove = vi.fn();
   const { container } = render(
     <MemoryRouter>
-      <TargetsTable connection={{ engineOrigin, result: undefined }} targets={{ value, failure, loading, refresh }} />
+      <TargetsTable
+        connection={{ engineOrigin, result: undefined }}
+        targets={{ value, failure, loading, refresh }}
+        onRemove={onRemove}
+      />
     </MemoryRouter>,
   );
   const table = createWrapper(container).findTable();
   if (!table) throw new Error('Expected the targets table');
-  return { table, refresh };
+  return { table, refresh, onRemove };
 }
 
 it('lists all target kinds in response order and shows the inputs and optional delivery details', () => {
@@ -105,3 +110,22 @@ it.each([
     expect(refresh).toHaveBeenCalledOnce();
   },
 );
+
+it('offers a named Remove for every target, including kinds the screen cannot add', () => {
+  const { table, onRemove } = open({
+    value: [
+      { Id: 'function', Arn: lambdaArn },
+      { Id: 'queue', Arn: queueArn },
+    ],
+  });
+  for (const [row, id] of [
+    [1, 'function'],
+    [2, 'queue'],
+  ] as const) {
+    const button = table.findBodyCell(row, 5)?.findButton();
+    expect(button?.getElement()).toHaveAccessibleName(`Remove target ${id}`);
+    expect(button?.getElement()).toHaveTextContent('Remove');
+    button?.click();
+  }
+  expect(onRemove.mock.calls).toEqual([['function'], ['queue']]);
+});
