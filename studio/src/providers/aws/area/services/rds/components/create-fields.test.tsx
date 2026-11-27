@@ -602,7 +602,7 @@ describe('RDS create field descriptions and placement', () => {
           connection={CONNECTION}
           value={[]}
           onChange={onChange}
-          placement={{ data, failure: undefined, retry: vi.fn() }}
+          placement={{ data, loading: false, failure: undefined, retry: vi.fn() }}
         />
       </QueryClientProvider>
     );
@@ -619,5 +619,71 @@ describe('RDS create field descriptions and placement', () => {
     await waitFor(() =>
       expect(text(groupsField().findDropdown().getElement())).toContain('No security groups in vpc-d'),
     );
+  });
+
+  it('announces the subnet VPC lookup and offers the scoped groups when it finishes with the picker open', async () => {
+    const client = new QueryClient();
+    const onChange = vi.fn();
+    const retry = vi.fn();
+    const group = { id: 'sg-1', name: 'default', vpcId: 'vpc-d' };
+    readGroups.mockResolvedValueOnce({ choices: [group] });
+    const fields = (loading: boolean, data?: string) => (
+      <QueryClientProvider client={client}>
+        <SecurityGroupsField
+          connection={CONNECTION}
+          value={[]}
+          onChange={onChange}
+          placement={{ data, loading, failure: undefined, retry }}
+        />
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(fields(true));
+    expect(screen.getByRole('status')).toHaveTextContent("Checking the DB subnet group's VPC");
+    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    groupsField().openDropdown();
+    await waitFor(() => expect(groupsField().findTrigger().getElement()).toHaveAttribute('aria-expanded', 'true'));
+    expect(readGroups).not.toHaveBeenCalled();
+
+    rerender(fields(false, 'vpc-d'));
+    await waitFor(() => expect(groupsField().findDropdown().findOptionByValue(group.id)).not.toBeNull());
+    expect(readGroups).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      { vpcId: 'vpc-d', name: '' },
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(screen.queryByText("Checking the DB subnet group's VPC")).not.toBeInTheDocument();
+    groupsField().selectOptionByValue(group.id);
+    expect(onChange).toHaveBeenCalledWith([group]);
+  });
+
+  it('shows the placement failure and retries it while keeping the security groups picker unavailable', () => {
+    const client = new QueryClient();
+    const retry = vi.fn();
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <SecurityGroupsField
+            connection={CONNECTION}
+            value={[]}
+            onChange={vi.fn()}
+            placement={{
+              data: undefined,
+              loading: false,
+              failure: { kind: 'other', operation: 'DescribeDBSubnetGroups', code: 'InternalError', message: 'boom' },
+              retry,
+            }}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(groupsField().findTrigger().getElement()).toBeDisabled();
+    expect(screen.queryByText('Choose DB subnet group first')).not.toBeInTheDocument();
+    expect(screen.getByText('The security groups could not be read')).toBeVisible();
+    expect(screen.getByText(/boom/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(readGroups).not.toHaveBeenCalled();
   });
 });

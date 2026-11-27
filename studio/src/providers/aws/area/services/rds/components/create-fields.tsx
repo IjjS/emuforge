@@ -284,38 +284,44 @@ export function SecurityGroupsField({
   connection: AreaConnection;
   value: readonly SecurityGroupChoice[];
   onChange: (groups: SecurityGroupChoice[]) => void;
-  placement?: Pick<ChoiceRead<string | null>, 'data' | 'failure' | 'retry'> | undefined;
+  placement?:
+    | (Pick<ChoiceRead<string | null>, 'data' | 'failure' | 'retry'> &
+        Partial<Pick<ChoiceRead<string | null>, 'loading'>>)
+    | undefined;
   required?: boolean;
   error?: string | undefined;
   missingIds?: ReadonlySet<string> | undefined;
 }) {
   const vpcId = placement?.data ?? undefined;
+  const loading = placement?.loading === true;
+  const failed = placement?.failure !== undefined;
   const source = groupChoices(connection.engineOrigin, vpcId);
   return (
     <FormField label={required === true ? 'Security groups' : 'Security groups - optional'} errorText={error}>
       <SpaceBetween size="xs">
-        <ChoiceMultiselect<SecurityGroupChoice>
-          key={vpcId}
-          source={{
-            ...source,
-            optionOf: (choice) => {
-              const option = source.optionOf(choice);
-              return missingIds?.has(choice.id) === true ? { ...option, description: NOT_IN_LIST } : option;
-            },
-          }}
-          connection={connection}
-          things="security groups"
-          placeholder="Choose security groups"
-          lockedBy={
-            placement !== undefined && (vpcId === undefined || placement.failure !== undefined)
-              ? 'DB subnet group'
-              : undefined
-          }
-          none={vpcId === undefined ? undefined : `No security groups in ${vpcId}`}
-          invalid={error !== undefined}
-          value={value}
-          onChange={onChange}
-        />
+        <fieldset disabled={failed} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
+          <ChoiceMultiselect<SecurityGroupChoice>
+            source={{
+              ...source,
+              ready: !loading && !failed,
+              optionOf: (choice) => {
+                const option = source.optionOf(choice);
+                return missingIds?.has(choice.id) === true ? { ...option, description: NOT_IN_LIST } : option;
+              },
+            }}
+            connection={connection}
+            things="security groups"
+            placeholder="Choose security groups"
+            lockedBy={
+              placement !== undefined && vpcId === undefined && !loading && !failed ? 'DB subnet group' : undefined
+            }
+            held={loading && !failed ? "Checking the DB subnet group's VPC" : undefined}
+            none={vpcId === undefined ? undefined : `No security groups in ${vpcId}`}
+            invalid={error !== undefined}
+            value={value}
+            onChange={onChange}
+          />
+        </fieldset>
         {placement !== undefined && (
           <FieldReadStatus
             connection={connection}
