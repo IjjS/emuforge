@@ -781,6 +781,14 @@ describe('reading move tasks after a start', () => {
     expect(taskRows().map((row) => row.slice(0, 3))).toEqual([[status, 'Source queues', counts]]);
   }
 
+  async function waitForEmptyTasks() {
+    await waitFor(() => {
+      const emptySlot = tasksTable().findEmptySlot()?.getElement();
+      expect(emptySlot).toHaveTextContent('No move tasks');
+      expect(emptySlot).toHaveTextContent('No move tasks are listed for this queue.');
+    });
+  }
+
   function holdRead() {
     let resolve: (answer: Answer) => void = () => undefined;
     const promise = new Promise<Answer>((done) => {
@@ -828,7 +836,7 @@ describe('reading move tasks after a start', () => {
     await waitFor(() => {
       expectRow('RUNNING', '0 of 1');
     });
-    expect(screen.queryByText('No move tasks')).toBeNull();
+    expect(tasksTable().findEmptySlot()).toBeNull();
   });
 
   it('keeps the running task when the first read answers empty after the later read', async () => {
@@ -901,10 +909,24 @@ describe('reading move tasks after a start', () => {
     await reply(first, empty);
     await waitForReads(2);
     await reply(later, refused(403, 'AccessDenied', 'no policy allows it'));
-    await screen.findByText('Access denied');
-    expect(screen.getByText('ListMessageMoveTasks was refused: no policy allows it')).toBeDefined();
-    expect(PAGE.findTable()).toBeNull();
-    fireEvent.click(button('Retry'));
+    const retry = await waitFor(() => {
+      const failure = PAGE.findAllContainers().find((container) => {
+        const header = container.findHeader()?.getElement();
+        return header !== undefined && text(header) === 'Move tasks';
+      });
+      const content = failure?.findContent();
+      expect(content?.findStatusIndicator()?.getElement()).toHaveTextContent(/^Access denied$/);
+      expect(content?.find('p')?.getElement()).toHaveTextContent(
+        /^ListMessageMoveTasks was refused: no policy allows it$/,
+      );
+      expect(PAGE.findTable()).toBeNull();
+      const button = content?.findButton();
+      expect(button?.getElement()).toHaveTextContent(/^Retry$/);
+      return button;
+    });
+    act(() => {
+      retry?.click();
+    });
     await waitFor(() => {
       expectRow('COMPLETED', '1 of 1');
     });
@@ -918,7 +940,7 @@ describe('reading move tasks after a start', () => {
     );
     engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
     await openRedrive();
-    await screen.findByText('No move tasks');
+    await waitForEmptyTasks();
     fireEvent.click(button('Refresh move tasks'));
     await waitForReads(2);
     await start();
@@ -935,7 +957,7 @@ describe('reading move tasks after a start', () => {
     engine.on(list, vi.fn<Handler>().mockReturnValue(completed).mockReturnValueOnce(empty));
     engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
     await openRedrive();
-    await screen.findByText('No move tasks');
+    await waitForEmptyTasks();
     await start();
     await expectFlash(startSuccess);
     await waitFor(() => {
