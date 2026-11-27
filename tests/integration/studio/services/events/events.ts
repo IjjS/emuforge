@@ -226,17 +226,28 @@ export async function topicReported(ctx: Ctx, port: number, arn: string): Promis
   return answer.status === 200;
 }
 
-/** One bounded read of the queue `url`, directly: the bodies it returned, each message deleted from the queue. */
-export async function receiveDirect(ctx: Ctx, port: number, url: string): Promise<string[]> {
+/** One bounded read of a queue: the bodies it returned and the moment `ReceiveMessage` answered. */
+export interface DirectRead {
+  bodies: string[];
+  /** Taken when `ReceiveMessage` answered, before any message is deleted. */
+  answeredAt: number;
+}
+
+/**
+ * One bounded read of the queue `url`, directly: the bodies it returned and the moment the read answered, each
+ * message deleted from the queue after that moment is taken.
+ */
+export async function receiveDirect(ctx: Ctx, port: number, url: string): Promise<DirectRead> {
   const answer = ok(
     await sqs(ctx, port, 'ReceiveMessage', { QueueUrl: url, MaxNumberOfMessages: 10, WaitTimeSeconds: 1 }),
     'ReceiveMessage',
   );
+  const answeredAt = Date.now();
   const messages = (answer.json.Messages ?? []) as { Body: string; ReceiptHandle: string }[];
   for (const message of messages) {
     ok(await sqs(ctx, port, 'DeleteMessage', { QueueUrl: url, ReceiptHandle: message.ReceiptHandle }), 'DeleteMessage');
   }
-  return messages.map((message) => message.Body);
+  return { bodies: messages.map((message) => message.Body), answeredAt };
 }
 
 /** Waits until a condition read directly holds, within `boundMs`; returns its last value. */
@@ -1080,7 +1091,12 @@ export function busList(page: Page) {
     main,
     table,
     filter: table.locator(TEXT_FILTER),
-    radio: (name: string) => rowsIn(table).getByRole('radio', { name, exact: true }),
+    /** The selection control of the row whose Name cell is, whole, `name`: Cloudscape's row selection area. */
+    select: async (name: string) => {
+      const index = (await rowsOf(table)).findIndex((row) => row.Name === name);
+      if (index < 0) throw new Error(`"Event buses" shows no row whose Name is ${name}`);
+      await table.locator(inside(wrapper.findTable().findRowSelectionArea(index + 1))).click(ACTION);
+    },
     link: (name: string) => rowsIn(table).getByRole('link', { name, exact: true }),
     del: main.getByRole('button', { name: DELETE, exact: true }),
     next: main.locator(NEXT_PAGE),
@@ -1301,17 +1317,38 @@ export async function shownEventIds(page: Page, bus: string): Promise<string[]> 
     .filter((id) => id !== '');
 }
 
+/** One `PutEvents` of the page: the entries its request held and the event ID the emulator answered it with. */
+export interface SentEvent {
+  id: string;
+  /** The `Entries` of the request this ID answered, as the page sent them. */
+  entries: Record<string, unknown>[];
+}
+
 /**
- * Runs `act` and returns the event ID the emulator gave in the answer to the page's `PutEvents`: the `EventId` of
- * its one entry. Fails the check when the answer holds none.
+ * Runs `act` and returns the page's `PutEvents`: the entries of its request and the event ID the emulator gave in
+ * the answer to that same request (the `EventId` of its one entry). Fails the check when the answer holds none.
  */
-export async function sentEventId(page: Page, act: () => Promise<void>): Promise<string> {
+export async function sentEvent(page: Page, act: () => Promise<void>): Promise<SentEvent> {
   const answer = answerTo(page, 'PutEvents');
   await act();
-  const body = (await (await answer).json()) as { Entries?: { EventId?: string }[] };
+  const response = await answer;
+  const body = (await response.json()) as { Entries?: { EventId?: string }[] };
   const id = body.Entries?.[0]?.EventId;
   if (!id) throw new Error(`the answer to PutEvents holds no event ID: ${JSON.stringify(body)}`);
-  return id;
+  const sent = JSON.parse(response.request().postData() ?? '{}') as { Entries?: Record<string, unknown>[] };
+  return { id, entries: sent.Entries ?? [] };
+}
+
+/**
+ * Waits until the one success flash is on the screen, visible, with the receipt of `bus` holding the event ID `id`.
+ * `expectFlash` reads the text of the flash; this is that text being shown.
+ */
+export async function expectReceiptVisible(page: Page, bus: string, id: string): Promise<void> {
+  await expectFlash(page, 'success', eventAccepted(bus, id));
+  await expect(
+    flashItems(page, 'success').locator(FLASH_CONTENT).filter({ hasText: id }),
+    `the receipt with the event ID ${id}, visible`,
+  ).toBeVisible({ timeout: 15_000 });
 }
 
 /**

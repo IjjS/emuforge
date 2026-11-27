@@ -242,7 +242,7 @@ test('studio.events-delete-bus-from-the-list', async ({ ctx, page }) => {
       await open(page, EVENT_BUSES_PATH, EVENT_BUSES);
       await filterBuses(page, name);
       await expectBuses(page, [name]);
-      await s.radio(name).check(ACTION);
+      await s.select(name);
       await s.del.click(ACTION);
       await answered(page, 'DeleteEventBus', () => confirmWith(page, name, DELETE));
       await expectFlash(page, 'success', busDeleted(name));
@@ -260,8 +260,8 @@ test('studio.events-delete-bus-from-the-list', async ({ ctx, page }) => {
       const s = busList(page);
       await open(page, EVENT_BUSES_PATH, EVENT_BUSES);
       await filterBuses(page, 'default');
-      await expect(s.radio('default'), 'the row `default`').toBeVisible({ timeout: 15_000 });
-      await s.radio('default').check(ACTION);
+      await expectBuses(page, ['default']);
+      await s.select('default');
       await expectUnavailable(s.del, DEFAULT_BUS_CANNOT_BE_DELETED);
       await expect(dialogOf(page), 'no dialog is open').toHaveCount(0);
     },
@@ -290,7 +290,7 @@ test('studio.events-delete-bus-with-rules-is-refused', async ({ ctx, page }) => 
       await open(page, EVENT_BUSES_PATH, EVENT_BUSES);
       await filterBuses(page, name);
       await expectBuses(page, [name]);
-      await s.radio(name).check(ACTION);
+      await s.select(name);
       await s.del.click(ACTION);
       await answered(page, 'DeleteEventBus', () => confirmWith(page, name, DELETE));
       await expectAlert(dialog, writeRefused('DeleteEventBus', reason));

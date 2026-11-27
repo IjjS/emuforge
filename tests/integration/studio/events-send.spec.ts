@@ -27,10 +27,10 @@ import {
   chooseBus,
   countPutEvents,
   EVENT_NOT_SENT,
-  eventAccepted,
   EventsSeeded,
   expectBusChosen,
   expectFlash,
+  expectReceiptVisible,
   expectRules,
   fieldError,
   flashItems,
@@ -42,7 +42,7 @@ import {
   SEND_EVENTS,
   SEND_EVENTS_PATH,
   sendScreen,
-  sentEventId,
+  sentEvent,
   stateBesideFields,
   tableTitled,
   withBus,
@@ -87,9 +87,21 @@ test('studio.events-sent-event-reaches-a-matching-rules-queue', async ({ ctx, pa
   const s = sendScreen(page);
   /** The first event as the first line sent it: its ID and the moment the screen showed it. */
   let first: { id: string; shownAt: number } | undefined;
-  /** The events of one bounded read of the queue, decoded. */
-  const readEvents = async () =>
-    (await receiveDirect(ctx, port, queue.url)).map((body) => JSON.parse(body) as Record<string, unknown>);
+  /** One bounded read of the queue: its events, decoded, and the moment the read answered. */
+  const readEvents = async () => {
+    const read = await receiveDirect(ctx, port, queue.url);
+    return { events: read.bodies.map((body) => JSON.parse(body) as Record<string, unknown>), answeredAt: read.answeredAt };
+  };
+  /** The entries of a `PutEvents` request as what the form sent: the bus, the source, the detail type, the detail. */
+  const sentAs = (entries: Record<string, unknown>[]) =>
+    entries.map((entry) => ({
+      keys: Object.keys(entry).sort(),
+      bus: entry.EventBusName,
+      source: entry.Source,
+      detailType: entry.DetailType,
+      detail: typeof entry.Detail === 'string' ? (JSON.parse(entry.Detail) as unknown) : entry.Detail,
+    }));
+  const ENTRY_KEYS = ['Detail', 'DetailType', 'EventBusName', 'Source'];
 
   await lines.line(
     'On Send events, opened from the bus\'s page, enter the source `shop`, the detail type `order placed` and the detail `{"n":1}`, and send → the screen says the emulator accepted the event for `<p>-send` and shows an event ID; the form still holds what was entered',
@@ -102,9 +114,13 @@ test('studio.events-sent-event-reaches-a-matching-rules-queue', async ({ ctx, pa
       await expect(heading(page, SEND_EVENTS), 'the h1 "Send events"').toBeVisible();
       await expectBusChosen(page, bus);
       await fillEvent(page, 'shop', 'order placed', '{"n":1}');
-      const id = await sentEventId(page, () => s.send.click(ACTION));
+      const sent = await sentEvent(page, () => s.send.click(ACTION));
+      expect(sentAs(sent.entries), 'the entries of the PutEvents this event ID answered').toEqual([
+        { keys: ENTRY_KEYS, bus, source: 'shop', detailType: 'order placed', detail: { n: 1 } },
+      ]);
+      const id = sent.id;
 
-      await expectFlash(page, 'success', eventAccepted(bus, id));
+      await expectReceiptVisible(page, bus, id);
       first = { id, shownAt: Date.now() };
       await expect(s.source, 'the source entered').toHaveValue('shop');
       await expect(s.detailType, 'the detail type entered').toHaveValue('order placed');
@@ -121,9 +137,11 @@ test('studio.events-sent-event-reaches-a-matching-rules-queue', async ({ ctx, pa
       let received: Record<string, unknown>[] = [];
       let receivedAt = Number.POSITIVE_INFINITY;
       while (received.length === 0 && Date.now() < deadline) {
-        received = await readEvents();
-        // The moment the read that held the message answered: it must be inside the bound too.
-        if (received.length > 0) receivedAt = Date.now();
+        const read = await readEvents();
+        received = read.events;
+        // The moment the read that held the message answered, taken before the message was deleted: it must be
+        // inside the bound too.
+        if (received.length > 0) receivedAt = read.answeredAt;
       }
       expect(
         received.map((event) => ({
@@ -148,23 +166,33 @@ test('studio.events-sent-event-reaches-a-matching-rules-queue', async ({ ctx, pa
       await expect(page, 'the form of the first send is still open').toHaveURL(addressOf(withBus(SEND_EVENTS_PATH, bus)));
       await expect(s.detailType, 'the detail type of the first send is still entered').toHaveValue('order placed');
       await s.source.fill('other', ACTION);
-      const secondId = await sentEventId(page, () => s.send.click(ACTION));
+      const second = await sentEvent(page, () => s.send.click(ACTION));
+      const secondId = second.id;
       expect(secondId, 'the second event ID differs from the first').not.toBe(first.id);
-      await expectFlash(page, 'success', eventAccepted(bus, secondId));
+      // The request this ID answered: the chosen bus, the source `other`, the rest as the first send.
+      expect(sentAs(second.entries), 'the entries of the PutEvents the second event ID answered').toEqual([
+        { keys: ENTRY_KEYS, bus, source: 'other', detailType: 'order placed', detail: { n: 1 } },
+      ]);
+      await expectReceiptVisible(page, bus, secondId);
       // The window starts here: the second event ID is visible on the screen.
       const started = Date.now();
+      const deadline = started + DELIVERY_BOUND_MS;
 
       let reads = 0;
-      while (Date.now() - started < DELIVERY_BOUND_MS) {
+      let answeredInWindow = 0;
+      // Every read begun in the window is looked at, the one that answers after it too; only a read that answered
+      // by the deadline counts as a read of the window.
+      while (Date.now() < deadline) {
         // A read that fails throws, and the line fails with it.
-        const received = await readEvents();
+        const read = await readEvents();
         reads += 1;
+        if (read.answeredAt <= deadline) answeredInWindow += 1;
         expect(
-          received.filter((event) => event.id === secondId),
+          read.events.filter((event) => event.id === secondId),
           `the events of read ${String(reads)} whose ID is the second event's`,
         ).toEqual([]);
       }
-      expect(reads, 'the reads answered within the window').toBeGreaterThan(0);
+      expect(answeredInWindow, 'the reads that answered within the window').toBeGreaterThan(0);
     },
   );
 
