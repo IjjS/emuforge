@@ -4,6 +4,7 @@ import {
   classError,
   databaseNameError,
   identifierError,
+  iopsError,
   masterUserNameConstraint,
   masterUserNameError,
   passwordError,
@@ -81,5 +82,36 @@ describe('the checks of the forms', () => {
     expect(databaseNameError('a-b')).toBe('A database name can hold letters, digits and underscores only.');
     expect(databaseNameError('1abc')).toBe('A database name begins with a letter.');
     expect(databaseNameError('app_db1')).toBeUndefined();
+  });
+});
+
+describe('storage and IOPS for an orderable type', () => {
+  const io1 = {
+    type: 'io1',
+    minSize: 20,
+    maxSize: 500,
+    minIops: 1000,
+    maxIops: 10000,
+    minIopsPerGib: 1,
+    maxIopsPerGib: 50,
+  };
+
+  it('checks a type’s advertised range', () => {
+    const gp3 = { type: 'gp3', minSize: 40, maxSize: 200 };
+    expect(storageError('39', gp3)).toBe('40 to 200 GiB for gp3.');
+    expect(storageError('201', gp3)).toBe('40 to 200 GiB for gp3.');
+    expect(storageError('40', gp3)).toBeUndefined();
+  });
+
+  it('requires IOPS for io1 and checks the row and size ranges', () => {
+    expect(iopsError('', '100', io1)).toBe('Enter the IOPS.');
+    expect(iopsError('999', '100', io1)).toBe('1000 to 10000.');
+    expect(iopsError('6000', '100', io1)).toBe('100 to 5000 IOPS for 100 GiB.');
+    expect(iopsError('5000', '100', io1)).toBeUndefined();
+  });
+
+  it.each(['io1', 'io2'])('requires at least 100 GiB for %s', (type) => {
+    expect(storageError('99', { ...io1, type })).toBe(`100 to 500 GiB for ${type}.`);
+    expect(storageError('100', { ...io1, type })).toBeUndefined();
   });
 });
