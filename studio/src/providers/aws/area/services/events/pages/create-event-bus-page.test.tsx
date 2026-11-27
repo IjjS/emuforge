@@ -5,7 +5,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
-import { PageFlashContext } from '../../../components/page-flash';
+import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
 import { PageResourcesContext } from '../../../components/page-resources';
 import { createEventBus } from '../bus-change-api';
 import { CreateEventBusPage } from './create-event-bus-page';
@@ -24,7 +24,7 @@ beforeEach(() => create.mockReset());
 
 function renderPage() {
   const resources = vi.fn();
-  const handOver = vi.fn();
+  const handOver = vi.fn<PageFlash['handOver']>();
   function Area() {
     const root = useRef<HTMLDivElement>(null);
     const { pathname } = useLocation();
@@ -84,8 +84,9 @@ it('creates the bus once and hands over its success to the bus page', async () =
   create.mockResolvedValueOnce(undefined);
   const { handOver } = renderPage();
   fill();
-  click('Create event bus');
-  click('Create event bus');
+  const action = screen.getByRole('button', { name: 'Create event bus' });
+  fireEvent.click(action);
+  fireEvent.click(action);
   await waitFor(() => expect(handOver).toHaveBeenCalledOnce());
   expect(create).toHaveBeenCalledExactlyOnceWith(
     endpoint,
@@ -96,10 +97,10 @@ it('creates the bus once and hands over its success to the bus page', async () =
     },
     expect.any(AbortSignal),
   );
-  const [path, items] = handOver.mock.calls[0] as [string, { type: string; content: React.ReactNode }[]];
+  const [path, items] = handOver.mock.calls[0] ?? [];
   expect(path).toBe('/aws/events/event-buses/bus/Orders');
-  expect(items[0]?.type).toBe('success');
-  const { container } = render(<>{items[0]?.content}</>);
+  expect(items?.[0].type).toBe('success');
+  const { container } = render(<>{items?.[0].content}</>);
   expect(container).toHaveTextContent('Event bus Orders created.');
 });
 

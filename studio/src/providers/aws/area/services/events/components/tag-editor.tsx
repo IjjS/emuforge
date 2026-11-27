@@ -11,13 +11,13 @@ export interface TagEditorRef {
 
 interface TagEditorProps {
   tags: readonly Tag[];
-  errors?: ReturnType<typeof validateTags>;
+  errors?: ReturnType<typeof validateTags> | undefined;
   disabled?: boolean;
   onChange: (tags: Tag[]) => void;
   ref?: Ref<TagEditorRef>;
 }
 
-export function TagEditor({ tags, errors, disabled, onChange, ref }: TagEditorProps) {
+export function TagEditor({ tags, errors, disabled = false, onChange, ref }: TagEditorProps) {
   const inputs = useRef(new Map<string, InputProps.Ref>());
   useImperativeHandle(ref, () => ({
     focus: (index, part) => inputs.current.get(`${String(index)}-${part}`)?.focus(),

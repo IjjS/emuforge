@@ -304,6 +304,8 @@ it('shows the missing bus when an open delete dialog is dismissed without deleti
   });
   expect(layout.findContent().getElement()).not.toHaveTextContent('Event bus not found');
   fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-  expect(await screen.findByText('Event bus not found')).toBeVisible();
+  await waitFor(() =>
+    expect(layout.findContent().findContainer()?.getElement()).toHaveTextContent('Event bus not found'),
+  );
   expect(deleteEventBus).not.toHaveBeenCalled();
 });
