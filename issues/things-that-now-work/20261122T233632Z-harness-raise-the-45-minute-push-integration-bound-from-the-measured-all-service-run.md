@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|push-integration-time-bound|all-service-45min-headroom
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 50518a8f27de5dcab6e463ebe04648f0ff92a4b7
 
 # Raise the 45-minute push integration bound from the measured all-service run
