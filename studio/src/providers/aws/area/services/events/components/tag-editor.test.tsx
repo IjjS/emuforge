@@ -29,7 +29,7 @@ it('reports added, changed and removed tag rows and focuses the new key', () => 
   fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
   const [, addedKey] = screen.getAllByRole('textbox', { name: 'Key' });
   expect(addedKey).toHaveFocus();
-  fireEvent.click(screen.getByRole('button', { name: 'Remove tag', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove tag' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove tag team' }));
   expect(change).toHaveBeenLastCalledWith([]);
 });
