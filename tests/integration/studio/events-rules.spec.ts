@@ -32,6 +32,7 @@ import {
   expectUnavailable,
   filterRules,
   open,
+  pairsIn,
   REMOVE,
   rowsIn,
   ruleDirect,
@@ -43,6 +44,7 @@ import {
   shownRule,
   shownTargets,
   tableTitled,
+  targetCell,
   targetRemoved,
   targetsDirect,
   withBus,
@@ -200,22 +202,27 @@ test('studio.events-rule-page-shows-rule-and-targets', async ({ ctx, page }) => 
         { id: 'whole', arn: queue.arn },
       ]);
 
+      // What each receives: the cell's whole text, the kind first and what it holds after it.
       expect((await row('whole')).Receives, 'what `whole` receives').toBe('Matched event');
-      const fixed = (await row('fixed')).Receives ?? '';
-      expect(fixed, 'what `fixed` receives').toContain('Constant');
-      expect(fixed, 'the constant of `fixed`').toContain('{"k":1}');
-      const part = (await row('part')).Receives ?? '';
-      expect(part, 'what `part` receives').toContain('Part of the event');
-      expect(part, 'the path of `part`').toContain('$.detail');
-      const shaped = (await row('shaped')).Receives ?? '';
-      expect(shaped, 'what `shaped` receives').toContain('Transformed');
-      expect(shaped, "the transformer's path").toContain('$.detail.n');
-      expect(shaped, "the transformer's template").toContain(template);
-
-      const details = (await row('fn')).Details ?? '';
-      expect(details, 'the dead-letter queue of `fn`').toContain(queue.arn);
-      expect(details, 'the retry policy of `fn`: its maximum event age').toContain('Maximum event age (seconds)3600');
-      expect(details, 'the retry policy of `fn`: its maximum retry attempts').toContain('Maximum retry attempts2');
+      expect((await row('fixed')).Receives, 'what `fixed` receives, with its constant').toBe('Constant{"k":1}');
+      expect((await row('part')).Receives, 'what `part` receives, with its path').toBe('Part of the event$.detail');
+      const shaped = await targetCell(page, 'shaped', 'Receives');
+      expect(await pairsIn(shaped), "the transformer's paths and template").toEqual({
+        'Input paths': '{ "n": "$.detail.n" }',
+        'Input template': template,
+      });
+      expect((await row('shaped')).Receives, 'what `shaped` receives, whole').toBe(
+        `TransformedInput paths{ "n": "$.detail.n" }Input template${template}`,
+      );
+      for (const id of ['whole', 'fixed', 'part', 'shaped']) {
+        expect((await row(id)).Details, `the details of \`${id}\``).toBe('-');
+      }
+      expect(await pairsIn(await targetCell(page, 'fn', 'Details')), 'the dead-letter queue and retry policy of `fn`').toEqual({
+        'Dead-letter queue ARN': queue.arn,
+        'Maximum event age (seconds)': '3600',
+        'Maximum retry attempts': '2',
+      });
+      expect((await row('fn')).Receives, 'what `fn` receives').toBe('Matched event');
 
       await expectUnavailable(s.button(ADD_TARGET), AT_MOST_FIVE_TARGETS);
     },

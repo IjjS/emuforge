@@ -1,8 +1,9 @@
 // The emulator side and the words of EventBridge's screens (test-criteria.md, issue 75), for the `events-*.spec.ts`
 // checks.
 //
-// - Direct calls: `directEvents`, `directSqs`, `directSns` and `directLogs` of `support/aws-clients-general.ts`
-//   (straight to the emulator, SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`).
+// - Direct calls: EventBridge's own sender here, over `directJson` of `support/aws-clients-general.ts`, and that
+//   file's `directSqs`, `directSns` and `directLogs` for what a rule points at (straight to the emulator,
+//   SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`).
 //   A refusal is read from its JSON `__type` and `message`; "the emulator's reason" a line asks for is the `message`
 //   of a direct call that is refused the same way, compared with what the screen shows.
 // - `EventsSeeded`: what a check makes, every name under the check's prefix `<p>`. When the check ends it removes
@@ -16,7 +17,7 @@ import type { Locator, Page } from '@playwright/test';
 
 import {
   createdTopicArn,
-  directEvents,
+  directJson,
   directLogs,
   directSns,
   directSqs,
@@ -54,6 +55,11 @@ function parsed(answer: DirectAnswer, what: string): Answer {
   return { status: answer.status, json, type, message: typeof text === 'string' ? text : null };
 }
 
+/** An EventBridge action (AWS JSON 1.1) with its JSON input, straight to the emulator. */
+function directEvents(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return directJson(ctx, port, 'events', '1.1', `AWSEvents.${action}`, input);
+}
+
 type Direct = (ctx: Ctx, port: number, action: string, input: object) => Promise<DirectAnswer>;
 
 /** A sender of one service's JSON operations: sends, parses and logs the status. */
@@ -81,16 +87,27 @@ export async function eventsOk(ctx: Ctx, port: number, operation: string, input:
   return ok(await events(ctx, port, operation, input), operation);
 }
 
+/** A refusal of the emulator's: its code (the last part of `__type`) and its message. */
+export interface Refusal {
+  code: string;
+  message: string;
+}
+
 /**
- * The emulator's reason for refusing the EventBridge `operation` with `input`, directly: the `message` of its
- * refusal. Fails the check when the emulator does not refuse it.
+ * The emulator's reason for refusing the EventBridge `operation` with `input`, directly: the code and the `message`
+ * of its refusal. Fails the check when the emulator does not refuse it with both.
  */
-export async function refusalDirect(ctx: Ctx, port: number, operation: string, input: object): Promise<string> {
+export async function refusalDirect(ctx: Ctx, port: number, operation: string, input: object): Promise<Refusal> {
   const answer = await events(ctx, port, operation, input);
-  if (answer.status === 200 || answer.message === null || answer.message === '') {
+  if (answer.status === 200 || !answer.type || !answer.message) {
     throw new Error(`direct ${operation} was not refused with a reason: ${String(answer.status)} ${JSON.stringify(answer.json)}`);
   }
-  return answer.message;
+  return { code: answer.type, message: answer.message };
+}
+
+/** What a failed write shows for `refusal`: its heading and, below it, the emulator's code and message. */
+export function writeRefused(operation: string, refusal: Refusal): { header: string; content: string } {
+  return { header: `${operation} failed`, content: `${refusal.code}: ${refusal.message}` };
 }
 
 /** An event bus as `ListEventBuses` and `DescribeEventBus` report it; the times are seconds since the epoch. */
@@ -445,7 +462,9 @@ export class EventsSeeded {
     for (const arn of this.topics) {
       await attempt(`DeleteTopic ${arn}`, async () => {
         const answer = await directSns(this.ctx, this.port, 'DeleteTopic', { TopicArn: arn });
-        return 'error' in answer ? { status: 0, json: { error: answer.error }, type: null, message: null } : null;
+        return 'error' in answer
+          ? { status: 0, json: { error: answer.error }, type: null, message: null }
+          : { status: answer.status, json: { body: answer.body }, type: null, message: null };
       });
     }
     for (const name of this.groups) {
@@ -554,14 +573,18 @@ export function busNotInEmulator(name: string): string {
 export function ruleNameTaken(name: string, bus: string): string {
   return `A rule named ${name} already exists on ${bus}. Creating it again would replace it.`;
 }
-/** What the delete dialog says is removed with a rule of `count` targets (two or more). */
+/** What the delete dialog says is removed with a rule of `count` targets (two or more): its whole sentence. */
 export function ruleAndTargetsRemoved(count: number): string {
-  return `The rule and its ${String(count)} targets are removed`;
+  return `The rule and its ${String(count)} targets are removed from your local emulator. This cannot be undone.`;
 }
-/** What Send events says of an accepted event, up to its ID. */
-export function eventAccepted(bus: string): string {
-  return `The emulator accepted the event for ${bus}. Event ID`;
+/** What Send events says of the accepted event `id`: the whole receipt. */
+export function eventAccepted(bus: string, id: string): string {
+  return `The emulator accepted the event for ${bus}. Event ID ${id}.`;
 }
+/** The heading of what Send events says when nothing was sent, and what stands below it. */
+export const EVENT_NOT_SENT = 'The event was not sent.';
+export const CHECK_THE_FORM = 'Check the form for details.';
+export const CHECK_THE_BUS_FIELD = 'Check the event bus field.';
 /** The accessible name of the control that removes the target `id` from its rule. */
 export function removeTarget(id: string): string {
   return `Remove target ${id}`;
@@ -669,6 +692,28 @@ const SELECT_OPEN = inside(wrapper.findSelect().findDropdown().findOpenDropdown(
 const SELECT_OPTIONS = inside(wrapper.findSelect().findDropdown().findOptions());
 const SELECT_FILTER = inside(wrapper.findSelect().findFilteringInput().findNativeInput());
 const EDITOR_ROWS = rel(wrapper.findAttributeEditor().findRows());
+/** The part of `whole` below `root`, for a locator that is `root`'s element. */
+function below(root: { toSelector(): string }, whole: { toSelector(): string }): string {
+  return whole.toSelector().slice(root.toSelector().length).trim();
+}
+const FIRST_FLASH = wrapper.findFlashbar().findItems().get(1);
+/** A flash item's heading and content, below the item. */
+const FLASH_HEADER = below(FIRST_FLASH, FIRST_FLASH.findHeader());
+const FLASH_CONTENT = below(FIRST_FLASH, FIRST_FLASH.findContent());
+/** An alert's heading and content, below the alert. */
+const ALERT_HEADER = below(wrapper.findAlert(), wrapper.findAlert().findHeader());
+const ALERT_CONTENT = below(wrapper.findAlert(), wrapper.findAlert().findContent());
+const MODAL_CONTENT = below(wrapper.findModal(), wrapper.findModal().findContent());
+const FIRST_PAIR = wrapper.findKeyValuePairs().findItems().get(1);
+const PAIRS = rel(wrapper.findKeyValuePairs().findItems());
+const PAIR_LABEL = below(FIRST_PAIR, FIRST_PAIR.findLabel());
+const PAIR_VALUE = below(FIRST_PAIR, FIRST_PAIR.findValue());
+/** The native input of the choice whose value is `value`, in a radio group. */
+function radioByValue(value: string): string {
+  return rel(wrapper.findRadioGroup().findInputByValue(value));
+}
+/** A text as a screen draws it: every run of white space one space, none at its ends. */
+const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
 /** An option of a select by its value. */
 function optionByValue(value: string): string {
   return inside(wrapper.findSelect().findDropdown().findOptionByValue(value));
@@ -756,15 +801,41 @@ export function flashItems(page: Page, type: 'success' | 'error' | 'info' | 'war
   return page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector());
 }
 
-/** Waits until one flash item of `type`, and no more, holds every text of `texts`: the items' own texts are read. */
-export async function expectFlash(page: Page, type: 'success' | 'error' | 'warning', ...texts: string[]): Promise<void> {
+/** What a flash item shows: its heading (`null` without one) and its content, each whole. */
+export interface ShownFlash {
+  header: string | null;
+  content: string;
+}
+
+/** The flash items of `type` as shown: the heading and the content of each, found with Cloudscape's selectors. */
+export async function shownFlashes(page: Page, type: 'success' | 'error' | 'info' | 'warning'): Promise<ShownFlash[]> {
   const items = flashItems(page, type);
+  const count = await items.count();
+  return Promise.all(
+    Array.from({ length: count }, async (_, i) => {
+      const item = items.nth(i);
+      const [header] = await item.locator(FLASH_HEADER).allTextContents();
+      const [content] = await item.locator(FLASH_CONTENT).allTextContents();
+      // A flash without a heading may still hold the heading's element, empty.
+      const heading = norm(header ?? '');
+      return { header: heading === '' ? null : heading, content: norm(content ?? '') };
+    }),
+  );
+}
+
+/**
+ * Waits until the flash items of `type` are one, whose content is `content`, whole, and whose heading is `header`
+ * (none when omitted).
+ */
+export async function expectFlash(
+  page: Page,
+  type: 'success' | 'error' | 'warning',
+  content: string,
+  header: string | null = null,
+): Promise<void> {
   await expect
-    .poll(async () => (await items.allInnerTexts()).filter((shown) => texts.every((text) => shown.includes(text))).length, {
-      message: `one ${type} flash holding ${texts.map((t) => `"${t}"`).join(', ')}`,
-      timeout: 15_000,
-    })
-    .toBe(1);
+    .poll(() => shownFlashes(page, type), { message: `the one ${type} flash "${content}"`, timeout: 15_000 })
+    .toEqual([{ header, content: norm(content) }]);
 }
 
 /** Whether a request the page sent to the engine is the EventBridge operation `operation`. */
@@ -881,20 +952,50 @@ export function alerts(scope: Locator): Locator {
   return scope.locator(ALERT);
 }
 
-/** Waits until one alert of `scope` holds every text of `texts`. */
-export async function expectAlert(scope: Locator, ...texts: string[]): Promise<void> {
-  // A reason of the emulator's may hold a line break, which the alert draws as a space: both are read with every
-  // run of white space as one space.
-  const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
-  const wanted = texts.map(norm);
+/**
+ * Waits until the announced alerts of `scope` are one, whose heading is `shown.header` and whose content is `shown.content`,
+ * each whole. A reason of the emulator's may hold a line break, which the alert draws as a space: both sides are
+ * read with every run of white space as one space.
+ */
+export async function expectAlert(scope: Locator, shown: { header: string; content: string }): Promise<void> {
+  const read = async () => {
+    // The result of a write is announced: its alert stands in an element of the role `alert`. The area's own notice
+    // of the local emulator, an alert too, does not.
+    const all = alerts(scope.getByRole('alert'));
+    const count = await all.count();
+    return Promise.all(
+      Array.from({ length: count }, async (_, i) => ({
+        header: norm((await all.nth(i).locator(ALERT_HEADER).allTextContents()).join(' ')),
+        content: norm((await all.nth(i).locator(ALERT_CONTENT).allTextContents()).join(' ')),
+      })),
+    );
+  };
   await expect
-    .poll(
-      async () =>
-        (await alerts(scope).allInnerTexts()).map(norm).filter((shown) => wanted.every((text) => shown.includes(text)))
-          .length,
-      { message: `one alert holding ${wanted.map((t) => `"${t}"`).join(', ')}`, timeout: 15_000 },
-    )
-    .toBe(1);
+    .poll(read, { message: `the one alert "${shown.header}": "${shown.content}"`, timeout: 15_000 })
+    .toEqual([{ header: norm(shown.header), content: norm(shown.content) }]);
+}
+
+/** The content of the open dialog `dialog`, below its heading and above its actions. */
+export function dialogContent(dialog: Locator): Locator {
+  return dialog.locator(MODAL_CONTENT);
+}
+
+/** The key-value pairs inside `scope` (a table's cell) as shown: each label with its value, whole. */
+export async function pairsIn(scope: Locator): Promise<Record<string, string>> {
+  const pairs = scope.locator(PAIRS);
+  const count = await pairs.count();
+  const read = await Promise.all(
+    Array.from({ length: count }, async (_, i) => [
+      norm((await pairs.nth(i).locator(PAIR_LABEL).allTextContents()).join(' ')),
+      norm((await pairs.nth(i).locator(PAIR_VALUE).allTextContents()).join(' ')),
+    ]),
+  );
+  return Object.fromEntries(read) as Record<string, string>;
+}
+
+/** The choice of the radio group inside the form field `of` whose value is `value`. */
+export function radioOf(of: Locator, value: string): Locator {
+  return of.locator(radioByValue(value));
 }
 
 /** The open dialog: Cloudscape's modal that is shown (one that is closed stays in the page, hidden). */
@@ -1099,11 +1200,12 @@ export function createRuleScreen(page: Page) {
     name: main.getByRole('textbox', { name: 'Rule name', exact: true }),
     nameField: field(main, 'Rule name'),
     description: main.getByRole('textbox', { name: 'Description - optional', exact: true }),
-    state: (label: 'Enabled' | 'Disabled') => main.getByRole('radio', { name: label, exact: true }),
-    trigger: (label: 'Event pattern' | 'Schedule') => main.getByRole('radio', { name: label, exact: true }),
+    /** The choices of "State", "What starts the rule" and "Unit", each by its value in its radio group. */
+    state: (value: 'ENABLED' | 'DISABLED') => radioOf(field(main, 'State'), value),
+    trigger: (value: 'pattern' | 'schedule') => radioOf(field(main, 'What starts the rule'), value),
     pattern: main.getByRole('textbox', { name: EVENT_PATTERN, exact: true }),
     rate: main.getByRole('textbox', { name: 'Rate', exact: true }),
-    unit: (label: 'Minutes' | 'Hours' | 'Days') => main.getByRole('radio', { name: label, exact: true }),
+    unit: (value: 'minute' | 'hour' | 'day') => radioOf(field(main, 'Unit'), value),
     addTarget: main.getByRole('button', { name: ADD_TARGET, exact: true }),
     /** The field labelled `label` of the targets, the `nth` of that label (1 the first) in document order. */
     targetField: (label: string, nth: number) => fields(main, label).nth(nth - 1),
@@ -1131,6 +1233,19 @@ export function ruleScreen(page: Page) {
   };
 }
 
+/**
+ * The cell under the heading `column` of the target `id` on a rule's page: the row is the one whose "ID" cell reads
+ * `id`, whole; row, heading and cell are found with Cloudscape's selectors. Fails the check when no row holds it.
+ */
+export async function targetCell(page: Page, id: string, column: string): Promise<Locator> {
+  const table = ruleScreen(page).targets;
+  const headers = (await table.locator(TABLE_HEADERS).allTextContents()).map(norm);
+  const at = headers.indexOf(column);
+  const row = (await rowsOf(table)).findIndex((each) => each.ID === id);
+  if (at < 0 || row < 0) throw new Error(`the targets table shows no cell "${column}" for the target ${id}`);
+  return table.locator(bodyCell(row + 1, at + 1));
+}
+
 /** The targets a rule's page shows, each row as its headings' texts, in the order of their IDs. */
 export async function shownTargets(page: Page): Promise<Record<string, string>[]> {
   return (await rowsOf(ruleScreen(page).targets)).sort((a, b) => ((a.ID ?? '') < (b.ID ?? '') ? -1 : 1));
@@ -1155,6 +1270,7 @@ export function addTargetDialog(page: Page) {
     idField: field(dialog, 'Target ID'),
     kind: field(dialog, 'Target kind'),
     resource: (label: 'Queue' | 'Topic' | 'Log group') => field(dialog, label),
+    receives: field(dialog, 'What the target receives'),
     submit: dialog.getByRole('button', { name: ADD_TARGET, exact: true }),
     cancel: dialog.getByRole('button', { name: CANCEL, exact: true }),
   };
@@ -1175,14 +1291,37 @@ export function sendScreen(page: Page) {
 }
 
 /**
- * The event IDs the page's success flash shows for events accepted for `bus`: what follows "Event ID" in each
- * item that holds the acceptance of that bus.
+ * The event IDs the page's success flash shows for events accepted for `bus`: the ID of each item whose content
+ * is, whole, the receipt of that bus with an ID.
  */
 export async function shownEventIds(page: Page, bus: string): Promise<string[]> {
-  const texts = await flashItems(page, 'success').allInnerTexts();
-  return texts
-    .map((text) => text.replace(/\s+/g, ' '))
-    .filter((text) => text.includes(eventAccepted(bus)))
-    .map((text) => /Event ID (\S+?)\.(\s|$)/.exec(text)?.[1] ?? '')
+  const receipt = new RegExp(`^${escaped(eventAccepted(bus, '\u0000')).replace('\u0000', '(\\S+)')}$`);
+  return (await shownFlashes(page, 'success'))
+    .map((flash) => (flash.header === null ? (receipt.exec(flash.content)?.[1] ?? '') : ''))
     .filter((id) => id !== '');
+}
+
+/**
+ * Runs `act` and returns the event ID the emulator gave in the answer to the page's `PutEvents`: the `EventId` of
+ * its one entry. Fails the check when the answer holds none.
+ */
+export async function sentEventId(page: Page, act: () => Promise<void>): Promise<string> {
+  const answer = answerTo(page, 'PutEvents');
+  await act();
+  const body = (await (await answer).json()) as { Entries?: { EventId?: string }[] };
+  const id = body.Entries?.[0]?.EventId;
+  if (!id) throw new Error(`the answer to PutEvents holds no event ID: ${JSON.stringify(body)}`);
+  return id;
+}
+
+/**
+ * Starts counting the `PutEvents` the page sends to the engine; the returned function gives the count so far. A
+ * listener only: no request is intercepted.
+ */
+export function countPutEvents(page: Page): () => number {
+  let sent = 0;
+  page.on('request', (request) => {
+    if (isOperation(request.headers(), 'PutEvents')) sent += 1;
+  });
+  return () => sent;
 }

@@ -30,6 +30,7 @@ import {
   CREATE_RULE_PATH,
   createRuleScreen,
   DELETE_RULE,
+  dialogContent,
   dialogOf,
   DISABLE,
   ENABLE,
@@ -54,6 +55,7 @@ import {
   RULES,
   RULES_PATH,
   ruleScreen,
+  selectOf,
   rulesDirect,
   rulesNamedDirect,
   ruleSwitched,
@@ -64,6 +66,7 @@ import {
   textOf,
   topicReported,
   withBus,
+  writeRefused,
 } from './services/events/events';
 
 test('studio.events-create-rule-with-targets', async ({ ctx, page }) => {
@@ -185,7 +188,7 @@ test('studio.events-create-rule-existing-name-is-refused', async ({ ctx, page })
       await s.pattern.fill('{"source":["b"]}', ACTION);
       await answered(page, 'DescribeRule', () => s.submit.click(ACTION));
 
-      await expect(fieldError(s.nameField), "what the name's field says").toContainText(ruleNameTaken('mine', bus), {
+      await expect(fieldError(s.nameField), "what the name's field says").toHaveText(ruleNameTaken('mine', bus), {
         timeout: 15_000,
       });
       await expect(page, 'the form stays').toHaveURL(addressOf(withBus(CREATE_RULE_PATH, bus)));
@@ -236,7 +239,7 @@ test('studio.events-create-rule-refused-pattern-leaves-no-rule', async ({ ctx, p
       await s.pattern.fill(pattern, ACTION);
       await answered(page, 'PutRule', () => s.submit.click(ACTION));
 
-      await expectAlert(s.main, 'PutRule', reason);
+      await expectAlert(s.main, writeRefused('PutRule', reason));
       await expect(page, 'the form stays').toHaveURL(addressOf(withBus(CREATE_RULE_PATH, bus)));
       await expect(s.name, 'the name entered').toHaveValue('bad');
       await expect(s.pattern, 'the pattern entered').toHaveValue(pattern);
@@ -264,8 +267,9 @@ test('studio.events-create-schedule-rule-on-default', async ({ ctx, page }) => {
   await lines.line('On Create rule with `<p>-other` chosen → "Schedule" cannot be chosen', async () => {
     await open(page, withBus(CREATE_RULE_PATH, other), CREATE_RULE);
     await expectBusChosen(page, other);
-    await expect(s.trigger('Schedule'), '"Schedule" with a bus other than `default`').toBeDisabled();
-    await expect(s.trigger('Event pattern'), '"Event pattern" stays chosen').toBeChecked();
+    await expect(s.trigger('schedule'), 'the choice of a schedule is named "Schedule"').toHaveAccessibleName('Schedule');
+    await expect(s.trigger('schedule'), '"Schedule" with a bus other than `default`').toBeDisabled();
+    await expect(s.trigger('pattern'), 'the choice of an event pattern stays chosen').toBeChecked();
   });
 
   await lines.line(
@@ -276,11 +280,13 @@ test('studio.events-create-schedule-rule-on-default', async ({ ctx, page }) => {
       await chooseBus(page, 'default');
       await expectBusChosen(page, 'default');
       await s.name.fill(name, ACTION);
-      await expect(s.trigger('Schedule'), '"Schedule" with `default` chosen').toBeEnabled();
-      await s.trigger('Schedule').check(ACTION);
+      await expect(s.trigger('schedule'), 'the choice of a schedule is named "Schedule"').toHaveAccessibleName('Schedule');
+      await expect(s.trigger('schedule'), '"Schedule" with `default` chosen').toBeEnabled();
+      await s.trigger('schedule').check(ACTION);
       await s.rate.fill('5', ACTION);
-      await s.unit('Minutes').check(ACTION);
-      await s.state('Disabled').check(ACTION);
+      await s.unit('minute').check(ACTION);
+      await expect(s.state('DISABLED'), 'the choice of a disabled rule is named "Disabled"').toHaveAccessibleName('Disabled');
+      await s.state('DISABLED').check(ACTION);
       await s.submit.click(ACTION);
 
       await expect(page, "the rule's page, at its address").toHaveURL(addressOf(rulePath('default', name)), {
@@ -360,8 +366,16 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
   await seeded.rule(bus, 'grow', { pattern: '{"source":["shop"]}' });
   await seeded.targets(bus, 'grow', [{ Id: 'first', Arn: queue.arn }]);
   const s = ruleScreen(page);
+  /** The targets, directly: each ID with its ARN and what it receives (`null` three times: the matched event). */
   const targets = async () =>
-    (await targetsDirect(ctx, port, bus, 'grow')).map((target) => ({ id: target.Id, arn: target.Arn }));
+    (await targetsDirect(ctx, port, bus, 'grow')).map((target) => ({
+      id: target.Id,
+      arn: target.Arn,
+      input: target.Input ?? null,
+      path: target.InputPath ?? null,
+      transformer: target.InputTransformer ?? null,
+    }));
+  const matched = { input: null, path: null, transformer: null };
   /** Opens "Add target" and enters a target `id` that is the topic, receiving the matched event. */
   const enterTopicTarget = async (id: string) => {
     const d = addTargetDialog(page);
@@ -371,6 +385,7 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
     await d.id.fill(id, ACTION);
     await chooseOption(d.kind, 'sns');
     await chooseListed(d.resource('Topic'), topic);
+    await expect(selectOf(d.receives), 'the target receives the matched event').toHaveText('Matched event');
     return d;
   };
 
@@ -384,9 +399,9 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
       await expectFlash(page, 'success', targetAdded('second', 'grow'));
       await expect(d.dialog, 'the dialog after the target was added').toHaveCount(0);
       await expectTargetIds(page, ['first', 'second']);
-      expect(await targets(), 'the targets, directly').toEqual([
-        { id: 'first', arn: queue.arn },
-        { id: 'second', arn: topic },
+      expect(await targets(), 'the targets with what each receives, directly').toEqual([
+        { id: 'first', arn: queue.arn, ...matched },
+        { id: 'second', arn: topic, ...matched },
       ]);
     },
   );
@@ -402,7 +417,7 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
       await expect(d.dialog, 'the dialog stays').toBeVisible();
       await expect(d.id, 'the ID entered').toHaveValue('first');
       expect((await targets()).filter((t) => t.id === 'first'), '`first`, directly').toEqual([
-        { id: 'first', arn: queue.arn },
+        { id: 'first', arn: queue.arn, ...matched },
       ]);
     },
   );
@@ -421,7 +436,7 @@ test('studio.events-add-and-remove-target', async ({ ctx, page }) => {
       await expectFlash(page, 'success', targetRemoved('second', 'grow'));
       await expect(dialog, 'the dialog after the removal').toHaveCount(0);
       await expectTargetIds(page, ['first']);
-      expect(await targets(), 'the targets, directly').toEqual([{ id: 'first', arn: queue.arn }]);
+      expect(await targets(), 'the targets, directly').toEqual([{ id: 'first', arn: queue.arn, ...matched }]);
       expect(await topicReported(ctx, port, topic), 'the emulator still reports the topic').toBe(true);
     },
   );
@@ -456,7 +471,10 @@ test('studio.events-delete-rule-with-targets', async ({ ctx, page }) => {
       await expect(s.button(DELETE_RULE), '"Delete rule" can be pressed').toBeEnabled({ timeout: 15_000 });
       await s.button(DELETE_RULE).click(ACTION);
       await expect(dialog, 'the dialog').toBeVisible();
-      await expect(dialog, 'what the dialog says is removed').toContainText(ruleAndTargetsRemoved(2));
+      await expect(
+        dialogContent(dialog).getByText(ruleAndTargetsRemoved(2), { exact: true }),
+        'what the dialog says is removed',
+      ).toBeVisible();
       await answered(page, 'DeleteRule', () => confirmWith(page, 'away', DELETE_RULE));
 
       await expect(page, 'Rules opens with the bus').toHaveURL(addressOf(withBus(RULES_PATH, bus)), { timeout: 15_000 });

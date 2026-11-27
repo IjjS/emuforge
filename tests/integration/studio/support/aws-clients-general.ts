@@ -474,11 +474,22 @@ export function directEcs(ctx: Ctx, port: number, action: string, input: object)
   });
 }
 
-/** An EventBridge action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 75: EventBridge's checks). */
-export function directEvents(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
-  return direct(ctx, port, 'events', 'POST', '/', {}, JSON.stringify(input), {
-    'content-type': 'application/x-amz-json-1.1',
-    'x-amz-target': `AWSEvents.${action}`,
+/**
+ * An action of an AWS JSON service straight to the emulator: `service` is its signing name, `version` its protocol
+ * version and `target` its `x-amz-target` (`<prefix>.<Action>`). For a service's own support, which names its
+ * service and holds its direct calls in its own folder (`references/services-and-manifest.md`).
+ */
+export function directJson(
+  ctx: Ctx,
+  port: number,
+  service: string,
+  version: '1.0' | '1.1',
+  target: string,
+  input: object,
+): Promise<DirectAnswer> {
+  return direct(ctx, port, service, 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': `application/x-amz-json-${version}`,
+    'x-amz-target': target,
   });
 }
 

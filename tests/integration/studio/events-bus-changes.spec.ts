@@ -55,6 +55,7 @@ import {
   tagRow,
   tagsDirect,
   tagsSaved,
+  writeRefused,
 } from './services/events/events';
 
 test('studio.events-create-bus-with-description-and-tags', async ({ ctx, page }) => {
@@ -121,7 +122,7 @@ test('studio.events-create-bus-existing-name-is-refused', async ({ ctx, page }) 
       await s.description.fill('Second', ACTION);
       await answered(page, 'CreateEventBus', () => s.submit.click(ACTION));
 
-      await expectAlert(s.main, 'CreateEventBus', reason);
+      await expectAlert(s.main, writeRefused('CreateEventBus', reason));
       await expect(flashItems(page, 'success'), 'no flash says the bus was created').toHaveCount(0);
       await expect(page, 'the form stays').toHaveURL(addressOf(CREATE_EVENT_BUS_PATH));
       await expect(s.name, 'the name entered').toHaveValue(name);
@@ -292,7 +293,7 @@ test('studio.events-delete-bus-with-rules-is-refused', async ({ ctx, page }) => 
       await s.radio(name).check(ACTION);
       await s.del.click(ACTION);
       await answered(page, 'DeleteEventBus', () => confirmWith(page, name, DELETE));
-      await expectAlert(dialog, 'DeleteEventBus', reason);
+      await expectAlert(dialog, writeRefused('DeleteEventBus', reason));
       await expect(dialog, 'the dialog stays open').toBeVisible();
       await expect(flashItems(page, 'success'), 'no flash says the bus was deleted').toHaveCount(0);
       expect(

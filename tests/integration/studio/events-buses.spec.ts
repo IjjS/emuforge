@@ -261,10 +261,10 @@ test('studio.events-missing-bus-and-rule-are-not-found', async ({ ctx, page }) =
         [nowhere, nowhere],
       ] as const) {
         const reason = await refusalDirect(ctx, port, 'DescribeRule', { Name: 'none', EventBusName: bus });
-        expect(reason, `the emulator's message for the rule none of ${bus} names ${named}`).toContain(named);
+        expect(reason.message, `the emulator's message for the rule none of ${bus} names ${named}`).toContain(named);
         await open(page, rulePath(bus, 'none'), 'none');
         await expect(stateShown(page, RULE_NOT_FOUND), `"${RULE_NOT_FOUND}" for ${bus}`).toBeVisible({ timeout: 15_000 });
-        await expect(stateShown(page, reason), `the emulator's message "${reason}"`).toBeVisible();
+        await expect(stateShown(page, reason.message), `the emulator's message "${reason.message}"`).toBeVisible();
       }
     },
   );
