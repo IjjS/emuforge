@@ -17,6 +17,7 @@ import { ClusterOperationControls } from './cluster-operations';
 vi.mock('../choices-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../choices-api')>()),
   findSubnetGroup: vi.fn(),
+  readDefaultVpcId: vi.fn(),
   readOrderableRows: vi.fn(),
   readUpgradeTargets: vi.fn(),
   listEngineVersionChoices: vi.fn(),
@@ -58,13 +59,7 @@ const fetchRequest = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) 
     return new Response(JSON.stringify({ token: 'test-cluster-operations' }));
   }
   const form = new URLSearchParams(await request.text());
-  ec2Requests.push(Object.fromEntries(form));
-  if (form.get('Action') === 'DescribeVpcs') {
-    return new Response(
-      '<DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><vpcSet><item><vpcId>vpc-default</vpcId><isDefault>true</isDefault></item></vpcSet></DescribeVpcsResponse>',
-      { headers: { 'content-type': 'text/xml' } },
-    );
-  }
+  groupRequests.push(Object.fromEntries(form));
   const group = (id: string, name: string, vpc: string) =>
     `<item><groupId>${id}</groupId><groupName>${name}</groupName><vpcId>${vpc}</vpcId></item>`;
   const groups =
@@ -82,7 +77,7 @@ const fetchRequest = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) 
     { headers: { 'content-type': 'text/xml' } },
   );
 });
-const ec2Requests: Record<string, string>[] = [];
+const groupRequests: Record<string, string>[] = [];
 const WRAPPER = createWrapper(document.body);
 const ROWS_OPERATION = 'DescribeOrderableDBInstanceOptions';
 
@@ -105,7 +100,7 @@ function found(members: api.DbCluster['members']) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  ec2Requests.length = 0;
+  groupRequests.length = 0;
   vi.stubGlobal('fetch', fetchRequest);
   onSubmit.mockResolvedValue('discard-draft');
   vi.mocked(api.getCluster).mockResolvedValue(found(CLUSTER.members));
@@ -214,7 +209,7 @@ describe('modify a DB cluster', () => {
     expect(select('Engine version').findTrigger().getElement()).toHaveTextContent('Keep 16.4');
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
     expect(await modal.findByText('old-group')).toBeInTheDocument();
-    expect(ec2Requests).toContainEqual(
+    expect(groupRequests).toContainEqual(
       expect.objectContaining({
         'Filter.1.Name': 'group-id',
         'Filter.1.Value.1': 'sg-old',
@@ -242,24 +237,21 @@ describe('modify a DB cluster', () => {
     },
   ])('offers groups from $vpc for $scenario', async ({ subnetGroup, vpc, offered, excluded, defaultLookup }) => {
     vi.mocked(choices.findSubnetGroup).mockResolvedValue(subnetGroup);
+    vi.mocked(choices.readDefaultVpcId).mockResolvedValue('vpc-default');
     renderControls({ ...CLUSTER, subnetGroup: subnetGroup.name });
     await open('modify');
 
+    await waitFor(() => expect(securityGroups().findTrigger().getElement()).toBeEnabled());
     const picker = securityGroups();
-    const trigger = picker.findTrigger().getElement();
-    await waitFor(() => {
-      expect(trigger).toBeEnabled();
-      expect(trigger).not.toHaveAttribute('aria-disabled', 'true');
-    });
     picker.openDropdown();
     const dropdown = picker.findDropdown();
     await waitFor(() => expect(dropdown.findOptionByValue(offered)).not.toBeNull());
     expect(dropdown.findOptionByValue(excluded)).toBeNull();
-    expect(ec2Requests.filter((request) => request['Filter.1.Name'] === 'vpc-id')).toEqual([
+    expect(groupRequests.filter((request) => request['Filter.1.Name'] === 'vpc-id')).toEqual([
       expect.objectContaining({ Action: 'DescribeSecurityGroups', 'Filter.1.Value.1': vpc }),
     ]);
-    expect(ec2Requests.filter((request) => request.Action === 'DescribeVpcs')).toEqual(
-      defaultLookup ? [expect.objectContaining({ 'Filter.1.Name': 'is-default', 'Filter.1.Value.1': 'true' })] : [],
+    expect(vi.mocked(choices.readDefaultVpcId).mock.calls).toEqual(
+      defaultLookup ? [[CONNECTION.engineOrigin, expect.any(AbortSignal)]] : [],
     );
   });
 
