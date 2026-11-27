@@ -14,7 +14,7 @@ import {
   type SecurityGroupChoice,
 } from '../../../components/security-group-choices';
 import type { FlashItem } from '../../../components/page-flash';
-import type { DbInstance } from '../api';
+import { withValues, type DbInstance } from '../api';
 import type { SubnetGroupChoice, UpgradeTarget } from '../choices-api';
 import { useOrderableRows, useSubnetGroupPlacement } from '../choices-queries';
 import { useClusterOnce } from '../cluster-queries';
@@ -135,32 +135,44 @@ export function ModifyInstanceDialog({
   const groupsReady = groupIds.length === 0 || startingGroups.value !== undefined;
   const vpcId = placement.data ?? undefined;
 
-  const [seenPlacement, setSeenPlacement] = useState<{ group: typeof subnetGroup; vpcId: typeof vpcId }>();
-  if (groupsReady && (seenPlacement?.group !== subnetGroup || seenPlacement.vpcId !== vpcId)) {
-    setSeenPlacement({ group: subnetGroup, vpcId });
-    const enriched = (group: SecurityGroupChoice) => startingGroups.value?.find(({ id }) => id === group.id) ?? group;
-    setGroups(afterSubnetGroup({ ...groups, value: groups.value.map(enriched) }, subnetGroup, vpcId));
+  const knownGroups = new Map(startingGroups.value?.map((group) => [group.id, group]));
+  const shownGroups = groups.value.map((group) => knownGroups.get(group.id) ?? group);
+  const missingIds = new Set(startingGroups.value === undefined ? [] : groupIds.filter((id) => !knownGroups.has(id)));
+  const [seenPlacement, setSeenPlacement] = useState<{
+    subnet: typeof subnetGroup;
+    vpcId: typeof vpcId;
+    startingGroups: typeof startingGroups.value;
+  }>();
+  if (
+    groupsReady &&
+    (seenPlacement?.subnet !== subnetGroup ||
+      seenPlacement.vpcId !== vpcId ||
+      seenPlacement.startingGroups !== startingGroups.value)
+  ) {
+    setSeenPlacement({ subnet: subnetGroup, vpcId, startingGroups: startingGroups.value });
+    setGroups(afterSubnetGroup({ ...groups, value: shownGroups }, subnetGroup, vpcId));
   }
-  const shownGroups = groups.value.map((group) => startingGroups.value?.find(({ id }) => id === group.id) ?? group);
-  const missingIds = new Set(
-    startingGroups.value === undefined
-      ? []
-      : groupIds.filter((id) => !startingGroups.value?.some((group) => group.id === id)),
-  );
 
   const classes = rows.data === undefined ? undefined : instanceClasses(rows.data);
-  const [seenRows, setSeenRows] = useState<{ rows: typeof rows.data; instanceClass: typeof instanceClass }>();
+  const [seenRows, setSeenRows] = useState<{
+    rows: typeof rows.data;
+    version: typeof version;
+    instanceClass: typeof instanceClass;
+  }>();
   const typeChoices = classes?.find(({ name }) => name === instanceClass.value)?.storageTypes ?? [];
-  if (rows.data !== undefined && (seenRows?.rows !== rows.data || seenRows.instanceClass !== instanceClass)) {
+  if (
+    rows.data !== undefined &&
+    (seenRows?.rows !== rows.data || seenRows.version !== version || seenRows.instanceClass !== instanceClass)
+  ) {
     const nextClass = afterParent(
       instanceClass,
       version,
       classes?.map(({ name }) => name),
       `Choose a class for ${orderableVersion ?? ''}`,
     );
-    setSeenRows({ rows: rows.data, instanceClass: nextClass });
+    setSeenRows({ rows: rows.data, version, instanceClass: nextClass });
     setInstanceClass(nextClass);
-    if (!member) {
+    if (!member && nextClass.cleared === undefined) {
       const types = classes?.find(({ name }) => name === nextClass.value)?.storageTypes ?? [];
       setStorageType(
         afterParent(
@@ -168,7 +180,7 @@ export function ModifyInstanceDialog({
           nextClass,
           types.map(({ type }) => type),
           `Choose a storage type for ${nextClass.value ?? 'the selected class'}`,
-          changed(version) || nextClass.cleared !== undefined,
+          changed(version),
         ),
       );
     }
@@ -184,7 +196,10 @@ export function ModifyInstanceDialog({
 
   const renamed = identifier.toLowerCase() !== instance.id.toLowerCase();
   const type = typeChoices.find((choice) => choice.type === storageType.value);
-  const shownType = type ?? (storageType.value === undefined ? undefined : { type: storageType.value });
+  const shownType =
+    instanceClass.cleared !== undefined
+      ? undefined
+      : (type ?? (storageType.value === undefined ? undefined : { type: storageType.value }));
   const typeChanged = changed(storageType);
   const sizeEdited = storage !== (instance.allocatedStorage?.toString() ?? '');
   const sizeChanged = sizeEdited && Number(storage) !== instance.allocatedStorage;
@@ -207,7 +222,7 @@ export function ModifyInstanceDialog({
     password: member || password === '' ? undefined : passwordError(password),
     groups: groupError,
   };
-  const edits: InstanceChanges = changes({ instanceClass, storageType, engineVersion: version });
+  const edits = withValues<InstanceChanges>({}, changes({ instanceClass, storageType, engineVersion: version }));
   if (renamed && errors.identifier === undefined) edits.identifier = identifier;
   if (!member) {
     if (sizeChanged) edits.allocatedStorage = Number(storage);

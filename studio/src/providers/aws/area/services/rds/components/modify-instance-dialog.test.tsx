@@ -437,7 +437,7 @@ describe('choices for a standalone DB instance', () => {
 
   it('keeps an eligible class, holds save for a cleared one, and restores a cleared class on Keep', async () => {
     vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, _engine, version) =>
-      version === '17.9' ? [{ DBInstanceClass: 'db.t3.small', StorageType: 'gp3' }] : ROWS,
+      version === '17.9' ? [{ DBInstanceClass: 'db.t3.small', StorageType: 'gp2' }] : ROWS,
     );
     const onSave = open();
     await opened();
@@ -459,8 +459,7 @@ describe('choices for a standalone DB instance', () => {
     await choose('Engine version', '17.9');
     await screen.findByText('Choose a class for 17.9');
     await choose('DB instance class', 'db.t3.small');
-    expect(save()).toBeDisabled();
-    await choose('Storage type', 'gp3');
+    expect(trigger('Storage type')).toHaveTextContent('gp2');
     expect(save()).toBeEnabled();
   });
 
