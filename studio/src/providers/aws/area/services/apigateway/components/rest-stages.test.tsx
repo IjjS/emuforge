@@ -137,7 +137,7 @@ it('shows the two stage addresses as plain text with just one GetStages request'
     const { pathname } = new URL(request.url);
     if (pathname === '/__emuforge/session') return Response.json({ token: 'test-session' });
     requests(request.method, pathname);
-    return Response.json({ item: stages });
+    return Response.json({ item: [{ ...stages[0], lastUpdatedDate: changed.getTime() / 1000 }, stages[1]] });
   });
 
   const { user } = open();

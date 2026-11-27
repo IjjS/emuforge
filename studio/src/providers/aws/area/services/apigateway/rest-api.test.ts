@@ -74,13 +74,15 @@ it('uses the position, page limit and embedded methods, retaining both kinds of 
 });
 
 it('reads the stages as returned by the emulator in one GetStages request', async () => {
-  const stages = [
-    { stageName: 'dev', deploymentId: 'deploy-1', lastUpdatedDate: new Date('2026-11-26T12:00:00Z') },
-    { stageName: 'prod', deploymentId: 'deploy-2' },
-  ];
-  sent.mockReturnValueOnce(Response.json({ item: stages }));
+  const changed = new Date('2026-11-26T12:00:00Z');
+  const dev = { stageName: 'dev', deploymentId: 'deploy-1' };
+  const prod = { stageName: 'prod', deploymentId: 'deploy-2' };
+  sent.mockReturnValueOnce(Response.json({ item: [{ ...dev, lastUpdatedDate: changed.getTime() / 1000 }, prod] }));
 
-  await expect(readRestStages(endpoint, 'api-1', signal)).resolves.toEqual(stages);
+  await expect(readRestStages(endpoint, 'api-1', signal)).resolves.toEqual([
+    { ...dev, lastUpdatedDate: changed },
+    prod,
+  ]);
   expect(sent).toHaveBeenCalledOnce();
   expect(sent.mock.calls[0]?.[0].pathname).toBe(`${apiPath}/stages`);
   expect(sent.mock.calls[0]?.[1].method).toBe('GET');
