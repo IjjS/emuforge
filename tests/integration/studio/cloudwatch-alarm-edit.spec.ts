@@ -10,7 +10,7 @@
 
 import { expect, startStack, test } from './support';
 import { expectPairs } from './support/aws-entries';
-import { ACTION, addressOf, heading } from './support/frame';
+import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import {
@@ -103,7 +103,7 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
       await openAlarm(page, name);
       await alarmScreen(page).edit.click(ACTION);
       await expect(page, 'the edit form, at its address').toHaveURL(addressOf(editAlarmPath(name)));
-      await expect(heading(page, EDIT_ALARM), 'the h1 "Edit alarm"').toBeVisible();
+      await expectHeading(page, EDIT_ALARM);
       await expect(form.threshold, "the alarm's threshold").toHaveValue('5', { timeout: 15_000 });
 
       await expect(form.form.getByText(name, { exact: true }), 'the name as text').toBeVisible();

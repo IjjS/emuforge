@@ -25,6 +25,7 @@ import {
   answered,
   chooseOption,
   CloudWatchSeeded,
+  disabledReason,
   codeAndMessage,
   cwOk,
   DEFAULT_REASON,
@@ -34,6 +35,7 @@ import {
   expectFlash,
   expectHeading,
   failed,
+  expectShown,
   finish,
   field,
   flashItems,
@@ -193,10 +195,10 @@ test('studio.cloudwatch-alarm-page-shows-each-type', async ({ ctx, page }) => {
       await expect(s.button(SET_STATE), '"Set state" cannot be pressed').toBeDisabled();
       // The reason is shown to a pointer over the control and to the keyboard on it.
       await s.button(SET_STATE).hover();
-      await expect(
-        page.getByText(LOG_ALARM_STATE, { exact: true }).filter({ visible: true }).first(),
-        `"${LOG_ALARM_STATE}"`,
-      ).toBeVisible();
+      await expectShown(disabledReason(page), [LOG_ALARM_STATE], 'the reason shown at "Set state"');
+      await expect(s.button(SET_STATE), 'the reason "Set state" is described by').toHaveAccessibleDescription(
+        LOG_ALARM_STATE,
+      );
     },
   );
 

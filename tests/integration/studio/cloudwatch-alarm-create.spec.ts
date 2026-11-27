@@ -85,6 +85,9 @@ test('studio.cloudwatch-create-alarm-on-a-listed-metric', async ({ ctx, page }) 
 
       await expectShown(selectOf(form.metricName), [CHOOSE_A_METRIC_NAME], 'the metric name is empty again');
       await expectShown(selectOf(form.dimensions), [CHOOSE_A_METRIC_NAME_FIRST], 'the dimensions are empty again');
+      // Every other field the form asks for holds a valid value: the metric alone keeps the form from being sent.
+      await form.name.fill(`${p}-unsent`, ACTION);
+      await form.threshold.fill('5', ACTION);
       const before = { written: written(), nameChecked: nameChecked() };
       await form.create.click(ACTION);
       await expect(errorOf(form.metricName), 'the form asks for the metric name').toBeVisible();

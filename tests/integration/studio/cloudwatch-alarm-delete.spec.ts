@@ -10,7 +10,7 @@
 
 import { expect, startStack, test } from './support';
 import { expectPairs } from './support/aws-entries';
-import { ACTION, addressOf, heading } from './support/frame';
+import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import {
@@ -29,6 +29,7 @@ import {
   dialogHeader,
   dialogOf,
   eventually,
+  expectHeading,
   expectShown,
   expectAlarms,
   expectAlert,
@@ -93,7 +94,7 @@ test('studio.cloudwatch-delete-alarm-from-its-page', async ({ ctx, page }) => {
       await s.button(DELETE).click(ACTION);
       await answered(page, 'DeleteAlarms', () => confirmWith(page, 'delete', DELETE));
       await expect(page, 'Alarms opens').toHaveURL(addressOf(ALARMS_PATH), { timeout: 15_000 });
-      await expect(heading(page, ALARMS), 'the h1 "Alarms"').toBeVisible();
+      await expectHeading(page, ALARMS);
       await expectFlash(page, 'success', alarmDeleted(name));
       expect(
         await eventually(5_000, async () => namesOf(await alarmsDirect(ctx, port, name)), (held) => held.length === 0),

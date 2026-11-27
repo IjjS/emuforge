@@ -11,7 +11,7 @@
 
 import { expect, startStack, test } from './support';
 import { expectOneCurrent, navigationLink, navigationTree } from './support/aws-entries';
-import { ACTION, addressOf, heading } from './support/frame';
+import { ACTION, addressOf } from './support/frame';
 import { Lines } from './support/lines';
 import { nothingChanged } from './support/no-screen-part';
 import { clipboardText, copiedText, copyControl, grantClipboard, setClipboard } from './support/screen-rules';
@@ -43,6 +43,7 @@ import {
   expectAlarms,
   expectEmpty,
   expectFlash,
+  expectHeading,
   expectNameHeading,
   expectRows,
   expectShown,
@@ -52,6 +53,7 @@ import {
   metricAlarmDirect,
   namesOf,
   shownPairValues,
+  shownTexts,
   NAVIGATION_HEADER,
   NO_ALARMS_MATCH,
   open,
@@ -297,7 +299,7 @@ test('studio.cloudwatch-missing-alarm-is-not-found', async ({ ctx, page }) => {
       await expect(s.main.getByRole('button', { name: 'Retry', exact: true }), 'no "Retry" is offered').toHaveCount(0);
       await s.backToAlarms.click(ACTION);
       await expect(page, 'the way back leads to Alarms').toHaveURL(addressOf(ALARMS_PATH));
-      await expect(heading(page, ALARMS), 'the h1 "Alarms"').toBeVisible();
+      await expectHeading(page, ALARMS);
     },
   );
 
@@ -352,7 +354,7 @@ test('studio.cloudwatch-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
     async () => {
       /** The Alarms screen itself, with the alarm the check made, not the area's page for an entry without one. */
       const expectAlarmsScreen = async (where: string) => {
-        await expect(heading(page, ALARMS), `the screen titled "Alarms" ${where}`).toBeVisible();
+        await expectHeading(page, ALARMS);
         await expect(nothingChanged(page), `the sentence of a page without a screen ${where}`).toHaveCount(0);
         await filterAlarms(page, p);
         await expectAlarms(page, [alarm]);
@@ -375,14 +377,14 @@ test('studio.cloudwatch-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
       for (const entry of ENTRIES.filter((each) => !each.screen)) {
         await navigationLink(page, entry.path).click(ACTION);
         await expect(page, `the address of "${entry.label}"`).toHaveURL(addressOf(entry.path));
-        await expect(heading(page, entry.label), `the page titled "${entry.label}"`).toBeVisible();
+        await expectHeading(page, entry.label);
         await expect(
           nothingChanged(page),
           `the sentence of the area's page for an entry without a screen at ${entry.path}`,
         ).toBeVisible();
         await expectOneCurrent(page, entry.label);
         await expectNavigation(`the service's navigation on the page of "${entry.label}"`);
-        await expect(heading(page, 'Page not found'), `"Page not found" at ${entry.path}`).toHaveCount(0);
+        expect(await shownTexts(page.locator('h1')), `the titles drawn at ${entry.path}`).not.toContain('Page not found');
       }
     },
   );
@@ -399,7 +401,7 @@ test('studio.cloudwatch-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
       await expectOneCurrent(page, ALARMS);
 
       await openEdit(page, alarm, '1');
-      await expect(heading(page, EDIT_ALARM), 'the h1 "Edit alarm"').toBeVisible();
+      await expectHeading(page, EDIT_ALARM);
       await expectNavigation("the service's navigation on the edit form");
       await expectOneCurrent(page, ALARMS);
     },

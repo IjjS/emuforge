@@ -635,6 +635,8 @@ const FIRST_PAIR = wrapper.findKeyValuePairs().findItems().get(1);
 const PAIR = rel(wrapper.findKeyValuePairs().findItems());
 const PAIR_LABEL = FIRST_PAIR.findLabel().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
 const PAIR_VALUE = FIRST_PAIR.findValue().toSelector().slice(FIRST_PAIR.toSelector().length).trim();
+/** The reason a button that cannot be pressed shows while the pointer or the keyboard is on it. */
+const DISABLED_REASON = wrapper.findButton().findDisabledReason().toSelector();
 const COPY_ROOT = wrapper.findCopyToClipboard();
 /** A copy control (Cloudscape's `CopyToClipboard`), and what a press of it says, as a selector below the control. */
 const COPY = rel(COPY_ROOT);
@@ -1004,6 +1006,14 @@ export function alertHeaders(scope: Locator): Locator {
 export async function expectAlert(scope: Locator, header: string, content: string): Promise<void> {
   await expectShown(alertHeaders(scope), [header], `the one alert is headed "${header}"`);
   await expectShown(alertContents(scope), [content], `the alert "${header}" reads "${content}"`);
+}
+
+/**
+ * The reason the button under the pointer shows for not being pressable, found with Cloudscape's selector: one is
+ * in the page at a time, that of the button the pointer or the keyboard is on.
+ */
+export function disabledReason(page: Page): Locator {
+  return page.locator(DISABLED_REASON);
 }
 
 /** The open dialog: Cloudscape's modal that is shown (one that is closed stays in the page, hidden). */
