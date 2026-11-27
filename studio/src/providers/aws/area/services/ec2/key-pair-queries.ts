@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
+import type { TagRow } from '../../lib/tag-rows';
 import {
   createKeyPair,
   deleteKeyPair,
@@ -62,14 +63,14 @@ export function useCreateKeyPair(
 /** "Import key pair". */
 export function useImportKeyPair(
   endpoint: string | undefined,
-): (name: string, publicKey: string, signal: AbortSignal) => Promise<void> {
+): (name: string, publicKey: string, signal: AbortSignal, tags?: readonly TagRow[]) => Promise<void> {
   const readAgain = useReadKeyPairsAgain();
   return useCallback(
-    async (name: string, publicKey: string, signal: AbortSignal) => {
+    async (name: string, publicKey: string, signal: AbortSignal, tags?: readonly TagRow[]) => {
       if (endpoint === undefined) {
         noEndpoint();
       }
-      await importKeyPair(endpoint, name, publicKey, signal);
+      await importKeyPair(endpoint, name, publicKey, signal, tags);
       readAgain();
     },
     [endpoint, readAgain],

@@ -17,6 +17,7 @@ import { ATTACHMENT_CONFIRMATION_MS, VOLUME_KEYS, useVolumeListing } from '../vo
 vi.mock('../volume-api', async (original) => ({
   ...(await original<typeof api>()),
   getVolume: vi.fn(),
+  listVolumeInstances: vi.fn(),
   attachVolume: vi.fn(),
   detachVolume: vi.fn(),
   deleteVolume: vi.fn(),
@@ -170,6 +171,9 @@ beforeEach(() => {
   vi.mocked(api.detachVolume).mockResolvedValue(undefined);
   vi.mocked(api.deleteVolume).mockResolvedValue(undefined);
   vi.mocked(api.listVolumes).mockResolvedValue({ items: [] });
+  vi.mocked(api.listVolumeInstances).mockResolvedValue({
+    items: [{ id: TARGET.instanceId, state: 'running', type: 't3.micro', devices: [] }],
+  });
   vi.mocked(instances.listInstances).mockResolvedValue({
     instances: [instance(TARGET.instanceId, 'us-east-1a', 'running')],
   });
@@ -412,10 +416,13 @@ describe('volume detail', () => {
 });
 
 describe('attach volume', () => {
-  it('pages through instance choices with IDs, zones and states and requires a choice and device', async () => {
-    vi.mocked(instances.listInstances)
-      .mockResolvedValueOnce({ instances: [instance('i-first', 'us-east-1a', 'running')], nextToken: 'second' })
-      .mockResolvedValueOnce({ instances: [instance('i-second', 'us-east-1b', 'stopped')] });
+  it('pages through instances in the volume zone and requires an instance and device', async () => {
+    vi.mocked(api.listVolumeInstances)
+      .mockResolvedValueOnce({
+        items: [{ id: 'i-first', name: 'First worker', state: 'running', type: 't3.micro', devices: [] }],
+        next: 'second',
+      })
+      .mockResolvedValueOnce({ items: [{ id: 'i-second', state: 'stopped', type: 't3.nano', devices: [] }] });
     open();
     const dialog = await openDialog('Attach volume');
     const submit = dialog.button('Attach volume');
@@ -430,16 +437,25 @@ describe('attach volume', () => {
     expect(zone).toBeVisible();
     expect(zone).toHaveTextContent('Choose an instance in us-east-1a, the volume’s Availability Zone.');
     await waitFor(() => {
-      expect(dropdown.findOptionByValue('i-first')?.getElement()).toHaveTextContent(/i-first.*us-east-1a.*running/);
+      expect(dropdown.findOptionByValue('i-first')?.getElement()).toHaveTextContent(
+        /First worker.*running · t3\.micro/,
+      );
     });
     const more = instanceSelect().findDropdownFooter()?.findButton()?.getElement();
     if (more === undefined) throw new Error('Missing instance chooser load-more action');
     expect(more).toHaveAccessibleName('Load more');
     fireEvent.click(more);
     await waitFor(() => {
-      expect(dropdown.findOptionByValue('i-second')?.getElement()).toHaveTextContent(/i-second.*us-east-1b.*stopped/);
+      expect(dropdown.findOptionByValue('i-second')?.getElement()).toHaveTextContent(/i-second.*stopped · t3\.nano/);
     });
-    expect(instances.listInstances).toHaveBeenLastCalledWith(ENDPOINT, {}, 'second', expect.any(AbortSignal));
+    expect(api.listVolumeInstances).toHaveBeenNthCalledWith(
+      1,
+      ENDPOINT,
+      'us-east-1a',
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(api.listVolumeInstances).toHaveBeenLastCalledWith(ENDPOINT, 'us-east-1a', 'second', expect.any(AbortSignal));
     fireEvent.change(device, { target: { value: '   ' } });
     selectInstance('i-second');
     expect(submit).toBeDisabled();
@@ -449,9 +465,7 @@ describe('attach volume', () => {
   });
 
   it('keeps a failed attachment usable and shows the emulator refusal', async () => {
-    vi.mocked(instances.listInstances).mockResolvedValue({
-      instances: [instance(TARGET.instanceId, 'us-east-1a', 'terminated')],
-    });
+    // The offered instance can terminate between reading the choices and attempting the attachment.
     vi.mocked(api.attachVolume).mockRejectedValue(
       refuse('AttachVolume', 'IncorrectInstanceState', 'The instance is terminated.'),
     );
@@ -587,7 +601,7 @@ describe('attach volume', () => {
   });
 
   it('retries a failed instance choice read and offers fresh results', async () => {
-    vi.mocked(instances.listInstances).mockRejectedValueOnce(
+    vi.mocked(api.listVolumeInstances).mockRejectedValueOnce(
       refuse('DescribeInstances', 'InvalidParameterValue', 'Could not list instances.'),
     );
     open();
