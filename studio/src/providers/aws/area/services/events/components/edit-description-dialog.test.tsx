@@ -17,7 +17,9 @@ const endpoint = 'http://127.0.0.1:8313';
 const operation = 'UpdateEventBus';
 const initial = 'Routes orders';
 
-beforeEach(() => vi.mocked(updateBusDescription).mockReset().mockResolvedValue(undefined));
+beforeEach(() => {
+  vi.mocked(updateBusDescription).mockReset().mockResolvedValue(undefined);
+});
 
 async function open() {
   const onSaved = vi.fn();
