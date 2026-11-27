@@ -236,6 +236,7 @@ export function ManageTagsDialog({
               variant="primary"
               disabled={saveDisabled}
               loading={inFlight && !failedRead}
+              loadingText="Saving tags"
               onClick={() => void handleSave()}
             >
               Save
@@ -260,7 +261,7 @@ export function ManageTagsDialog({
           <Alert
             type="error"
             action={
-              <Button ref={retryButton} loading={reading} onClick={() => void handleRetry()}>
+              <Button ref={retryButton} loading={reading} loadingText="Reading tags" onClick={() => void handleRetry()}>
                 Retry
               </Button>
             }

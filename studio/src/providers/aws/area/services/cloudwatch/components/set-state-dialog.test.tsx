@@ -140,6 +140,9 @@ it.each([
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).not.toBeDisabled();
     expect(modal.findDismissButton()).toBeNull();
+    expect(
+      await screen.findByText('Setting alarm state', { selector: '[aria-live="polite"]' }, { timeout: 3000 }),
+    ).toBeInTheDocument();
     await user.keyboard('{Enter}');
     await user.keyboard('{Escape}');
     expect(send).toHaveBeenCalledOnce();
