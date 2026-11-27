@@ -119,8 +119,30 @@ function open(alarmName = name, inLayout = false) {
   };
 }
 
+function headerControl(label: string) {
+  const control = page
+    .findContentLayout()
+    ?.findHeader()
+    ?.findHeader()
+    ?.findActions()
+    ?.findAllButtons()
+    .find((button) => {
+      const name = button.getElement().getAttribute('aria-label') ?? button.findTextRegion()?.getElement().textContent;
+      return name === label;
+    });
+  if (!control) throw new Error(`Alarm header control is missing: ${label}`);
+  return control.getElement();
+}
+
+function expectAlarmNotFound() {
+  const heading = page.findContentLayout()?.findContent().findContainer()?.findContent().findBox()?.getElement();
+  expect(heading).toBeVisible();
+  expect(heading?.tagName).toBe('H2');
+  expect(heading?.textContent).toBe('Alarm not found');
+}
+
 async function openDelete() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  fireEvent.click(await waitFor(() => headerControl('Delete')));
   return waitFor(() => {
     const modal = page.findModal();
     if (!modal?.isVisible()) throw new Error('Delete confirmation is missing');
@@ -175,21 +197,21 @@ it.each(['before', 'after'])('hands over once when a read finds no alarm %s the 
   read.mockResolvedValueOnce(row(name)).mockReturnValueOnce(reread.promise);
   remove.mockReturnValueOnce(deletion.promise);
   const { handOver, show } = open();
-  const refresh = screen.getByRole('button', { name: 'Refresh' });
+  const refresh = headerControl('Refresh');
   const modal = await openDelete();
   fireEvent.click(refresh);
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   confirm(modal);
   if (order === 'before') {
     await act(async () => reread.resolve(undefined));
-    await waitFor(() => expect(screen.getByText('Alarm not found', { selector: 'h2' })).toBeVisible());
+    await waitFor(expectAlarmNotFound);
     expect(modal.getElement()).toBeVisible();
     expect(handOver).not.toHaveBeenCalled();
   }
   await act(async () => deletion.resolve(undefined));
   if (order === 'after') {
     await act(async () => reread.resolve(undefined));
-    expect(await screen.findByText('Alarm not found', { selector: 'h2' })).toBeVisible();
+    await waitFor(expectAlarmNotFound);
   }
   expect(handOver).toHaveBeenCalledExactlyOnceWith(ALARMS_PATH, [{ type: 'success', content: expect.anything() }]);
   expect(show).not.toHaveBeenCalled();
@@ -257,7 +279,11 @@ it.each(['answers', 'fails'])(
     list.mockReturnValueOnce(dest.promise);
     open(exactName, true);
     confirm(await openDelete());
-    expect(await screen.findByText('Loading alarms')).toBeVisible();
+    await waitFor(() => {
+      const loading = page.findTable()?.findLoadingText()?.getElement();
+      expect(loading).toBeVisible();
+      expect(loading).toHaveTextContent('Loading alarms');
+    });
 
     function expectResult() {
       const element = expectDeletedFlash(exactName)?.find('.aws-area-value-name')?.getElement();
@@ -268,12 +294,20 @@ it.each(['answers', 'fails'])(
     expectResult();
     if (outcome === 'answers') {
       await act(async () => dest.resolve({ items: [row('other alarm')] }));
-      expect(await screen.findByRole('link', { name: 'other alarm' })).toBeVisible();
+      await waitFor(() => {
+        const link = page.findTable()?.findRows()[0]?.findLink()?.getElement();
+        expect(link).toBeVisible();
+        expect(link).toHaveAccessibleName('other alarm');
+      });
     } else {
       await act(async () =>
         dest.reject(new RequestError({ kind: 'access-denied', operation: 'DescribeAlarms', message: 'Read refused' })),
       );
-      expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
+      await waitFor(() => {
+        const retry = page.findTable()?.findEmptySlot()?.findButton()?.getElement();
+        expect(retry).toBeVisible();
+        expect(retry).toHaveAccessibleName('Retry');
+      });
     }
     expectResult();
   },
