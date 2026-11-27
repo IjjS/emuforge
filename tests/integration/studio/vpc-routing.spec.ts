@@ -11,6 +11,7 @@ import type { Locator } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
 import { ACTION, addressOf, heading } from './support/frame';
+import { openSelect, triggerOf } from './support/form-choices';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import {
@@ -138,10 +139,18 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   };
   const routes = () => tableOf(main, 'Routes');
   const associations = () => tableOf(main, 'Subnet associations');
-  /** Opens S10 of the table and waits until "Target" shows the gateway. */
+  /** In S10: "Internet gateway" chosen in "Target type" and the gateway chosen in "Target" by its ID (issue 651). */
+  const chooseGateway = async (): Promise<void> => {
+    await (await openSelect(field(main, 'Target type'))).choose('GatewayId');
+    await expect(triggerOf(field(main, 'Target type')), 'the target type chosen').toContainText('Internet gateway');
+    const targets = await openSelect(field(main, 'Target'));
+    await targets.choose(gateway());
+    await expect(triggerOf(field(main, 'Target')), 'the gateway chosen').toContainText(gateway());
+  };
+  /** Opens S10 of the table with the gateway chosen as the target, as the form asks before it sends. */
   const openAddRoute = async (): Promise<void> => {
     await open(page, addRoutePath(table()), ADD_ROUTE);
-    await expectValueIs(page, 'Internet gateway ID', gateway());
+    await chooseGateway();
   };
   /** S9 of the table, as S10 and S11 lead back to it. */
   const expectTablePage = async (): Promise<void> => {
@@ -257,15 +266,19 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   );
 
   await lines.line(
-    'S9, "Add route" → S10 naming the table; "Target" shows the gateway\'s ID and name; the destination `0.0.0.0/0`, "Add route" → S9 with "Saved the route to {gateway id} in {id}"; "Routes" has a row `0.0.0.0/0`, the gateway\'s ID, `active`; the emulator reports that route',
+    'S9, "Add route" → S10 naming the table; "Internet gateway" chosen in "Target type" and the gateway chosen in "Target" by its ID (the option shows its state); the destination `0.0.0.0/0`, "Add route" → S9 with "Saved the route to {gateway id} in {id}"; "Routes" has a row `0.0.0.0/0`, the gateway\'s ID, `active`; the emulator reports that route (changed, issue 651)',
     async () => {
       await open(page, routeTablePath(table()), rtName);
       await link(routes(), ADD_ROUTE).click(ACTION);
       await expect(page).toHaveURL(addressOf(addRoutePath(table())));
       await expect(heading(page, ADD_ROUTE)).toBeVisible();
       await expect(main, 'S10 names the table').toContainText(`Adds a route to ${rtName}.`, { timeout: 30_000 });
-      await expectValueIs(page, 'Internet gateway ID', gateway());
-      await expectValueIs(page, 'Name', gwName);
+      await (await openSelect(field(main, 'Target type'))).choose('GatewayId');
+      const targets = await openSelect(field(main, 'Target'));
+      await targets.expectOption(gateway(), gateway());
+      await expect(targets.option(gateway()), "the option shows the gateway's state").toContainText(/attached|available/);
+      await targets.choose(gateway());
+      await expect(triggerOf(field(main, 'Target')), 'the gateway chosen').toContainText(gateway());
       await entry(page, DESTINATION).fill('0.0.0.0/0', ACTION);
       await button(main, ADD_ROUTE).click(ACTION);
       await expectTablePage();
@@ -431,19 +444,25 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   );
 
   await lines.line(
-    'S9 of the table → the route `0.0.0.0/0` reads `blackhole`; "Add route" → S10 says "No internet gateway is attached to {vpc id}. Attach one to add a route to it." with "View internet gateways", and "Add route" there cannot be sent',
+    'S9 of the table → the route `0.0.0.0/0` reads `blackhole`; "Add route" → S10, "Internet gateway" chosen in "Target type" → "Target" says "No internet gateways in {vpc id}"; "Add route" → "Choose a target." at the field and no request to add left the page; the emulator reports the table\'s routes unchanged (changed, issue 651)',
     async () => {
+      const before = (await routeTableDirect(ctx, port, table()))?.routes;
       await open(page, routeTablePath(table()), rtName);
       await expectCell(routes(), 'Destination', '0.0.0.0/0', 'State', 'blackhole');
       await link(routes(), ADD_ROUTE).click(ACTION);
       await expect(page).toHaveURL(addressOf(addRoutePath(table())));
       await expect(heading(page, ADD_ROUTE)).toBeVisible();
-      await expect(main, 'what S10 says of the target').toContainText(
-        `No internet gateway is attached to ${vpc}. Attach one to add a route to it.`,
-        { timeout: 30_000 },
-      );
-      await expect(link(main, VIEW_GATEWAYS), `"${VIEW_GATEWAYS}"`).toBeVisible();
-      await expect(button(main, ADD_ROUTE), '"Add route" cannot be sent').toBeDisabled();
+      const sent = countActions(page, 'CreateRoute');
+      await (await openSelect(field(main, 'Target type'))).choose('GatewayId');
+      const targets = await openSelect(field(main, 'Target'));
+      await targets.expectSays(`No internet gateways in ${vpc}`);
+      await targets.expectNone(gateway());
+      await targets.close();
+      await entry(page, DESTINATION).fill('10.98.0.0/16', ACTION);
+      await button(main, ADD_ROUTE).click(ACTION);
+      await expect(errorOf(field(main, 'Target')), '"Choose a target."').toHaveText('Choose a target.');
+      expect(sent.count(), 'CreateRoute requests that left the page').toBe(0);
+      expect((await routeTableDirect(ctx, port, table()))?.routes, 'the routes, directly').toEqual(before);
     },
   );
 
@@ -621,20 +640,22 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
   );
 
   await lines.line(
-    'S14 of H, the VPC chosen, "Attach" → the form stays with the emulator\'s message that the network already has an internet gateway attached; the emulator reports H without an attachment',
+    'S14 of H → the VPC that holds G is listed in "VPC" with "Has {G\'s id}" and cannot be chosen; "Attach" with no VPC → "Choose a VPC." and no request to attach left the page; the emulator reports H without an attachment (changed, issue 651)',
     async () => {
       await open(page, attachGatewayPath(h), ATTACH_GATEWAY);
       const vpcField = field(main, VPC_FIELD);
-      await chooseOption(vpcField, vpc, vpc);
+      const sent = countActions(page, 'AttachInternetGateway');
+      const vpcs = await openSelect(vpcField);
+      await vpcs.type(vpc);
+      await vpcs.expectOption(vpc, `Has ${g}`);
+      await expect(
+        vpcs.option(vpc).locator('xpath=ancestor-or-self::*[@aria-disabled="true"][1]'),
+        'the VPC that holds G cannot be chosen',
+      ).toHaveCount(1);
+      await vpcs.close();
       await button(main, ATTACH).click(ACTION);
-      const message = refusal(
-        await ec2(ctx, port, 'AttachInternetGateway', { InternetGatewayId: h, VpcId: vpc }),
-        null,
-        'a second gateway for the VPC',
-      );
-      await expect(alertWith(main, message), "the emulator's message on the form").toBeVisible({ timeout: 30_000 });
-      await expect(page, 'the form stays').toHaveURL(addressOf(attachGatewayPath(h)));
-      await expect(selectOf(vpcField), 'the VPC as it was').toContainText(vpc);
+      await expect(errorOf(vpcField), 'the message at "VPC"').toHaveText(CHOOSE_A_VPC);
+      expect(sent.count(), 'AttachInternetGateway requests that left the page').toBe(0);
       expect((await gatewayDirect(ctx, port, h))?.vpcIds, "H's attachments, directly").toEqual([]);
     },
   );
