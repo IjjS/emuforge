@@ -56,8 +56,10 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
     const list = (await apisRead(page)).first();
     return { list, rowTwo: (await rowReading(list, 2, `${two} (${identity})`)).row };
   };
-  /** Of the two APIs' IDs, the two-space one's alone, in a list that is not reading. */
-  const filtered = { reading: false, offered: [idTwo] };
+  /** What an API's option shows: its label, and below it the API's ID. */
+  const optionOf = (label: string, id: string) => ({ value: id, text: `${label}\n${id}` });
+  /** Of the two APIs' options the two-space one's alone, seen, showing the identity and that ID, in a list that is not reading. */
+  const filtered = { reading: false, offered: [optionOf(identity, idTwo)] };
   /** Opens the page that asks which REST API to open, and its choice, with the options of both APIs offered. */
   const asked = async () => {
     await page.goto(entryOf('Resources').path);
@@ -109,9 +111,6 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
         .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list after the name', timeout: 20_000 })
         .toEqual(filtered);
       expect(await drawnText(choice.label(idTwo)), "the label of the option left").toBe(identity);
-      const whole = await drawnText(choice.option(idTwo));
-      expect(whole.replace(identity, '').trim(), `what the option shows beside its label, of "${whole}"`).toBe(idTwo);
-      expect(await offeredNow(page, [idOne, idTwo]), 'the same list, after it was read').toEqual(filtered);
     },
   );
 
@@ -126,14 +125,13 @@ test('studio.apigateway-api-names-that-differ-by-spaces-are-told-apart', async (
       await choice.filter.fill('');
       await expect
         .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list, the filter cleared', timeout: 20_000 })
-        .toEqual({ reading: false, offered: [idOne, idTwo] });
+        .toEqual({ reading: false, offered: [optionOf(one, idOne), optionOf(identity, idTwo)] });
       await choice.filter.fill(idTwo);
       // The list as it stands once it has read for the ID.
       await expect
         .poll(() => offeredNow(page, [idOne, idTwo]), { message: 'the list after the ID', timeout: 20_000 })
         .toEqual(filtered);
       expect(await drawnText(choice.label(idTwo)), 'the label of the option left').toBe(identity);
-      expect(await offeredNow(page, [idOne, idTwo]), 'the same list, after it was read').toEqual(filtered);
       await choice.option(idTwo).click();
       await expect(choice.option(idTwo), 'the list after the choice').toHaveCount(0);
       expect(await drawnText(choice.trigger), 'what the closed field shows').toContain(identity);

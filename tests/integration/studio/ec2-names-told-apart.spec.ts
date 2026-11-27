@@ -40,8 +40,12 @@ import {
   TABLE,
   tableOf,
   typeInMultiselect,
+  valueElement,
   world,
 } from './services/ec2/ec2';
+
+/** In the Security groups table of an instance's page: the column of the group's ID (1 the first). */
+const GROUP_ID_COLUMN = 2;
 
 test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page }) => {
   test.setTimeout(300_000);
@@ -148,17 +152,20 @@ test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page
     async () => {
       expect(launched, 'the instance of the line before').not.toBe('');
       await page.goto(instancePath(launched));
-      const groupLink = tableOf(main, 'Security groups').getByRole('link', { name: identity, exact: true });
-      await expect(groupLink, "the group's link in the Security groups table").toHaveCount(1, { timeout: 30_000 });
-      expect(
-        new URL((await groupLink.getAttribute('href')) ?? '', 'http://127.0.0.1').pathname,
-        "where the group's link leads",
-      ).toBe(groupPath(groupTwo));
-      // The two links of that name on the page: the group's, in its table, and the key pair's.
-      const named = main.getByRole('link', { name: identity, exact: true });
-      await expect(named, 'the links named by the identity').toHaveCount(2);
-      const targets = await named.evaluateAll((links) => links.map((a) => new URL((a as HTMLAnchorElement).href).pathname));
-      expect(targets.sort(), 'where the two links lead').toEqual([KEY_PAIRS_PATH, groupPath(groupTwo)].sort());
+      const here = (path: string) => new URL(path, page.url()).href;
+      // The group's link is the one in the row of the Security groups table that reads the two-space group's ID.
+      const groupRow = (await rowReading(tableOf(main, 'Security groups'), GROUP_ID_COLUMN, groupTwo)).row;
+      const groupLink = groupRow.getByRole('link', { name: identity, exact: true });
+      await expect(groupLink, "the link named by the identity in the two-space group's row").toHaveCount(1);
+      expect(here((await groupLink.getAttribute('href')) ?? ''), "where the group's link leads").toBe(
+        here(groupPath(groupTwo)),
+      );
+      // The key pair's link is the one in the value of "Key pair".
+      const keyLink = valueElement(main, 'Key pair').getByRole('link', { name: identity, exact: true });
+      await expect(keyLink, 'the link named by the identity in the value of "Key pair"').toHaveCount(1);
+      expect(here((await keyLink.getAttribute('href')) ?? ''), "where the key pair's link leads").toBe(
+        here(KEY_PAIRS_PATH),
+      );
     },
   );
 

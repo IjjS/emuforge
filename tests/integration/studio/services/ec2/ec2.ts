@@ -829,6 +829,14 @@ export async function valueOf(scope: Locator, label: string): Promise<string | n
   }, label);
 }
 
+/** The value of `label` in the key-value pairs inside `scope`, as an element: for a link or a control it holds. */
+export function valueElement(scope: Locator, label: string): Locator {
+  return scope
+    .locator('dt')
+    .filter({ hasText: new RegExp(`^\\s*${escaped(label)}\\s*$`) })
+    .locator('xpath=following-sibling::dd[1]');
+}
+
 /** The texts of the parts of the value of `label` inside `scope`, in order (each element that holds text alone). */
 export async function valuePartsOf(scope: Locator, label: string): Promise<string[]> {
   return scope.evaluate((root, wanted) => {

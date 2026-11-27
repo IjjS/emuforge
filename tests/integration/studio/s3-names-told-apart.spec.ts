@@ -27,7 +27,7 @@ import {
   twoSpaceIdentity,
 } from './support/service-screens';
 import { objectKeysDirect, Seeded } from './services/s3/s3';
-import { bucketPath, openObjectsTab } from './services/s3/s3-bucket-page';
+import { openObjectsTab } from './services/s3/s3-bucket-page';
 import {
   CONFIRM_WORD,
   deleteDialog,
@@ -78,6 +78,8 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
   // On Objects column 1 is the selection control's, column 2 the key.
   /** The row of the two-space object on Objects: the one whose key reads with its two spaces, then the identity. */
   const rowOfTwo = async () => (await rowReading(tab.table, 2, `${two} (${identity})`)).row;
+  /** The row of the two-space folder on Objects: the one whose name reads with its two spaces, then the identity. */
+  const rowOfFolderTwo = async () => (await rowReading(tab.table, 2, `${folderTwo} (${folderTwoIdentity}/)`)).row;
   /** Opens the two-space object's page by the link of its row on Objects and waits for its overview. */
   const objectOfTwo = async () => {
     await objects(identity);
@@ -97,9 +99,15 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
       const rowOne = (await rowReading(tab.table, 2, one)).row;
       await expect(link(rowOne, one), `the one-space row's link, named "${one}"`).toHaveCount(1);
       await expect(selection(rowOne, one), `the one-space row's control "Select ${one}"`).toHaveCount(1);
-      for (const name of [tabIdentity, folderOne, `${folderTwoIdentity}/`]) {
-        await expect(tab.keyLink(name), `the link named "${name}"`).toHaveCount(1);
-      }
+      const rowTab = (await rowReading(tab.table, 2, `${tabKey} (${tabIdentity})`)).row;
+      await expect(link(rowTab, tabIdentity), `the tab key's row's link, named "${tabIdentity}"`).toHaveCount(1);
+      const rowFolderOne = (await rowReading(tab.table, 2, folderOne)).row;
+      await expect(link(rowFolderOne, folderOne), `the one-space folder's row's link, named "${folderOne}"`).toHaveCount(1);
+      const rowFolderTwo = await rowOfFolderTwo();
+      await expect(
+        link(rowFolderTwo, `${folderTwoIdentity}/`),
+        `the two-space folder's row's link, named "${folderTwoIdentity}/"`,
+      ).toHaveCount(1);
     },
   );
 
@@ -107,7 +115,7 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
     "Follow the link of the two-space folder → the last crumb reads the folder's identity and the object listed is the one put under it; open that object → the crumb of the folder is a link that leads to the Objects of the two-space folder",
     async () => {
       await objects(identity);
-      await tab.keyLink(`${folderTwoIdentity}/`).click(ACTION);
+      await link(await rowOfFolderTwo(), `${folderTwoIdentity}/`).click(ACTION);
       await expect(tab.keyLink('in-two'), "the two-space folder's object").toBeVisible({ timeout: 15_000 });
       await expect(tab.keyLink('in-one'), "the one-space folder's object").toHaveCount(0);
       expect((await crumbs(page)).at(-1), 'the last crumb').toBe(folderTwoIdentity);
@@ -118,11 +126,10 @@ test('studio.s3-keys-that-differ-by-spaces-are-told-apart', async ({ ctx, page }
       const crumb = crumbAt(page, shown.length - 2);
       expect(await drawnText(crumb), "the folder's crumb as drawn").toBe(folderTwoIdentity);
       await expect(crumb, "the folder's crumb, a link").toHaveAttribute('href', /./);
-      const target = new URL((await crumb.getAttribute('href')) ?? '', 'http://127.0.0.1');
-      expect(
-        { path: target.pathname, prefix: target.searchParams.get('prefix') },
-        "where the folder's crumb leads",
-      ).toEqual({ path: bucketPath(bucket), prefix: folderTwo });
+      // The whole address the crumb leads to, from the page it is on: Studio's Objects at the two-space folder.
+      expect(new URL((await crumb.getAttribute('href')) ?? '', page.url()).href, "where the folder's crumb leads").toBe(
+        new URL(objectsAddress(bucket, folderTwo), page.url()).href,
+      );
     },
   );
 

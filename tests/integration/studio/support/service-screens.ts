@@ -160,11 +160,13 @@ export interface TableRow {
  * Cloudscape's selectors. A failure says what the column's cells read last.
  */
 export async function rowReading(table: Locator, column: number, text: string): Promise<TableRow> {
-  const below = (selector: { toSelector(): string }) =>
-    selector
-      .toSelector()
-      .replace(/^body /, '')
-      .replace(/^\[class\*="awsui_root_\w+"\] /, '');
+  // A selector below the table's root: the table wrapper's own selector is taken off the front of its part's.
+  const root = createWrapper().findTable().toSelector();
+  const below = (part: { toSelector(): string }) => {
+    const selector = part.toSelector();
+    if (!selector.startsWith(`${root} `)) throw new Error(`the selector ${selector} is not below the table's, ${root}`);
+    return selector.slice(root.length + 1);
+  };
   const rows = table.locator(below(createWrapper().findTable().findRows()));
   const cellOf = (index: number) => table.locator(below(createWrapper().findTable().findBodyCell(index + 1, column)));
   let read: string[] = [];
@@ -195,21 +197,57 @@ export async function rowReading(table: Locator, column: number, text: string): 
   return { row: rows.nth(found[0]!), cell: cellOf(found[0]!) };
 }
 
+/** An option the open list offers: its value and its text as drawn. */
+export interface OfferedOption {
+  value: string;
+  text: string;
+}
+
 /**
  * What the open list of the page's one open select or multiselect offers at one moment: whether it says it is still
- * reading (its status line), and which of `values` have an option drawn in it, in the order given. Read in one step,
- * so a check asserts on one list and not on two states of it.
+ * reading (its status line), and which of `values` have an option a user sees in it, in the order given, each with
+ * its text as drawn. An option is seen when it takes room on the screen and neither it nor an element around it is
+ * hidden or of opacity 0; its text is read as `drawnText` reads one (the rendered text, without what takes no room).
+ * All of it is read in one step, so a check asserts on one list and not on two states of it.
  */
-export async function offeredNow(page: Page, values: string[]): Promise<{ reading: boolean; offered: string[] }> {
+export async function offeredNow(page: Page, values: string[]): Promise<{ reading: boolean; offered: OfferedOption[] }> {
   const select = createWrapper().findSelect();
   const multiselect = createWrapper().findMultiselect();
   return page.evaluate(
     ({ status, options }) => {
-      const drawn = (selector: string) =>
-        [...document.querySelectorAll(selector)].some((element) => element.getClientRects().length > 0);
+      const seen = (element: Element) =>
+        element.getClientRects().length > 0 &&
+        (element as Element & { checkVisibility(options: object): boolean }).checkVisibility({
+          opacityProperty: true,
+          visibilityProperty: true,
+        });
+      const all = (selectors: string[]) => selectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
+      // The same read as `drawnText`.
+      const textOf = (root: Element) => {
+        const unseen: { element: HTMLElement; style: string | null }[] = [];
+        for (const element of root.querySelectorAll<HTMLElement>('*')) {
+          const style = getComputedStyle(element);
+          if (style.opacity === '0' || style.fontSize === '0px') {
+            unseen.push({ element, style: element.getAttribute('style') });
+          }
+        }
+        try {
+          for (const { element } of unseen) element.style.setProperty('display', 'none', 'important');
+          return (root as HTMLElement).innerText.replace(/^[ \n]+|[ \n]+$/g, '');
+        } finally {
+          for (const { element, style } of unseen) {
+            if (style === null) element.removeAttribute('style');
+            else element.setAttribute('style', style);
+          }
+        }
+      };
       return {
-        reading: status.some(drawn),
-        offered: options.filter((each) => each.selectors.some(drawn)).map((each) => each.value),
+        reading: all(status).some(seen),
+        offered: options.flatMap((each) =>
+          all(each.selectors)
+            .filter(seen)
+            .map((element) => ({ value: each.value, text: textOf(element) })),
+        ),
       };
     },
     {

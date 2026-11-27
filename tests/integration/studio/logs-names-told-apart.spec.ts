@@ -164,12 +164,10 @@ test('studio.logs-stream-choice-tells-names-apart', async ({ ctx, page }) => {
       const choice = await opened();
       await choice.filter.fill(two, ACTION);
       // The list as it stands once it has read for the filter: of the two values, the two-space one alone.
-      const filtered = { reading: false, offered: [two] };
+      // and that option, seen, shows the identity alone.
       await expect
         .poll(() => offeredNow(page, [one, two]), { message: 'the list after the filter', timeout: 20_000 })
-        .toEqual(filtered);
-      expect(await drawnText(choice.option(two)), 'what the option left shows').toBe(identity);
-      expect(await offeredNow(page, [one, two]), 'the same list, after it was read').toEqual(filtered);
+        .toEqual({ reading: false, offered: [{ value: two, text: identity }] });
       await choice.option(two).click(ACTION);
       await expect(choice.list, 'the list after the choice').toHaveCount(0);
       expect(await drawnText(selectOf(searchScreen(page).stream)), 'what the closed field shows').toBe(identity);
