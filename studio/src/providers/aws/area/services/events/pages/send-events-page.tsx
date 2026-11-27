@@ -9,7 +9,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
@@ -26,6 +26,7 @@ import { useBusChoice, type BusChoice } from '../use-bus-choice';
 
 const DESCRIPTION =
   "The bus's enabled rules whose pattern matches route the event to their targets. A target receives it only if it allows EventBridge to deliver. The event ID says the emulator accepted the event, not that a rule matched or a target received it.";
+const NOT_SENT = 'The event was not sent.';
 
 type ConnectionProps = Pick<ScreenPageProps, 'connection'>;
 
@@ -72,6 +73,20 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
     setMissingBus(undefined);
   }
 
+  function showSendFailure(content: ReactNode) {
+    // The area's status region announces warning items. The form shows the detailed errors in place.
+    flash.show([{ type: 'warning', header: NOT_SENT, content }]);
+  }
+
+  function showRequestFailure(item: FlashItem) {
+    setNotice(item);
+    showSendFailure(
+      <>
+        {item.header}. {item.content}
+      </>,
+    );
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy.current || unavailable) return;
@@ -80,15 +95,20 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
     setNotice(undefined);
     setReceipt(undefined);
     const faults = validateSendForm(form);
-    if (choice.kind !== 'chosen') return;
-    if (faults.source !== undefined) return sourceInput.current?.focus();
-    if (faults.detailType !== undefined) return typeInput.current?.focus();
-    if (faults.detail !== undefined) return detailInput.current?.focus();
+    if (choice.kind !== 'chosen' || Object.keys(faults).length > 0) {
+      showSendFailure('Check the form for details.');
+      if (choice.kind === 'chosen') {
+        if (faults.source !== undefined) sourceInput.current?.focus();
+        else if (faults.detailType !== undefined) typeInput.current?.focus();
+        else detailInput.current?.focus();
+      }
+      return;
+    }
 
     const bus = choice.name;
     let operation: string = BUS_OPERATIONS.describeEventBus;
     if (engineOrigin === undefined) {
-      setNotice({
+      showRequestFailure({
         ...actionFailureItem({ kind: 'engine-did-not-answer', operation }, operation, engineOrigin),
         content: `${operation} failed.`,
       });
@@ -107,6 +127,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
           name: bus,
           message: `Event bus ${bus} is not in your local emulator. Choose an event bus.`,
         });
+        showSendFailure('Check the event bus field.');
         return;
       }
       operation = PUT_EVENTS;
@@ -121,6 +142,11 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
             </>
           ),
         });
+        showSendFailure(
+          <>
+            {PUT_EVENTS} failed. <CodeAndMessage code={result.code} message={result.message} />
+          </>,
+        );
         return;
       }
       const accepted = (
@@ -136,7 +162,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
       const failure = failureOf(error, operation);
       const item = actionFailureItem(failure, failure.operation, engineOrigin);
       setUnavailable(failure.kind === 'not-implemented' && operation === PUT_EVENTS);
-      setNotice(
+      showRequestFailure(
         failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer'
           ? {
               ...item,
