@@ -53,7 +53,7 @@ import {
   metricAlarmDirect,
   namesOf,
   shownPairValues,
-  shownTexts,
+  shownTitles,
   NAVIGATION_HEADER,
   NO_ALARMS_MATCH,
   open,
@@ -384,7 +384,7 @@ test('studio.cloudwatch-entries-lead-to-a-screen-or-no-screen-yet', async ({ ctx
         ).toBeVisible();
         await expectOneCurrent(page, entry.label);
         await expectNavigation(`the service's navigation on the page of "${entry.label}"`);
-        expect(await shownTexts(page.locator('h1')), `the titles drawn at ${entry.path}`).not.toContain('Page not found');
+        expect(await shownTitles(page), `the titles drawn at ${entry.path}: the label alone, no "Page not found"`).toEqual([entry.label]);
       }
     },
   );

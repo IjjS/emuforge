@@ -739,6 +739,14 @@ export function pageHeading(page: Page): Locator {
   return page.locator(HEADING_TEXT).and(page.locator('h1 *')).first();
 }
 
+/**
+ * The titles the page draws: the heading text of every `h1`, found with Cloudscape's selector, so a counter or
+ * another part of a header is no part of a title; white space folded.
+ */
+export async function shownTitles(page: Page): Promise<string[]> {
+  return (await shownTexts(page.locator(HEADING_TEXT).and(page.locator('h1 *')))).map(norm);
+}
+
 /** Waits until the page's `h1` is shown and reads `text`, character for character. */
 export async function expectHeading(page: Page, text: string, timeout = 15_000): Promise<void> {
   await expect
