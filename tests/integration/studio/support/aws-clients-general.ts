@@ -458,6 +458,14 @@ export function directRds(
   });
 }
 
+/** A KMS action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 651: the forms' key choices). */
+export function directKms(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return direct(ctx, port, 'kms', 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.1',
+    'x-amz-target': `TrentService.${action}`,
+  });
+}
+
 /** A CloudWatch Logs action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 536: a function's log). */
 export function directLogs(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
   return direct(ctx, port, 'logs', 'POST', '/', {}, JSON.stringify(input), {
