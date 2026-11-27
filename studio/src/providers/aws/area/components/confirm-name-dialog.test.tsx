@@ -1,11 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 
-import { aws, modal as openModal, modalInput, modalButton, expectModalBox } from '../logs-test-utils.test';
-import { AreaRootContext } from '../../../area-root';
+import { AreaRootContext } from '../area-root';
 import { ConfirmNameDialog } from './confirm-name-dialog';
 
+const aws = () => createWrapper(document.body);
 const name = '/app#Name';
 
 function renderDialog({ pending = false, unavailable }: { pending?: boolean; unavailable?: string } = {}) {
@@ -44,20 +45,35 @@ function renderDialog({ pending = false, unavailable }: { pending?: boolean; una
 }
 
 async function controls() {
-  const dialog = await openModal('Confirm removal');
-  return {
-    dialog,
-    field: modalInput(dialog, 'Type its name.'),
-    action: modalButton(dialog, 'Remove'),
-    cancel: modalButton(dialog, 'Cancel'),
-    close: modalButton(dialog, 'Close dialog'),
-  };
+  return waitFor(() => {
+    const dialog = aws().findModal();
+    if (!dialog?.isVisible()) throw new Error('Expected an open modal');
+    expect(dialog.getElement()).toHaveAccessibleName('Confirm removal');
+    const field = dialog.findContent().findInput()?.findNativeInput().getElement();
+    const [cancel, action] = dialog.findFooter()?.findAllButtons() ?? [];
+    if (!field || !action || !cancel) throw new Error('Expected the confirmation controls');
+    expect(field).toHaveAccessibleName('Type its name.');
+    expect(action.getElement()).toHaveAccessibleName('Remove');
+    expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+    return {
+      dialog,
+      field,
+      action: action.getElement(),
+      cancel: cancel.getElement(),
+      close: dialog.findDismissButton().getElement(),
+    };
+  });
 }
 
 it('renders the supplied copy and accepts only the exact name', async () => {
   const { confirmed } = renderDialog();
   const { dialog, field, action } = await controls();
-  expectModalBox(dialog, 'This removes the resource.');
+  expect(
+    dialog
+      .findContent()
+      .findAllBoxes()
+      .map((box) => box.getElement().textContent),
+  ).toContain('This removes the resource.');
   expect(action).toBeDisabled();
   for (const value of [name.toLowerCase(), ` ${name}`, `${name} `]) {
     fireEvent.change(field, { target: { value } });
