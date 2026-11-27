@@ -135,6 +135,21 @@ describe('create a group', () => {
       VpcId: 'vpc-1',
     });
   });
+  it('sends tags as a security-group specification and omits the member for empty rows', async () => {
+    engine.on('CreateSecurityGroup', () => CREATED);
+    const group = { name: 'web', description: 'Web servers' };
+    await createSecurityGroup(endpoint, { ...group, tags: [{ key: 'team', value: 'core' }] }, signal());
+    await createSecurityGroup(endpoint, { ...group, tags: [] }, signal());
+
+    expect(sentParams(engine.of('CreateSecurityGroup')[0])).toMatchObject({
+      'TagSpecification.1.ResourceType': 'security-group',
+      'TagSpecification.1.Tag.1.Key': 'team',
+      'TagSpecification.1.Tag.1.Value': 'core',
+    });
+    expect(Object.keys(sentParams(engine.of('CreateSecurityGroup')[1]))).not.toContain(
+      'TagSpecification.1.ResourceType',
+    );
+  });
 });
 
 describe('add a rule', () => {
@@ -155,6 +170,14 @@ describe('add a rule', () => {
     });
     expect(engine.of('AuthorizeSecurityGroupIngress')).toHaveLength(1);
     expect(engine.of('AuthorizeSecurityGroupEgress')).toHaveLength(1);
+  });
+
+  it.each([false, true])('sends a security-group-rule tag specification with egress %s', async (egress) => {
+    expect(await sentRule({ ...RANGE, egress, tags: [{ key: 'use', value: 'https' }] })).toMatchObject({
+      'TagSpecification.1.ResourceType': 'security-group-rule',
+      'TagSpecification.1.Tag.1.Key': 'use',
+      'TagSpecification.1.Tag.1.Value': 'https',
+    });
   });
 
   it('TCP with one port → tcp and it twice; UDP with two → udp and the two; ICMP → icmp -1 -1; All → -1 -1 -1', async () => {
