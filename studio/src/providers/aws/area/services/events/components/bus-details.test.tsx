@@ -43,19 +43,14 @@ function renderDetails(
   const table = page.findTable();
   const details = page.findContainer()?.findContent();
   if (!table || !details) throw new Error('Expected bus details and tags');
-  const values = Object.fromEntries(
-    details
-      .findAllKeyValuePairs()
-      .flatMap((pairs) => pairs.findItems())
-      .map((item) => [item.findLabel()?.getElement().textContent, item.findValue()]),
-  );
-  return { table, values, refresh };
+  const items = details.findAllKeyValuePairs().flatMap((pairs) => pairs.findItems());
+  return { table, items, refresh };
 }
 
 it('renders the description and dates, keeps the policy literal and copies each identifier as supplied', async () => {
   const writeText = vi.fn(() => Promise.resolve());
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-  const { values } = renderDetails({
+  const { items } = renderDetails({
     Arn: arn,
     Description: 'Routes orders',
     CreationTime: created,
@@ -64,18 +59,28 @@ it('renders the description and dates, keeps the policy literal and copies each 
     DeadLetterConfig: { Arn: dlq },
     Policy: policy,
   });
-  expect(values.Description?.getElement().textContent).toBe('Routes orders');
-  expect(values['Creation time']?.getElement().textContent).toBe(creationDateText(created));
-  expect(values['Last change']?.getElement().textContent).toBe(creationDateText(changed));
-  expect(values['Resource policy']?.getElement().textContent).toBe(policy);
+  expect(items.map((item) => item.findLabel()?.getElement().textContent)).toEqual([
+    'ARN',
+    'Description',
+    'Creation time',
+    'Last change',
+    'KMS key',
+    'Dead-letter queue ARN',
+    'Resource policy',
+  ]);
+  expect(items[1]?.findValue()?.getElement()).toHaveTextContent('Routes orders');
+  expect(items[2]?.findValue()?.getElement()).toHaveTextContent(creationDateText(created));
+  expect(items[3]?.findValue()?.getElement()).toHaveTextContent(creationDateText(changed));
+  expect(items[6]?.findValue()?.getElement().textContent).toBe(policy);
 
-  for (const [label, value] of [
-    ['ARN', arn],
-    ['KMS key', kms],
-    ['Dead-letter queue ARN', dlq],
+  for (const [index, label, value] of [
+    [0, 'ARN', arn],
+    [4, 'KMS key', kms],
+    [5, 'Dead-letter queue ARN', dlq],
   ] as const) {
-    const copy = values[label]?.findCopyToClipboard()?.findCopyButton();
-    expect(values[label]?.getElement().textContent).toBe(value);
+    const entry = items[index]?.findValue();
+    const copy = entry?.findCopyToClipboard()?.findCopyButton();
+    expect(entry?.getElement()).toHaveTextContent(value);
     expect(copy?.getElement()).toHaveAccessibleName(`Copy ${label}`);
     if (!copy) throw new Error(`Expected Copy ${label}`);
     fireEvent.click(copy.getElement());
@@ -85,11 +90,15 @@ it('renders the description and dates, keeps the policy literal and copies each 
 });
 
 it('uses a dash for the absent description and omits optional configuration and its copy controls', () => {
-  const { values, table } = renderDetails({ Arn: arn }, { value: {} });
-  expect(values.Description?.getElement().textContent).toBe('-');
-  expect(values).not.toHaveProperty('KMS key');
-  expect(values).not.toHaveProperty('Dead-letter queue ARN');
-  expect(values).not.toHaveProperty('Resource policy');
+  const { items, table } = renderDetails({ Arn: arn }, { value: {} });
+  expect(items[1]?.findValue()?.getElement().textContent).toBe('-');
+  expect(items.map((item) => item.findLabel()?.getElement().textContent)).toEqual([
+    'ARN',
+    'Description',
+    'Creation time',
+    'Last change',
+  ]);
+  expect(items.flatMap((item) => item.findValue()?.findCopyToClipboard() ?? [])).toHaveLength(1);
   expect(table.findEmptySlot()?.getElement().textContent).toBe('No tags');
 });
 
@@ -114,11 +123,11 @@ const failures: [RequestFailure, string, string?][] = [
 ];
 
 it.each(failures)('keeps the details visible when the tags read fails (%s)', (failure, status, detail) => {
-  const { table, values, refresh } = renderDetails({ Arn: arn, Description: 'Order events' }, { failure });
+  const { table, items, refresh } = renderDetails({ Arn: arn, Description: 'Order events' }, { failure });
   const empty = table.findEmptySlot();
   expect(empty?.findStatusIndicator()?.getElement().textContent).toBe(status);
   if (detail !== undefined) expect(empty?.getElement()).toHaveTextContent(detail);
-  expect(values.Description?.getElement().textContent).toBe('Order events');
+  expect(items[1]?.findValue()?.getElement()).toHaveTextContent('Order events');
   const retry = empty?.findButton();
   expect(retry?.getElement()).toHaveAccessibleName('Retry');
   retry?.click();
