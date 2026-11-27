@@ -122,7 +122,7 @@ export interface AlarmFormProps<Values extends AlarmEditValues = AlarmFormValues
   /** Current entries and the baseline used by Cancel. Key the form by alarm when switching resources. */
   values: Values;
   initialValues: Values;
-  onChange: (values: Values, field: keyof Values) => void;
+  onChange: (values: Values) => void;
   onSubmit: (values: Values) => void | Promise<void>;
   onCancel: () => void;
   pending?: boolean;
@@ -188,7 +188,7 @@ export function AlarmForm<Values extends AlarmEditValues>({
   }
 
   function change<K extends keyof AlarmFormValues>(field: K, value: AlarmFormValues[K]) {
-    if (!pending && !busy.current) onChange({ ...values, [field]: value }, field);
+    if (!pending && !busy.current) onChange({ ...values, [field]: value });
   }
 
   function handleNamePaste(event: ClipboardEvent<HTMLInputElement>) {

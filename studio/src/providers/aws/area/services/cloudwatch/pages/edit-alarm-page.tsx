@@ -148,16 +148,12 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
     if (feedback) conflictRef.current?.focus();
   }, [feedback]);
 
-  function handleChange(entries: AlarmEditValues, field: keyof AlarmEditValues) {
-    if (
-      field === 'datapointsToAlarm' &&
+  function handleChange(entries: AlarmEditValues) {
+    const restoresImplicitCondition =
       initialValues.datapointsToAlarm === undefined &&
-      entries.datapointsToAlarm === initialValues.evaluationPeriods
-    ) {
-      setValues({ ...entries, datapointsToAlarm: undefined });
-    } else {
-      setValues(entries);
-    }
+      entries.evaluationPeriods === initialValues.evaluationPeriods &&
+      entries.datapointsToAlarm === initialValues.evaluationPeriods;
+    setValues(restoresImplicitCondition ? { ...entries, datapointsToAlarm: undefined } : entries);
   }
 
   async function handleSubmit(submitted: AlarmEditValues) {

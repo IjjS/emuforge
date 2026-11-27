@@ -210,61 +210,91 @@ it('opens the populated edit form with an immutable name and the replace notice'
   expect(button(page, 'Save changes').getElement()).toBeEnabled();
 });
 
-it.each([false, true])('tracks implicit data points until overridden (%s)', async (override) => {
-  read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
-  const write = captureAlarmWrite();
-
-  const page = open();
-  await ready(page);
-  const datapoints = input(page, 'Data points to alarm');
-  const periods = input(page, 'Evaluation periods');
-  expect(datapoints.getInputValue()).toBe('1');
-  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 1 out of 1 periods');
-
-  periods.setInputValue('3');
-  expect(datapoints.getInputValue()).toBe('3');
-  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 3 out of 3 periods');
-
-  if (override) {
-    datapoints.setInputValue('2');
-    periods.setInputValue('4');
-    expect(datapoints.getInputValue()).toBe('2');
-    expect(content(page)?.getElement()).toHaveTextContent('Alarm when 2 out of 4 periods');
-  }
-
-  await submit(page);
-  expect(write).toHaveBeenCalledTimes(1);
-  const request = write.mock.calls[0]?.[0].input;
-  expect(request?.EvaluationPeriods).toBe(override ? 4 : 3);
-  if (override) {
-    expect(request?.DatapointsToAlarm).toBe(2);
-  } else {
-    expect(request).not.toHaveProperty('DatapointsToAlarm');
-  }
-});
-
 it.each([
-  { entered: '5', count: '5', sent: 5 },
-  { entered: '3', count: '6', sent: undefined },
-])('uses the opening count to detect a revert when $entered is entered', async ({ entered, count, sent }) => {
+  {
+    scenario: 'follows evaluation periods while untouched',
+    edits: [['Evaluation periods', '6']],
+    periods: 6,
+    count: 6,
+    sent: undefined,
+  },
+  {
+    scenario: 'keeps a count different from both the opening and current periods',
+    edits: [
+      ['Data points to alarm', '2'],
+      ['Evaluation periods', '6'],
+    ],
+    periods: 6,
+    count: 2,
+    sent: 2,
+  },
+  {
+    scenario: 'keeps an explicit count that equals the current periods',
+    edits: [
+      ['Data points to alarm', '2'],
+      ['Data points to alarm', '5'],
+      ['Evaluation periods', '6'],
+    ],
+    periods: 6,
+    count: 5,
+    sent: 5,
+  },
+  {
+    scenario: 'keeps an explicit count that equals the opening periods',
+    edits: [['Data points to alarm', '3']],
+    periods: 5,
+    count: 3,
+    sent: 3,
+  },
+  {
+    scenario: 'restores the opening condition with the count untouched',
+    edits: [['Evaluation periods', '3']],
+    periods: 3,
+    count: 3,
+    sent: undefined,
+  },
+  {
+    scenario: 'restores the opening condition when periods are restored last',
+    edits: [
+      ['Data points to alarm', '3'],
+      ['Evaluation periods', '3'],
+    ],
+    periods: 3,
+    count: 3,
+    sent: undefined,
+  },
+  {
+    scenario: 'restores the opening condition when count is restored last',
+    edits: [
+      ['Data points to alarm', '2'],
+      ['Evaluation periods', '3'],
+      ['Data points to alarm', '3'],
+    ],
+    periods: 3,
+    count: 3,
+    sent: undefined,
+  },
+] as const)('$scenario', async ({ edits, periods, count, sent }) => {
   read.mockResolvedValue(metric(name, { EvaluationPeriods: 3, DatapointsToAlarm: undefined }));
   const write = captureAlarmWrite();
   const page = open();
   await ready(page);
-
   const datapoints = input(page, 'Data points to alarm');
-  const periods = input(page, 'Evaluation periods');
-  periods.setInputValue('5');
-  datapoints.setInputValue('2');
-  datapoints.setInputValue(entered);
-  periods.setInputValue('6');
-  expect(datapoints.getInputValue()).toBe(count);
-  expect(content(page)?.getElement()).toHaveTextContent(`Alarm when ${count} out of 6 periods`);
+  expect(datapoints.getInputValue()).toBe('3');
+  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 3 out of 3 periods');
+
+  input(page, 'Evaluation periods').setInputValue('5');
+  expect(datapoints.getInputValue()).toBe('5');
+  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 5 out of 5 periods');
+
+  for (const [field, value] of edits) input(page, field).setInputValue(value);
+  expect(datapoints.getInputValue()).toBe(String(count));
+  expect(content(page)?.getElement()).toHaveTextContent(`Alarm when ${count} out of ${periods} periods`);
 
   await submit(page);
   expect(write).toHaveBeenCalledTimes(1);
   const request = write.mock.calls[0]?.[0].input;
-  expect(request?.EvaluationPeriods).toBe(6);
+  expect(request?.EvaluationPeriods).toBe(periods);
   if (sent === undefined) {
     expect(request).not.toHaveProperty('DatapointsToAlarm');
   } else {
