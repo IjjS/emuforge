@@ -67,7 +67,7 @@ function open() {
     return formField;
   }
   function select(index: number, label: string) {
-    const found = field(index, label).findSelect();
+    const found = field(index, label).findControl()?.findSelect();
     if (!found) throw new Error(`Expected a select in form field ${index}`);
     return found;
   }
@@ -131,11 +131,11 @@ it('describes each input choice and opens the corresponding field', async () => 
   expect(select.findDropdown().findOptionByValue('path')?.getElement()).toHaveTextContent('such as $.detail.');
   act(() => select.selectOptionByValue('constant'));
   const json = form.field(3, 'JSON text');
-  expect(json.findTextarea()?.getElement()).toBeVisible();
+  expect(json.findControl()?.findTextarea()?.getElement()).toBeVisible();
   await form.choose(2, 'What the target receives', 'path');
   expect(form.page.findTextarea()).toBeNull();
   const path = form.field(3, 'JSON path');
-  expect(path.findInput()?.getElement()).toBeVisible();
+  expect(path.findControl()?.findInput()?.getElement()).toBeVisible();
 });
 
 function deferredArn() {
@@ -188,7 +188,7 @@ it('requires a message group ID only when the chosen queue is FIFO', async () =>
   );
   expect(validateTarget(form.draft()).messageGroupId).toBeDefined();
   await form.choose(2, 'Queue', queueB.value);
-  expect(form.field(3, 'What the target receives').findSelect()?.getElement()).toBeVisible();
+  expect(form.field(3, 'What the target receives').findControl()?.findSelect()?.getElement()).toBeVisible();
   expect(form.page.findAllFormFields()).toHaveLength(4);
   expect(validateTarget(form.draft()).messageGroupId).toBeUndefined();
 });
