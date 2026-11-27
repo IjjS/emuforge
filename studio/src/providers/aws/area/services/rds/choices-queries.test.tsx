@@ -19,7 +19,14 @@ import {
 
 vi.mock('./choices-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('./choices-api')>();
-  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn(), readOrderableRows: vi.fn() };
+  return {
+    ...real,
+    listEngineVersionChoices: vi.fn(),
+    listSubnetGroupChoices: vi.fn(),
+    readOrderableRows: vi.fn(),
+    findSubnetGroup: vi.fn(),
+    readDefaultVpcId: vi.fn(),
+  };
 });
 
 vi.mock('../../components/security-group-choices', async (importOriginal) => {
