@@ -194,8 +194,8 @@ it('distinguishes one space from two in the link and selection names', async () 
     expect(wrapper?.findRows()).toHaveLength(2);
     return wrapper;
   });
-  const oneSpaceLink = table?.findBodyCell(1, 1)?.findLink()?.getElement();
-  const twoSpaceLink = table?.findBodyCell(2, 1)?.findLink()?.getElement();
+  const oneSpaceLink = table?.findBodyCell(1, 2)?.findLink()?.getElement();
+  const twoSpaceLink = table?.findBodyCell(2, 2)?.findLink()?.getElement();
   expect(oneSpaceLink).toBeVisible();
   expect(oneSpaceLink?.textContent).toBe('a b');
   expect(oneSpaceLink).toHaveAccessibleName('a b');
