@@ -208,6 +208,46 @@ it('keeps outside additions and retries only the outstanding addition after a pa
   expect(sent).toEqual([untag, tag, tag]);
 });
 
+it('keeps focus inside the dialog and announces the partial save and Retry together when rereading fails', async () => {
+  const write = deferred<Response>();
+  const read = deferred<ReadResult>();
+  const retry = deferred<ReadResult>();
+  const sent = writes(200, write.promise);
+  refresh.mockReturnValueOnce(read.promise).mockReturnValueOnce(retry.promise);
+  const edit = await open();
+  edit.replaceA();
+  edit.save.focus();
+  fireEvent.click(edit.save);
+  await waitFor(() => expect(sent).toEqual([untag, tag]));
+  expect(edit.save).toHaveFocus();
+  await act(async () =>
+    write.resolve(
+      Response.json({ __type: 'InvalidParameterValueException', message: 'Tag limit reached.' }, { status: 400 }),
+    ),
+  );
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  expect(edit.save).toHaveFocus();
+  await act(async () => read.resolve({ failure: { kind: 'engine-did-not-answer', operation: 'ListTagsForResource' } }));
+
+  const readAlert = required(edit.content.findAllAlerts()[1], 'Reread failure alert');
+  const retryButton = required(readAlert.findActionSlot()?.findButton(), 'Retry button').getElement();
+  expect(retryButton).toHaveFocus();
+  expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent(
+    'The removals were saved. The added and changed tags were not: TagResource: Tag limit reached. ' +
+      '(InvalidParameterValueException) The tags could not be read again. Choose Retry to read the tags before saving.',
+  );
+  expect(edit.save).toBeDisabled();
+  expect(edit.field(2, 1)).toHaveValue('c');
+
+  fireEvent.click(retryButton);
+  expect(retryButton).toHaveFocus();
+  expect(edit.save).toBeDisabled();
+  await act(async () => retry.resolve({ value: removed }));
+  expect(edit.save).toBeEnabled();
+  expect(edit.save).toHaveFocus();
+  expect(edit.field(2, 1)).toHaveValue('c');
+});
+
 it.each<{ failure: NonNullable<Parameters<typeof ManageTagsDialog>[0]['tags']['failure']>; detail: string }>([
   {
     failure: { kind: 'not-implemented', operation: 'ListTagsForResource' },
@@ -230,12 +270,12 @@ it.each<{ failure: NonNullable<Parameters<typeof ManageTagsDialog>[0]['tags']['f
   const edit = await open();
   edit.replaceA();
   fireEvent.click(edit.save);
-  expect(edit.save).toBeDisabled();
+  expect(edit.save).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(edit.save);
   await waitFor(() => expect(sent).toEqual([untag]));
   await act(async () => write.resolve(Response.json({ message: 'Tag change refused.' }, { status: 400 })));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-  expect(edit.save).toBeDisabled();
+  expect(edit.save).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(edit.save);
   expect(sent).toEqual([untag]);
 
