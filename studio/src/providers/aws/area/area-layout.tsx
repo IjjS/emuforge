@@ -18,7 +18,7 @@ import { ContentTarget } from './components/content-target';
 import { targetOf } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
-import { PageFlashContext } from './components/page-flash';
+import { HandOverNoteContext, PageFlashContext } from './components/page-flash';
 import { PageHelpContext } from './components/page-help';
 import { PageResourcesContext, type PageResources } from './components/page-resources';
 import { screenCrumbs } from './screen-paths';
@@ -282,7 +282,7 @@ export function AreaLayout({
   const [resources, setResources] = useState<PageResources | null>(null);
 
   // The result a screen's page shows of an action, or hands to the page it leads to (issue 386, R5).
-  const flash = useAreaFlash(pathname, routeChanges, page.kind === 'screen');
+  const flash = useAreaFlash(pathname, routeChanges, page.kind === 'screen', targetGeneration);
 
   // A change of target (issue 486, R3): the page below the line, the notice and the flash is mounted again under the
   // new generation, so it reads its data afresh and keeps nothing of the earlier target; focus that went with it moves
@@ -377,15 +377,17 @@ export function AreaLayout({
                     <div ref={pageBox}>
                       <PageResourcesContext value={setResources}>
                         <PageFlashContext value={flash.pageFlash}>
-                          <PageHelpContext value={openHelp}>
-                            {/* One page per target: a change of target mounts it again (issue 486, R3). */}
-                            <PageContent
-                              key={targetGeneration}
-                              page={page}
-                              pathname={pathname}
-                              connection={connection}
-                            />
-                          </PageHelpContext>
+                          <HandOverNoteContext value={flash.note}>
+                            <PageHelpContext value={openHelp}>
+                              {/* One page per target: a change of target mounts it again (issue 486, R3). */}
+                              <PageContent
+                                key={targetGeneration}
+                                page={page}
+                                pathname={pathname}
+                                connection={connection}
+                              />
+                            </PageHelpContext>
+                          </HandOverNoteContext>
                         </PageFlashContext>
                       </PageResourcesContext>
                     </div>
