@@ -94,7 +94,9 @@ it('choosing a bus changes the query, empties the filter, starts on page one and
   expect(listRules).toHaveBeenLastCalledWith(endpoint, 'default', 'ship', 'page2', expect.any(AbortSignal));
 
   select.openDropdown();
-  await waitFor(() => expect(select.findDropdown().findOption(1)?.findLabel().getElement().textContent).toBe('orders'));
+  await waitFor(() =>
+    expect(select.findDropdown().findOptionByValue('orders')?.findLabel().getElement().textContent).toBe('orders'),
+  );
   select.selectOptionByValue('orders');
   await waitFor(() =>
     expect(page.findTable()?.findRows()[0]?.findLink()?.getElement().textContent).toBe('created-outside'),
