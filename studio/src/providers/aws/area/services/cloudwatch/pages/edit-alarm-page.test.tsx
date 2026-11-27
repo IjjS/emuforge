@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -289,6 +290,40 @@ it('hands the exact name and success to the alarm page after saving', async () =
   const handed = page.handOver.mock.calls[0]?.[1] as { content: React.ReactNode }[] | undefined;
   const { container } = render(<>{handed?.[0]?.content}</>);
   expect(container.textContent).toBe(`Alarm ${name} saved.`);
+});
+
+it('keeps the submitted edit stable until the save-time read returns a conflict', async () => {
+  const user = userEvent.setup();
+  const request = deferred<Alarm>();
+  const page = open();
+  await ready(page);
+  read.mockReturnValueOnce(request.promise);
+  input(page, 'Threshold').setInputValue('7');
+  const textarea = createWrapper(field(page, 'Description').getElement()).findTextarea();
+  const description = textarea?.findNativeTextarea().getElement();
+  if (!textarea || !description) throw new Error('Missing Description field');
+  textarea.setTextareaValue('Submitted description');
+  description.focus();
+
+  await submit(page);
+  expect(button(page, 'Save changes').findLoadingIndicator()).not.toBeNull();
+  expect(description.readOnly).toBe(true);
+  expect(description).toHaveFocus();
+  await user.keyboard('new text');
+  const enabled = page.wrapper.findCheckbox()?.findNativeInput();
+  enabled?.click();
+  expect(enabled?.getElement()).toBeChecked();
+  expect(textarea.getTextareaValue()).toBe('Submitted description');
+  expect(description).toHaveFocus();
+
+  await act(async () => request.resolve(metric(name, { Threshold: 8 })));
+  expect(textarea.getTextareaValue()).toBe('Submitted description');
+  expect(description.readOnly).toBe(false);
+  expect(input(page, 'Threshold').getInputValue()).toBe('7');
+  expect(page.wrapper.findAlert()?.findHeader()?.getElement().textContent).toBe(
+    'This alarm changed while you were editing it',
+  );
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('shows every conflict, keeps changed entries, adopts untouched ones and allows a new save', async () => {

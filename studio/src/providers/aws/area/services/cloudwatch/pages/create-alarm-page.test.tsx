@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -161,6 +162,38 @@ it('hands the exact name and a success message to the created alarm address', as
   const { container } = render(<>{handed?.[0]?.content}</>);
   expect(container.textContent).toBe(success);
   expect(page.show).not.toHaveBeenCalled();
+});
+
+it('keeps the submitted create entries and focus while the request is pending', async () => {
+  const user = userEvent.setup();
+  const request = deferred<'created'>();
+  create.mockReturnValueOnce(request.promise);
+  const page = open();
+  enterAlarm(page);
+  const textarea = createWrapper(field(page, 'Description').getElement()).findTextarea();
+  const description = textarea?.findNativeTextarea().getElement();
+  if (!textarea || !description) throw new Error('Missing Description field');
+  textarea.setTextareaValue('Submitted description');
+  description.focus();
+
+  await submit(page);
+  expect(button(page, 'Create alarm').findLoadingIndicator()).not.toBeNull();
+  expect(description).toHaveFocus();
+  expect(description.readOnly).toBe(true);
+  await user.keyboard('new text');
+  expect(textarea.getTextareaValue()).toBe('Submitted description');
+  expect(description).toHaveFocus();
+  expect(create).toHaveBeenCalledExactlyOnceWith(
+    engineOrigin,
+    expect.objectContaining({ AlarmDescription: 'Submitted description' }),
+    expect.any(AbortSignal),
+  );
+
+  await act(async () => request.reject(denied('PutMetricAlarm', 'Write refused')));
+  expect(description.readOnly).toBe(false);
+  expect(textarea.getTextareaValue()).toBe('Submitted description');
+  textarea.setTextareaValue('Edited after the refusal');
+  expect(textarea.getTextareaValue()).toBe('Edited after the refusal');
 });
 
 it('reports an existing name at the Name field and keeps the entries', async () => {
