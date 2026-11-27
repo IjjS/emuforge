@@ -70,7 +70,6 @@ async function controls() {
     field,
     action: action.getElement(),
     cancel: cancel.getElement(),
-    close: modal.findDismissButton().getElement(),
   };
 }
 
@@ -136,6 +135,7 @@ it.each([
   const content = alert.findContent().getElement();
   expect(heading).toBeVisible();
   expect(heading?.textContent).toBe(header);
+  expect(alert.getElement().contains(document.activeElement)).toBe(true);
   expect(content).toBeVisible();
   expect(field).toHaveValue('delete');
   expect(deleted).not.toHaveBeenCalled();
@@ -161,13 +161,13 @@ it.each([
 ] as const)('allows dismissal of %s with %s', async (error, method) => {
   remove.mockRejectedValueOnce(error);
   const deleted = open();
-  const { modal, field, action, cancel, close } = await controls();
+  const { modal, field, action, cancel } = await controls();
   type(field);
   fireEvent.click(action);
   const header = error === dependent ? 'DeleteAlarms failed' : 'Not implemented by the emulator';
   await waitFor(() => expect(modal.findContent().findAlert()?.findHeader()?.getElement().textContent).toBe(header));
   if (method === 'Escape') escape(field);
-  else fireEvent.click(method === 'Cancel' ? cancel : close);
+  else fireEvent.click(method === 'Cancel' ? cancel : modal.findDismissButton().getElement());
   expect(page.findModal()).toBeNull();
   expect(deleted).not.toHaveBeenCalled();
 });
@@ -180,15 +180,18 @@ it('ignores confirmation and all dismissal controls while the request is pending
     }),
   );
   const deleted = open();
-  const { modal, field, action, cancel, close } = await controls();
+  const { modal, field, action, cancel } = await controls();
   type(field);
+  action.focus();
   fireEvent.click(action);
-  expect(action).toBeDisabled();
+  expect(action).toHaveAttribute('aria-disabled', 'true');
+  expect(action).not.toBeDisabled();
+  expect(action).toHaveFocus();
   expect(cancel).toBeDisabled();
+  expect(modal.findDismissButton()).toBeNull();
   fireEvent.click(action);
   fireEvent.click(cancel);
-  fireEvent.click(close);
-  escape(field);
+  escape(action);
   expect(modal.getElement()).toBeVisible();
   expect(remove).toHaveBeenCalledTimes(1);
   expect(deleted).not.toHaveBeenCalled();

@@ -219,17 +219,24 @@ it.each(['before', 'after'])('hands over once when a read finds no alarm %s the 
 });
 
 it('stays on the alarm and reports nothing to the flash on refusal', async () => {
-  remove.mockRejectedValueOnce(
-    new RequestError({
-      kind: 'other',
-      operation: 'DeleteAlarms',
-      code: 'ValidationError',
-      message: 'A composite alarm depends on it.',
-    }),
-  );
+  const deletion = deferred<undefined>();
+  remove.mockReturnValueOnce(deletion.promise);
   const { handOver, show } = open();
   const modal = await openDelete();
+  const submit = modalButton(modal, 'Delete');
   confirm(modal);
+  expect(submit).toHaveFocus();
+  expect(modal.findDismissButton()).toBeNull();
+  await act(async () =>
+    deletion.reject(
+      new RequestError({
+        kind: 'other',
+        operation: 'DeleteAlarms',
+        code: 'ValidationError',
+        message: 'A composite alarm depends on it.',
+      }),
+    ),
+  );
   await waitFor(() => {
     const alert = modal.findContent().findAlert();
     const header = alert?.findHeader()?.getElement();
@@ -238,7 +245,9 @@ it('stays on the alarm and reports nothing to the flash on refusal', async () =>
     expect(header?.textContent).toBe('DeleteAlarms failed');
     expect(content).toBeVisible();
     expect(content).toHaveTextContent('A composite alarm depends on it.');
+    expect(alert?.getElement().contains(document.activeElement)).toBe(true);
   });
+  expect(modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
   expect(screen.getByLabelText('Address').textContent).toBe(alarmPath(name));
   expect(handOver).not.toHaveBeenCalled();
   expect(show).not.toHaveBeenCalled();

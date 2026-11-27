@@ -122,7 +122,7 @@ async function open(initialTags: Tag[] = initial) {
     fireEvent.click(required(editor.findRow(1)?.findRemoveButton(), 'Remove tag button').getElement());
     add('c');
   };
-  return { editor, save, cancel, field, alertText, replaceA, content, onSaved, onDismiss };
+  return { modal, editor, save, cancel, field, alertText, replaceA, content, onSaved, onDismiss };
 }
 
 it('opens with the tags as read, validates rows, and writes nothing for an unchanged save', async () => {
@@ -249,9 +249,13 @@ it('keeps focus inside the dialog and announces the partial save and Retry toget
   const edit = await open();
   edit.replaceA();
   edit.save.focus();
+  expect(edit.modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
   fireEvent.click(edit.save);
   await waitFor(() => expect(sent).toEqual([untag, tag]));
   expect(edit.save).toHaveFocus();
+  expect(edit.save).not.toBeDisabled();
+  expect(edit.save).toHaveAttribute('aria-disabled', 'true');
+  expect(edit.modal.findDismissButton()).toBeNull();
   await act(async () =>
     write.resolve(
       Response.json({ __type: 'InvalidParameterValueException', message: 'Tag limit reached.' }, { status: 400 }),
@@ -259,11 +263,13 @@ it('keeps focus inside the dialog and announces the partial save and Retry toget
   );
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(edit.save).toHaveFocus();
+  expect(edit.modal.findDismissButton()).toBeNull();
   await act(async () => read.resolve({ failure: { kind: 'engine-did-not-answer', operation: 'ListTagsForResource' } }));
 
   const readAlert = required(edit.content.findAllAlerts()[1], 'Reread failure alert');
   const retryButton = required(readAlert.findActionSlot()?.findButton(), 'Retry button').getElement();
   expect(retryButton).toHaveFocus();
+  expect(edit.modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
   expect(edit.content.find('[role="alert"]')?.getElement()).toHaveTextContent(
     'The removals were saved. The added and changed tags were not: TagResource: Tag limit reached. ' +
       '(InvalidParameterValueException) The tags could not be read again. Choose Retry to read the tags before saving.',
@@ -273,8 +279,12 @@ it('keeps focus inside the dialog and announces the partial save and Retry toget
 
   fireEvent.click(retryButton);
   expect(retryButton).toHaveFocus();
+  expect(retryButton).not.toBeDisabled();
+  expect(retryButton).toHaveAttribute('aria-disabled', 'true');
+  expect(edit.modal.findDismissButton()).toBeNull();
   expect(edit.save).toBeDisabled();
   await act(async () => retry.resolve({ value: removed }));
+  expect(edit.modal.findDismissButton().getElement()).toHaveAccessibleName('Close dialog');
   expect(edit.save).toBeEnabled();
   expect(edit.save).toHaveFocus();
   expect(edit.field(2, 1)).toHaveValue('c');

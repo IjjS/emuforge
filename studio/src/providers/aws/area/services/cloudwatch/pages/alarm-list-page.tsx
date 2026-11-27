@@ -54,6 +54,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   const [selectedName, setSelectedName] = useState<string>();
   const [deleteName, setDeleteName] = useState<string>();
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const { engineOrigin } = connection;
   const { prefix, state, visit } = filters;
   const requested: AlarmFilters = { prefix, ...(state === undefined ? {} : { state }) };
@@ -73,8 +74,15 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
   useEffect(() => {
     announce(message);
   }, [announce, message]);
+  useEffect(() => {
+    if (!listing.loading) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- The list's settlement ends explicit refresh feedback.
+      setRefreshing(false);
+    }
+  }, [listing.loading]);
 
-  const handleRefresh = () => {
+  const refreshList = (explicit = false) => {
+    setRefreshing(explicit);
     setSelectedName(undefined);
     listing.refresh();
   };
@@ -91,7 +99,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
         ),
       },
     ]);
-    handleRefresh();
+    refreshList();
   };
 
   const columns: TableProps.ColumnDefinition<Alarm>[] = [
@@ -161,7 +169,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
         columnDefinitions={columns}
         wrapLines
         loading={listing.loading}
-        loadingText="Loading alarms"
+        loadingText={refreshing ? 'Refreshing alarms' : 'Loading alarms'}
         header={
           <Header
             variant="awsui-h1-sticky"
@@ -172,8 +180,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
                   ariaLabel="Refresh"
                   iconName="refresh"
                   loading={listing.loading}
-                  loadingText="Refreshing alarms"
-                  onClick={handleRefresh}
+                  onClick={() => refreshList(true)}
                 />
                 {canEdit ? (
                   <Button href={editAlarmPath(selectedName)} onFollow={handleFollow}>
@@ -214,6 +221,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
                 onChange={({ detail }) => setFilterText(detail.filteringText)}
                 onDelayedChange={({ detail }) => {
                   if (detail.filteringText !== prefix) {
+                    setRefreshing(false);
                     setSelectedName(undefined);
                     setFilters((current) => ({ ...current, prefix: detail.filteringText, visit: current.visit + 1 }));
                   }
@@ -227,6 +235,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
                 onChange={({ detail }) => {
                   const next = STATES.find((value) => value === detail.selectedOption.value);
                   if (next !== state) {
+                    setRefreshing(false);
                     setSelectedName(undefined);
                     setFilters((current) => ({ ...current, state: next, visit: current.visit + 1 }));
                   }
@@ -254,7 +263,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
         }
         empty={
           failure ? (
-            <ReadFailure state={failure} onRetry={handleRefresh} />
+            <ReadFailure state={failure} onRetry={() => refreshList()} />
           ) : (
             <Box textAlign="center" color="inherit">
               <Box variant="strong" color="inherit">
