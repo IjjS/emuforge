@@ -1,7 +1,7 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
-import { useState, type Ref } from 'react';
+import { useLayoutEffect, useState, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
@@ -80,6 +80,14 @@ interface FieldParts<T> {
   >;
 }
 
+/** Apply Cloudscape's current input text before the browser can select from the dropdown. */
+function LocalFilterText({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  useLayoutEffect(() => {
+    onChange(text);
+  }, [text, onChange]);
+  return null;
+}
+
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
 // eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
 export function useChoiceField<T>(
@@ -144,18 +152,27 @@ export function useChoiceField<T>(
           // "Retry" asks again for the page that failed, the first or a further one.
           choices.retry();
         }
-        if (filtering !== 'none') {
+        if (filtering === 'sent') {
           setText(detail.filteringText);
         }
       },
-      renderDropdownFooter: () =>
-        more ? (
-          <Box padding={{ vertical: 'xs', horizontal: 's' }}>
-            <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
-              Load more
-            </Button>
-          </Box>
-        ) : null,
+      // Cloudscape publishes each input change to the dropdown renderer. onLoadItems is delayed for remote reads.
+      renderDropdownFooter: ({ filterText }) => {
+        const syncText = filtering === 'local' && filterText !== text;
+        if (!syncText && !more) return null;
+        return (
+          <>
+            {syncText && <LocalFilterText text={filterText} onChange={setText} />}
+            {more && (
+              <Box padding={{ vertical: 'xs', horizontal: 's' }}>
+                <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
+                  Load more
+                </Button>
+              </Box>
+            )}
+          </>
+        );
+      },
     },
   };
 }

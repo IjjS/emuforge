@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -110,6 +110,10 @@ function dropdownText(): string {
   return text(select().findDropdown().getElement());
 }
 
+function statusText(): string {
+  return select().findDropdown().findFooterRegion()?.getElement().textContent ?? '';
+}
+
 function triggerText(): string {
   return text(select().findTrigger().getElement());
 }
@@ -129,13 +133,34 @@ describe('ChoiceSelect', () => {
     select().openDropdown();
     await waitFor(() => expect(shown()).toEqual(['a b', identity]));
 
-    expect(select().findDropdown().findOptionByValue(twoSpaces.id)?.findLabel().getElement()).toHaveTextContent(
+    expect(select().findDropdown().findOptionByValue(twoSpaces.id)?.findLabel().getElement().textContent).toBe(
       identity,
     );
-    expect(select().findDropdown().findOptionByValue(oneSpace.id)?.findLabel().getElement()).toHaveTextContent('a b');
+    expect(select().findDropdown().findOptionByValue(oneSpace.id)?.findLabel().getElement().textContent).toBe('a b');
     select().selectOptionByValue(twoSpaces.id);
     expect(triggerText()).toBe(identity);
     expect(chosen).toEqual([twoSpaces]);
+  });
+
+  it('selects the two-space name by keyboard immediately after entering the filter', async () => {
+    const oneSpace = thing('id-1', 'a b');
+    const twoSpaces = thing('id-2', 'a  b');
+    read.mockResolvedValue({ items: [oneSpace, twoSpaces] });
+    open({ filtering: 'local' });
+    select().openDropdown();
+    await waitFor(() => expect(shown()).toEqual(['a b', 'a\\u0020\\u0020b']));
+
+    const input = select().findFilteringInput();
+    const native = input?.findNativeInput()?.getElement();
+    if (!input || !native) throw new Error('no filtering input');
+    act(() => native.focus());
+    input.setInputValue(twoSpaces.name);
+    expect(native).toHaveFocus();
+    fireEvent.keyDown(native, { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 });
+    fireEvent.keyDown(native, { key: 'Enter', code: 'Enter', keyCode: 13 });
+
+    expect(chosen).toEqual([twoSpaces]);
+    expect(triggerText()).toBe('a\\u0020\\u0020b');
   });
 
   it('filters by the stored name, id or description and shows the escaped label with the usual option details', async () => {
@@ -160,8 +185,7 @@ describe('ChoiceSelect', () => {
     input?.setInputValue('Replica');
     await waitFor(() => expect(shown()).toEqual([identity]));
     input?.setInputValue('missing');
-    expect(await screen.findByText('No things match')).toBeInTheDocument();
-    expect(screen.queryByText('No things')).not.toBeInTheDocument();
+    expect(statusText()).toBe('No things match');
     input?.setInputValue('');
     await waitFor(() => expect(shown()).toEqual(['a b', identity]));
     expect(read.mock.calls).toEqual([['', undefined]]);
@@ -178,23 +202,29 @@ describe('ChoiceSelect', () => {
     read.mockResolvedValueOnce({ items: [] });
     open({ filtering: 'local' });
     select().openDropdown();
-    await waitFor(() => expect(dropdownText()).toContain('Loading things'));
+    await waitFor(() => expect(statusText()).toBe('Loading things'));
 
     reject(new RequestError({ kind: 'other', operation: 'ListThings', code: 'Broken' }));
-    await waitFor(() => expect(dropdownText()).toContain('The things could not be loaded: Broken'));
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('No things')).toBeInTheDocument();
+    await waitFor(() => {
+      const footer = select().findDropdown().findFooterRegion()?.getElement();
+      const status = footer && createWrapper(footer).findStatusIndicator()?.getElement();
+      expect(status?.textContent?.trim()).toBe('The things could not be loaded: Broken');
+    });
+    const retry = select().findErrorRecoveryButton();
+    expect(retry?.getElement()).toHaveAccessibleName('Retry');
+    retry?.click();
+    await waitFor(() => expect(statusText()).toBe('No things'));
   });
 
   it('filters a fixed first choice even when the source is empty, restoring it when the text is cleared', async () => {
     read.mockResolvedValue({ items: [] });
     open({ filtering: 'local', fixed: 'No key pair' });
     select().openDropdown();
-    await waitFor(() => expect(dropdownText()).toContain('No things'));
+    await waitFor(() => expect(statusText()).toBe('No things'));
 
     const input = select().findFilteringInput();
     input?.setInputValue('missing');
-    expect(await screen.findByText('No things match')).toBeInTheDocument();
+    expect(statusText()).toBe('No things match');
     expect(shown()).toEqual([]);
     input?.setInputValue('');
     await waitFor(() => expect(shown()).toEqual(['No key pair']));
@@ -222,7 +252,9 @@ describe('ChoiceSelect', () => {
 
     select().findFilteringInput()?.setInputValue('a  b');
     await waitFor(() => expect(shown()).toEqual([]));
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    const footer = select().findDropdownFooter()?.getElement();
+    if (!footer) throw new Error('no dropdown footer');
+    fireEvent.click(within(footer).getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(shown()).toEqual(['a\\u0020\\u0020b']));
     expect(read.mock.calls).toEqual([
       ['', undefined],

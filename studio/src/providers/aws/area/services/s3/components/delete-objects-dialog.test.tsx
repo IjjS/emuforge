@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useMemo, useRef, useState } from 'react';
@@ -217,7 +218,12 @@ async function openDialog(props: HarnessProps) {
     opener.focus();
   });
   fireEvent.click(opener);
-  const dialog = await screen.findByRole('dialog');
+  const modal = await waitFor(() => {
+    const found = createWrapper().findModal();
+    if (!found) throw new Error('Expected the delete modal');
+    return found;
+  });
+  const dialog = modal.getElement();
   await waitFor(() => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
@@ -226,7 +232,7 @@ async function openDialog(props: HarnessProps) {
       expect(dialog.textContent).not.toContain(PENDING);
     });
   }
-  return { dialog, opener };
+  return { dialog, modal, opener };
 }
 
 /** Matches the element whose whole text is `text`, and none of its children alone. */
@@ -295,10 +301,11 @@ describe('the delete dialog, what it says', () => {
   it('keeps the count in the list dialog and distinguishes both selected keys', async () => {
     const keys = ['a b', 'a  b'];
     engine.keys = [...keys];
-    const { dialog } = await openDialog({ selection: { keys, folders: [] } });
+    const { dialog, modal } = await openDialog({ selection: { keys, folders: [] } });
 
     expect(dialog).toHaveAccessibleName('Delete 2 objects?');
-    const list = within(dialog).getByRole('list', { name: 'Selected objects and folders' });
+    expect(modal.findHeader().findHeader()?.findHeadingText().getElement().textContent).toBe('Delete 2 objects?');
+    const list = within(modal.findContent().getElement()).getByRole('list', { name: 'Selected objects and folders' });
     const [first, second] = within(list).getAllByRole('listitem');
     expect(first?.textContent).toBe('a b');
     expect(second?.querySelector('[aria-hidden="true"]')?.textContent).toBe('a  b (a\\u0020\\u0020b)');
@@ -311,13 +318,12 @@ describe('the delete dialog, what it says', () => {
   it('names the single-object dialog by the identity and deletes the stored key', async () => {
     const key = 'a  b';
     engine.keys = [key];
-    const { dialog } = await openDialog({ selection: { keys: [key], folders: [] }, single: key });
+    const { dialog, modal } = await openDialog({ selection: { keys: [key], folders: [] }, single: key });
 
     expect(dialog).toHaveAccessibleName('Delete a\\u0020\\u0020b?');
-    const header = within(dialog).getByText(byWholeText('a  b (a\\u0020\\u0020b)'), {
-      selector: '[aria-hidden="true"]',
-    });
-    expect(header).toBeVisible();
+    const visibleName = modal.findHeader().findHeader()?.findHeadingText().find('[aria-hidden="true"]')?.getElement();
+    expect(visibleName).toBeVisible();
+    expect(visibleName?.textContent).toBe('a  b (a\\u0020\\u0020b)');
 
     await confirm(dialog);
     await waitFor(() => expect(closes).toEqual([true]));
@@ -326,10 +332,12 @@ describe('the delete dialog, what it says', () => {
 
   it('leaves the single-object dialog name and visible header intact for an ordinary key', async () => {
     const key = 'a b';
-    const { dialog } = await openDialog({ selection: { keys: [key], folders: [] }, single: key });
+    const { dialog, modal } = await openDialog({ selection: { keys: [key], folders: [] }, single: key });
 
     expect(dialog).toHaveAccessibleName('Delete a b?');
-    expect(within(dialog).getByText(byWholeText('Delete a b?'))).toBeVisible();
+    const heading = modal.findHeader().findHeader()?.findHeadingText().getElement();
+    expect(heading).toBeVisible();
+    expect(heading?.textContent).toBe('Delete a b?');
   });
 
   it.each([

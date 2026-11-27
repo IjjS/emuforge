@@ -454,13 +454,25 @@ it('distinguishes a tab from a space followed by a tab when version metadata is 
   open('/aws/s3/buckets/alpha');
   await toggleVersions();
 
-  const withoutSpace = await screen.findByRole('radio', {
-    name: 'Select a\\tb version same, Type: Version, Latest: Yes',
-  });
-  const withSpace = screen.getByRole('radio', { name: 'Select a \\tb version same, Type: Version, Latest: Yes' });
-  fireEvent.click(withSpace);
-  expect(withSpace).toBeChecked();
-  expect(withoutSpace).not.toBeChecked();
+  const versionRow = (index: number) =>
+    waitFor(() => {
+      const list = table();
+      const name = required(list.findBodyCell(index, 2)?.find('[aria-hidden="true"]')).getElement();
+      const radio = required(list.findRowSelectionArea(index)?.find('input[type="radio"]')).getElement();
+      return { name, radio };
+    });
+
+  const withoutSpace = await versionRow(1);
+  const withSpace = await versionRow(2);
+  expect(withoutSpace.name).toBeVisible();
+  expect(withoutSpace.name.textContent).toBe('a\tb (a\\tb)');
+  expect(withSpace.name).toBeVisible();
+  expect(withSpace.name.textContent).toBe('a \tb (a \\tb)');
+  expect(withoutSpace.radio).toHaveAccessibleName('Select a\\tb version same, Type: Version, Latest: Yes');
+  expect(withSpace.radio).toHaveAccessibleName('Select a \\tb version same, Type: Version, Latest: Yes');
+  fireEvent.click(withSpace.radio);
+  expect(withSpace.radio).toBeChecked();
+  expect(withoutSpace.radio).not.toBeChecked();
 });
 
 it('selects a different ID of the same key on the next page and returns to the ordinary listing of the folder', async () => {

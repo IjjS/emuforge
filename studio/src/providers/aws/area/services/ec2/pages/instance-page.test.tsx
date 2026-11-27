@@ -459,10 +459,18 @@ describe("an instance's page", () => {
     holding(full({ keyName, groups: [{ id: 'sg-1', name: groupName }] }));
     open(pathOf('i-0full'));
 
-    const key = await screen.findByRole('link', { name: keyIdentity });
-    expect(key.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${keyName} (${keyIdentity})`);
-    const group = within(tableOf('Security groups').element).getByRole('link', { name: groupIdentity });
-    expect(group.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${groupName} (${groupIdentity})`);
+    await loaded();
+    const key = PAGE.findAllKeyValuePairs()
+      .flatMap((pairs) => pairs.findItems())
+      .find((item) => item.findLabel()?.getElement().textContent === 'Key pair')
+      ?.findValue()
+      ?.findLink()
+      ?.getElement();
+    expect(key).toHaveAccessibleName(keyIdentity);
+    expect(key?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${keyName} (${keyIdentity})`);
+    const group = tableOf('Security groups').wrapper.findBodyCell(1, 1)?.findLink()?.getElement();
+    expect(group).toHaveAccessibleName(groupIdentity);
+    expect(group?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${groupName} (${groupIdentity})`);
     expect(group).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-1');
   });
 
@@ -472,8 +480,11 @@ describe("an instance's page", () => {
     holding(full({ tags: [{ key: 'Name', value: name }] }));
     open(pathOf('i-0full'));
 
-    const heading = await screen.findByRole('heading', { level: 1, name: identity });
-    expect(heading.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    await waitFor(() => {
+      const heading = detailHeading()?.closest('h1');
+      expect(heading).toHaveAccessibleName(identity);
+      expect(heading?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    });
   });
 
   it('links a reported block device to its volume from the instance view', async () => {

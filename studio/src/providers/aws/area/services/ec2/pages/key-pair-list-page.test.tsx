@@ -348,23 +348,37 @@ describe('the key pairs list', () => {
     vi.mocked(api.deleteKeyPair).mockResolvedValue(undefined);
     open();
 
-    expect(await screen.findByRole('radio', { name: 'dev key' })).toBeInTheDocument();
-    const selection = screen.getByRole('radio', { name: identity });
-    const row = selection.closest('tr');
-    expect(row?.querySelector('.aws-area-value-name')?.parentElement?.textContent).toBe(`${name} (${identity})`);
+    await waitFor(() => expect(table().findRows()).toHaveLength(2));
+    const [ordinaryRow, spacedRow] = table().findRows();
+    if (!ordinaryRow || !spacedRow) throw new Error('Missing key pair rows');
+    expect(within(ordinaryRow.getElement()).getByRole('radio')).toHaveAccessibleName('dev key');
+    const selection = within(spacedRow.getElement()).getByRole('radio');
+    expect(selection).toHaveAccessibleName(identity);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    expect(cell?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
 
     fireEvent.click(selection);
     fireEvent.click(action('Delete'));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete key pair?' });
-    const drawn = within(dialog).getByText(`(${identity})`).parentElement;
-    expect(drawn?.textContent).toBe(`${name} (${identity})`);
-    expect(drawn?.parentElement?.textContent).toContain(' is deleted from the local emulator.');
+    const modal = await waitFor(() => {
+      const shown = PAGE.findModal();
+      if (!shown) throw new Error('Missing key pair delete dialog');
+      return shown;
+    });
+    expect(modal.getElement()).toHaveAccessibleName('Delete key pair?');
+    const sentence = modal.findContent().find('p')?.getElement();
+    expect(sentence?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    expect(sentence?.textContent).toContain(' is deleted from the local emulator.');
     vi.mocked(api.listKeyPairs).mockResolvedValue([keyPair('dev key')]);
-    await confirmDelete();
+    const input = modal.findContent().findInput();
+    const confirm = modal.findFooter()?.findAllButtons()[1];
+    if (!input || !confirm) throw new Error('Missing delete confirmation controls');
+    input.setInputValue('delete');
+    expect(confirm.getElement()).toHaveAccessibleName('Delete');
+    confirm.click();
     await waitFor(() => {
       expect(api.deleteKeyPair).toHaveBeenCalledWith(ENGINE, name, expect.any(AbortSignal));
     });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
   });
 
   it('a failed delete → the failure in the flash, the dialog closed and the row stays', async () => {

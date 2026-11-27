@@ -235,19 +235,32 @@ describe('the security groups list', () => {
     answer({ '|': { groups: [group('sg-a', 'dev group'), group('sg-b', name), group('sg-c', '')] } });
     open('/aws/ec2/security-groups');
 
-    expect(await screen.findByRole('link', { name: 'dev group' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'dev group' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'sg-c' })).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-c');
-    expect(screen.getByRole('radio', { name: 'sg-c' })).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: identity });
-    expect(link.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    await waitFor(() => expect(table().findRows()).toHaveLength(3));
+    const [ordinaryRow, spacedRow, unnamedRow] = table().findRows();
+    if (!ordinaryRow || !spacedRow || !unnamedRow) throw new Error('Missing security group rows');
+    expect(within(ordinaryRow.getElement()).getByRole('radio')).toHaveAccessibleName('dev group');
+    expect(table().findBodyCell(1, 2)?.findLink()?.getElement()).toHaveAccessibleName('dev group');
+    expect(within(unnamedRow.getElement()).getByRole('radio')).toHaveAccessibleName('sg-c');
+    const unnamedLink = table().findBodyCell(3, 2)?.findLink()?.getElement();
+    expect(unnamedLink).toHaveAccessibleName('sg-c');
+    expect(unnamedLink).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-c');
+    const link = table().findBodyCell(2, 2)?.findLink()?.getElement();
+    expect(link).toHaveAccessibleName(identity);
+    expect(link?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
 
-    selectRow(identity);
+    const selection = within(spacedRow.getElement()).getByRole('radio');
+    expect(selection).toHaveAccessibleName(identity);
+    fireEvent.click(selection);
     fireEvent.click(action('Delete'));
-    const shown = await screen.findByRole('dialog', { name: 'Delete security group?' });
-    const drawn = within(shown).getByText(`(${identity})`).parentElement;
-    expect(drawn?.textContent).toBe(`${name} (${identity})`);
-    expect(drawn?.parentElement?.textContent).toContain(' is deleted from the local emulator.');
+    const modal = await waitFor(() => {
+      const shown = PAGE.findModal();
+      if (!shown) throw new Error('Missing security group delete dialog');
+      return shown;
+    });
+    expect(modal.getElement()).toHaveAccessibleName('Delete security group?');
+    const sentence = modal.findContent().find('p')?.getElement();
+    expect(sentence?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    expect(sentence?.textContent).toContain(' is deleted from the local emulator.');
   });
 
   it('none, no filter → "No security groups" with "Create security group", which leads to the create address', async () => {
