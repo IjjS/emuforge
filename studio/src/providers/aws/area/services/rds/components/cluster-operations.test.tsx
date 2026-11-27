@@ -17,6 +17,7 @@ import { ClusterOperationControls } from './cluster-operations';
 vi.mock('../choices-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../choices-api')>()),
   findSubnetGroup: vi.fn(),
+  readDefaultVpcId: vi.fn(),
   readOrderableRows: vi.fn(),
   readUpgradeTargets: vi.fn(),
   listEngineVersionChoices: vi.fn(),
@@ -59,9 +60,18 @@ const fetchRequest = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) 
   }
   const form = new URLSearchParams(await request.text());
   groupRequests.push(Object.fromEntries(form));
-  const group = (id: string, name: string) =>
-    `<item><groupId>${id}</groupId><groupName>${name}</groupName><vpcId>vpc-one</vpcId></item>`;
-  const groups = form.get('Filter.1.Name') === 'group-id' ? group('sg-old', 'old-group') : group('sg-new', 'new-group');
+  const group = (id: string, name: string, vpc: string) =>
+    `<item><groupId>${id}</groupId><groupName>${name}</groupName><vpcId>${vpc}</vpcId></item>`;
+  const groups =
+    form.get('Filter.1.Name') === 'group-id'
+      ? group('sg-old', 'old-group', 'vpc-one')
+      : [
+          { id: 'sg-new', name: 'new-group', vpc: 'vpc-one' },
+          { id: 'sg-default', name: 'default-group', vpc: 'vpc-default' },
+        ]
+          .filter(({ vpc }) => form.get('Filter.1.Name') === 'vpc-id' && form.get('Filter.1.Value.1') === vpc)
+          .map(({ id, name, vpc }) => group(id, name, vpc))
+          .join('');
   return new Response(
     `<DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><securityGroupInfo>${groups}</securityGroupInfo></DescribeSecurityGroupsResponse>`,
     { headers: { 'content-type': 'text/xml' } },
@@ -95,7 +105,7 @@ beforeEach(() => {
   onSubmit.mockResolvedValue('discard-draft');
   vi.mocked(api.getCluster).mockResolvedValue(found(CLUSTER.members));
   vi.mocked(api.listMembers).mockResolvedValue([instance('writer'), instance('reader')]);
-  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-one' });
+  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-one', zones: ['us-east-1a'] });
   vi.mocked(choices.readOrderableRows).mockResolvedValue(ROWS);
   vi.mocked(choices.readUpgradeTargets).mockResolvedValue([TARGET]);
   vi.mocked(choices.listEngineVersionChoices).mockResolvedValue({ choices: [{ version: '13.15' }, TARGET] });
@@ -155,6 +165,12 @@ function select(label: string) {
   return match;
 }
 
+function securityGroups() {
+  const groups = createWrapper(field('Security groups').getElement()).findMultiselect();
+  if (groups === null) throw new Error('Missing security groups');
+  return groups;
+}
+
 async function pick(label: string, value: string) {
   const picker = select(label);
   const trigger = picker.findTrigger().getElement();
@@ -200,6 +216,43 @@ describe('modify a DB cluster', () => {
       }),
     );
     expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  });
+
+  it.each([
+    {
+      scenario: 'an empty default row',
+      subnetGroup: { name: 'default', vpcId: 'vpc-absent' },
+      vpc: 'vpc-default',
+      offered: 'sg-default',
+      excluded: 'sg-new',
+      defaultLookup: true,
+    },
+    {
+      scenario: 'a populated row',
+      subnetGroup: { name: 'app-subnets', vpcId: 'vpc-one', zones: ['us-east-1a'] },
+      vpc: 'vpc-one',
+      offered: 'sg-new',
+      excluded: 'sg-default',
+      defaultLookup: false,
+    },
+  ])('offers groups from $vpc for $scenario', async ({ subnetGroup, vpc, offered, excluded, defaultLookup }) => {
+    vi.mocked(choices.findSubnetGroup).mockResolvedValue(subnetGroup);
+    vi.mocked(choices.readDefaultVpcId).mockResolvedValue('vpc-default');
+    renderControls({ ...CLUSTER, subnetGroup: subnetGroup.name });
+    await open('modify');
+
+    await waitFor(() => expect(securityGroups().findTrigger().getElement()).toBeEnabled());
+    const picker = securityGroups();
+    picker.openDropdown();
+    const dropdown = picker.findDropdown();
+    await waitFor(() => expect(dropdown.findOptionByValue(offered)).not.toBeNull());
+    expect(dropdown.findOptionByValue(excluded)).toBeNull();
+    expect(groupRequests.filter((request) => request['Filter.1.Name'] === 'vpc-id')).toEqual([
+      expect.objectContaining({ Action: 'DescribeSecurityGroups', 'Filter.1.Value.1': vpc }),
+    ]);
+    expect(vi.mocked(choices.readDefaultVpcId).mock.calls).toEqual(
+      defaultLookup ? [[CONNECTION.engineOrigin, expect.any(AbortSignal)]] : [],
+    );
   });
 
   it('shows Not set when no storage type was reported and omits it when saving another field', async () => {
@@ -314,8 +367,7 @@ describe('modify a DB cluster', () => {
     await pick('Engine version', TARGET.version);
     await pick('Storage type', 'aurora-iopt1');
 
-    const groups = createWrapper(field('Security groups').getElement()).findMultiselect();
-    if (groups === null) throw new Error('Missing security groups');
+    const groups = securityGroups();
     await waitFor(() => expect(groups.findTrigger().getElement()).toBeEnabled());
     groups.openDropdown();
     await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-new')).not.toBeNull());

@@ -118,7 +118,7 @@ function matchMedia(query: string): MediaQueryList {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(choices.readOrderableRows).mockResolvedValue([]);
-  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-1' });
+  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-1', zones: ['us-east-1a'] });
   vi.mocked(security.readSecurityGroupsById).mockResolvedValue([]);
   vi.stubGlobal('matchMedia', matchMedia);
   connection = new Connection();
@@ -847,8 +847,15 @@ async function selectReader(target: string) {
   const { picker, submit } = await editFailover();
   picker.openDropdown();
   await waitFor(() => {
-    const options = picker.findDropdown().findOptions();
-    expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['app-aur-2', 'app-aur-3']);
+    const dropdown = picker.findDropdown();
+    const secondMember = dropdown.findOptionByValue('app-aur-2');
+    const thirdMember = dropdown.findOptionByValue('app-aur-3');
+    expect(secondMember?.findLabel().getElement()).toHaveTextContent('app-aur-2');
+    expect(thirdMember?.findLabel().getElement()).toHaveTextContent('app-aur-3');
+    expect(dropdown.findOptions().map((option) => option.getElement())).toEqual([
+      secondMember?.getElement(),
+      thirdMember?.getElement(),
+    ]);
   });
   picker.selectOptionByValue(target);
   await waitFor(() => expect(submit).toBeEnabled());
