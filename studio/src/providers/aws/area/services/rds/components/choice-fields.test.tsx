@@ -169,7 +169,7 @@ describe('the orderable class and storage fields', () => {
     expect(trigger()).toBeDisabled();
     expect(trigger()).toHaveTextContent('Choose DB instance class first');
     view.rerender(<StorageTypeField {...blank} mode="instance-create" rows={rows} instanceClass="db.first" />);
-    expect(trigger()).toHaveTextContent('The emulator creates gp2 storage.');
+    expect(trigger()).toHaveAccessibleDescription('The emulator creates gp2 storage.');
     select().openDropdown();
     expect(labels()).toEqual(['Chosen by the emulator', 'gp2', 'io1']);
     expect(option('gp2')).toHaveTextContent('20 to 65536 GiB');
@@ -189,10 +189,27 @@ describe('the orderable class and storage fields', () => {
       ],
     };
     open(<StorageTypeField {...blank} mode={mode} rows={read} />);
-    expect(trigger()).toHaveTextContent(description);
+    expect(trigger()).toHaveAccessibleDescription(description);
     select().openDropdown();
     expect(labels()).toEqual([label, 'aurora', 'aurora-iopt1']);
     expect(option('aurora')).toHaveTextContent('10 to 100 GiB');
+  });
+
+  it('shows the fixed storage explanation as field help and in the open option', () => {
+    const description = 'The emulator records no storage type for the cluster.';
+    const view = open(<StorageTypeField {...blank} mode="cluster-create" rows={rows} />);
+    expect(trigger()).toHaveTextContent('Chosen by the emulator');
+    expect(trigger()).not.toHaveTextContent(description);
+    expect(trigger()).toHaveAccessibleDescription(description);
+    expect(screen.getByText(description)).toBeVisible();
+
+    select().openDropdown();
+    expect(option('')).toHaveTextContent(description);
+    select().closeDropdown();
+
+    view.rerender(<StorageTypeField {...blank} mode="cluster-create" rows={rows} value="gp2" />);
+    expect(trigger()).toHaveTextContent('20 to 65536 GiB');
+    expect(screen.queryByText(description)).not.toBeInTheDocument();
   });
 
   it.each([listOperation, versionOperation])('keeps the create preset alone after a %s 501', (operation) => {
@@ -253,7 +270,7 @@ describe('engine upgrades and zones', () => {
 
   it('lists only subnet group zones with IDs and displays No preference when disabled', () => {
     const view = open(<ZoneField {...blank} zones={zones} zoneRead={zoneRead} />);
-    expect(trigger()).toHaveTextContent(
+    expect(trigger()).toHaveAccessibleDescription(
       "No zone is sent. The emulator reports a zone of its own, which may be none of the subnet group's.",
     );
     select().openDropdown();
@@ -263,6 +280,24 @@ describe('engine upgrades and zones', () => {
     view.rerender(<ZoneField {...blank} value="us-east-1b" zones={zones} zoneRead={zoneRead} disabled />);
     expect(trigger()).toBeDisabled();
     expect(trigger()).toHaveTextContent('No preference');
+  });
+
+  it('shows the No preference explanation as field help and in the open option', () => {
+    const description =
+      "No zone is sent. The emulator reports a zone of its own, which may be none of the subnet group's.";
+    const view = open(<ZoneField {...blank} zones={zones} zoneRead={zoneRead} />);
+    expect(trigger()).toHaveTextContent('No preference');
+    expect(trigger()).not.toHaveTextContent(description);
+    expect(trigger()).toHaveAccessibleDescription(description);
+    expect(screen.getByText(description)).toBeVisible();
+
+    select().openDropdown();
+    expect(option('')).toHaveTextContent(description);
+    select().closeDropdown();
+
+    view.rerender(<ZoneField {...blank} zones={zones} zoneRead={zoneRead} value="us-east-1b" />);
+    expect(trigger()).toHaveTextContent('use1-az2');
+    expect(screen.queryByText(description)).not.toBeInTheDocument();
   });
 
   it('offers the subnet group zones in the multiselect and starts with none', () => {
