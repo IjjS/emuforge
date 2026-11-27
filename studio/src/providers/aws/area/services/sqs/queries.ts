@@ -35,7 +35,7 @@ import {
   type SendTarget,
   type SentMessage,
 } from './api';
-import { queueNameFromUrl, type QueueKind } from './format';
+import { nameFromArn, queueNameFromUrl, type QueueKind } from './format';
 
 export type { QueueChoice } from './api';
 
@@ -225,6 +225,10 @@ function queueKey(name: string) {
   return [...SQS_KEY, 'queue', name] as const;
 }
 
+function moveTasksKey(name: string, endpoint: string | undefined, sourceArn: string | undefined) {
+  return [...queueKey(name), 'move-tasks', endpoint, sourceArn] as const;
+}
+
 /**
  * S2's read of the queue named `name`: `GetQueueUrl`, then its attributes and dead-letter sources; `NO_SUCH_QUEUE`
  * when the emulator holds none. Read again after every action, keeping the shown details while it is.
@@ -272,7 +276,7 @@ export function useMoveTasks(
   const [generation, setGeneration] = useState(0);
   const wasActive = useRef(false);
   const query = useQuery({
-    queryKey: [...queueKey(name), 'move-tasks', endpoint, sourceArn, mount, generation],
+    queryKey: [...moveTasksKey(name, endpoint, sourceArn), mount, generation],
     queryFn: async ({ signal }) => {
       if (endpoint === undefined || sourceArn === undefined) {
         noEndpoint();
@@ -474,7 +478,22 @@ export function usePurgeQueue(endpoint: string | undefined): (url: string, signa
 export function useStartMoveTask(
   endpoint: string | undefined,
 ): (request: MoveRequest, signal: AbortSignal) => Promise<string> {
-  return useAction(endpoint, startMessageMoveTask);
+  const client = useQueryClient();
+  const readAgain = useReadAgain();
+  return useCallback(
+    async (request, signal) => {
+      if (endpoint === undefined) {
+        noEndpoint();
+      }
+      const result = await startMessageMoveTask(endpoint, request, signal);
+      // Invalidation joins an in-flight read when the query has no data yet.
+      const { sourceArn } = request;
+      void client.cancelQueries({ queryKey: moveTasksKey(nameFromArn(sourceArn), endpoint, sourceArn) });
+      readAgain();
+      return result;
+    },
+    [client, endpoint, readAgain],
+  );
 }
 
 /** "Cancel" of a running move task: the number it had moved. */

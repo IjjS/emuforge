@@ -11,6 +11,7 @@ import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
+import { MOVE_TASKS_POLL_MS } from '../queries';
 
 // S2's tab "Redrive" on a dead-letter queue, on the queue's page inside the area's layout, as Studio's frame renders
 // the area, against a fake engine behind the page's `fetch` that answers SQS's JSON 1.0 protocol (issue 481,
@@ -762,6 +763,185 @@ describe('the move tasks', () => {
     await openRedrive();
     fireEvent.click(await within(tasksTable().getElement()).findByRole('button', { name: 'Cancel' }));
     await expectFlash([['Cancelling the move failed', 'ResourceNotFoundException: Task does not exist.']]);
+  });
+});
+
+describe('reading move tasks after a start', () => {
+  const list = 'ListMessageMoveTasks';
+  const empty = ok({ Results: [] });
+  const running = ok({
+    Results: [wireTask('RUNNING', { ApproximateNumberOfMessagesMoved: 0, ApproximateNumberOfMessagesToMove: 1 })],
+  });
+  const completed = ok({
+    Results: [wireTask('COMPLETED', { ApproximateNumberOfMessagesMoved: 1, ApproximateNumberOfMessagesToMove: 1 })],
+  });
+  const startSuccess: [string, string][] = [['Started: move the messages of orders-dlq back to its source queues', '']];
+
+  function expectRow(status: string, counts: string) {
+    expect(taskRows().map((row) => row.slice(0, 3))).toEqual([[status, 'Source queues', counts]]);
+  }
+
+  function holdRead() {
+    let resolve: (answer: Answer) => void = () => undefined;
+    const promise = new Promise<Answer>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  async function reply(read: ReturnType<typeof holdRead>, answer: Answer) {
+    await act(async () => {
+      read.resolve(answer);
+    });
+  }
+
+  async function waitForReads(count: number) {
+    await waitFor(() => {
+      expect(engine.of(list)).toHaveLength(count);
+    });
+  }
+
+  async function startWithFirstReadHeld(pollAnswer = empty) {
+    const first = holdRead();
+    const later = holdRead();
+    engine.on(
+      list,
+      vi
+        .fn<Handler>()
+        .mockReturnValue(pollAnswer)
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(later.promise),
+    );
+    engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
+    await openRedrive();
+    await waitForReads(1);
+    await start();
+    await expectFlash(startSuccess);
+    return { first, later };
+  }
+
+  it('lists a running task even when the first read answers empty before the later read', async () => {
+    const { first, later } = await startWithFirstReadHeld();
+    await reply(first, empty);
+    await waitForReads(2);
+    await reply(later, running);
+    await waitFor(() => {
+      expectRow('RUNNING', '0 of 1');
+    });
+    expect(screen.queryByText('No move tasks')).toBeNull();
+  });
+
+  it('keeps the running task when the first read answers empty after the later read', async () => {
+    const { first, later } = await startWithFirstReadHeld();
+    await waitForReads(2);
+    await reply(later, running);
+    await waitFor(() => {
+      expectRow('RUNNING', '0 of 1');
+    });
+    await reply(first, empty);
+    expectRow('RUNNING', '0 of 1');
+  });
+
+  // Bound: one real 2-second poll and one more interval to verify that polling stops (issue 665 s1).
+  it(
+    'polls after two seconds while the started task is running and stops when it completes',
+    async () => {
+      const { first, later } = await startWithFirstReadHeld(completed);
+      await reply(first, empty);
+      await waitForReads(2);
+      const runningAt = Date.now();
+      await reply(later, running);
+      await waitFor(() => {
+        expectRow('RUNNING', '0 of 1');
+      });
+      await waitFor(
+        () => {
+          expectRow('COMPLETED', '1 of 1');
+        },
+        { timeout: MOVE_TASKS_POLL_MS + 1000 },
+      );
+      expect(Date.now() - runningAt).toBeGreaterThanOrEqual(MOVE_TASKS_POLL_MS);
+      await new Promise((resolve) => setTimeout(resolve, MOVE_TASKS_POLL_MS + 200));
+      expect(engine.of(list)).toHaveLength(3);
+    },
+    MOVE_TASKS_POLL_MS * 4,
+  );
+
+  it('shows an already completed task from the later read and does not poll', async () => {
+    const { first, later } = await startWithFirstReadHeld();
+    await reply(first, empty);
+    await waitForReads(2);
+    await reply(later, completed);
+    await waitFor(() => {
+      expectRow('COMPLETED', '1 of 1');
+    });
+    await new Promise((resolve) => setTimeout(resolve, MOVE_TASKS_POLL_MS + 200));
+    expect(engine.of(list)).toHaveLength(2);
+  });
+
+  it('shows the refused start and still shows the first read when it answers', async () => {
+    const first = holdRead();
+    engine.on(list, vi.fn<Handler>().mockReturnValue(empty).mockReturnValueOnce(first.promise));
+    engine.on('StartMessageMoveTask', () =>
+      refused(400, 'UnsupportedOperation', 'A move is already running.', 'UnsupportedOperation'),
+    );
+    await openRedrive();
+    await waitForReads(1);
+    await start();
+    await expectFlash([['Starting the move failed', 'UnsupportedOperation: A move is already running.']]);
+    await reply(first, completed);
+    await waitFor(() => {
+      expectRow('COMPLETED', '1 of 1');
+    });
+    expect(engine.of(list)).toHaveLength(1);
+  });
+
+  it('shows a failed later read in place of the table and allows retrying it', async () => {
+    const { first, later } = await startWithFirstReadHeld(completed);
+    await reply(first, empty);
+    await waitForReads(2);
+    await reply(later, refused(403, 'AccessDenied', 'no policy allows it'));
+    await screen.findByText('Access denied');
+    expect(screen.getByText('ListMessageMoveTasks was refused: no policy allows it')).toBeDefined();
+    expect(PAGE.findTable()).toBeNull();
+    fireEvent.click(button('Retry'));
+    await waitFor(() => {
+      expectRow('COMPLETED', '1 of 1');
+    });
+  });
+
+  it('replaces a held manual refresh with a read after the start', async () => {
+    const refresh = holdRead();
+    engine.on(
+      list,
+      vi.fn<Handler>().mockReturnValue(completed).mockReturnValueOnce(empty).mockReturnValueOnce(refresh.promise),
+    );
+    engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
+    await openRedrive();
+    await screen.findByText('No move tasks');
+    fireEvent.click(button('Refresh move tasks'));
+    await waitForReads(2);
+    await start();
+    await expectFlash(startSuccess);
+    await waitFor(() => {
+      expectRow('COMPLETED', '1 of 1');
+    });
+    expect(engine.of(list)).toHaveLength(3);
+    await reply(refresh, empty);
+    expectRow('COMPLETED', '1 of 1');
+  });
+
+  it('lists the task after the start when the first read has already answered empty', async () => {
+    engine.on(list, vi.fn<Handler>().mockReturnValue(completed).mockReturnValueOnce(empty));
+    engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
+    await openRedrive();
+    await screen.findByText('No move tasks');
+    await start();
+    await expectFlash(startSuccess);
+    await waitFor(() => {
+      expectRow('COMPLETED', '1 of 1');
+    });
+    expect(engine.of(list)).toHaveLength(2);
   });
 });
 

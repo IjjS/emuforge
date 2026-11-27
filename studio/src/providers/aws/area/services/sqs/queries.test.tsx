@@ -10,6 +10,7 @@ import { RequestError } from '../../../../../lib/aws/request';
 import {
   FILTER_DELAY_MS,
   MOVE_TASKS_POLL_MS,
+  useCancelMoveTask,
   useCreateQueue,
   useDeadLetterChoices,
   useDeleteMessages,
@@ -309,6 +310,87 @@ describe('an action', () => {
 });
 
 describe('the move tasks', () => {
+  const sourceArn = `${ARN}:dlq`;
+  const listed = (status: string) => ({ Results: [{ Status: status, SourceArn: sourceArn }] });
+
+  it.each(['first', 'later'])(
+    'reads after start and keeps the new tasks when the %s read answers first',
+    async (order) => {
+      engine.held.add('ListMessageMoveTasks');
+      engine.held.add('StartMessageMoveTask');
+      const { result } = renderHook(
+        () => ({ tasks: useMoveTasks(endpoint, 'dlq', sourceArn), start: useStartMoveTask(endpoint) }),
+        { wrapper },
+      );
+      const firstRead = await engine.nth('ListMessageMoveTasks', 0);
+      const started = result.current.start({ sourceArn }, new AbortController().signal);
+      const start = await engine.nth('StartMessageMoveTask', 0);
+      expect(engine.of('ListMessageMoveTasks')).toHaveLength(1);
+
+      await act(async () => {
+        start.answer({ TaskHandle: 'task' });
+        expect(await started).toBe('task');
+        if (order === 'first') {
+          firstRead.answer({ Results: [] });
+        }
+      });
+      const laterRead = await engine.nth('ListMessageMoveTasks', 1);
+      expect(laterRead.body).toEqual({ SourceArn: sourceArn, MaxResults: 10 });
+      expect(firstRead.signal.aborted).toBe(true);
+      await act(async () => {
+        laterRead.answer(listed('COMPLETED'));
+      });
+      await waitFor(() => {
+        expect(result.current.tasks.value?.[0]?.status).toBe('COMPLETED');
+      });
+      if (order === 'later') {
+        await act(async () => {
+          firstRead.answer({ Results: [] });
+        });
+        expect(result.current.tasks.value?.[0]?.status).toBe('COMPLETED');
+      }
+    },
+  );
+
+  it('reads after cancel while a poll is out and keeps the result of the new read', async () => {
+    engine.handlers.set('ListMessageMoveTasks', () => listed('RUNNING'));
+    engine.held.add('CancelMessageMoveTask');
+    const { result } = renderHook(
+      () => ({ tasks: useMoveTasks(endpoint, 'dlq', sourceArn), cancel: useCancelMoveTask(endpoint) }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.tasks.value?.[0]?.status).toBe('RUNNING');
+    });
+    engine.held.add('ListMessageMoveTasks');
+    await waitFor(
+      () => {
+        expect(engine.of('ListMessageMoveTasks')).toHaveLength(2);
+      },
+      { timeout: MOVE_TASKS_POLL_MS + 1000 },
+    );
+    const poll = await engine.nth('ListMessageMoveTasks', 1);
+    const cancelled = result.current.cancel('task', new AbortController().signal);
+    const cancel = await engine.nth('CancelMessageMoveTask', 0);
+    expect(engine.of('ListMessageMoveTasks')).toHaveLength(2);
+
+    await act(async () => {
+      cancel.answer({ ApproximateNumberOfMessagesMoved: 1 });
+      expect(await cancelled).toBe(1);
+    });
+    const laterRead = await engine.nth('ListMessageMoveTasks', 2);
+    await act(async () => {
+      laterRead.answer(listed('CANCELLED'));
+    });
+    await waitFor(() => {
+      expect(result.current.tasks.value?.[0]?.status).toBe('CANCELLED');
+    });
+    await act(async () => {
+      poll.answer(listed('RUNNING'));
+    });
+    expect(result.current.tasks.value?.[0]?.status).toBe('CANCELLED');
+  });
+
   // Bound: waits on real time through two MOVE_TASKS_POLL_MS (2 s) reads and one more interval that reads nothing (about 6.5 s) (issue 481 s1).
   it(
     'are read every 2 seconds while one is RUNNING or CANCELLING, and not after none is',
