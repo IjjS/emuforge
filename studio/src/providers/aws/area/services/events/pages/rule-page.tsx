@@ -49,9 +49,10 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
   const pageSignal = usePageSignal();
   const [dialog, setDialog] = useState<RuleDialog>();
   const [leaving, setLeaving] = useState(false);
-  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(
-    () => new Set(note?.notImplemented === PUT_TARGETS && note.bus === bus && note.rule === name ? [PUT_TARGETS] : []),
+  const [addBlockedByHandOver] = useState(
+    () => note?.notImplemented === PUT_TARGETS && note.bus === bus && note.rule === name,
   );
+  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
   const [switchPending, setSwitchPending] = useState(false);
   const switchBusy = useRef(false);
 
@@ -64,6 +65,9 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
   // Keep the dialog and the rule it names mounted through any outstanding read and the hand-over.
   const rule = deleteDialog?.rule ?? currentRule ?? (read.loading ? lastRule : undefined);
   const targets = useRuleTargets(engineOrigin, bus, name, rule !== undefined && !leaving);
+  if (deleteDialog && targets.value !== undefined && targets.value !== deleteDialog.targets) {
+    setDialog({ ...deleteDialog, targets: targets.value });
+  }
   const shownTargets =
     deleteDialog && (targets.failure || leaving)
       ? { ...targets, value: deleteDialog.targets, failure: undefined, loading: false }
@@ -81,21 +85,16 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
   const enabling = rule?.State === 'DISABLED';
   const switchOperation = enabling ? RULE_CHANGE_OPERATIONS.enable : RULE_CHANGE_OPERATIONS.disable;
   const switchUnavailable = unavailable.has(switchOperation);
-  const addUnavailable = unavailable.has(PUT_TARGETS);
   const targetLimitReached = (targets.value?.length ?? 0) >= MAX_TARGETS;
   const removeUnavailable = unavailable.has(RULE_CHANGE_OPERATIONS.removeTargets);
   const deleteUnavailable = unavailable.has(RULE_CHANGE_OPERATIONS.delete)
     ? RULE_CHANGE_OPERATIONS.delete
-    : removeUnavailable
+    : removeUnavailable && (deleteDialog?.targets.length ?? 0) > 0
       ? RULE_CHANGE_OPERATIONS.removeTargets
       : undefined;
   const anotherAction = dialog !== undefined || leaving || engineOrigin === undefined;
   const actionBlocked = anotherAction || switchPending;
-  const removeDisabledReason = removeUnavailable
-    ? unavailableReason(RULE_CHANGE_OPERATIONS.removeTargets)
-    : actionBlocked
-      ? 'Another action is in progress.'
-      : undefined;
+  const removeDisabledReason = actionBlocked ? 'Another action is in progress.' : undefined;
 
   async function handleSwitch() {
     if (
@@ -168,23 +167,21 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
                     (actionBlocked && dialog?.kind !== 'add') ||
                     targets.value === undefined ||
                     targetLimitReached ||
-                    addUnavailable
+                    addBlockedByHandOver
                   }
                   disabledReason={
-                    addUnavailable ? unavailableReason(PUT_TARGETS) : targetLimitReached ? TARGET_LIMIT_TEXT : undefined
+                    addBlockedByHandOver
+                      ? unavailableReason(PUT_TARGETS)
+                      : targetLimitReached
+                        ? TARGET_LIMIT_TEXT
+                        : undefined
                   }
                   onClick={() => setDialog({ kind: 'add' })}
                 >
                   Add target
                 </Button>
                 <Button
-                  disabled={
-                    actionBlocked ||
-                    currentRule === undefined ||
-                    targets.value === undefined ||
-                    deleteUnavailable !== undefined
-                  }
-                  disabledReason={deleteUnavailable ? unavailableReason(deleteUnavailable) : undefined}
+                  disabled={actionBlocked || currentRule === undefined || targets.value === undefined}
                   onClick={() => {
                     if (currentRule && targets.value)
                       setDialog({ kind: 'delete', rule: currentRule, targets: targets.value });
@@ -240,6 +237,7 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
           connection={{ ...connection, engineOrigin }}
           bus={bus}
           name={name}
+          operationUnavailable={unavailable.has(PUT_TARGETS)}
           onDismiss={dismiss}
           onUnavailable={() => markUnavailable(PUT_TARGETS)}
           onAdded={(id) => {
@@ -264,6 +262,7 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
           bus={bus}
           name={name}
           id={dialog.id}
+          operationUnavailable={removeUnavailable}
           onDismiss={dismiss}
           onUnavailable={() => markUnavailable(RULE_CHANGE_OPERATIONS.removeTargets)}
           onRemoved={() => {
@@ -289,6 +288,7 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
           bus={bus}
           name={name}
           targetCount={deleteDialog.targets.length}
+          unavailableOperation={deleteUnavailable}
           onDismiss={dismiss}
           onUnavailable={markUnavailable}
           onTargetsChanged={targets.refresh}

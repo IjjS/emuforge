@@ -22,10 +22,8 @@ interface BusDetailsProps {
   tags: ReturnType<typeof useResourceTags>;
   detailsLoading?: boolean;
   editDescriptionDisabled: boolean;
-  editDescriptionReason: string | undefined;
   onEditDescription: () => void;
   manageTagsDisabled: boolean;
-  manageTagsReason: string | undefined;
   onManageTags: () => void;
 }
 
@@ -35,10 +33,8 @@ export function BusDetails({
   tags,
   detailsLoading = false,
   editDescriptionDisabled,
-  editDescriptionReason,
   onEditDescription,
   manageTagsDisabled,
-  manageTagsReason,
   onManageTags,
 }: BusDetailsProps) {
   const [announcement, announce] = useAnnouncer();
@@ -57,11 +53,7 @@ export function BusDetails({
           <Header
             variant="h2"
             actions={
-              <Button
-                disabled={editDescriptionDisabled}
-                disabledReason={editDescriptionReason}
-                onClick={onEditDescription}
-              >
+              <Button disabled={editDescriptionDisabled} onClick={onEditDescription}>
                 Edit description
               </Button>
             }
@@ -137,7 +129,7 @@ export function BusDetails({
           <Header
             variant="h2"
             actions={
-              <Button disabled={manageTagsDisabled} disabledReason={manageTagsReason} onClick={onManageTags}>
+              <Button disabled={manageTagsDisabled} onClick={onManageTags}>
                 Manage tags
               </Button>
             }

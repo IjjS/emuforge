@@ -1,6 +1,6 @@
 import type { Target } from '@aws-sdk/client-eventbridge';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
 
@@ -91,7 +91,7 @@ it.each([
   const scroll = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(scrollWidth);
   try {
     const { table } = open({ value: [{ Id: 'queue', Arn: queueArn }] });
-    expect(screen.getByRole('table', { name: label })).toBeVisible();
+    expect(table.find('table')?.getElement()).toHaveAccessibleName(label);
     const description = table.findHeaderSlot()?.findHeader()?.findDescription();
     if (clientWidth < scrollWidth) {
       expect(description?.getElement()).toHaveTextContent(

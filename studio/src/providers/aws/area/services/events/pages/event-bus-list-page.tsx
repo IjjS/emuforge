@@ -19,7 +19,7 @@ import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { BUS_OPERATIONS, listEventBuses } from '../bus-api';
-import { BUS_DELETE_UNAVAILABLE, DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
+import { DEFAULT_BUS_DELETE_REASON } from '../bus-change-api';
 import { DeleteEventBusDialog } from '../components/delete-event-bus-dialog';
 import { busPath, CREATE_EVENT_BUS_PATH, CREATE_EVENT_BUS_TITLE, EVENT_BUSES_TITLE } from '../format';
 import { useOverflowHint } from '../use-overflow-hint';
@@ -53,8 +53,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
   const rows = listing.items ?? [];
   const { tableSection, showOverflow } = useOverflowHint(!listing.loading && rows.length > 0);
   const selected = rows.find(({ Name }) => Name !== undefined && Name === selectedName);
-  const deleteReason =
-    selected?.Name === 'default' ? DEFAULT_BUS_DELETE_REASON : deleteUnavailable ? BUS_DELETE_UNAVAILABLE : undefined;
+  const deleteReason = selected?.Name === 'default' ? DEFAULT_BUS_DELETE_REASON : undefined;
   const canDelete =
     selected?.Name !== undefined &&
     engineOrigin !== undefined &&
@@ -205,6 +204,7 @@ export function EventBusListPage({ connection }: Pick<ScreenPageProps, 'connecti
         <DeleteEventBusDialog
           endpoint={engineOrigin}
           name={deleteTarget}
+          writeUnavailable={deleteUnavailable}
           onDismiss={() => setDeleteTarget(undefined)}
           onUnavailable={() => setDeleteUnavailable(true)}
           onDeleted={() => {

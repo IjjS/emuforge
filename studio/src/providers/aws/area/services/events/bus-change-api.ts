@@ -9,7 +9,6 @@ import { sendEvents } from './clients';
 export const BUS_CHANGE_OPERATIONS = { create: 'CreateEventBus', delete: 'DeleteEventBus' } as const;
 
 export const DEFAULT_BUS_DELETE_REASON = 'The default event bus cannot be deleted.';
-export const BUS_DELETE_UNAVAILABLE = 'Not implemented by the emulator (DeleteEventBus).';
 
 export async function createEventBus(
   endpoint: string,
