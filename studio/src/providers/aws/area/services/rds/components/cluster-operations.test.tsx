@@ -2,10 +2,12 @@ import type { OrderableDBInstanceOption } from '@aws-sdk/client-rds';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { DbInstance } from '../api';
 import * as choices from '../choices-api';
@@ -101,11 +103,11 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderControls(cluster = CLUSTER) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>
+function InArea({ cluster }: { cluster: api.DbCluster }) {
+  const root = useRef<HTMLDivElement>(null);
+  return (
+    <div ref={root}>
+      <AreaRootContext value={root}>
         <ClusterOperationControls
           cluster={cluster}
           connection={CONNECTION}
@@ -114,17 +116,28 @@ function renderControls(cluster = CLUSTER) {
           unavailable={new Set()}
           onSubmit={onSubmit}
         />
+      </AreaRootContext>
+    </div>
+  );
+}
+
+function renderControls(cluster = CLUSTER) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <InArea cluster={cluster} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
 }
 
-function open(action: 'modify' | 'failover') {
+async function open(action: 'modify' | 'failover') {
   fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
   const item = WRAPPER.findButtonDropdown()?.findItemById(action);
   if (item == null) throw new Error(`Missing ${action} action`);
-  item.click();
-  return within(screen.getByRole('dialog'));
+  fireEvent.click(item.getElement());
+  return within(await screen.findByRole('dialog'));
 }
 
 function field(label: string) {
@@ -160,7 +173,7 @@ function deferredRows() {
 describe('modify a DB cluster', () => {
   it('starts on the cluster values, reads starting groups by ID, and disables an unchanged save', async () => {
     renderControls();
-    const modal = open('modify');
+    const modal = await open('modify');
     expect(modal.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('cluster-one');
     expect(modal.getByRole('textbox', { name: 'Backup retention period (days)' })).toHaveValue('7');
     expect(modal.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
@@ -176,11 +189,11 @@ describe('modify a DB cluster', () => {
     expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 
-  it('shows Not set when no storage type was reported and omits it when saving another field', () => {
+  it('shows Not set when no storage type was reported and omits it when saving another field', async () => {
     const cluster = { ...CLUSTER };
     delete cluster.storageType;
     renderControls(cluster);
-    const modal = open('modify');
+    const modal = await open('modify');
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('Not set');
     expect(modal.getByText('The cluster has no storage type.')).toBeInTheDocument();
     fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
@@ -193,7 +206,7 @@ describe('modify a DB cluster', () => {
       version === TARGET.version ? [{ StorageType: 'aurora-iopt1' }] : ROWS,
     );
     renderControls();
-    const modal = open('modify');
+    const modal = await open('modify');
     const versions = select('Engine version');
     versions.openDropdown();
     await waitFor(() => expect(versions.findDropdown().findOptionByValue(TARGET.version)).not.toBeNull());
@@ -209,7 +222,7 @@ describe('modify a DB cluster', () => {
       version === TARGET.version ? late.promise : Promise.resolve(ROWS),
     );
     renderControls();
-    open('modify');
+    await open('modify');
     await pick('Engine version', TARGET.version);
     await waitFor(() =>
       expect(choices.readOrderableRows).toHaveBeenCalledWith(
@@ -238,7 +251,7 @@ describe('modify a DB cluster', () => {
         ),
       );
       renderControls();
-      const modal = open('modify');
+      const modal = await open('modify');
       const storage = within(field('Storage type').getElement());
       await waitFor(() =>
         expect(field('Storage type').getElement()).toHaveTextContent(
@@ -270,7 +283,7 @@ describe('modify a DB cluster', () => {
         return new Response('', { status: kind === '501' ? 501 : 400 });
       });
       renderControls();
-      const modal = open('modify');
+      const modal = await open('modify');
       expect(modal.getAllByText('sg-old').length).toBeGreaterThan(0);
       if (kind === '501') {
         expect(await modal.findByText(/501 Not Implemented for DescribeSecurityGroups/)).toBeInTheDocument();
@@ -283,7 +296,7 @@ describe('modify a DB cluster', () => {
   it('reopens a refused modify with the identifier, version, groups and storage type sent', async () => {
     onSubmit.mockResolvedValue('retain-draft');
     renderControls();
-    const modal = open('modify');
+    const modal = await open('modify');
     fireEvent.change(modal.getByRole('textbox', { name: 'DB cluster identifier' }), { target: { value: 'renamed' } });
     await pick('Engine version', TARGET.version);
     await pick('Storage type', 'aurora-iopt1');
@@ -307,7 +320,7 @@ describe('modify a DB cluster', () => {
       },
     });
 
-    const reopened = open('modify');
+    const reopened = await open('modify');
     expect(reopened.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('renamed');
     expect(select('Engine version').findTrigger().getElement()).toHaveTextContent(TARGET.version);
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora-iopt1');
@@ -321,7 +334,7 @@ describe('fail over a DB cluster', () => {
 
   it('rereads both sources each time the picker opens and describes the latest readers', async () => {
     renderControls();
-    open('failover');
+    await open('failover');
     await waitFor(() => expect(api.getCluster).toHaveBeenCalledTimes(1));
     target().openDropdown();
     await waitFor(() => expect(option('reader')?.getElement()).toHaveTextContent('db.r6g.large · us-east-1a'));
@@ -352,14 +365,14 @@ describe('fail over a DB cluster', () => {
       }),
     );
     renderControls();
-    const modal = open('failover');
+    const modal = await open('failover');
     expect(await modal.findByText(/501 Not Implemented for DescribeDBInstances/)).toBeInTheDocument();
     expect(modal.getByRole('button', { name: 'Fail over' })).toBeDisabled();
   });
 
   it('offers and submits an externally added reader even if the page saw only the writer', async () => {
     renderControls({ ...CLUSTER, members: WRITER_ONLY });
-    const modal = open('failover');
+    const modal = await open('failover');
     await pick('Target DB instance', 'reader');
     fireEvent.click(modal.getByRole('button', { name: 'Fail over' }));
     expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'reader' });
@@ -368,7 +381,7 @@ describe('fail over a DB cluster', () => {
   it('shows the reason when there is no reader, then offers a reader after reopening the target', async () => {
     vi.mocked(api.getCluster).mockResolvedValue(found(WRITER_ONLY));
     renderControls({ ...CLUSTER, members: WRITER_ONLY });
-    const modal = open('failover');
+    const modal = await open('failover');
     expect(await modal.findByText('Failover requires a reader DB instance in this cluster.')).toBeInTheDocument();
     target().openDropdown();
     await waitFor(() => expect(target().findDropdown().findOptions()).toEqual([]));
