@@ -99,7 +99,7 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
-      minWidth: '28ch',
+      width: 'clamp(12ch, 34vw, 28ch)',
       cell: ({ data }) =>
         data.AlarmName === undefined ? (
           '-'
@@ -108,11 +108,6 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
             <AlarmName name={data.AlarmName} />
           </Link>
         ),
-    },
-    {
-      id: 'type',
-      header: 'Type',
-      cell: ({ type }) => <ValueText kind="fixed" value={alarmTypeText(type)} />,
     },
     {
       id: 'state',
@@ -126,6 +121,11 @@ export function AlarmListPage({ connection }: { connection: AreaConnection }) {
           <StatusIndicator type={indicator}>{alarmStateText(state)}</StatusIndicator>
         );
       },
+    },
+    {
+      id: 'type',
+      header: 'Type',
+      cell: ({ type }) => <ValueText kind="fixed" value={alarmTypeText(type)} />,
     },
     {
       id: 'condition',

@@ -108,17 +108,23 @@ it('shows the three types with their links, states, conditions, actions and stat
   const { table, resources } = open();
   expect(resources).toHaveBeenCalledWith({ word: 'alarms' });
   await waitFor(() => expect(table.findRows()).toHaveLength(3));
+  expect(
+    table
+      .findColumnHeaders()
+      .slice(1)
+      .map((header) => header.getElement().textContent),
+  ).toEqual(['Name', 'State', 'Type', 'Condition', 'Actions', 'State last changed']);
   const expected = [
     [
       'a-metric',
-      'Metric alarm',
       'In alarm',
+      'Metric alarm',
       'Errors greater than 1 (2 out of 3 periods, 1 minute each)',
       'On',
       creationDateText(changedAt),
     ],
-    ['b-composite', 'Composite alarm', 'OK', 'ALARM("a-metric")', 'Off', '-'],
-    ['c-log', 'Log alarm', 'Insufficient data', 'fields @message', 'On', '-'],
+    ['b-composite', 'OK', 'Composite alarm', 'ALARM("a-metric")', 'Off', '-'],
+    ['c-log', 'Insufficient data', 'Log alarm', 'fields @message', 'On', '-'],
   ];
   expected.forEach((cells, index) => {
     const row = index + 1;
