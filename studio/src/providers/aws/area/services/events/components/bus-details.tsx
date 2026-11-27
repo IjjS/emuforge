@@ -1,5 +1,6 @@
 import type { DescribeEventBusResponse } from '@aws-sdk/client-eventbridge';
 import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
@@ -18,9 +19,25 @@ interface BusDetailsProps {
   connection: AreaConnection;
   bus: DescribeEventBusResponse;
   tags: ReturnType<typeof useResourceTags>;
+  editDescriptionDisabled: boolean;
+  editDescriptionReason: string | undefined;
+  onEditDescription: () => void;
+  manageTagsDisabled: boolean;
+  manageTagsReason: string | undefined;
+  onManageTags: () => void;
 }
 
-export function BusDetails({ connection, bus, tags }: BusDetailsProps) {
+export function BusDetails({
+  connection,
+  bus,
+  tags,
+  editDescriptionDisabled,
+  editDescriptionReason,
+  onEditDescription,
+  manageTagsDisabled,
+  manageTagsReason,
+  onManageTags,
+}: BusDetailsProps) {
   const [announcement, announce] = useAnnouncer();
   const failure = tags.failure && readFailureState(tags.failure, connection, 'event bus tags');
   const message = failure?.firstText ?? '';
@@ -32,7 +49,24 @@ export function BusDetails({ connection, bus, tags }: BusDetailsProps) {
 
   return (
     <SpaceBetween size="m">
-      <Container header={<Header variant="h2">Details</Header>}>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <Button
+                disabled={editDescriptionDisabled}
+                disabledReason={editDescriptionReason}
+                onClick={onEditDescription}
+              >
+                Edit description
+              </Button>
+            }
+          >
+            Details
+          </Header>
+        }
+      >
         <SpaceBetween size="m">
           <KeyValuePairs
             items={[
@@ -90,7 +124,18 @@ export function BusDetails({ connection, bus, tags }: BusDetailsProps) {
       </Container>
       <Table
         ariaLabels={{ tableLabel: 'Tags' }}
-        header={<Header variant="h2">Tags</Header>}
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <Button disabled={manageTagsDisabled} disabledReason={manageTagsReason} onClick={onManageTags}>
+                Manage tags
+              </Button>
+            }
+          >
+            Tags
+          </Header>
+        }
         items={Object.entries(tags.value ?? {}).map(([key, value]) => ({ key, value }))}
         trackBy="key"
         columnDefinitions={[

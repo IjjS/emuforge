@@ -12,6 +12,7 @@ import { PageFlashContext, type PageFlash } from '../../../components/page-flash
 import { PageResourcesContext } from '../../../components/page-resources';
 import { deleteEventBus } from '../bus-change-api';
 import { getEventBus, listResourceTags, type EventBusRead } from '../bus-api';
+import { saveBusTags, updateBusDescription } from '../bus-settings-api';
 import { listRules } from '../rule-api';
 import { EventBusPage } from './event-bus-page';
 
@@ -31,6 +32,12 @@ vi.mock('../bus-change-api', async (original) => ({
   deleteEventBus: vi.fn(),
 }));
 
+vi.mock('../bus-settings-api', async (original) => ({
+  ...(await original<typeof import('../bus-settings-api')>()),
+  saveBusTags: vi.fn(),
+  updateBusDescription: vi.fn(),
+}));
+
 const endpoint = 'http://127.0.0.1:8313';
 const arn = 'arn:aws:events:us-east-1:123:event-bus/..';
 const operation = 'DescribeEventBus';
@@ -42,11 +49,14 @@ beforeEach(() => {
   vi.mocked(listResourceTags).mockResolvedValue({});
   vi.mocked(listRules).mockResolvedValue({ items: [] });
   vi.mocked(deleteEventBus).mockResolvedValue(undefined);
+  vi.mocked(saveBusTags).mockResolvedValue(undefined);
+  vi.mocked(updateBusDescription).mockResolvedValue(undefined);
 });
 
 function renderPage(result: AreaConnection['result'] = undefined, segment = '*..') {
   const resources = vi.fn();
   const handOver = vi.fn<PageFlash['handOver']>();
+  const show = vi.fn<PageFlash['show']>();
   const client = new QueryClient();
   function Area() {
     const root = useRef<HTMLDivElement>(null);
@@ -54,7 +64,7 @@ function renderPage(result: AreaConnection['result'] = undefined, segment = '*..
       <AreaRootContext.Provider value={root}>
         <div ref={root}>
           <PageResourcesContext.Provider value={resources}>
-            <PageFlashContext.Provider value={{ show: vi.fn(), handOver }}>
+            <PageFlashContext.Provider value={{ show, handOver }}>
               <EventBusPage connection={{ engineOrigin: endpoint, result }} params={{ bus: segment }} />
             </PageFlashContext.Provider>
           </PageResourcesContext.Provider>
@@ -71,7 +81,7 @@ function renderPage(result: AreaConnection['result'] = undefined, segment = '*..
   );
   const layout = createWrapper(container).findContentLayout();
   if (!layout) throw new Error('Expected the event bus page');
-  return { layout, resources, handOver, client };
+  return { layout, resources, handOver, show, client, container };
 }
 
 it('reads its bus, then the tags by returned ARN and rules by name, and offers links with the bus query', async () => {
@@ -315,4 +325,224 @@ it('shows the missing bus when an open delete dialog is dismissed without deleti
   expect(await screen.findByRole('link', { name: 'Event buses' })).toBeVisible();
   expect(layout.findContent().findContainer()?.getElement()).toHaveTextContent('Event bus not found');
   expect(deleteEventBus).not.toHaveBeenCalled();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+type Page = ReturnType<typeof renderPage>;
+
+function tagTable({ layout }: Page) {
+  return layout
+    .findContent()
+    .findAllTables()
+    .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags');
+}
+
+function manageTagsButton(page: Page) {
+  return tagTable(page)?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+}
+
+function descriptionText({ layout }: Page) {
+  const pairs = layout.findContent().findContainer()?.findContent().findKeyValuePairs();
+  return pairs
+    ?.findItems()
+    .find((item) => item.findLabel()?.getElement().textContent === 'Description')
+    ?.findValue()
+    ?.getElement().textContent;
+}
+
+async function openSettings(page: Page, heading: string) {
+  const button = await waitFor(() => {
+    const action =
+      heading === 'Manage tags'
+        ? manageTagsButton(page)
+        : page.layout.findContent().findContainer()?.findHeader()?.findHeader()?.findActions()?.findButton();
+    expect(action?.getElement()).toHaveAccessibleName(heading);
+    expect(action?.getElement()).toBeEnabled();
+    return action;
+  });
+  button?.click();
+
+  return waitFor(() => {
+    const modal = createWrapper(page.container).findModal();
+    const save = modal
+      ?.findFooter()
+      ?.findAllButtons()
+      .find((action) => action.getElement().textContent === 'Save');
+    if (!modal || !save) throw new Error('Expected a settings dialog');
+    expect(modal.findHeader().getElement()).toHaveTextContent(heading);
+    return { modal, save };
+  });
+}
+
+async function saveDescription(page: Page) {
+  const { modal, save } = await openSettings(page, 'Edit description');
+  const input = modal.findContent().findTextarea()?.findNativeTextarea().getElement();
+  if (!input) throw new Error('Expected the description field');
+  fireEvent.change(input, { target: { value: 'Updated description' } });
+  save.click();
+}
+
+async function saveTags(page: Page) {
+  const { modal, save } = await openSettings(page, 'Manage tags');
+  const input = modal
+    .findContent()
+    .findAttributeEditor()
+    ?.findRow(1)
+    ?.findField(2)
+    ?.findControl()
+    ?.findInput()
+    ?.findNativeInput()
+    .getElement();
+  if (!input) throw new Error('Expected the first tag value');
+  fireEvent.change(input, { target: { value: 'local' } });
+  save.click();
+}
+
+function expectSaved(page: Page, text: string) {
+  expect(createWrapper(page.container).findModal()).toBeNull();
+  expect(page.show).toHaveBeenCalledOnce();
+  const result = page.show.mock.calls[0]?.[0][0];
+  expect(result?.type).toBe('success');
+  expect(render(<>{result?.content}</>).container).toHaveTextContent(text);
+}
+
+it('keeps Manage tags disabled until the tags are read', async () => {
+  read.mockResolvedValue(loaded);
+  const reading = deferred<Record<string, string>>();
+  vi.mocked(listResourceTags).mockReturnValueOnce(reading.promise);
+  const page = renderPage(undefined, 'orders');
+  await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeDisabled());
+  manageTagsButton(page)?.click();
+  expect(createWrapper(page.container).findModal()).toBeNull();
+  await act(async () => reading.resolve({}));
+  await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeEnabled());
+});
+
+it.each([
+  ['before', 'old description'],
+  ['after', 'old description'],
+  ['before', 'failure'],
+  ['after', 'failure'],
+] as const)(
+  'uses the read after a description save when the earlier read settles %s with %s',
+  async (order, outcome) => {
+    const stale = deferred<EventBusRead>();
+    const fresh = deferred<EventBusRead>();
+    const updating = deferred<void>();
+    read.mockResolvedValueOnce(loaded).mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
+    vi.mocked(updateBusDescription).mockReturnValueOnce(updating.promise);
+    const page = renderPage(undefined, 'orders');
+    await waitFor(() => expect(descriptionText(page)).toBe('Routes orders'));
+    const previousRead = page.client.refetchQueries({ queryKey: ['events', 'bus'] });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await saveDescription(page);
+
+    async function settleEarlierRead() {
+      await act(async () => {
+        if (outcome === 'failure') stale.reject(new Error('Earlier read failed'));
+        else stale.resolve(loaded);
+        await previousRead;
+      });
+    }
+
+    if (order === 'before') await settleEarlierRead();
+    await act(async () => updating.resolve());
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expectSaved(page, 'Description of orders saved.');
+    await act(async () => fresh.resolve({ kind: 'found', bus: { ...loaded.bus, Description: 'Read after save' } }));
+    if (order === 'after') await settleEarlierRead();
+    await waitFor(() => expect(descriptionText(page)).toBe('Read after save'));
+    expect(updateBusDescription).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      'orders',
+      'Updated description',
+      expect.any(AbortSignal),
+    );
+  },
+);
+
+it.each(['before', 'after'] as const)(
+  'uses the read after a tags save when an earlier read answers %s it',
+  async (order) => {
+    read.mockResolvedValue(loaded);
+    const stale = deferred<Record<string, string>>();
+    const fresh = deferred<Record<string, string>>();
+    vi.mocked(listResourceTags)
+      .mockResolvedValueOnce({ team: 'core' })
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(fresh.promise);
+    const page = renderPage(undefined, 'orders');
+    await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeEnabled());
+    const previousRead = page.client.refetchQueries({ queryKey: ['events', 'tags'] });
+    await waitFor(() => expect(listResourceTags).toHaveBeenCalledTimes(2));
+    await saveTags(page);
+    await waitFor(() => expect(listResourceTags).toHaveBeenCalledTimes(3));
+
+    async function settleEarlierRead() {
+      await act(async () => {
+        stale.resolve({ team: 'core' });
+        await previousRead;
+      });
+    }
+
+    if (order === 'before') await settleEarlierRead();
+    await act(async () => fresh.resolve({ team: 'answered' }));
+    if (order === 'after') await settleEarlierRead();
+    await waitFor(() => expect(tagTable(page)?.findBodyCell(1, 2)?.getElement().textContent).toBe('answered'));
+    expectSaved(page, 'Tags of orders saved.');
+    expect(saveBusTags).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      'arn:orders',
+      { remove: [], put: { team: 'local' } },
+      expect.any(AbortSignal),
+    );
+  },
+);
+
+it('keeps the tags success result while the fresh read loads and when it fails', async () => {
+  read.mockResolvedValue(loaded);
+  const fresh = deferred<Record<string, string>>();
+  vi.mocked(listResourceTags).mockResolvedValueOnce({ team: 'core' }).mockReturnValueOnce(fresh.promise);
+  const page = renderPage(undefined, 'orders');
+  await saveTags(page);
+  await waitFor(() => expect(tagTable(page)?.findLoadingText()?.getElement()).toHaveTextContent('Loading tags'));
+  expectSaved(page, 'Tags of orders saved.');
+  await act(async () =>
+    fresh.reject(
+      new RequestError({
+        kind: 'other',
+        operation: 'ListTagsForResource',
+        code: 'ValidationException',
+        message: 'Read refused',
+      }),
+    ),
+  );
+  await waitFor(() => {
+    const empty = tagTable(page)?.findEmptySlot();
+    expect(empty?.findStatusIndicator()?.getElement()).toHaveTextContent('The event bus tags could not be read');
+    expect(empty?.findButton()?.getElement()).toHaveAccessibleName('Retry');
+  });
+  expectSaved(page, 'Tags of orders saved.');
+});
+
+it('keeps the description success result when the subsequent bus read finds no bus', async () => {
+  read.mockResolvedValueOnce(loaded).mockResolvedValueOnce({ kind: 'not-found' });
+  const page = renderPage(undefined, 'orders');
+  await saveDescription(page);
+  await waitFor(() =>
+    expect(page.layout.findContent().findContainer()?.findContent().getElement()).toHaveTextContent(
+      'Event bus not found',
+    ),
+  );
+  expect(read).toHaveBeenCalledTimes(2);
+  expectSaved(page, 'Description of orders saved.');
 });
