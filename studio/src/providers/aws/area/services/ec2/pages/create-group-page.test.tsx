@@ -303,7 +303,7 @@ describe('Create security group', () => {
     open();
     await opened();
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for DescribeVpcs/)).toBeVisible();
+    expect(screen.getByText('The emulator answered 501 Not Implemented for DescribeVpcs.')).toBeVisible();
     expect(screen.getByText('The emulator creates the group in its default VPC.')).toBeVisible();
     const select = vpcSelect();
     select.openDropdown();

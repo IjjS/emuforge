@@ -27,7 +27,7 @@ import { GROUP_DESCRIPTION_RULE, groupFormMessages, GROUP_NAME_RULE, type GroupF
 import { GROUP_FORM_OPERATIONS, type NewSecurityGroup } from '../group-form-api';
 import { useCreateSecurityGroup } from '../group-form-queries';
 
-// S5, "Create security group" (issue 553, design task 4): the name, the description and, optionally, the VPC, chosen
+// S5, "Create security group" (issue 553, design task 4): the name, description, tags and optional VPC, chosen
 // a page of `DescribeVpcs` at a time when the field opens. `group-form.ts` checks the form before anything is sent;
 // then one `CreateSecurityGroup`. On 200 the new group's page opens with the result; a refusal (a name the VPC already
 // has included) stays on the form with the emulator's code and message and every entry. What is entered lives in this
@@ -81,6 +81,11 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
       ? 'The emulator creates the group in its default VPC.'
       : `The emulator creates the group in its default VPC, ${defaultVpcId}.`;
   const vpcFailure = defaultVpc.failure && readFailureState(defaultVpc.failure, connection, 'default VPC');
+  const unsupportedVpcRead = defaultVpc.failure?.kind === 'not-implemented' ? defaultVpc.failure.operation : undefined;
+  const vpcFailureDetail =
+    unsupportedVpcRead === undefined
+      ? vpcFailure?.detail
+      : `The emulator answered 501 Not Implemented for ${unsupportedVpcRead}.`;
 
   const [form, setForm] = useState<GroupFormState>(START);
   const [tried, setTried] = useState(false);
@@ -258,8 +263,8 @@ export function CreateGroupPage({ connection }: ScreenPageProps) {
                 {vpcFailure !== undefined && (
                   <SpaceBetween size="xxs">
                     <StatusIndicator type={vpcFailure.type}>{vpcFailure.first}</StatusIndicator>
-                    {vpcFailure.detail !== undefined && <Box variant="small">{vpcFailure.detail}</Box>}
-                    {defaultVpc.failure?.kind !== 'not-implemented' && (
+                    {vpcFailureDetail !== undefined && <Box variant="small">{vpcFailureDetail}</Box>}
+                    {unsupportedVpcRead === undefined && (
                       <Button variant="inline-link" formAction="none" onClick={defaultVpc.retry}>
                         Retry
                       </Button>
