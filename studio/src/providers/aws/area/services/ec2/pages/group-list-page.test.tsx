@@ -229,6 +229,27 @@ describe('the security groups list', () => {
     });
   });
 
+  it('distinguishes security groups with repeated spaces in links, selection and deletion', async () => {
+    const name = 'dev  group';
+    const identity = 'dev\\u0020\\u0020group';
+    answer({ '|': { groups: [group('sg-a', 'dev group'), group('sg-b', name), group('sg-c', '')] } });
+    open('/aws/ec2/security-groups');
+
+    expect(await screen.findByRole('link', { name: 'dev group' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'dev group' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'sg-c' })).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-c');
+    expect(screen.getByRole('radio', { name: 'sg-c' })).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: identity });
+    expect(link.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+
+    selectRow(identity);
+    fireEvent.click(action('Delete'));
+    const shown = await screen.findByRole('dialog', { name: 'Delete security group?' });
+    const drawn = within(shown).getByText(`(${identity})`).parentElement;
+    expect(drawn?.textContent).toBe(`${name} (${identity})`);
+    expect(drawn?.parentElement?.textContent).toContain(' is deleted from the local emulator.');
+  });
+
   it('none, no filter → "No security groups" with "Create security group", which leads to the create address', async () => {
     answer({});
     const router = open('/aws/ec2/security-groups');

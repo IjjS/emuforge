@@ -12,6 +12,8 @@ import { useCallback, useState } from 'react';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer, type ReadFailureState } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import type { TokenListing } from '../../../components/use-token-listing';
@@ -153,7 +155,7 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
       id: 'name',
       header: 'Name',
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={instanceName(row.tags)} />,
+      cell: (row) => <NameText name={instanceName(row.tags)} />,
     },
     {
       id: 'id',
@@ -243,7 +245,7 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
         }}
         ariaLabels={{
           selectionGroupLabel: 'Instance selection',
-          itemSelectionLabel: (_, row) => nameOf(row.tags) ?? row.id,
+          itemSelectionLabel: (_, row) => nameIdentity(nameOf(row.tags) ?? row.id),
         }}
         columnDefinitions={columns}
         wrapLines
