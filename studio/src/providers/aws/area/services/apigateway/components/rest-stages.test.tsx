@@ -1,7 +1,7 @@
 import type { Stage } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
@@ -169,14 +169,19 @@ it('copies exactly the invoke URL shown in the row and confirms the copy', async
   await waitFor(() => expect(names()).toEqual(['dev', 'prod']));
   const address = addressCell(2);
   assert(address);
-  const copyAddress = createWrapper(address).findCopyToClipboard()?.findCopyButton().getElement();
-  assert(copyAddress);
+  const copy = createWrapper(address).findCopyToClipboard();
+  assert(copy);
+  const copyAddress = copy.findCopyButton().getElement();
   expect(copyAddress).toHaveAccessibleName('Copy Invoke URL');
   const shownAddress = address.textContent;
   expect(shownAddress).toBe(invokeUrl('prod'));
   await user.click(copyAddress);
   expect(await navigator.clipboard.readText()).toBe(shownAddress);
-  expect(await screen.findByText('Invoke URL copied')).toBeVisible();
+  await waitFor(() => {
+    const status = copy.findStatusText({ popoverRenderWithPortal: false })?.getElement();
+    expect(status).toBeVisible();
+    expect(status?.textContent).toBe('Invoke URL copied');
+  });
 });
 
 const unreachable = {

@@ -40,6 +40,7 @@ it.each([
   [`${endpoint}/`, endpoint],
   ['https://127.0.0.2:9682', 'https://127.0.0.2:9682'],
   ['https://[::1]:9682', 'https://[::1]:9682'],
+  ['https://[0:0:0:0:0:0:0:1]:9682', 'https://[0:0:0:0:0:0:0:1]:9682'],
 ])('makes a local stage address from %s', (connectedEndpoint, base) => {
   const result = { kind: 'connected', checkedAt: 1, emulator: { port: 9682, endpoint: connectedEndpoint } } as const;
   expect(restStageAddress({ result, engineOrigin }, 'api-1', 'dev')).toBe(`${base}/_aws/execute-api/api-1/dev`);
@@ -50,6 +51,10 @@ it.each([
   'https://api-1.execute-api.us-east-1.amazonaws.com',
   'https://192.168.0.5:9682',
   'https://128.0.0.1:9682',
+  'https://127.1:9682',
+  'https://%31%32%37.0.0.1:9682',
+  'https://127.0.0.001:9682',
+  'https://127.0.0.1:123@127.1:9682',
   'not-a-url',
   '',
 ])('has no local address for endpoint %j', (invalidEndpoint) => {
