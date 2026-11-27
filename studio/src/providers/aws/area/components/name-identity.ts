@@ -1,8 +1,6 @@
 /** The exact identity of a resource name, in a form that survives white space collapsing. */
 export function nameIdentity(name: string): string {
-  return name.replace(/ {2,}|^ | $|[\\\t\r\n\u2028\u2029]/g, (part) =>
-    part.startsWith(' ') ? '\\u0020'.repeat(part.length) : ESCAPES[part]!,
-  );
+  return name.replace(/ {2,}|^ | $|[\\\t\r\n\u2028\u2029]/g, (part) => ESCAPES[part] ?? '\\u0020'.repeat(part.length));
 }
 
 const ESCAPES: Readonly<Record<string, string>> = {

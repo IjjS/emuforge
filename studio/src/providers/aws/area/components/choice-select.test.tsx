@@ -179,7 +179,7 @@ describe('ChoiceSelect', () => {
     select().openDropdown();
     await waitFor(() => expect(dropdownText()).toContain('Loading things'));
 
-    reject(new RequestError({ kind: 'other', code: 'Broken' }));
+    reject(new RequestError({ kind: 'other', operation: 'ListThings', code: 'Broken' }));
     await waitFor(() => expect(dropdownText()).toContain('The things could not be loaded: Broken'));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(dropdownText()).toBe('No things'));
