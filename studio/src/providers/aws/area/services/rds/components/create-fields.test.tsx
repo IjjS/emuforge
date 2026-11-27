@@ -11,6 +11,7 @@ import * as area from '../../../components/security-group-choices';
 import type { SecurityGroupChoice } from '../../../components/security-group-choices';
 import * as api from '../choices-api';
 import type { EngineVersionChoice, SubnetGroupChoice } from '../choices-api';
+import { useDefaultVersions } from '../choices-queries';
 import {
   DatabaseNameField,
   EngineField,
@@ -28,7 +29,7 @@ import {
 
 vi.mock('../choices-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../choices-api')>();
-  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn() };
+  return { ...real, listEngineVersionChoices: vi.fn(), listSubnetGroupChoices: vi.fn(), readDefaultVersion: vi.fn() };
 });
 
 // The area's source reads through its own module's reader, which a mock of the module cannot reach from inside it;
@@ -276,7 +277,7 @@ describe('the create fields', () => {
     );
     open();
     const select = selectIn('Engine version - optional');
-    expect(text(select.findTrigger().getElement())).toBe("The emulator's default");
+    expect(select.findTrigger().getElement()).toHaveTextContent("The emulator's default");
     expect(api.listEngineVersionChoices).not.toHaveBeenCalled();
     select.openDropdown();
     await waitFor(() => {
@@ -286,9 +287,17 @@ describe('the create fields', () => {
     await waitFor(() => {
       expect(select.findDropdown().findOptionByValue('18.3')).not.toBeNull();
     });
-    const options = (select.findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()));
-    expect(options).toEqual(["The emulator's default", '18.3']);
-    expect(text(select.findDropdown().findOptionByValue('18.3')?.getElement())).toContain('PostgreSQL 18.3-R1');
+    const dropdown = select.findDropdown();
+    const defaultOption = dropdown.findOptionByValue('');
+    const versionOption = dropdown.findOptionByValue('18.3');
+    expect(dropdown.findOptions()).toHaveLength(2);
+    if (defaultOption === null || versionOption === null) throw new Error('missing default or explicit version');
+    expect(defaultOption.findLabel().getElement()).toHaveTextContent("The emulator's default");
+    expect(versionOption.findLabel().getElement()).toHaveTextContent('18.3');
+    expect(versionOption.findDescription()?.getElement()).toHaveTextContent('PostgreSQL 18.3-R1');
+    expect(defaultOption.getElement().compareDocumentPosition(versionOption.getElement())).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(vi.mocked(api.listEngineVersionChoices).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'postgres', undefined]);
   });
 
@@ -437,7 +446,22 @@ describe('RDS create field descriptions and placement', () => {
     { value: 'aurora-postgresql', label: 'Aurora PostgreSQL' },
     { value: 'aurora-mysql', label: 'Aurora MySQL' },
   ];
+  const descriptions = new Map([
+    ['postgres', 'PostgreSQL.'],
+    ['mysql', 'MySQL.'],
+    ['mariadb', 'MariaDB.'],
+    ['aurora-postgresql', 'Aurora, PostgreSQL-compatible.'],
+    ['aurora-mysql', 'Aurora, MySQL-compatible.'],
+  ]);
   const defaults = { data: undefined, failure: undefined, retry: vi.fn(), loading: true };
+
+  function engineOption(value: string) {
+    const option = PAGE.findRadioGroup()
+      ?.findButtons()
+      .find((button) => button.findNativeInput().getElement().value === value);
+    if (option === undefined) throw new Error(`no engine option ${value}`);
+    return option;
+  }
 
   it('describes the engines before the read and adds their default versions when they arrive', () => {
     const onChange = vi.fn();
@@ -450,8 +474,11 @@ describe('RDS create field descriptions and placement', () => {
         defaults={defaults}
       />,
     );
-    const names = ['PostgreSQL.', 'MySQL.', 'MariaDB.', 'Aurora, PostgreSQL-compatible.', 'Aurora, MySQL-compatible.'];
-    for (const name of names) expect(screen.getByText(name)).toBeVisible();
+    for (const { value, label } of engines) {
+      const option = engineOption(value);
+      expect(option.findLabel().getElement()).toHaveTextContent(label);
+      expect(option.findDescription()?.getElement().textContent).toBe(descriptions.get(value));
+    }
     const versions = Object.fromEntries(engines.map(({ value }, index) => [value, String(index + 1)]));
     rerender(
       <EngineField
@@ -462,9 +489,11 @@ describe('RDS create field descriptions and placement', () => {
         defaults={{ ...defaults, loading: false, data: { versions, failures: {} } }}
       />,
     );
-    names.forEach((name, index) => {
-      expect(screen.getByText(`${name} The emulator's default version is ${index + 1}.`)).toBeVisible();
-    });
+    for (const { value } of engines) {
+      expect(engineOption(value).findDescription()?.getElement()).toHaveTextContent(
+        `${descriptions.get(value)} The emulator's default version is ${versions[value]}.`,
+      );
+    }
   });
 
   it('shows a 501 at Engine and leaves every engine selectable with its base description', () => {
@@ -483,31 +512,85 @@ describe('RDS create field descriptions and placement', () => {
     );
     expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(/501 Not Implemented for DescribeDBEngineVersions/)).toBeVisible();
-    expect(screen.getByText('MySQL.')).toBeVisible();
-    fireEvent.click(screen.getByRole('radio', { name: 'MySQL' }));
+    for (const { value } of engines) {
+      const option = engineOption(value);
+      expect(option.findDescription()?.getElement().textContent).toBe(descriptions.get(value));
+      expect(option.findNativeInput().getElement()).toBeEnabled();
+    }
+    engineOption('mysql').findNativeInput().click();
     expect(onChange).toHaveBeenCalledWith('mysql');
   });
 
-  it('describes the fixed engine version and each kind of default subnet group', () => {
+  it('describes the fixed version while the default read is pending, after failure and after retry succeeds', async () => {
+    const client = new QueryClient();
+    const onChange = vi.fn();
+    let rejectRead: (reason: RequestError) => void = () => undefined;
+    vi.mocked(api.readDefaultVersion)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRead = reject;
+          }),
+      )
+      .mockResolvedValueOnce('18.3');
+
+    function VersionFields() {
+      const read = useDefaultVersions(ENGINE, ['postgres']);
+      return (
+        <>
+          <EngineField engines={engines} value="postgres" onChange={onChange} defaults={read} connection={CONNECTION} />
+          <EngineVersionField
+            engine="postgres"
+            defaultVersion={read.data?.versions.postgres}
+            connection={CONNECTION}
+            value={undefined}
+            onChange={onChange}
+          />
+        </>
+      );
+    }
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <VersionFields />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    const select = selectIn('Engine version - optional');
+    const description = () => select.findDropdown().findOptionByValue('')?.findDescription()?.getElement();
+    const omission = 'The emulator uses its default version when none is sent.';
+    select.openDropdown();
+    await waitFor(() => expect(api.readDefaultVersion).toHaveBeenCalledOnce());
+    expect(select.findDropdown().findOptionByValue('')?.findLabel().getElement()).toHaveTextContent(
+      "The emulator's default",
+    );
+    expect(description()).toHaveTextContent(omission);
+    rejectRead(failed('DescribeDBEngineVersions'));
+    expect(await screen.findByText('The default engine versions could not be read')).toBeVisible();
+    expect(description()).toHaveTextContent(omission);
+    select.closeDropdown();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    select.openDropdown();
+    await waitFor(() =>
+      expect(description()).toHaveTextContent('18.3, the version the emulator creates when none is sent.'),
+    );
+  });
+
+  it('describes each kind of default subnet group', () => {
     const client = new QueryClient();
     const onChange = vi.fn();
     const fields = (mode: 'instance' | 'cluster') => (
       <QueryClientProvider client={client}>
-        <EngineVersionField
-          engine="postgres"
-          defaultVersion="18.3"
-          connection={CONNECTION}
-          value={undefined}
-          onChange={onChange}
-        />
         <SubnetGroupField mode={mode} connection={CONNECTION} value={undefined} onChange={onChange} />
       </QueryClientProvider>
     );
     const { rerender } = render(fields('instance'));
-    expect(screen.getByText('18.3, the version the emulator creates when none is sent.')).toBeVisible();
-    expect(screen.getByText('The emulator puts the instance in its subnet group named default.')).toBeVisible();
+    const select = selectIn('DB subnet group - optional');
+    select.openDropdown();
+    const description = () => select.findDropdown().findOptionByValue('')?.findDescription()?.getElement();
+    expect(description()).toHaveTextContent('The emulator puts the instance in its subnet group named default.');
     rerender(fields('cluster'));
-    expect(screen.getByText('The emulator puts the cluster in its subnet group named default.')).toBeVisible();
+    expect(description()).toHaveTextContent('The emulator puts the cluster in its subnet group named default.');
   });
 
   it('locks security groups without a VPC and scopes the read and empty text when it arrives', async () => {
