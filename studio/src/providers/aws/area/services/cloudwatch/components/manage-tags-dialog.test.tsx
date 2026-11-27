@@ -149,7 +149,7 @@ it('allows replacing a tag at the 50-tag limit and saves the removal before the 
     ...Array.from({ length: 49 }, (_, i) => ({ Key: `k${i.toString()}`, Value: '' })),
   ];
   const edit = await open(full);
-  expect(edit.editor.findAddButton().getElement()).toBeDisabled();
+  expect(edit.editor.findAddButton().getElement()).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(edit.editor.findAddButton().getElement());
   expect(edit.editor.findRows()).toHaveLength(50);
   edit.replaceA();
@@ -219,7 +219,7 @@ it('blocks additional saves during writes and reads and re-enables save after a 
   );
   expect(edit.alertText()).toContainEqual(expect.stringContaining('The tags could not be read again.'));
   expect(edit.save).toBeDisabled();
-  const retryButton = edit.content.findAllAlerts()[1]?.findActionButton();
+  const retryButton = edit.content.findAllAlerts()[1]?.findActionSlot()?.findButton();
   expect(retryButton?.getElement()).toBeEnabled();
   fireEvent.click(required(retryButton, 'Retry button').getElement());
   expect(refresh).toHaveBeenCalledTimes(2);
