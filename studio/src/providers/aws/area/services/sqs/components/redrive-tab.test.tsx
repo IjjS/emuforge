@@ -842,6 +842,7 @@ describe('reading move tasks after a start', () => {
     expectRow('RUNNING', '0 of 1');
   });
 
+  // Bound: one real 2-second poll and one more interval to verify that polling stops (issue 665 s1).
   it(
     'polls after two seconds while the started task is running and stops when it completes',
     async () => {
