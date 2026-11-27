@@ -26,7 +26,7 @@ interface ManageTagsDialogProps {
   arn: string;
   initialTags: Record<string, string>;
   tags: ReturnType<typeof useResourceTags>;
-  unavailable: ReadonlySet<TagWriteOperation>;
+  unavailable: TagWriteOperation | undefined;
   onUnavailable: (operation: TagWriteOperation) => void;
   onSaved: () => void;
   onDismiss: () => void;
@@ -54,12 +54,7 @@ export function ManageTagsDialog({
   const changes = tags.value === undefined ? undefined : tagChanges(tags.value, tagsToRecord(draft));
   const removing = Boolean(changes?.remove.length);
   const putting = changes !== undefined && Object.keys(changes.put).length > 0;
-  const unsupported =
-    removing && unavailable.has(OPERATIONS.untag)
-      ? OPERATIONS.untag
-      : putting && unavailable.has(OPERATIONS.tag)
-        ? OPERATIONS.tag
-        : undefined;
+  const unsupported = unavailable ?? (failure?.reason.kind === 'not-implemented' ? failure.operation : undefined);
   const shownFailure =
     unsupported === undefined
       ? failure

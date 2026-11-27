@@ -32,10 +32,8 @@ function renderDetails(
         connection={{ engineOrigin: endpoint, result }}
         bus={bus}
         editDescriptionDisabled={false}
-        editDescriptionReason={undefined}
         onEditDescription={vi.fn()}
         manageTagsDisabled={false}
-        manageTagsReason={undefined}
         onManageTags={vi.fn()}
         tags={{ loading: false, value: undefined, failure: undefined, refresh, ...tags }}
       />
