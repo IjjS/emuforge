@@ -121,14 +121,23 @@ it.each(failures)('keeps the details visible when the tags read fails (%s)', (fa
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-it('links to connection status when the emulator is unreachable', () => {
-  const emulator = { port: 9313, endpoint: 'https://127.0.0.1:9313' };
-  const { table } = renderDetails(
-    { Arn: arn },
-    { failure: { kind: 'emulator-did-not-answer', operation, message: '' } },
-    { kind: 'emulator-unreachable', checkedAt: 0, emulator, reason: 'not_started', message: '' },
-  );
-  const empty = table.findEmptySlot();
-  expect(empty?.findStatusIndicator()?.getElement().textContent).toBe('Not started on port 9313');
-  expect(empty?.findLink()?.getElement()).toHaveAttribute('href', '/');
-});
+it.each(['not_started', 'connection_failed'] as const)(
+  'links to connection status and retries the tags read when the emulator is %s',
+  (reason) => {
+    const emulator = { port: 9313, endpoint: 'https://127.0.0.1:9313' };
+    const { table, refresh } = renderDetails(
+      { Arn: arn },
+      { failure: { kind: 'emulator-did-not-answer', operation, message: '' } },
+      { kind: 'emulator-unreachable', checkedAt: 0, emulator, reason, message: '' },
+    );
+    const empty = table.findEmptySlot();
+    const status = reason === 'not_started' ? 'Not started on port 9313' : `Not answering at ${emulator.endpoint}`;
+    expect(empty?.findStatusIndicator()?.getElement().textContent).toBe(status);
+    expect(empty?.findLink()?.getElement()).toHaveAccessibleName('Connection status');
+    expect(empty?.findLink()?.getElement()).toHaveAttribute('href', '/');
+    const retry = empty?.findButton();
+    expect(retry?.getElement()).toHaveAccessibleName('Retry');
+    retry?.click();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  },
+);

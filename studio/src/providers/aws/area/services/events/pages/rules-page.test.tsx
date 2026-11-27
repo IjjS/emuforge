@@ -47,7 +47,7 @@ function renderPage(query = '') {
     <MemoryRouter initialEntries={[rulesPath + query]}>
       <QueryClientProvider client={new QueryClient()}>
         <PageResourcesContext.Provider value={resources}>
-          <RulesPage connection={{ engineOrigin: endpoint }} />
+          <RulesPage connection={{ engineOrigin: endpoint, result: undefined }} />
         </PageResourcesContext.Provider>
         <Address />
       </QueryClientProvider>

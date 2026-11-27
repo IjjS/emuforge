@@ -120,18 +120,22 @@ it.each(failures)('shows a failed DescribeEventBus read and retries (%s)', async
   expect(read).toHaveBeenCalledTimes(2);
 });
 
-it('shows connection recovery when the emulator is not started', async () => {
-  const emulator = { port: 9313, endpoint: 'https://127.0.0.1:9313' };
-  read.mockRejectedValueOnce(new RequestError({ kind: 'emulator-did-not-answer', operation, message: '' }));
-  const { layout } = renderPage({
-    kind: 'emulator-unreachable',
-    checkedAt: 0,
-    emulator,
-    reason: 'not_started',
-    message: '',
-  });
-  const content = layout.findContent();
-  await waitFor(() => expect(content.findStatusIndicator()?.getElement().textContent).toBe('Not started on port 9313'));
-  expect(content.findLink()?.getElement()).toHaveAccessibleName('Connection status');
-  expect(content.findLink()?.getElement()).toHaveAttribute('href', '/');
-});
+it.each(['not_started', 'connection_failed'] as const)(
+  'shows connection recovery and retries when the emulator is %s',
+  async (reason) => {
+    const emulator = { port: 9313, endpoint: 'https://127.0.0.1:9313' };
+    read
+      .mockRejectedValueOnce(new RequestError({ kind: 'emulator-did-not-answer', operation, message: '' }))
+      .mockResolvedValueOnce(bus);
+    const { layout } = renderPage({ kind: 'emulator-unreachable', checkedAt: 0, emulator, reason, message: '' });
+    const content = layout.findContent();
+    const status = reason === 'not_started' ? 'Not started on port 9313' : `Not answering at ${emulator.endpoint}`;
+    await waitFor(() => expect(content.findStatusIndicator()?.getElement().textContent).toBe(status));
+    expect(content.findLink()?.getElement()).toHaveAccessibleName('Connection status');
+    expect(content.findLink()?.getElement()).toHaveAttribute('href', '/');
+    const retry = content.findButton();
+    expect(retry?.getElement()).toHaveAccessibleName('Retry');
+    retry?.click();
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  },
+);

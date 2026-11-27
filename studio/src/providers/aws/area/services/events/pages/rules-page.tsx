@@ -10,6 +10,7 @@ import { useNavigationType, useSearchParams } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { BusSelect } from '../components/bus-select';
 import { RulesTable } from '../components/rules-table';
@@ -62,7 +63,9 @@ export function RulesPage({ connection }: Pick<ScreenPageProps, 'connection'>) {
         {bus !== undefined && <RulesTable key={bus} connection={connection} bus={bus} />}
         {choice.kind === 'invalid' && (
           <Container>
-            <Box textAlign="center">{choice.message}</Box>
+            <Box textAlign="center">
+              <ValueText kind="text" value={choice.message} />
+            </Box>
           </Container>
         )}
         {choice.kind === 'loading' && (

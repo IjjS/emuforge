@@ -121,12 +121,19 @@ it.each(['not_started', 'connection_failed'] as const)(
   'offers connection recovery when the emulator is %s',
   async (reason) => {
     const emulator = { port: 9313, endpoint: 'https://127.0.0.1:9313' };
-    read.mockRejectedValueOnce(new RequestError({ kind: 'emulator-did-not-answer', operation, message: '' }));
+    read
+      .mockRejectedValueOnce(new RequestError({ kind: 'emulator-did-not-answer', operation, message: '' }))
+      .mockResolvedValueOnce({ items: [] });
     const table = renderTable({ kind: 'emulator-unreachable', checkedAt: 0, emulator, reason, message: '' });
     const status = reason === 'not_started' ? 'Not started on port 9313' : `Not answering at ${emulator.endpoint}`;
     await waitFor(() => expect(table.findEmptySlot()?.findStatusIndicator()?.getElement().textContent).toBe(status));
-    const link = table.findEmptySlot()?.findLink()?.getElement();
+    const empty = table.findEmptySlot();
+    const link = empty?.findLink()?.getElement();
     expect(link).toHaveAccessibleName('Connection status');
     expect(link).toHaveAttribute('href', '/');
+    const retry = empty?.findButton();
+    expect(retry?.getElement()).toHaveAccessibleName('Retry');
+    retry?.click();
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   },
 );

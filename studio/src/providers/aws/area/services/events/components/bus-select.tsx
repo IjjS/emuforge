@@ -5,6 +5,7 @@ import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure } from '../../../components/failure-states';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
+import { ValueText } from '../../../components/value-text';
 import { BUS_OPERATIONS, listEventBuses } from '../bus-api';
 import type { BusChoice } from '../use-bus-choice';
 
@@ -38,7 +39,7 @@ export function BusSelect({ connection, choice, onChange }: BusSelectProps) {
   return (
     <FormField
       label="Event bus"
-      errorText={invalid ? choice.message : undefined}
+      errorText={invalid ? <ValueText kind="text" value={choice.message} /> : undefined}
       secondaryControl={
         failure && choice.kind === 'failed' ? <ReadFailure state={failure} onRetry={choice.retry} /> : undefined
       }

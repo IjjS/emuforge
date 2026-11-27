@@ -28,7 +28,7 @@ function renderField(initialChoice: BusChoice = { kind: 'chosen', name: 'default
     const [choice, setChoice] = useState(initialChoice);
     return (
       <BusSelect
-        connection={{ engineOrigin: endpoint }}
+        connection={{ engineOrigin: endpoint, result: undefined }}
         choice={choice}
         onChange={(name) => {
           setChoice({ kind: 'chosen', name });
