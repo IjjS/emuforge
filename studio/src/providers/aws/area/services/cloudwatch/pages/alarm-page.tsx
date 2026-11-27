@@ -157,25 +157,25 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" disabled={actions.pending} onClick={handleRefresh} />
                 {alarm !== undefined && (
-                  <>
-                    <Button
-                      disabled={engineOrigin === undefined || alarm.type === 'log' || actions.pending}
-                      disabledReason={
-                        alarm.type === 'log' ? 'The emulator does not set the state of a log alarm.' : undefined
-                      }
-                      onClick={() => setStateDialog({ currentState: alarm.data.StateValue })}
-                    >
-                      Set state
-                    </Button>
-                    <Button
-                      disabled={engineOrigin === undefined || actions.unavailable}
-                      disabledReason={actions.disabledReason}
-                      loading={actions.pending}
-                      onClick={() => void actions.toggle()}
-                    >
-                      {actions.label}
-                    </Button>
-                  </>
+                  <Button
+                    disabled={engineOrigin === undefined || alarm.type === 'log' || actions.pending}
+                    disabledReason={
+                      alarm.type === 'log' ? 'The emulator does not set the state of a log alarm.' : undefined
+                    }
+                    onClick={() => setStateDialog({ currentState: alarm.data.StateValue })}
+                  >
+                    Set state
+                  </Button>
+                )}
+                {alarm !== undefined && (
+                  <Button
+                    disabled={engineOrigin === undefined || actions.unavailable}
+                    disabledReason={actions.disabledReason}
+                    loading={actions.pending}
+                    onClick={() => void actions.toggle()}
+                  >
+                    {actions.label}
+                  </Button>
                 )}
                 {alarm !== undefined && isEditableAlarm(alarm) && (
                   <Button href={editAlarmPath(name)} onFollow={follow}>
