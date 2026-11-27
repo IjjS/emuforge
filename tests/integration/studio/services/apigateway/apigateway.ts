@@ -121,11 +121,31 @@ export async function fixture(ctx: Ctx) {
 
   /** A request the check itself sends to the emulator on loopback, with the run's CA; redirects are not followed. */
   function callOutside(pathname: string, options: { host?: string; method?: string } = {}): Promise<Outside> {
+    return requestAt('127.0.0.1', port, pathname, options);
+  }
+
+  /**
+   * A request to the whole address `address` as it is written (its host, its port, its path and query), with the
+   * run's CA and no redirect followed. Only a loopback IP address is requested; anything else is refused unsent.
+   */
+  function callAddress(address: URL): Promise<Outside> {
+    if (address.protocol !== 'https:' || address.hostname !== '127.0.0.1') {
+      throw new Error(`not requested: ${address.href} is not an https address on 127.0.0.1`);
+    }
+    return requestAt(address.hostname, Number(address.port), `${address.pathname}${address.search}`, {});
+  }
+
+  function requestAt(
+    host: string,
+    onPort: number,
+    pathname: string,
+    options: { host?: string; method?: string },
+  ): Promise<Outside> {
     return new Promise((resolve, reject) => {
       const request = https.request(
         {
-          host: '127.0.0.1',
-          port,
+          host,
+          port: onPort,
           path: pathname,
           method: options.method ?? 'GET',
           ca,
@@ -164,6 +184,7 @@ export async function fixture(ctx: Ctx) {
     iam,
     makeFunction,
     callOutside,
+    callAddress,
     /** A REST stage's path on the emulator: `/_aws/execute-api/<id>/<stage><resource path>`. */
     restStagePath: (apiId: string, stage: string, resourcePath: string) =>
       `/_aws/execute-api/${apiId}/${stage}${resourcePath}`,

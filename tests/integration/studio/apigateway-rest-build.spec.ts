@@ -121,7 +121,7 @@ test('studio.apigateway-build-a-rest-api-with-a-mock-and-call-it', async ({ ctx,
   // The request goes to the address read from the screen, not to one the check builds (issue 691).
   const shown = await shownStageAddress(f, tableOf(page, 'Stages'), id, 'dev');
 
-  const hello = await f.callOutside(`${shown.pathname}/hello`);
+  const hello = await f.callAddress(new URL(`${shown.href}/hello`));
   expect(hello).toMatchObject({ status: 200, body });
   const resources = await f.rest.getResources({ restApiId: id, limit: 500 });
   const helloId = resources.items!.find((resource) => resource.path === '/hello')!.id!;
