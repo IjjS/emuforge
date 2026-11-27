@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { readRestApi, readRestResource, readRestResources, readRestStages, readStageAddress } from './rest-api';
+import { readRestApi, readRestResource, readRestResources, readRestStages } from './rest-api';
 
 const endpoint = 'http://127.0.0.1:9682';
 const apiPath = '/restapis/api-1';
@@ -73,29 +73,15 @@ it('uses the position, page limit and embedded methods, retaining both kinds of 
   });
 });
 
-it('reads stages and gets the invoke URL from the first OpenAPI server and its base path default', async () => {
-  sent
-    .mockReturnValueOnce(Response.json({ item: [{ stageName: 'dev', deploymentId: 'deploy-1' }] }))
-    .mockReturnValueOnce(
-      Response.json({
-        servers: [
-          {
-            url: 'https://127.0.0.1:9683/_aws/execute-api/api-1/{basePath}',
-            variables: { basePath: { default: 'dev' } },
-          },
-          { url: 'https://127.0.0.1:9683/another' },
-        ],
-      }),
-    )
-    .mockReturnValueOnce(Response.json({ openapi: '3.0.1' }));
-  await expect(readRestStages(endpoint, 'api-1', signal)).resolves.toMatchObject([
-    { stageName: 'dev', deploymentId: 'deploy-1' },
-  ]);
+it('reads the stages as returned by the emulator in one GetStages request', async () => {
+  const stages = [
+    { stageName: 'dev', deploymentId: 'deploy-1', lastUpdatedDate: new Date('2026-11-26T12:00:00Z') },
+    { stageName: 'prod', deploymentId: 'deploy-2' },
+  ];
+  sent.mockReturnValueOnce(Response.json({ item: stages }));
+
+  await expect(readRestStages(endpoint, 'api-1', signal)).resolves.toEqual(stages);
+  expect(sent).toHaveBeenCalledOnce();
   expect(sent.mock.calls[0]?.[0].pathname).toBe(`${apiPath}/stages`);
-  await expect(readStageAddress(endpoint, 'api-1', 'dev', signal)).resolves.toBe(
-    'https://127.0.0.1:9683/_aws/execute-api/api-1/dev',
-  );
-  expect(sent.mock.calls[1]?.[0].pathname).toBe(`${apiPath}/stages/dev/exports/oas30`);
-  expect(sent.mock.calls[1]?.[1].headers.get('accept')).toBe('application/json');
-  await expect(readStageAddress(endpoint, 'api-1', 'other', signal)).resolves.toBeNull();
+  expect(sent.mock.calls[0]?.[1].method).toBe('GET');
 });
