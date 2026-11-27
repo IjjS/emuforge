@@ -98,9 +98,10 @@ function change(editor: Editor, row: number, column: number, value: string) {
 function editTags(editor: Editor) {
   editor.findRow(1)?.findRemoveButton()?.click();
   change(editor, 1, 2, 'local');
+  const added = editor.findRows().length + 1;
   editor.findAddButton().click();
-  change(editor, 2, 1, 'project');
-  change(editor, 2, 2, 'orders');
+  change(editor, added, 1, 'project');
+  change(editor, added, 2, 'orders');
 }
 
 function refusal(operation: TagWriteOperation) {
@@ -162,10 +163,13 @@ it('keeps the operation and reason in the dialog when removals are refused', asy
   expect(onDismiss).not.toHaveBeenCalled();
 });
 
-it('shows the partial save and sends only the changes still missing from the re-read tags', async () => {
+it('shows a partial save and retries only the missing edits alongside outside changes', async () => {
+  const openingTags = { ...initial, environment: 'dev' };
   write.mockRejectedValueOnce(new PartialTagSaveError(refusal('TagResource')));
-  listTags.mockResolvedValueOnce(initial).mockResolvedValueOnce({ team: 'core' });
-  const { modal, editor, save, onSaved } = await open();
+  listTags
+    .mockResolvedValueOnce(openingTags)
+    .mockResolvedValueOnce({ team: 'core', environment: 'prod', outside: 'added', project: 'orders' });
+  const { modal, editor, save, onSaved } = await open(openingTags);
   editTags(editor);
   save.click();
   await waitFor(() => {
@@ -178,13 +182,20 @@ it('shows the partial save and sends only the changes still missing from the re-
     expect(listTags).toHaveBeenCalledTimes(2);
     expect(save.getElement()).toBeEnabled();
   });
+  expect(write).toHaveBeenCalledExactlyOnceWith(
+    endpoint,
+    arn,
+    { remove: ['old'], put: { team: 'local', project: 'orders' } },
+    expect.any(AbortSignal),
+  );
   expect(onSaved).not.toHaveBeenCalled();
   save.click();
   await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  expect(write).toHaveBeenCalledTimes(2);
   expect(write).toHaveBeenLastCalledWith(
     endpoint,
     arn,
-    { remove: [], put: { team: 'local', project: 'orders' } },
+    { remove: [], put: { team: 'local' } },
     expect.any(AbortSignal),
   );
 });

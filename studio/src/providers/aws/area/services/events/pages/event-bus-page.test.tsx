@@ -448,6 +448,28 @@ it('keeps Manage tags disabled until the tags are read', async () => {
   await waitFor(() => expect(manageTagsButton(page)?.getElement()).toBeEnabled());
 });
 
+it('dismisses an untouched tag draft when a reread includes a tag added elsewhere', async () => {
+  read.mockResolvedValue(loaded);
+  vi.mocked(listResourceTags)
+    .mockResolvedValueOnce({ team: 'core' })
+    .mockResolvedValueOnce({ team: 'core', outside: 'added' });
+  const page = renderPage(undefined, 'orders');
+  const { modal, save } = await openSettings(page, 'Manage tags');
+  expect(modal.findContent().findAttributeEditor()?.findRows()).toHaveLength(1);
+
+  await act(async () => page.client.refetchQueries({ queryKey: ['events', 'tags'] }));
+  await waitFor(() => {
+    const table = tagTable(page);
+    expect(table?.findBodyCell(2, 1)?.getElement()).toHaveTextContent('outside');
+    expect(table?.findBodyCell(2, 2)?.getElement()).toHaveTextContent('added');
+  });
+  expect(listResourceTags).toHaveBeenCalledTimes(2);
+  save.click();
+  expect(createWrapper(page.container).findModal()).toBeNull();
+  expect(saveBusTags).not.toHaveBeenCalled();
+  expect(page.show).not.toHaveBeenCalled();
+});
+
 it('refreshes the description without restarting the tags and rules reads', async () => {
   const fresh = deferred<EventBusRead>();
   read.mockResolvedValueOnce(loaded).mockReturnValueOnce(fresh.promise);

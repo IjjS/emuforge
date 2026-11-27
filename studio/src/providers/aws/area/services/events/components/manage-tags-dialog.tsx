@@ -51,9 +51,6 @@ export function ManageTagsDialog({
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<{ operation: TagWriteOperation; reason: RequestFailure }>();
   const [partial, setPartial] = useState<string>();
-  const changes = tags.value === undefined ? undefined : tagChanges(tags.value, tagsToRecord(draft));
-  const removing = Boolean(changes?.remove.length);
-  const putting = changes !== undefined && Object.keys(changes.put).length > 0;
   const unsupported = unavailable ?? (failure?.reason.kind === 'not-implemented' ? failure.operation : undefined);
   const shownFailure =
     unsupported === undefined
@@ -63,7 +60,8 @@ export function ManageTagsDialog({
   const readFailure = tags.failure && readFailureState(tags.failure, connection, 'event bus tags');
 
   async function handleSave() {
-    if (busy.current || changes === undefined || unsupported !== undefined) return;
+    const latestTags = tags.value;
+    if (busy.current || latestTags === undefined || unsupported !== undefined) return;
 
     setTried(true);
     const validation = validateTags(draft);
@@ -73,7 +71,17 @@ export function ManageTagsDialog({
       return;
     }
     if (validation.limit !== undefined) return;
-    if (!removing && !putting) {
+    const intended = tagChanges(initialTags, tagsToRecord(draft));
+    const changes = {
+      remove: intended.remove.filter((key) => Object.hasOwn(latestTags, key)),
+      put: Object.fromEntries(
+        Object.entries(intended.put).filter(
+          ([key, value]) => !Object.hasOwn(latestTags, key) || latestTags[key] !== value,
+        ),
+      ),
+    };
+    const removing = changes.remove.length > 0;
+    if (!removing && Object.keys(changes.put).length === 0) {
       onDismiss();
       return;
     }
@@ -119,7 +127,7 @@ export function ManageTagsDialog({
             <Button
               variant="primary"
               loading={pending}
-              disabled={changes === undefined || unsupported !== undefined}
+              disabled={tags.value === undefined || unsupported !== undefined}
               onClick={() => void handleSave()}
             >
               Save
