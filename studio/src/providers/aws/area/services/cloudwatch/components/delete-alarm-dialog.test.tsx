@@ -60,7 +60,7 @@ async function controls() {
     if (!dialog?.isVisible()) throw new Error('Delete confirmation is missing');
     return dialog;
   });
-  const field = modal.findContent().findFormField()?.findInput()?.findNativeInput().getElement();
+  const field = modal.findContent().findInput()?.findNativeInput().getElement();
   const buttons = modal.findFooter()?.findAllButtons();
   const action = buttons?.find((button) => button.findTextRegion()?.getElement().textContent === 'Delete');
   const cancel = buttons?.find((button) => button.findTextRegion()?.getElement().textContent === 'Cancel');

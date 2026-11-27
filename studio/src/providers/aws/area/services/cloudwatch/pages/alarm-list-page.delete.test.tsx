@@ -110,7 +110,7 @@ function modalButton(modal: DeleteModal, label: string) {
 }
 
 function confirm(modal: DeleteModal) {
-  const field = modal.findContent().findFormField()?.findInput()?.findNativeInput().getElement();
+  const field = modal.findContent().findInput()?.findNativeInput().getElement();
   if (!field) throw new Error('Delete confirmation field is missing');
   expect(field).toHaveAccessibleName('To confirm, type delete.');
   fireEvent.change(field, { target: { value: 'delete' } });

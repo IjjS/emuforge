@@ -140,7 +140,7 @@ function modalButton(modal: DeleteModal, label: string) {
 }
 
 function confirmationField(modal: DeleteModal) {
-  return modal.findContent().findFormField()?.findInput()?.findNativeInput().getElement();
+  return modal.findContent().findInput()?.findNativeInput().getElement();
 }
 
 function confirm(modal: DeleteModal) {
