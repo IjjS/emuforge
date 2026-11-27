@@ -350,13 +350,21 @@ function wireTask(status: string, extra: Record<string, unknown> = {}) {
 async function openRedrive(queue: FakeQueue = DLQ) {
   engine.queues = [queue, ...[DLQ, ORDERS, PARKING, PAYMENTS].filter((other) => other.name !== queue.name)];
   open(`/aws/sqs/queues/queue/${queue.name}`);
-  await screen.findByRole('heading', { name: 'Details' });
-  const link = (PAGE.findTabs()?.findTabLinks() ?? []).find((each) => text(each.getElement()) === 'Redrive');
-  expect(link).toBeDefined();
+  const link = await waitFor(() => {
+    expect(PAGE.findAllHeaders().some((header) => text(header.findHeadingText().getElement()) === 'Details')).toBe(
+      true,
+    );
+    const redrive = PAGE.findTabs()?.findTabLinkById('redrive');
+    expect(redrive?.getElement()).toHaveTextContent(/^Redrive$/);
+    return redrive;
+  });
   act(() => {
     link?.click();
   });
-  await screen.findByRole('heading', { name: /^Move messages/ });
+  await waitFor(() => {
+    const header = PAGE.findTabs()?.findTabContent()?.findHeader();
+    expect(header?.findHeadingText().getElement()).toHaveTextContent(/^Move messages$/);
+  });
 }
 
 /** The form's description: the sentence of the move. */
@@ -430,18 +438,23 @@ function setRate(value: string) {
 
 async function start() {
   const before = engine.of('StartMessageMoveTask').length;
-  await waitFor(() => {
-    expect(button('Start').getAttribute('aria-disabled')).not.toBe('true');
+  const startButton = await waitFor(() => {
+    const action = PAGE.findTabs()?.findTabContent()?.findForm()?.findActions()?.findButton();
+    expect(action?.findTextRegion()?.getElement()).toHaveTextContent(/^Start$/);
+    expect(action?.isDisabled()).toBe(false);
+    return action;
   });
-  fireEvent.click(button('Start'));
+  act(() => {
+    startButton?.click();
+  });
   await waitFor(() => {
     expect(engine.of('StartMessageMoveTask')).toHaveLength(before + 1);
   });
 }
 
 function tasksTable() {
-  const found = PAGE.findAllTables().find((each) =>
-    text(each.findHeaderSlot()?.getElement() ?? document.body).startsWith('Move tasks'),
+  const found = PAGE.findAllTables().find(
+    (each) => each.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Move tasks',
   );
   expect(found).toBeDefined();
   return found as NonNullable<typeof found>;
@@ -778,14 +791,18 @@ describe('reading move tasks after a start', () => {
   const startSuccess: [string, string][] = [['Started: move the messages of orders-dlq back to its source queues', '']];
 
   function expectRow(status: string, counts: string) {
-    expect(taskRows().map((row) => row.slice(0, 3))).toEqual([[status, 'Source queues', counts]]);
+    const table = tasksTable();
+    expect(table.findRows()).toHaveLength(1);
+    expect(table.findBodyCell(1, 1)?.findStatusIndicator()?.getElement().textContent).toBe(status);
+    expect(table.findBodyCell(1, 2)?.getElement()).toHaveTextContent(/^Source queues$/);
+    expect(table.findBodyCell(1, 3)?.getElement().textContent).toBe(counts);
   }
 
   async function waitForEmptyTasks() {
     await waitFor(() => {
-      const emptySlot = tasksTable().findEmptySlot()?.getElement();
-      expect(emptySlot).toHaveTextContent('No move tasks');
-      expect(emptySlot).toHaveTextContent('No move tasks are listed for this queue.');
+      const emptySlot = tasksTable().findEmptySlot();
+      expect(emptySlot?.findBox('strong')?.getElement()).toHaveTextContent(/^No move tasks$/);
+      expect(emptySlot?.findBox('p')?.getElement()).toHaveTextContent(/^No move tasks are listed for this queue\.$/);
     });
   }
 
@@ -911,17 +928,17 @@ describe('reading move tasks after a start', () => {
     await reply(later, refused(403, 'AccessDenied', 'no policy allows it'));
     const retry = await waitFor(() => {
       const failure = PAGE.findAllContainers().find((container) => {
-        const header = container.findHeader()?.getElement();
+        const header = container.findHeader()?.findHeader()?.findHeadingText().getElement();
         return header !== undefined && text(header) === 'Move tasks';
       });
       const content = failure?.findContent();
       expect(content?.findStatusIndicator()?.getElement()).toHaveTextContent(/^Access denied$/);
-      expect(content?.find('p')?.getElement()).toHaveTextContent(
+      expect(content?.findBox('p')?.getElement()).toHaveTextContent(
         /^ListMessageMoveTasks was refused: no policy allows it$/,
       );
       expect(PAGE.findTable()).toBeNull();
       const button = content?.findButton();
-      expect(button?.getElement()).toHaveTextContent(/^Retry$/);
+      expect(button?.findTextRegion()?.getElement()).toHaveTextContent(/^Retry$/);
       return button;
     });
     act(() => {
@@ -941,7 +958,15 @@ describe('reading move tasks after a start', () => {
     engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'handle-1' }));
     await openRedrive();
     await waitForEmptyTasks();
-    fireEvent.click(button('Refresh move tasks'));
+    const refreshButton = tasksTable()
+      .findHeaderSlot()
+      ?.findHeader()
+      ?.findActions()
+      ?.findButton('[aria-label="Refresh move tasks"]');
+    expect(refreshButton?.isDisabled()).toBe(false);
+    act(() => {
+      refreshButton?.click();
+    });
     await waitForReads(2);
     await start();
     await expectFlash(startSuccess);
