@@ -119,6 +119,7 @@ export interface AlarmFormProps {
   failure?: RequestFailure | undefined;
   fieldErrors?: (Omit<AlarmFormErrors, 'name'> & { name?: ReactNode }) | undefined;
   feedback?: ReactNode;
+  metricKey?: string;
 }
 
 export function AlarmForm({
@@ -133,6 +134,7 @@ export function AlarmForm({
   failure,
   fieldErrors,
   feedback,
+  metricKey,
 }: AlarmFormProps) {
   const openingKey = useId();
   const [tried, setTried] = useState(false);
@@ -262,6 +264,7 @@ export function AlarmForm({
             <Container header={<Header variant="h2">Metric</Header>}>
               <SpaceBetween size="m">
                 <MetricField
+                  key={metricKey}
                   connection={connection}
                   value={values.metric}
                   errors={errors}
@@ -362,6 +365,7 @@ export function AlarmForm({
                   <ActionTopicsField
                     key={field}
                     openingKey={openingKey}
+                    baseline={mode === 'edit' ? initialValues[field] : undefined}
                     connection={connection}
                     label={ACTION_LABELS[field]}
                     value={values[field]}
