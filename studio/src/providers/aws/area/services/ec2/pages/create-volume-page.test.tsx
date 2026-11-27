@@ -252,14 +252,8 @@ describe('create volume', () => {
     expect(type.findTrigger().getElement()).toHaveTextContent('gp2');
     expect(field('size').findConstraint()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
     act(() => type.openDropdown());
-    const options = type
-      .findDropdown()
-      .findOptions()
-      .map((option) => [
-        option.findLabel().getElement().textContent,
-        option.findDescription()?.getElement().textContent,
-      ]);
-    expect(options).toEqual([
+    const dropdown = type.findDropdown();
+    const descriptions = [
       ['standard', '1 to 1024 GiB. IOPS and throughput cannot be set.'],
       ['gp2', '1 to 16384 GiB. IOPS and throughput cannot be set.'],
       ['gp3', '1 to 65536 GiB. 3000 IOPS and 125 MiB/s unless you set them.'],
@@ -267,7 +261,13 @@ describe('create volume', () => {
       ['io2', '4 to 65536 GiB. IOPS must be set.'],
       ['st1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
       ['sc1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
-    ]);
+    ] as const;
+    expect(dropdown.findOptions()).toHaveLength(descriptions.length);
+    for (const [value, description] of descriptions) {
+      const option = dropdown.findOptionByValue(value);
+      expect(option?.findLabel().getElement().textContent).toBe(value);
+      expect(option?.findDescription()?.getElement().textContent).toBe(description);
+    }
     act(() => type.closeDropdown());
     const zone = await openZoneChoices('us-east-1b');
     expect(zone.findOptionByValue('us-east-1b')?.getElement()).toHaveTextContent('use1-az2');
@@ -439,12 +439,30 @@ describe('create volume', () => {
     );
   });
 
+  it('shows a 501 at Availability Zone and leaves the required zone unavailable', async () => {
+    vi.mocked(listAvailabilityZones).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
+    );
+    open();
+    const zone = field('zone');
+    await waitFor(() =>
+      expect(zone.findConstraint()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+    );
+    expect(zone.findConstraint()?.getElement()).toHaveTextContent(
+      'The emulator answered 501 Not Implemented for DescribeAvailabilityZones',
+    );
+    expect(select().findTrigger().getElement()).toBeDisabled();
+    expect(formAction('Create volume').getElement()).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('retries a failed zone read and offers the returned choices in order', async () => {
     vi.mocked(listAvailabilityZones).mockRejectedValueOnce(
       new RequestError({ kind: 'other', operation: 'DescribeAvailabilityZones', code: 'InternalError' }),
     );
     open();
     await waitFor(() => expect(zoneReadFailure()?.getElement()).toHaveTextContent('InternalError'));
+    expect(zoneReadFailure()?.getElement()).toHaveTextContent('The Availability Zones could not be read');
     const retry = zoneReadFailure()?.findButton();
     if (retry == null) throw new Error('Missing availability zone retry action');
     expect(retry.getElement()).toHaveAccessibleName('Retry');

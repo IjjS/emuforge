@@ -1,4 +1,5 @@
 import Alert from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import Container from '@cloudscape-design/components/container';
@@ -8,6 +9,7 @@ import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
@@ -47,6 +49,10 @@ function CreateVolumeForm({
   const refresh = useRefreshVolumeData();
   const create = useCreateVolume(endpoint);
   const zones = useAvailabilityZones(endpoint);
+  const zoneNotImplemented =
+    zones.failure?.kind === 'not-implemented'
+      ? readFailureState(zones.failure, connection, 'Availability Zones')
+      : undefined;
   const [zone, setZone] = useState<string>();
   const [settings, setSettings] = useState(DEFAULT_VOLUME_SETTINGS);
   const [snapshot, setSnapshot] = useState<VolumeSnapshot>();
@@ -99,7 +105,7 @@ function CreateVolumeForm({
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || asking || unavailable || endpoint === undefined) return;
+    if (busy.current || asking || unavailable || zoneNotImplemented !== undefined || endpoint === undefined) return;
 
     setTried(true);
     if (selected === undefined || zone === undefined) {
@@ -178,7 +184,7 @@ function CreateVolumeForm({
       <Header variant="h1" description="Choose the zone where you will attach this volume.">
         Create volume
       </Header>
-      {zones.failure !== undefined && (
+      {zones.failure !== undefined && zoneNotImplemented === undefined && (
         <ReadFailure state={readFailureState(zones.failure, connection, 'Availability Zones')} onRetry={zones.retry} />
       )}
       {failure !== undefined && (
@@ -197,7 +203,7 @@ function CreateVolumeForm({
                 variant="primary"
                 loading={pending}
                 loadingText="Creating volume"
-                disabled={unavailable || endpoint === undefined}
+                disabled={unavailable || zoneNotImplemented !== undefined || endpoint === undefined}
               >
                 Create volume
               </Button>
@@ -210,6 +216,14 @@ function CreateVolumeForm({
                 <FormField
                   label="Availability Zone"
                   errorText={tried && selected === undefined ? 'Choose an Availability Zone.' : undefined}
+                  constraintText={
+                    zoneNotImplemented && (
+                      <SpaceBetween size="xxs">
+                        <StatusIndicator type={zoneNotImplemented.type}>{zoneNotImplemented.first}</StatusIndicator>
+                        <Box>{zoneNotImplemented.detail}</Box>
+                      </SpaceBetween>
+                    )
+                  }
                 >
                   <Select
                     ref={zoneRef}
@@ -220,7 +234,7 @@ function CreateVolumeForm({
                     empty="No Availability Zones"
                     statusType={zones.loading && endpoint !== undefined ? 'loading' : 'finished'}
                     onChange={({ detail }) => setZone(detail.selectedOption.value)}
-                    disabled={pending || endpoint === undefined}
+                    disabled={pending || zoneNotImplemented !== undefined || endpoint === undefined}
                   />
                 </FormField>
                 <FormField label="Volume type" errorText={errors.type}>
