@@ -297,7 +297,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
       await name().fill(`${p}-web`, ACTION);
       await chooseImageAndType();
       await chooseOption(keyPair(), key);
-      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText(w.defaultVpc, { timeout: 20_000 });
       await chooseOption(subnet(), w.subnet['us-east-1b']!);
       await chooseInMultiselect(groups(), g, `${p}-g`);
       await submit().click(ACTION);
@@ -330,7 +330,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
     'S2 with the default VPC as "VPC" stands, H\'s name typed in "Security groups" → "No security groups match"; with the second VPC chosen in "VPC", the same text → H is offered (changed, issue 651)',
     async () => {
       await open(page, LAUNCH_PATH, LAUNCH);
-      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText(w.defaultVpc, { timeout: 20_000 });
       await typeInMultiselect(groups(), `${p}-h`);
       const m = multiselectOf(groups());
       await expect(m.list, `"${NO_GROUPS_MATCH}"`).toContainText(NO_GROUPS_MATCH, { timeout: 20_000 });
@@ -347,7 +347,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
     'S2 with G chosen, then the second VPC chosen in "VPC" → no group is chosen any more (changed, issue 651)',
     async () => {
       await open(page, LAUNCH_PATH, LAUNCH);
-      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText('Default VPC', { timeout: 20_000 });
+      await expect(selectOf(vpc()), 'the default VPC as "VPC" stands').toContainText(w.defaultVpc, { timeout: 20_000 });
       await chooseInMultiselect(groups(), g, `${p}-g`);
       await chooseOption(vpc(), other.vpcId);
       await expect(multiselectOf(groups()).tokens, 'the chosen groups').toHaveCount(0);
