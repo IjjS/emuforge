@@ -157,8 +157,13 @@ function select(label: string) {
 
 async function pick(label: string, value: string) {
   const picker = select(label);
-  picker.openDropdown();
-  await waitFor(() => expect(picker.findDropdown().findOptionByValue(value)).not.toBeNull());
+  const trigger = picker.findTrigger().getElement();
+  await waitFor(() => {
+    expect(trigger).toBeEnabled();
+    expect(trigger).not.toHaveAttribute('aria-disabled', 'true');
+  });
+  fireEvent.click(trigger);
+  await waitFor(() => expect(picker.findDropdown().findOptionByValue(value), `${label}: ${value}`).not.toBeNull());
   picker.selectOptionByValue(value);
 }
 
