@@ -267,7 +267,7 @@ describe('Add route', () => {
       ['NatGatewayId', 'NAT gateway', "A NAT gateway of this table's VPC."],
       ['InstanceId', 'Instance', "An instance of this table's VPC."],
       ['NetworkInterfaceId', 'Network interface', "A network interface of this table's VPC."],
-    ]) {
+    ] as const) {
       const option = dropdown.findOptionByValue(value);
       expect(text(option?.findLabel().getElement())).toBe(label);
       expect(text(option?.findDescription()?.getElement())).toBe(description);

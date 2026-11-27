@@ -250,10 +250,10 @@ describe('Associate subnet', () => {
     const web = dropdown.findOptionByValue('subnet-1');
     expect(text(web?.findLabel().getElement())).toBe('subnet-1');
     expect(text(web?.findDescription()?.getElement())).toBe('web');
-    expect(web?.findTags().map((tag) => text(tag.getElement()))).toContain('us-east-1a · 10.0.1.0/24');
+    expect(web?.findTags()?.map((tag) => text(tag.getElement()))).toContain('us-east-1a · 10.0.1.0/24');
     const subnet = dropdown.findOptionByValue('subnet-2');
     expect(text(subnet?.findLabel().getElement())).toBe('subnet-2');
-    expect(subnet?.findTags().map((tag) => text(tag.getElement()))).toContain('us-east-1b · 10.0.2.0/24');
+    expect(subnet?.findTags()?.map((tag) => text(tag.getElement()))).toContain('us-east-1b · 10.0.2.0/24');
   });
 
   it('none → "No subnets"; a typed text that matches none → "No subnets match"', async () => {
