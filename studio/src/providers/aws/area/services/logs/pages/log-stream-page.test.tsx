@@ -137,11 +137,11 @@ it.each([
 it('shows the stored two-space name in the heading and gives it the exact accessible identity', async () => {
   const identity = 'a\\u0020\\u0020b';
   read.mockResolvedValueOnce(page([]));
-  renderPage(CONNECTED, '/aws/logs/log-groups/group/%2Fapp%23group/stream/a%20%20b');
+  const { container } = renderPage(CONNECTED, '/aws/logs/log-groups/group/%2Fapp%23group/stream/a%20%20b');
 
-  const heading = screen.getByRole('heading', { level: 1 });
-  expect(heading).toHaveAccessibleName(identity);
-  const name = heading.querySelector('[aria-hidden="true"]');
+  const heading = createWrapper(container).findHeader()?.findHeadingText();
+  expect(heading?.getElement().closest('h1')).toHaveAccessibleName(identity);
+  const name = heading?.find('[aria-hidden="true"]')?.getElement();
   expect(name).toBeVisible();
   expect(name?.textContent).toBe(`a  b (${identity})`);
   await waitFor(() => expect(emptyStream()).toBeVisible());
