@@ -12,6 +12,8 @@ import { flushSync } from 'react-dom';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -132,7 +134,7 @@ export function ApiListPage({ connection }: ScreenPageProps) {
       minWidth: '28ch',
       cell: (api) => (
         <Link href={api.kind === 'REST' ? restApiPath(api.id) : v2ApiPath(api.id)} onFollow={handleFollow}>
-          <ValueText kind="name" value={api.name} />
+          <NameText name={api.name} />
         </Link>
       ),
     },
@@ -209,7 +211,7 @@ export function ApiListPage({ connection }: ScreenPageProps) {
             ariaLabels={{
               tableLabel: title,
               selectionGroupLabel: 'API selection',
-              itemSelectionLabel: (_, api) => `Select ${api.name} (${api.kind})`,
+              itemSelectionLabel: (_, api) => `Select ${nameIdentity(api.name)} (${api.kind})`,
             }}
             items={rows}
             trackBy={apiRowKey}
