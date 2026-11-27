@@ -90,6 +90,14 @@ function shown(): string[] {
   return (field().findDropdown().findOptions() ?? []).map((option) => text(option.findLabel().getElement()));
 }
 
+function expectOptions(labelsByValue: Record<string, string>) {
+  const dropdown = field().findDropdown();
+  expect(dropdown.findOptions()).toHaveLength(Object.keys(labelsByValue).length);
+  for (const [value, label] of Object.entries(labelsByValue)) {
+    expect(text(dropdown.findOptionByValue(value)?.findLabel().getElement())).toBe(label);
+  }
+}
+
 function dropdownText(): string {
   return text(field().findDropdown().getElement());
 }
@@ -215,9 +223,11 @@ it('shows a disabled option and its reason without choosing it', async () => {
   read.mockResolvedValue({ items: [{ ...thing('a', 'alpha'), disabledReason: 'Already used' }] });
   open();
   field().openDropdown();
-  const option = await screen.findByRole('option', { name: /alpha/ });
-  expect(option).toHaveAttribute('aria-disabled', 'true');
-  expect(option).toHaveAccessibleDescription('Already used');
+  await waitFor(() => {
+    const option = field().findDropdown().findOptionByValue('a')?.getElement().closest('[role="option"]');
+    expect(option).toHaveAttribute('aria-disabled', 'true');
+    expect(option).toHaveAccessibleDescription('Already used');
+  });
   field().selectOptionByValue('a');
   expect(latest).toEqual([]);
 });
@@ -230,15 +240,15 @@ it('wraps the selected fixed description and retains it in the open list', async
   expect(screen.getByText(description)).toHaveStyle({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
 
   field().openDropdown();
-  await waitFor(() => expect(shown()).toEqual(['Default security group', 'a']));
-  const fixed = field().findDropdown().findOption(1);
-  expect(text(fixed?.getElement())).toContain(description);
+  await waitFor(() => expectOptions({ '': 'Default security group', a: 'a' }));
+  const fixed = field().findDropdown().findOptionByValue('');
+  expect(fixed?.findDescription()?.getElement()).toHaveTextContent(description);
   field().selectOptionByValue('a');
   expect(latest).toEqual([thing('a')]);
   expect(tokens()).toEqual(['a']);
   expect(screen.getAllByText(description)).toHaveLength(1);
 
-  field().selectOption(1);
+  field().selectOptionByValue('');
   expect(latest).toEqual([]);
   expect(tokens()).toEqual(['Default security group']);
   expect(screen.getAllByText(description)).toHaveLength(2);
@@ -248,12 +258,12 @@ it('reads a marked source again on reopen and keeps a chosen token from the earl
   read.mockResolvedValueOnce({ items: [thing('a')] }).mockResolvedValueOnce({ items: [thing('b')] });
   open({ readAgainOnOpen: true });
   field().openDropdown();
-  await waitFor(() => expect(shown()).toEqual(['a']));
+  await waitFor(() => expectOptions({ a: 'a' }));
   field().selectOptionByValue('a');
   field().closeDropdown();
   await waitFor(() => expect(field().findTrigger().getElement()).toHaveAttribute('aria-expanded', 'false'));
   field().openDropdown();
-  await waitFor(() => expect(shown()).toEqual(['b']));
+  await waitFor(() => expectOptions({ b: 'b' }));
   expect(read).toHaveBeenCalledTimes(2);
   expect(tokens()).toEqual(['a']);
   field().closeDropdown();
