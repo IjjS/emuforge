@@ -131,7 +131,7 @@ it('checks the bus again, sends the event, and flashes each accepted ID without 
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
   read.mockClear();
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
 
   await waitFor(() => expect(page.show).toHaveBeenCalledTimes(1));
   expect(read).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
@@ -143,7 +143,7 @@ it('checks the bus again, sends the event, and flashes each accepted ID without 
 
   fireEvent.change(page.source, { target: { value: 'warehouse' } });
   send.mockResolvedValueOnce({ kind: 'accepted', id: 'event-2' });
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   await waitFor(() => expect(page.show).toHaveBeenCalledTimes(2));
   expect(read).toHaveBeenCalledTimes(2);
   expect(send).toHaveBeenCalledTimes(2);
@@ -160,7 +160,7 @@ it('marks a bus deleted before send as missing and sends nothing', async () => {
   const page = renderPage('?bus=orders');
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   await waitFor(() =>
     expect(page.busField.findError()?.getElement().textContent).toBe(
       'Event bus orders is not in your local emulator. Choose an event bus.',
@@ -181,7 +181,7 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     );
     const page = renderPage();
     page.fill();
-    page.button.click();
+    fireEvent.click(page.button.getElement());
     await waitFor(() => expect(page.content.findAlert()?.getElement()).toBeVisible());
     const alert = page.content.findAlert();
     expect(alert?.findHeader()?.getElement().textContent).toBe(`${operation} failed`);
@@ -196,7 +196,7 @@ it('shows the failed entry code and message without an acceptance flash', async 
   send.mockResolvedValueOnce({ kind: 'refused', code: 'MalformedDetail', message: 'Detail is malformed.' });
   const page = renderPage();
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   await waitFor(() =>
     expect(page.content.findAlert()?.findContent().getElement().textContent).toBe(
       'The emulator did not accept the event: MalformedDetail: Detail is malformed.',
@@ -214,7 +214,7 @@ it.each(['DescribeEventBus', 'PutEvents'])(
     );
     const page = renderPage();
     page.fill();
-    page.button.click();
+    fireEvent.click(page.button.getElement());
     await waitFor(() =>
       expect(page.content.findAlert()?.findHeader()?.getElement().textContent).toBe('Not implemented by the emulator'),
     );
@@ -239,7 +239,7 @@ it('shows a 501 at the bus field when the address read fails and offers Retry', 
   expect(page.busField.getElement()).toHaveTextContent('DescribeEventBus');
   expect(page.select.findTrigger().getElement().textContent).toBe('Choose an event bus');
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
   expect(page.show).not.toHaveBeenCalled();
@@ -263,7 +263,7 @@ it.each([
     : 'The address names no event bus. Choose an event bus.';
   await waitFor(() => expect(page.busField.findError()?.getElement().textContent).toBe(error));
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(reads);
   expect(send).not.toHaveBeenCalled();
   expect(page.show).not.toHaveBeenCalled();
@@ -273,7 +273,7 @@ it('shows field rules before calling DescribeEventBus or PutEvents', () => {
   const page = renderPage();
   fireEvent.change(page.source, { target: { value: 'aws.shop' } });
   fireEvent.change(page.text, { target: { value: '[]' } });
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   expect(page.sourceField.findError()?.getElement().textContent).toBe('The source cannot start with aws.');
   expect(page.typeField.findError()?.getElement().textContent).toBe('Enter a detail type.');
   expect(page.detailField.findError()?.getElement().textContent).toBe('Enter a JSON object.');
@@ -288,11 +288,11 @@ it('uses the bus chosen from the list instead of an invalid address', async () =
   await waitFor(() =>
     expect(page.select.findDropdown().findOption(1)?.findLabel().getElement().textContent).toBe('orders'),
   );
-  page.select.selectOptionByValue('orders');
-  expect(page.busField.findError()).toBeNull();
+  await act(async () => page.select.selectOptionByValue('orders'));
+  expect(page.busField.findError()?.getElement().textContent).toBeUndefined();
   expect(read).not.toHaveBeenCalled();
   page.fill();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
   await waitFor(() => expect(page.show).toHaveBeenCalledTimes(1));
   expect(read).toHaveBeenCalledExactlyOnceWith(endpoint, 'orders', expect.any(AbortSignal));
   expect(send).toHaveBeenCalledExactlyOnceWith(endpoint, { ...event, EventBusName: 'orders' }, expect.any(AbortSignal));
@@ -313,20 +313,20 @@ it('keeps Send busy through both requests and ignores repeat presses', async () 
   );
   const page = renderPage();
   page.fill();
-  page.button.click();
-  expect(page.button.findLoadingIndicator()).not.toBeNull();
-  page.button.click();
+  fireEvent.click(page.button.getElement());
+  expect(page.button.findLoadingIndicator() !== null).toBe(true);
+  fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledExactlyOnceWith(endpoint, 'default', expect.any(AbortSignal));
   expect(send).not.toHaveBeenCalled();
 
   await act(async () => resolveBus(found('default')));
-  expect(page.button.findLoadingIndicator()).not.toBeNull();
-  page.button.click();
+  expect(page.button.findLoadingIndicator() !== null).toBe(true);
+  fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(1);
   expect(page.show).not.toHaveBeenCalled();
 
   await act(async () => resolveSend(accepted));
   expect(page.show).toHaveBeenCalledTimes(1);
-  expect(page.button.findLoadingIndicator()).toBeNull();
+  expect(page.button.findLoadingIndicator() !== null).toBe(false);
 });
