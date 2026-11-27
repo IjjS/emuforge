@@ -1,24 +1,27 @@
+const NO_IOPS_OR_THROUGHPUT = 'IOPS and throughput cannot be set.';
+const REQUIRED_IOPS = 'IOPS must be set.';
+
 const TYPES = {
-  standard: { size: [1, 1024], description: 'Magnetic storage for infrequent access.' },
-  gp2: { size: [1, 16384], description: 'General purpose SSD with IOPS based on volume size.' },
+  standard: { size: [1, 1024], description: NO_IOPS_OR_THROUGHPUT },
+  gp2: { size: [1, 16384], description: NO_IOPS_OR_THROUGHPUT },
   gp3: {
     size: [1, 65536],
     iops: { range: [3000, 80000], required: false },
     throughput: [125, 2000],
-    description: 'General purpose SSD with independently configurable IOPS and throughput.',
+    description: '3000 IOPS and 125 MiB/s unless you set them.',
   },
   io1: {
     size: [4, 16384],
     iops: { range: [100, 64000], required: true },
-    description: 'Provisioned IOPS SSD for workloads that need consistent performance.',
+    description: REQUIRED_IOPS,
   },
   io2: {
     size: [4, 65536],
     iops: { range: [100, 256000], required: true },
-    description: 'Provisioned IOPS SSD with a higher IOPS limit than io1.',
+    description: REQUIRED_IOPS,
   },
-  st1: { size: [125, 16384], description: 'Throughput optimized HDD for frequently accessed data.' },
-  sc1: { size: [125, 16384], description: 'Cold HDD storage for infrequently accessed data.' },
+  st1: { size: [125, 16384], description: NO_IOPS_OR_THROUGHPUT },
+  sc1: { size: [125, 16384], description: NO_IOPS_OR_THROUGHPUT },
 } as const;
 
 export type VolumeType = keyof typeof TYPES;
@@ -38,7 +41,7 @@ export function volumeRules(type: VolumeType): VolumeRules {
 export const VOLUME_TYPE_OPTIONS = (Object.keys(TYPES) as VolumeType[]).map((type) => ({
   value: type,
   label: type,
-  description: `${TYPES[type].description} Sizes: ${rangeText(TYPES[type].size)} GiB.`,
+  description: `${rangeText(TYPES[type].size)} GiB. ${TYPES[type].description}`,
 }));
 
 interface VolumeSettings {

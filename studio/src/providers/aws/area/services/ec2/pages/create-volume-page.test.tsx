@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -252,18 +252,21 @@ describe('create volume', () => {
     expect(type.findTrigger().getElement()).toHaveTextContent('gp2');
     expect(field('size').findConstraint()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
     act(() => type.openDropdown());
-    const descriptions = type
+    const options = type
       .findDropdown()
       .findOptions()
-      .map((option) => option.findDescription()?.getElement().textContent);
-    expect(descriptions).toEqual([
-      expect.stringContaining('Magnetic storage'),
-      expect.stringContaining('IOPS based on volume size'),
-      expect.stringContaining('independently configurable IOPS and throughput'),
-      expect.stringContaining('consistent performance'),
-      expect.stringContaining('higher IOPS limit'),
-      expect.stringContaining('Throughput optimized HDD'),
-      expect.stringContaining('Cold HDD'),
+      .map((option) => [
+        option.findLabel().getElement().textContent,
+        option.findDescription()?.getElement().textContent,
+      ]);
+    expect(options).toEqual([
+      ['standard', '1 to 1024 GiB. IOPS and throughput cannot be set.'],
+      ['gp2', '1 to 16384 GiB. IOPS and throughput cannot be set.'],
+      ['gp3', '1 to 65536 GiB. 3000 IOPS and 125 MiB/s unless you set them.'],
+      ['io1', '4 to 16384 GiB. IOPS must be set.'],
+      ['io2', '4 to 65536 GiB. IOPS must be set.'],
+      ['st1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
+      ['sc1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
     ]);
     act(() => type.closeDropdown());
     const zone = await openZoneChoices('us-east-1b');
@@ -302,13 +305,14 @@ describe('create volume', () => {
     );
   });
 
-  it('preselects the emulator’s encryption option when encryption is enabled', () => {
+  it('explains encryption and preselects the described default key option', () => {
     open();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Encrypt the volume' }));
-    expect(choice('KMS key').findTrigger().getElement()).toHaveTextContent('Chosen by the emulator');
-    expect(choice('KMS key').findTrigger().getElement()).toHaveTextContent(
-      'The emulator encrypts the volume without a specified KMS key.',
-    );
+    const encryption = screen.getByRole('checkbox', { name: 'Encrypt the volume' });
+    expect(encryption).toHaveAccessibleDescription('The emulator reports the volume as encrypted.');
+    fireEvent.click(encryption);
+    const key = within(choice('KMS key').findTrigger().getElement());
+    expect(key.getByText('Chosen by the emulator')).toBeVisible();
+    expect(key.getByText('No key is sent. The emulator reports the volume as encrypted, with no key.')).toBeVisible();
   });
 
   it('blocks a snapshot larger than the selected type and accepts it after a compatible type is chosen', async () => {
