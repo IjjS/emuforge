@@ -2,12 +2,17 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
-import { DESCRIBE_AVAILABILITY_ZONES, listAvailabilityZones } from '../lib/ec2-availability-zones';
+import {
+  DESCRIBE_AVAILABILITY_ZONES,
+  listAvailabilityZones,
+  type AvailabilityZone,
+} from '../lib/ec2-availability-zones';
 import { failureOf, noEndpoint } from './use-token-listing';
 
 /** The form's zone names, read state and retry. */
 export interface ZonesRead {
   zones: string[] | undefined;
+  zoneDetails: AvailabilityZone[] | undefined;
   failure: RequestFailure | undefined;
   loading: boolean;
   retry: () => void;
@@ -22,7 +27,15 @@ export function useAvailabilityZones(endpoint: string | undefined): ZonesRead {
   const [mount] = useState(() => (mounts += 1));
   const query = useQuery({
     queryKey: ['ec2-availability-zones', endpoint, mount, generation],
-    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : listAvailabilityZones(endpoint, signal)),
+    queryFn: async ({ signal }) => {
+      if (endpoint === undefined) return noEndpoint();
+
+      let zoneDetails: AvailabilityZone[] | undefined;
+      const zones = await listAvailabilityZones(endpoint, signal, (details) => {
+        zoneDetails = details;
+      });
+      return { zones, zoneDetails };
+    },
     enabled: endpoint !== undefined,
     staleTime: 0,
     gcTime: 0,
@@ -31,8 +44,10 @@ export function useAvailabilityZones(endpoint: string | undefined): ZonesRead {
   const retry = useCallback(() => {
     setGeneration((current) => current + 1);
   }, []);
+  const data = query.isError ? undefined : query.data;
   return {
-    zones: query.isError ? undefined : query.data,
+    zones: data?.zones,
+    zoneDetails: data?.zoneDetails,
     failure: query.isError ? failureOf(query.error, DESCRIBE_AVAILABILITY_ZONES) : undefined,
     loading: !query.isError && query.data === undefined,
     retry,

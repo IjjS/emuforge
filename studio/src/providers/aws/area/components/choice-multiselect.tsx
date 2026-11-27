@@ -1,3 +1,4 @@
+import Box from '@cloudscape-design/components/box';
 import Multiselect, { type MultiselectProps } from '@cloudscape-design/components/multiselect';
 import type { Ref } from 'react';
 
@@ -16,25 +17,41 @@ export interface ChoiceMultiselectProps<T> extends ChoiceFieldProps<T> {
 
 /** A field of several choices of `source`, read a page at a time. */
 export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
-  const { source, value, onChange, placeholder, invalid, ariaLabel, multiselectRef } = props;
-  const { items, options, props: parts } = useChoiceField(props, undefined);
+  const { source, value, onChange, placeholder, invalid, ariaLabel, multiselectRef, lockedBy, held } = props;
+  const { fieldRef, items, options, props: parts } = useChoiceField(props, undefined);
 
   return (
-    <Multiselect
-      ref={multiselectRef}
-      {...parts}
-      selectedOptions={value.map(source.optionOf)}
-      options={options}
-      {...optional({ placeholder, invalid, ariaLabel })}
-      deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
-      onChange={({ detail }) => {
-        const known = [...value, ...items];
-        const chosen = detail.selectedOptions.flatMap((option) => {
-          const found = known.find((each) => source.optionOf(each).value === option.value);
-          return found === undefined ? [] : [found];
-        });
-        onChange(chosen);
-      }}
-    />
+    <div ref={fieldRef}>
+      <Multiselect
+        ref={multiselectRef}
+        {...parts}
+        selectedOptions={value.map((choice) => {
+          const option = source.optionOf(choice);
+          return held === undefined ? option : { ...option, disabled: true };
+        })}
+        options={options}
+        {...optional({
+          placeholder: lockedBy === undefined ? placeholder : `Choose ${lockedBy} first`,
+          invalid,
+          ariaLabel,
+        })}
+        deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
+        onChange={({ detail }) => {
+          if (held !== undefined) return;
+          const available = items.filter((_, index) => options[index]?.disabled !== true);
+          const known = [...value, ...available];
+          const chosen = detail.selectedOptions.flatMap((option) => {
+            const found = known.find((each) => source.optionOf(each).value === option.value);
+            return found === undefined ? [] : [found];
+          });
+          onChange(chosen);
+        }}
+      />
+      {held !== undefined && (
+        <Box color="text-status-inactive" padding={{ top: 'xxs' }} nativeAttributes={{ role: 'status' }}>
+          {held}
+        </Box>
+      )}
+    </div>
   );
 }

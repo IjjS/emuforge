@@ -20,6 +20,8 @@ export interface ChoiceOption {
   label: string;
   description?: string;
   tags?: string[];
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 /**
@@ -27,6 +29,11 @@ export interface ChoiceOption {
  * choices read, `none` takes no typed text.
  */
 export type ChoiceFiltering = 'sent' | 'local' | 'none';
+
+/** A page may carry the continuation of a read that shares data across its pages. */
+interface ChoicePage<T> extends TokenPage<T> {
+  readNext?: (signal: AbortSignal) => Promise<ChoicePage<T>>;
+}
 
 /** Where a field's choices come from. */
 export interface ChoiceSource<T> {
@@ -46,7 +53,7 @@ export interface ChoiceSource<T> {
    */
   readAgainOnOpen?: boolean | undefined;
   /** One page: the answer for `text` (`''` for none) and `token` (none for the first page). */
-  read: (endpoint: string, text: string, token: string | undefined, signal: AbortSignal) => Promise<TokenPage<T>>;
+  read: (endpoint: string, text: string, token: string | undefined, signal: AbortSignal) => Promise<ChoicePage<T>>;
   /** Each choice as the field shows it. */
   optionOf: (choice: T) => ChoiceOption;
 }
@@ -68,14 +75,14 @@ export interface PagedChoices<T> {
   /** After a failure: the page that failed, again, the first or a further one. */
   retry: () => void;
   /** Reads the choices again from the first page, those read dropped. */
-  restart: () => void;
+  restart: (resetText?: string) => void;
 }
 
 /** A number per mount, so a read of an earlier mount is never shown. */
 let mounts = 0;
 
 /** `value`, once it has not changed for `delay` ms. */
-function useSettled(value: string, delay: number): string {
+function useSettled(value: string, delay: number) {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
     if (value === settled) {
@@ -88,7 +95,7 @@ function useSettled(value: string, delay: number): string {
       clearTimeout(timer);
     };
   }, [value, settled, delay]);
-  return settled;
+  return [settled, setSettled] as const;
 }
 
 /**
@@ -99,16 +106,19 @@ export function usePagedChoices<T>(source: ChoiceSource<T>, opened: boolean, tex
   const { key, endpoint, operation, read, filtering = 'none', ready = true } = source;
   const [mount] = useState(() => (mounts += 1));
   const [generation, setGeneration] = useState(0);
-  const settled = useSettled(filtering === 'sent' ? text : '', FILTER_DELAY_MS);
+  const [settled, setSettled] = useSettled(filtering === 'sent' ? text : '', FILTER_DELAY_MS);
   const enabled = opened && ready && endpoint !== undefined;
 
   const query = useInfiniteQuery({
     queryKey: [...key, settled, endpoint, mount, generation],
     queryFn: ({ signal, pageParam }) =>
-      endpoint === undefined ? noEndpoint() : read(endpoint, settled, pageParam, signal),
-    initialPageParam: undefined as string | undefined,
+      endpoint === undefined
+        ? noEndpoint()
+        : (pageParam?.readNext?.(signal) ?? read(endpoint, settled, pageParam?.next, signal)),
+    initialPageParam: undefined as ChoicePage<T> | undefined,
     // A further page that came back empty is the list's end, whatever token it carried.
-    getNextPageParam: (last, pages) => (pages.length > 1 && last.items.length === 0 ? undefined : last.next),
+    getNextPageParam: (last, pages) =>
+      last.next === undefined || (pages.length > 1 && last.items.length === 0) ? undefined : last,
     enabled,
     staleTime: 0,
     gcTime: 0,
@@ -130,9 +140,13 @@ export function usePagedChoices<T>(source: ChoiceSource<T>, opened: boolean, tex
     }
   }, [data, isFetching, fetchNextPage]);
 
-  const restart = useCallback(() => {
-    setGeneration((current) => current + 1);
-  }, []);
+  const restart = useCallback(
+    (resetText?: string) => {
+      if (resetText !== undefined) setSettled(resetText);
+      setGeneration((current) => current + 1);
+    },
+    [setSettled],
+  );
 
   const waiting = opened && (!ready || endpoint === undefined);
   return {
