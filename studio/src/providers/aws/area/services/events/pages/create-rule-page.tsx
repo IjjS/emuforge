@@ -14,7 +14,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { DiscardDialog } from '../../../components/discard-dialog';
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, Code } from '../../../components/failure-states';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
@@ -120,6 +120,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
   const [askDiscard, setAskDiscard] = useState(false);
   const inFlight = useRef(false);
   const nextRow = useRef(0);
+  const targetToFocus = useRef<number>(null);
   const busField = useRef<HTMLDivElement>(null);
   const nameInput = useRef<InputProps.Ref>(null);
   const descriptionInput = useRef<TextareaProps.Ref>(null);
@@ -315,7 +316,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                   />
                 </FormField>
                 <FormField
-                  label="Description"
+                  label="Description - optional"
                   constraintText={RULE_DESCRIPTION_RULE}
                   errorText={tried && errors.description}
                 >
@@ -338,7 +339,12 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
             </Container>
             <Container header={<Header variant="h2">Trigger</Header>}>
               <SpaceBetween size="l">
-                <FormField label="What starts the rule">
+                <FormField
+                  label="What starts the rule"
+                  description={
+                    bus !== undefined && bus !== 'default' && 'Schedules are available only on the default event bus.'
+                  }
+                >
                   <RadioGroup
                     value={form.trigger}
                     readOnly={pending}
@@ -362,6 +368,12 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                 {form.trigger === 'pattern' ? (
                   <FormField
                     label="Event pattern"
+                    description={
+                      <>
+                        List the source values you want to match in an array, such as{' '}
+                        <Code>{'{"source":["shop.checkout"]}'}</Code>.
+                      </>
+                    }
                     constraintText={EVENT_PATTERN_RULE}
                     errorText={tried && errors.pattern}
                   >
@@ -428,7 +440,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                 )}
               </SpaceBetween>
             </Container>
-            <Container header={<Header variant="h2">Targets</Header>}>
+            <Container header={<Header variant="h2">Targets - optional</Header>}>
               <SpaceBetween size="l">
                 {rows.map(({ key, draft }, index) => (
                   <SpaceBetween key={key} size="m">
@@ -449,8 +461,15 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                     </Header>
                     <TargetFields
                       ref={(fields) => {
-                        if (fields === null) targetFields.current.delete(key);
-                        else targetFields.current.set(key, fields);
+                        if (fields === null) {
+                          targetFields.current.delete(key);
+                          return;
+                        }
+                        targetFields.current.set(key, fields);
+                        if (targetToFocus.current === key) {
+                          targetToFocus.current = null;
+                          fields.focus('id');
+                        }
                       }}
                       connection={connection}
                       draft={draft}
@@ -469,6 +488,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
                   disabled={pending || limitReached}
                   onClick={() => {
                     const row = { key: nextRow.current++, draft: emptyTarget() };
+                    targetToFocus.current = row.key;
                     setRows((current) => (current.length < MAX_TARGETS ? [...current, row] : current));
                   }}
                 >
