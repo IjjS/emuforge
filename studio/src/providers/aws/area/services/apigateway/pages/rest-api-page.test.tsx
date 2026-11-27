@@ -1,7 +1,7 @@
 import type { Resource, RestApi } from '@aws-sdk/client-api-gateway';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
@@ -146,6 +146,16 @@ it('shows loading until the API answers, then shows its three parts', async () =
     expect(stagesHeader()?.findHeadingText().getElement().closest('h2')).toHaveTextContent('Stages');
   });
   expect(loading).not.toBeInTheDocument();
+});
+
+it('shows the REST API name with its spaces and names the heading by its exact identity', async () => {
+  apiReader.mockResolvedValue({ ...api, name: 'a  b' });
+  open();
+
+  const identity = 'a\\u0020\\u0020b';
+  const heading = await screen.findByRole('heading', { level: 1, name: identity });
+  expect(within(heading).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
+  expect(within(heading).getByText(`(${identity})`)).toBeVisible();
 });
 
 it('shows the missing ID and a link back to APIs when the emulator has no REST API of that ID', async () => {

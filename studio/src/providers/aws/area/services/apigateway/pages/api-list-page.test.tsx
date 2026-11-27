@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -174,6 +174,25 @@ it('shows one sorted table with the model-specific links and metadata', async ()
       metadata,
     );
   });
+});
+
+it('distinguishes REST API names and selection controls when the names differ by spaces', async () => {
+  vi.mocked(readRestApis).mockResolvedValue({
+    items: [
+      { ...rest, name: 'a b' },
+      { ...rest2, name: 'a  b' },
+    ],
+  });
+  open();
+
+  const identity = 'a\\u0020\\u0020b';
+  const link = await screen.findByRole('link', { name: identity });
+  expect(link).toHaveAttribute('href', '/aws/apigateway/apis/rest/rest2');
+  expect(screen.getByRole('link', { name: 'a b' })).toHaveAttribute('href', '/aws/apigateway/apis/rest/api-shared');
+  expect(screen.getByRole('radio', { name: `Select ${identity} (REST)` })).toBeInTheDocument();
+  expect(screen.getByRole('radio', { name: 'Select a b (REST)' })).toBeInTheDocument();
+  expect(within(link).getByText('a  b', { normalizer: (text) => text })).toBeVisible();
+  expect(within(link).getByText(`(${identity})`)).toBeVisible();
 });
 
 it('shows loading until the lists answer, then offers Create API when both are empty', async () => {
