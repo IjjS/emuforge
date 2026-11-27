@@ -162,7 +162,7 @@ async function pick(label: string, value: string) {
     expect(trigger).toBeEnabled();
     expect(trigger).not.toHaveAttribute('aria-disabled', 'true');
   });
-  fireEvent.click(trigger);
+  picker.openDropdown();
   await waitFor(() => expect(picker.findDropdown().findOptionByValue(value), `${label}: ${value}`).not.toBeNull());
   picker.selectOptionByValue(value);
 }
