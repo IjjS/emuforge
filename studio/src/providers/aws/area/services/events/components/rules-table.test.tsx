@@ -213,8 +213,9 @@ it.each([
 it('does not request rules on mount or refresh while reads are disabled', async () => {
   read.mockResolvedValue({ items: [{ Name: 'visible' }] });
   const { table, update } = mountTable({ readsEnabled: false });
-  const refresh = table.findHeaderSlot()?.findButton('[aria-label="Refresh"]');
+  const refresh = table.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
   if (!refresh) throw new Error('Expected the refresh control');
+  expect(refresh.getElement()).toHaveAccessibleName('Refresh');
 
   await act(async () => {
     fireEvent.click(refresh.getElement());

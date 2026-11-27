@@ -443,7 +443,7 @@ export function CreateRulePage({ connection }: ScreenPageProps) {
             <Container header={<Header variant="h2">Targets - optional</Header>}>
               <SpaceBetween size="l">
                 {rows.map(({ key, draft }, index) => (
-                  <SpaceBetween key={key} size="m">
+                  <SpaceBetween key={key} size="m" data-testid="create-rule-target-row">
                     <Header
                       variant="h3"
                       actions={

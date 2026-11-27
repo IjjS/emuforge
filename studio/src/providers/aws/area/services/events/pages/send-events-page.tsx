@@ -9,7 +9,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
@@ -41,6 +41,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
+  const submitId = useId();
   const [selectedBus, setSelectedBus] = useState<string>();
   const resolvedBus = useBusChoice(engineOrigin, selectedBus ?? addressBus, selectedBus);
   const [missingBus, setMissingBus] = useState<Extract<BusChoice, { kind: 'invalid' }>>();
@@ -89,7 +90,8 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (busy.current || unavailable) return;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    if (submitter?.id !== submitId || busy.current || unavailable) return;
 
     setTried(true);
     setNotice(undefined);
@@ -206,6 +208,7 @@ function SendFormPage({ connection, addressBus }: ConnectionProps & { addressBus
                 disabled={unavailable}
                 loading={pending}
                 loadingText="Sending"
+                nativeButtonAttributes={{ id: submitId }}
               >
                 Send
               </Button>

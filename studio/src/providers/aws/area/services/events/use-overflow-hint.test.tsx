@@ -41,11 +41,12 @@ it('measures the table scroll region when rows appear and updates the hint on re
   if (!scrollPane) throw new Error('Expected the table scroll region');
   vi.spyOn(scrollPane, 'scrollWidth', 'get').mockReturnValue(570);
   const clientWidth = vi.spyOn(scrollPane, 'clientWidth', 'get').mockReturnValue(348);
-  const hint = () => screen.queryByText('Scroll sideways.');
+  const hint = () => screen.queryByRole('paragraph');
   expect(hint()).toBeNull();
 
   rerender(<ExampleTable hasRows />);
   expect(hint()).toBeVisible();
+  expect(hint()).toHaveTextContent(/^Scroll sideways\.$/);
   expect(observe).toHaveBeenCalledWith(table);
   expect(observe).toHaveBeenCalledWith(scrollPane);
 
