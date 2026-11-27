@@ -14,6 +14,7 @@ interface DeleteRuleDialogProps {
   bus: string;
   name: string;
   targetCount: number;
+  unavailableOperation?: string | undefined;
   onDeleted: () => void;
   onTargetsChanged: () => void;
   onUnavailable: (operation: string) => void;
@@ -31,6 +32,7 @@ export function DeleteRuleDialog({
   bus,
   name,
   targetCount,
+  unavailableOperation,
   onDeleted,
   onTargetsChanged,
   onUnavailable,
@@ -40,8 +42,16 @@ export function DeleteRuleDialog({
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ cause: unknown }>();
-  const failure = error && failureOf(error.cause, RULE_CHANGE_OPERATIONS.delete);
-  const unavailable = failure?.kind === 'not-implemented' && failure.operation !== RULE_OPERATIONS.listTargetsByRule;
+  const failure = error
+    ? failureOf(error.cause, RULE_CHANGE_OPERATIONS.delete)
+    : unavailableOperation
+      ? { kind: 'not-implemented' as const, operation: unavailableOperation }
+      : undefined;
+  const unavailable =
+    unavailableOperation !== undefined ||
+    (failure?.kind === 'not-implemented' &&
+      (failure.operation === RULE_CHANGE_OPERATIONS.delete ||
+        (failure.operation === RULE_CHANGE_OPERATIONS.removeTargets && targetCount > 0)));
   const item = failure && actionFailureItem(failure, failure.operation, endpoint);
   const afterRemoval = error?.cause instanceof DeleteAfterRemovalError ? error.cause : undefined;
   const partialRemoval = error?.cause instanceof RemoveTargetsError ? error.cause : undefined;

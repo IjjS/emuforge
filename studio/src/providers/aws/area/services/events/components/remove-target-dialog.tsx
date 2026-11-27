@@ -16,6 +16,7 @@ interface RemoveTargetDialogProps {
   bus: string;
   name: string;
   id: string;
+  operationUnavailable?: boolean;
   onRemoved: () => void;
   onUnavailable: () => void;
   onDismiss: () => void;
@@ -26,6 +27,7 @@ export function RemoveTargetDialog({
   bus,
   name,
   id,
+  operationUnavailable,
   onRemoved,
   onUnavailable,
   onDismiss,
@@ -33,8 +35,9 @@ export function RemoveTargetDialog({
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [localFailure, setFailure] = useState<RequestFailure>();
   const operation = RULE_CHANGE_OPERATIONS.removeTargets;
+  const failure = localFailure ?? (operationUnavailable ? { kind: 'not-implemented', operation } : undefined);
   const unavailable = failure?.kind === 'not-implemented';
   const item = failure && actionFailureItem(failure, operation, endpoint);
 
