@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|unit-fast-check|related-studio-unit-tests
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 1e50de9d7c26c7c5a2cdeb31cf95c318235b4d3f
 
 # A unit's fast check runs only the Studio unit tests related to its changed files
