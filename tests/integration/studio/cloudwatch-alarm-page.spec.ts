@@ -40,7 +40,6 @@ import {
   historyDirect,
   historyRowOf,
   historyRows,
-  historyTypeText,
   LOG_ALARM_STATE,
   LOG_QUERY,
   metricAlarmDirect,
@@ -159,10 +158,7 @@ test('studio.cloudwatch-alarm-page-shows-each-type', async ({ ctx, page }) => {
       });
       expect(actionsText(direct.ActionsEnabled), 'the actions of the alarm, directly').toBe('On');
 
-      const history = (await historyDirect(ctx, port, metric)).map((item) => ({
-        type: historyTypeText(item.HistoryItemType),
-        summary: (item.HistorySummary ?? '-').replace(/\s+/g, ' ').trim(),
-      }));
+      const history = (await historyDirect(ctx, port, metric)).map(historyRowOf);
       expect(
         history.filter((item) => item.type === 'Configuration').length,
         'the history items of type "Configuration", directly',

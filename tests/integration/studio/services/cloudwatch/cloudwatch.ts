@@ -664,7 +664,8 @@ const norm = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /**
  * The text each element of `found` draws, character for character: its text nodes that are drawn (not under
- * `display: none`, `visibility: hidden`, a zero opacity or a clipped-away box, and with a box of their own), joined
+ * `display: none`, `visibility: hidden`, a zero opacity or a clipped-away box, and, but for white space alone, with a
+ * box of their own), joined
  * in document order. A text that is in the page and not shown is no part of it, so a value hidden inside a shown
  * row, pair, alert or flash reads as absent. White space is as written; nothing is folded.
  */
@@ -689,7 +690,8 @@ export async function shownTexts(found: Locator): Promise<string[]> {
         if (holder === null || hidden(holder)) continue;
         const range = document.createRange();
         range.selectNodeContents(node);
-        if (range.getClientRects().length === 0) continue;
+        // White space between two words has no box of its own where the line breaks: it is kept with its holder.
+        if ((node.textContent ?? '').trim() !== '' && range.getClientRects().length === 0) continue;
         text += node.textContent ?? '';
       }
       return text;
@@ -1220,7 +1222,7 @@ export async function shownPairs(page: Page): Promise<ShownPair[]> {
             if (holder === null || hidden(holder)) continue;
             const range = document.createRange();
             range.selectNodeContents(node);
-            if (range.getClientRects().length === 0) continue;
+            if ((node.textContent ?? '').trim() !== '' && range.getClientRects().length === 0) continue;
             text += node.textContent ?? '';
           }
           return text.replace(/\s+/g, ' ').trim();
