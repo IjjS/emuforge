@@ -1,7 +1,8 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
@@ -13,6 +14,7 @@ import type { EngineVersionChoice, SubnetGroupChoice } from '../choices-api';
 import {
   ClassField,
   DatabaseNameField,
+  EngineField,
   EngineVersionField,
   IdentifierField,
   MasterPasswordField,
@@ -40,10 +42,10 @@ vi.mock('../choices-queries', async (importOriginal) => {
   );
   return {
     ...real,
-    groupChoices: (endpoint: string | undefined) => ({
-      ...securityGroupChoices(endpoint),
+    groupChoices: (endpoint: string | undefined, vpcId?: string) => ({
+      ...securityGroupChoices(endpoint, vpcId),
       read: async (at: string, text: string, token: string | undefined, signal: AbortSignal) => {
-        const page = await readGroups(at, { name: text }, token, signal);
+        const page = await readGroups(at, { name: text, ...(vpcId === undefined ? {} : { vpcId }) }, token, signal);
         return page.nextToken === undefined ? { items: page.choices } : { items: page.choices, next: page.nextToken };
       },
     }),
@@ -432,5 +434,115 @@ describe('the create fields', () => {
       expect(text(groups.findDropdown().getElement())).toContain('The security groups could not be loaded');
     });
     expect(text(groups.findDropdown().getElement())).toContain('Retry');
+  });
+});
+
+describe('RDS create field descriptions and placement', () => {
+  const engines = [
+    { value: 'postgres', label: 'PostgreSQL' },
+    { value: 'mysql', label: 'MySQL' },
+    { value: 'mariadb', label: 'MariaDB' },
+    { value: 'aurora-postgresql', label: 'Aurora PostgreSQL' },
+    { value: 'aurora-mysql', label: 'Aurora MySQL' },
+  ];
+  const defaults = { data: undefined, failure: undefined, retry: vi.fn(), loading: true };
+
+  it('describes the engines before the read and adds their default versions when they arrive', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <EngineField
+        engines={engines}
+        value="postgres"
+        onChange={onChange}
+        connection={CONNECTION}
+        defaults={defaults}
+      />,
+    );
+    const names = ['PostgreSQL.', 'MySQL.', 'MariaDB.', 'Aurora, PostgreSQL-compatible.', 'Aurora, MySQL-compatible.'];
+    for (const name of names) expect(screen.getByText(name)).toBeVisible();
+    const versions = Object.fromEntries(engines.map(({ value }, index) => [value, String(index + 1)]));
+    rerender(
+      <EngineField
+        engines={engines}
+        value="postgres"
+        onChange={onChange}
+        connection={CONNECTION}
+        defaults={{ ...defaults, loading: false, data: { versions, failures: {} } }}
+      />,
+    );
+    names.forEach((name, index) => {
+      expect(screen.getByText(`${name} The emulator's default version is ${index + 1}.`)).toBeVisible();
+    });
+  });
+
+  it('shows a 501 at Engine and leaves every engine selectable with its base description', () => {
+    const onChange = vi.fn();
+    const failure = { kind: 'not-implemented', operation: 'DescribeDBEngineVersions' } as const;
+    render(
+      <MemoryRouter>
+        <EngineField
+          engines={engines}
+          value="postgres"
+          onChange={onChange}
+          connection={CONNECTION}
+          defaults={{ ...defaults, loading: false, data: { versions: {}, failures: { postgres: failure } } }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
+    expect(screen.getByText(/501 Not Implemented for DescribeDBEngineVersions/)).toBeVisible();
+    expect(screen.getByText('MySQL.')).toBeVisible();
+    fireEvent.click(screen.getByRole('radio', { name: 'MySQL' }));
+    expect(onChange).toHaveBeenCalledWith('mysql');
+  });
+
+  it('describes the fixed engine version and each kind of default subnet group', () => {
+    const client = new QueryClient();
+    const onChange = vi.fn();
+    const fields = (mode: 'instance' | 'cluster') => (
+      <QueryClientProvider client={client}>
+        <EngineVersionField
+          engine="postgres"
+          defaultVersion="18.3"
+          connection={CONNECTION}
+          value={undefined}
+          onChange={onChange}
+        />
+        <SubnetGroupField mode={mode} connection={CONNECTION} value={undefined} onChange={onChange} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(fields('instance'));
+    expect(screen.getByText('18.3, the version the emulator creates when none is sent.')).toBeVisible();
+    expect(screen.getByText('The emulator puts the instance in its subnet group named default.')).toBeVisible();
+    rerender(fields('cluster'));
+    expect(screen.getByText('The emulator puts the cluster in its subnet group named default.')).toBeVisible();
+  });
+
+  it('locks security groups without a VPC and scopes the read and empty text when it arrives', async () => {
+    const client = new QueryClient();
+    const onChange = vi.fn();
+    const fields = (data: string | undefined) => (
+      <QueryClientProvider client={client}>
+        <SecurityGroupsField
+          connection={CONNECTION}
+          value={[]}
+          onChange={onChange}
+          placement={{ data, failure: undefined, retry: vi.fn() }}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(fields(undefined));
+    expect(groupsField().findTrigger().getElement()).toBeDisabled();
+    expect(screen.getByText('Choose DB subnet group first')).toBeVisible();
+    expect(readGroups).not.toHaveBeenCalled();
+    readGroups.mockResolvedValueOnce({ choices: [] });
+    rerender(fields('vpc-d'));
+    groupsField().openDropdown();
+    await waitFor(() =>
+      expect(readGroups).toHaveBeenCalledWith(ENGINE, { vpcId: 'vpc-d', name: '' }, undefined, expect.any(AbortSignal)),
+    );
+    await waitFor(() =>
+      expect(text(groupsField().findDropdown().getElement())).toContain('No security groups in vpc-d'),
+    );
   });
 });
