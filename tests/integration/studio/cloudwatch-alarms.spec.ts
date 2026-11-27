@@ -218,9 +218,9 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
       await openAlarms(page, p);
       const order = await expectListed();
       expect(
-        (await shownNames()).map((shown) => shown.whiteSpace),
+        (await shownNames()).map((shown) => shown.keepsWhiteSpace),
         'the white space of each name in the list is kept',
-      ).toEqual(order.map(() => 'pre-wrap'));
+      ).toEqual(order.map(() => true));
 
       for (const name of names) {
         await openAlarms(page, p);

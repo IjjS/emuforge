@@ -715,8 +715,12 @@ export async function expectShown(found: Locator, want: string[], what: string, 
 export interface DrawnText {
   /** The text the element draws, whole: every character, white space as written (`shownTexts`). */
   text: string;
-  /** The computed `white-space` of the element that holds the text's first characters. */
-  whiteSpace: string;
+  /**
+   * Whether the element that holds the text's first characters keeps white space: its computed `white-space` is one
+   * that draws repeated spaces and line feeds (`pre`, `pre-wrap`, `break-spaces`), whichever of them the area's
+   * styles give a name.
+   */
+  keepsWhiteSpace: boolean;
 }
 
 /**
@@ -731,7 +735,7 @@ export async function drawnText(element: Locator): Promise<DrawnText> {
     while (first !== null && (first.textContent ?? '') === '') first = walker.nextNode();
     return getComputedStyle(first?.parentElement ?? el).whiteSpace;
   });
-  return { text: text ?? '', whiteSpace };
+  return { text: text ?? '', keepsWhiteSpace: ['pre', 'pre-wrap', 'break-spaces'].includes(whiteSpace) };
 }
 
 /** The heading text of the page's `h1`, found with Cloudscape's selector. */
@@ -762,7 +766,7 @@ export async function expectHeading(page: Page, text: string, timeout = 15_000):
 
 /**
  * Waits until the page's `h1` is shown and holds the alarm name `name`, character for character, in an element
- * that keeps white space (`pre-wrap`), so its repeated spaces and its line feeds are drawn.
+ * that keeps white space, so its repeated spaces and its line feeds are drawn.
  */
 export async function expectNameHeading(page: Page, name: string): Promise<void> {
   await expect
@@ -773,7 +777,7 @@ export async function expectNameHeading(page: Page, name: string): Promise<void>
       },
       { message: `the h1 ${JSON.stringify(name)}, its white space kept`, timeout: 15_000 },
     )
-    .toEqual({ text: name, whiteSpace: 'pre-wrap' });
+    .toEqual({ text: name, keepsWhiteSpace: true });
 }
 
 /** Opens `path` and waits for its `h1` `h1`, character for character. */
