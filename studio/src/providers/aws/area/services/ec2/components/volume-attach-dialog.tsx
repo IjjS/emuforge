@@ -10,8 +10,7 @@ import { AreaModal } from '../../../components/area-modal';
 import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { FlashItem } from '../../../components/page-flash';
-import type { Instance } from '../api';
-import type { AttachmentTarget } from '../volume-api';
+import type { AttachmentTarget, VolumeInstance } from '../volume-api';
 import { volumeInstanceChoices } from '../volume-queries';
 
 export interface VolumeDialogStatus {
@@ -38,7 +37,7 @@ export function VolumeAttachDialog({
   onConfirm,
   onDismiss,
 }: VolumeAttachDialogProps) {
-  const [instance, setInstance] = useState<Instance>();
+  const [instance, setInstance] = useState<VolumeInstance>();
   const [device, setDevice] = useState('');
   const canSubmit = !pending && !unavailable && instance !== undefined && device.trim() !== '';
 
@@ -85,7 +84,9 @@ export function VolumeAttachDialog({
           }
         >
           <ChoiceSelect
-            source={volumeInstanceChoices(endpoint)}
+            source={volumeInstanceChoices(endpoint, zone)}
+            lockedBy={zone === undefined ? 'Availability Zone' : undefined}
+            none={zone === undefined ? undefined : `No instances in ${zone}`}
             connection={connection}
             things="instances"
             ariaLabel="Instance"
@@ -95,7 +96,13 @@ export function VolumeAttachDialog({
             onChange={setInstance}
           />
         </FormField>
-        <FormField label="Device name" constraintText="For example, /dev/sdf.">
+        <FormField
+          label="Device name"
+          constraintText="For example, /dev/sdf."
+          description={
+            instance?.devices.length ? `In use on ${instance.id}: ${instance.devices.join(', ')}` : undefined
+          }
+        >
           <Input
             value={device}
             disabled={pending}

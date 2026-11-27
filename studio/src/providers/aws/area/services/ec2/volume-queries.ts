@@ -2,19 +2,23 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import { failureOf, noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
-import { listInstances, OPERATIONS, type Instance } from './api';
-import { NONE } from './format';
+import type { ChoiceSource } from '../../components/use-paged-choices';
+import { OPERATIONS } from './api';
 import { READ_AGAIN_MS } from './instance-state';
 import { EC2_KEY, EC2_KEYS, type Ec2Read } from './queries';
 import {
   createVolume,
   getVolume,
   listVolumes,
+  listVolumeInstances,
+  listVolumeSnapshots,
   VOLUME_OPERATIONS,
   type AttachmentTarget,
   type NewVolume,
   type Volume,
   type VolumeRead,
+  type VolumeInstance,
+  type VolumeSnapshot,
 } from './volume-api';
 
 export const VOLUME_KEYS = {
@@ -109,20 +113,36 @@ export function useRefreshVolumeData(): (id: string, instanceId?: string) => voi
   );
 }
 
-export function volumeInstanceChoices(endpoint: string) {
+export function volumeSnapshotChoices(endpoint: string | undefined): ChoiceSource<VolumeSnapshot> {
   return {
-    key: EC2_KEYS.choices('volume-instances'),
+    key: EC2_KEYS.choices('volume-snapshots'),
     endpoint,
+    operation: VOLUME_OPERATIONS.describeSnapshots,
+    readAgainOnOpen: true,
+    read: (at, _text, token, signal) => listVolumeSnapshots(at, token, signal),
+    optionOf: ({ id, size, state, volumeId, description }) => ({
+      value: id,
+      label: id,
+      description: [size === undefined ? undefined : `${size} GiB`, state, volumeId, description]
+        .filter(Boolean)
+        .join(' · '),
+    }),
+  };
+}
+
+export function volumeInstanceChoices(endpoint: string, zone: string | undefined): ChoiceSource<VolumeInstance> {
+  return {
+    key: [...EC2_KEYS.choices('volume-instances'), zone],
+    endpoint: zone === undefined ? undefined : endpoint,
     operation: OPERATIONS.describeInstances,
-    read: async (at: string, _text: string, token: string | undefined, signal: AbortSignal) => {
-      const page = await listInstances(at, {}, token, signal);
-      return page.nextToken === undefined ? { items: page.instances } : { items: page.instances, next: page.nextToken };
-    },
-    optionOf: (instance: Instance) => ({
-      value: instance.id,
-      label: instance.id,
-      description: instance.zone ?? NONE,
-      tags: [instance.state || NONE],
+    readAgainOnOpen: true,
+    read: (at, _text, token, signal) =>
+      zone === undefined ? noEndpoint() : listVolumeInstances(at, zone, token, signal),
+    optionOf: ({ id, name, state, type }) => ({
+      value: id,
+      label: name ?? id,
+      ...(name === undefined ? {} : { labelTag: id }),
+      description: [state, type].filter(Boolean).join(' · '),
     }),
   };
 }
