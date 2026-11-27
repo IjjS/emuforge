@@ -183,6 +183,23 @@ it.each(['selectable', 'read-only'])('distinguishes stored names in the %s listi
   }
 });
 
+it('distinguishes one space from two in the link and selection names', async () => {
+  read.mockResolvedValueOnce({ items: [{ logStreamName: 'a b' }, { logStreamName: 'a  b' }] });
+  const onChange = vi.fn();
+  renderSection(connected, { name: undefined, onChange });
+
+  const identity = 'a\\u0020\\u0020b';
+  expect(await waitForLink(streamTable, 'a b')).toHaveAccessibleName('a b');
+  const link = await waitForLink(streamTable, identity);
+  expect(link).toHaveAccessibleName(identity);
+  expect(link.textContent).toBe(`a  b (${identity})`);
+  expect(rowRadio(streamTable(), 'a b')).toHaveAccessibleName('a b');
+  const radio = rowRadio(streamTable(), identity);
+  expect(radio).toHaveAccessibleName(identity);
+  fireEvent.click(radio);
+  expect(onChange).toHaveBeenCalledExactlyOnceWith('a  b');
+});
+
 it('sends the typed prefix and explains that prefix matches are listed by name', async () => {
   read
     .mockResolvedValueOnce({ items: [{ logStreamName: 'initial' }] })
