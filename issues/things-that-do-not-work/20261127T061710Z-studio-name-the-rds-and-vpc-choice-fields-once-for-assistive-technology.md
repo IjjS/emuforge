@@ -20,6 +20,9 @@ critique of issue 651 (`final`, P3). The fields named: "DB instance class" and "
 (`studio/src/providers/aws/area/services/vpc/pages/create-subnet-page.tsx:289`). The reference is the area's other form fields, whose control is named
 once, by its form field.
 
+The critique's second `final` found the same repetition in one EC2 field, "KMS key" of the create volume form
+(`studio/src/providers/aws/area/services/ec2/pages/create-volume-page.tsx:316`); it is this issue's as well.
+
 ## Evidence
 
 `.pm/issue-651/review-final.md`, section P3 (RDS s2 and VPC s10), on the built app of `feat/651` at `356536ce`; the
@@ -35,7 +38,7 @@ critique's accessibility tree dump is `output/crit-b/field-choices-final.json` i
 
 ## Expected
 
-- Each of the four controls has its label once in its accessible name.
+- Each of the four controls, and the create volume form's "KMS key", has its label once in its accessible name.
 - The chosen value of each is still exposed to assistive technology.
 
 ## Out of scope
