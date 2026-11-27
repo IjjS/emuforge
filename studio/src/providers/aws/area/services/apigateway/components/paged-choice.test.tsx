@@ -94,7 +94,7 @@ it('shows the chosen API identity and finds that API by typing its stored name',
   const user = userEvent.setup();
   await user.click(trigger);
   const select = createWrapper(container).findSelect();
-  const input = select?.findFilteringInput();
+  const input = select?.findFilteringInput()?.findNativeInput();
   if (!select || !input) throw new Error('Missing API filter');
   await user.type(input.getElement(), 'a  b');
 
