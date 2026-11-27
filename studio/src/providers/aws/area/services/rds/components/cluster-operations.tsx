@@ -317,6 +317,7 @@ function ClusterStorageType({
     }),
   }));
   const unset = { value: '', label: 'Not set', description: 'The cluster has no storage type.' };
+  const canRestoreUnset = value.start === undefined && value.cleared === undefined;
   const selected =
     value.value === undefined
       ? value.cleared === undefined
@@ -332,13 +333,13 @@ function ClusterStorageType({
       <SpaceBetween size="xs">
         <Select
           ariaLabel="Storage type"
-          options={options}
+          options={canRestoreUnset ? [unset, ...options] : options}
           selectedOption={selected}
           triggerVariant="option"
           placeholder="Choose a storage type"
           disabled={pending || rows.data === undefined}
           invalid={value.cleared !== undefined}
-          onChange={({ detail }) => onChange(detail.selectedOption.value)}
+          onChange={({ detail }) => onChange(detail.selectedOption.value || undefined)}
         />
         <FieldReadStatus
           connection={connection}
