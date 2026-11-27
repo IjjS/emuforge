@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, readFailureState } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useAvailabilityZones } from '../../../components/use-availability-zones';
 import { useShowsResources } from '../../../components/page-resources';
@@ -244,6 +244,10 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
     value: form.zone,
     label: form.zone,
   };
+  const zoneUnavailable =
+    zones.failure?.kind === 'not-implemented'
+      ? readFailureState(zones.failure, connection, 'Availability Zones')
+      : undefined;
 
   const blockConstraint =
     form.vpc?.cidr === undefined
@@ -303,7 +307,13 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
                     {zones.loading && engineOrigin !== undefined && (
                       <StatusIndicator type="loading">Loading Availability Zones</StatusIndicator>
                     )}
-                    {zones.failure !== undefined && (
+                    {zoneUnavailable !== undefined && (
+                      <SpaceBetween size="xxs">
+                        <StatusIndicator type={zoneUnavailable.type}>{zoneUnavailable.first}</StatusIndicator>
+                        <Box>{zoneUnavailable.detail}</Box>
+                      </SpaceBetween>
+                    )}
+                    {zones.failure !== undefined && zoneUnavailable === undefined && (
                       <Box>
                         <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                           <StatusIndicator type="error">The Availability Zones could not be loaded</StatusIndicator>

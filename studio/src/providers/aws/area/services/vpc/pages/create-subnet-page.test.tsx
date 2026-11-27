@@ -341,7 +341,7 @@ describe('Create subnet', () => {
     });
     const select = selectOf('Availability Zone - optional');
     select.openDropdown();
-    const defaultZone = select.findDropdown().findOptions()?.[0];
+    const defaultZone = select.findDropdown().findOptionByValue('');
     expect(text(defaultZone?.findLabel().getElement())).toBe('Chosen by the emulator');
     expect(text(defaultZone?.findDescription()?.getElement())).toBe(
       'The request omits the zone so the emulator chooses it.',
@@ -350,11 +350,32 @@ describe('Create subnet', () => {
 
   it('their read failed → "The Availability Zones could not be loaded" with "Retry", and the form can still be sent', async () => {
     vi.mocked(availability.listAvailabilityZones).mockRejectedValue(
+      new RequestError({ kind: 'other', operation: 'DescribeAvailabilityZones', code: 'InternalError' }),
+    );
+    open();
+    await opened();
+    const zoneField = within(field('Availability Zone - optional').getElement());
+    expect(await zoneField.findByText('The Availability Zones could not be loaded')).toBeInTheDocument();
+    expect(zoneField.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await chooseVpc();
+    type('IPv4 CIDR block', '10.0.1.0/24');
+    submit();
+    await waitFor(() => {
+      expect(changes.createSubnet).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(changes.createSubnet).mock.calls[0]?.[1]).toEqual({ vpcId: 'vpc-x', cidr: '10.0.1.0/24' });
+  });
+
+  it('a 501 from DescribeAvailabilityZones is shown at the zone field and creation omits the zone', async () => {
+    vi.mocked(availability.listAvailabilityZones).mockRejectedValue(
       new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
     );
     open();
     await opened();
-    expect(await screen.findByText('The Availability Zones could not be loaded')).toBeInTheDocument();
+    const zoneField = within(field('Availability Zone - optional').getElement());
+    expect(await zoneField.findByText('Not implemented by the emulator')).toBeInTheDocument();
+    expect(zoneField.getByText(/DescribeAvailabilityZones/)).toBeInTheDocument();
+    expect(zoneField.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     await chooseVpc();
     type('IPv4 CIDR block', '10.0.1.0/24');
     submit();
