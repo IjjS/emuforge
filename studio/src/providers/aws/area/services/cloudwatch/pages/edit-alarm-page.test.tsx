@@ -14,7 +14,7 @@ import { readAlarm } from '../alarms-api';
 import { sendCloudWatch } from '../clients';
 import { editAlarm } from '../edit-api';
 import { listDimensionSets } from '../metric-api';
-import { EDIT_ALARM_PATH, alarmPath, editAlarmPath } from '../paths';
+import { ALARMS_PATH, EDIT_ALARM_PATH, alarmPath, editAlarmPath } from '../paths';
 import { listTopicArns } from '../topic-api';
 import { EditAlarmPage } from './edit-alarm-page';
 
@@ -207,6 +207,9 @@ it('shows loading and then the missing alarm state, and makes no request for a m
   expect(content(page)?.findStatusIndicator()?.getElement().textContent).toBe('Loading alarm');
   await act(async () => opening.resolve(undefined));
   await waitFor(() => expect(content(page)?.getElement()).toHaveTextContent('Alarm not found'));
+  const link = content(page)?.findLink()?.getElement();
+  expect(link).toHaveAttribute('href', ALARMS_PATH);
+  expect(link?.textContent).toBe('Alarms');
   await page.go(EDIT_ALARM_PATH);
   expect(content(page)?.getElement()).toHaveTextContent('Alarm not found');
   expect(read).toHaveBeenCalledTimes(1);
@@ -265,7 +268,9 @@ it.each(unsupported)('shows the edit restriction for $type', async (alarm) => {
   const page = open();
   await waitFor(() => expect(content(page)?.getElement()).toHaveTextContent('Studio cannot edit this alarm yet'));
   expect(content(page)?.getElement()).toHaveTextContent(reason);
-  expect(content(page)?.findLink()?.getElement()).toHaveAttribute('href', destination);
+  const link = content(page)?.findLink()?.getElement();
+  expect(link).toHaveAttribute('href', destination);
+  expect(link?.textContent).toBe('Back to alarm');
   expect(page.wrapper.findForm()).toBeNull();
 });
 
@@ -305,6 +310,10 @@ it('shows every conflict, keeps changed entries, adopts untouched ones and allow
 
   const alert = page.wrapper.findAlert();
   expect(alert?.findHeader()?.getElement().textContent).toBe('This alarm changed while you were editing it');
+  expect(alert?.getElement()).toContainElement(document.activeElement);
+  expect(alert?.findContent().getElement()).toHaveTextContent(
+    'Nothing was saved. Save changes again to apply your form entries over the conflicting values shown below.',
+  );
   expect(alert?.findContent().getElement()).toHaveTextContent('Threshold (now 8)');
   expect(alert?.findContent().getElement()).toHaveTextContent('Evaluation periods (now 3)');
   expect(input(page, 'Threshold').getInputValue()).toBe('7');
