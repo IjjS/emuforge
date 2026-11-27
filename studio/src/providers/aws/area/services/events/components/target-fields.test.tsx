@@ -60,17 +60,19 @@ function open() {
     </QueryClientProvider>,
   );
   const page = createWrapper(container);
-  function field(label: string) {
-    return page.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === label);
+  function field(index: number, label: string) {
+    const formField = page.findAllFormFields()[index];
+    if (!formField) throw new Error(`Expected form field ${index}`);
+    expect(formField.findLabel()?.getElement().textContent).toBe(label);
+    return formField;
   }
-  function select(label: string) {
-    const formField = field(label);
-    const found = formField && createWrapper(formField.getElement()).findSelect();
-    if (!found) throw new Error(`Expected a select for ${label}`);
+  function select(index: number, label: string) {
+    const found = field(index, label).findSelect();
+    if (!found) throw new Error(`Expected a select in form field ${index}`);
     return found;
   }
-  async function choose(label: string, value: string) {
-    const current = select(label);
+  async function choose(index: number, label: string, value: string) {
+    const current = select(index, label);
     act(() => current.openDropdown());
     await waitFor(() => expect(current.findDropdown().findOptionByValue(value)).not.toBeNull());
     act(() => current.selectOptionByValue(value));
@@ -80,8 +82,8 @@ function open() {
 
 it('shows the ID constraint and describes the only three kinds in the choice', () => {
   const form = open();
-  expect(form.field('Target ID')?.findConstraint()?.getElement()).toHaveTextContent('1 to 64 characters');
-  const select = form.select('Target kind');
+  expect(form.field(0, 'Target ID')?.findConstraint()?.getElement()).toHaveTextContent('1 to 64 characters');
+  const select = form.select(1, 'Target kind');
   act(() => select.openDropdown());
   expect(select.findDropdown().findOptions()).toHaveLength(3);
   for (const [kind, description] of [
@@ -102,23 +104,23 @@ it('shows the ID constraint and describes the only three kinds in the choice', (
 
 it('lists resources only for the selected kind, clears a choice and shows empty lists', async () => {
   const form = open();
-  await form.choose('Target kind', 'sns');
-  await form.choose('Topic', topic.value);
+  await form.choose(1, 'Target kind', 'sns');
+  await form.choose(2, 'Topic', topic.value);
   expect(form.draft().resource).toEqual(topic);
-  await form.choose('Target kind', 'logs');
+  await form.choose(1, 'Target kind', 'logs');
   expect(form.draft().resource).toBeUndefined();
-  await form.choose('Log group', group.value);
+  await form.choose(2, 'Log group', group.value);
   expect(form.draft().resource).toEqual(group);
   queues.mockResolvedValueOnce({ items: [] });
-  await form.choose('Target kind', 'sqs');
-  const select = form.select('Queue');
+  await form.choose(1, 'Target kind', 'sqs');
+  const select = form.select(2, 'Queue');
   act(() => select.openDropdown());
   await waitFor(() => expect(select.findDropdown().getElement()).toHaveTextContent('No queues'));
 });
 
 it('describes each input choice and opens the corresponding field', async () => {
   const form = open();
-  const select = form.select('What the target receives');
+  const select = form.select(2, 'What the target receives');
   act(() => select.openDropdown());
   expect(select.findDropdown().findOptionByValue('matched')?.getElement()).toHaveTextContent(
     'The whole event, as JSON.',
@@ -128,12 +130,12 @@ it('describes each input choice and opens the corresponding field', async () => 
   );
   expect(select.findDropdown().findOptionByValue('path')?.getElement()).toHaveTextContent('such as $.detail.');
   act(() => select.selectOptionByValue('constant'));
-  const json = form.field('JSON text');
-  expect(json && createWrapper(json.getElement()).findTextarea()).toBeTruthy();
-  await form.choose('What the target receives', 'path');
-  expect(form.field('JSON text')).toBeUndefined();
-  const path = form.field('JSON path');
-  expect(path && createWrapper(path.getElement()).findInput()).toBeTruthy();
+  const json = form.field(3, 'JSON text');
+  expect(json.findTextarea()?.getElement()).toBeVisible();
+  await form.choose(2, 'What the target receives', 'path');
+  expect(form.page.findTextarea()).toBeNull();
+  const path = form.field(3, 'JSON path');
+  expect(path.findInput()?.getElement()).toBeVisible();
 });
 
 function deferredArn() {
@@ -150,8 +152,8 @@ it('waits for the queue ARN and keeps its Retry at the field after a read fails'
   const pending = deferredArn();
   arnRead.mockReturnValueOnce(pending.promise);
   const form = open();
-  await form.choose('Target kind', 'sqs');
-  await form.choose('Queue', queueB.value);
+  await form.choose(1, 'Target kind', 'sqs');
+  await form.choose(2, 'Queue', queueB.value);
   await waitFor(() => expect(form.page.findStatusIndicator()?.getElement()).toHaveTextContent('Reading queue ARN'));
   expect(arnRead).toHaveBeenCalledWith(connection.engineOrigin, queueB.value, expect.any(AbortSignal));
   expect(buildTarget(form.draft())).toBeUndefined();
@@ -179,14 +181,15 @@ it('waits for the queue ARN and keeps its Retry at the field after a read fails'
 
 it('requires a message group ID only when the chosen queue is FIFO', async () => {
   const form = open();
-  await form.choose('Target kind', 'sqs');
-  await form.choose('Queue', queueA.value);
-  expect(form.field('Message group ID')?.findDescription()?.getElement()).toHaveTextContent(
+  await form.choose(1, 'Target kind', 'sqs');
+  await form.choose(2, 'Queue', queueA.value);
+  expect(form.field(3, 'Message group ID')?.findDescription()?.getElement()).toHaveTextContent(
     'Required for a FIFO queue.',
   );
   expect(validateTarget(form.draft()).messageGroupId).toBeDefined();
-  await form.choose('Queue', queueB.value);
-  expect(form.field('Message group ID')).toBeUndefined();
+  await form.choose(2, 'Queue', queueB.value);
+  expect(form.field(3, 'What the target receives').findSelect()?.getElement()).toBeVisible();
+  expect(form.page.findAllFormFields()).toHaveLength(4);
   expect(validateTarget(form.draft()).messageGroupId).toBeUndefined();
 });
 
@@ -195,10 +198,10 @@ it.each(['before', 'after'])('drops the old queue ARN arriving %s the selected q
   const b = deferredArn();
   arnRead.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
   const form = open();
-  await form.choose('Target kind', 'sqs');
-  await form.choose('Queue', queueA.value);
+  await form.choose(1, 'Target kind', 'sqs');
+  await form.choose(2, 'Queue', queueA.value);
   await waitFor(() => expect(arnRead).toHaveBeenCalledTimes(1));
-  await form.choose('Queue', queueB.value);
+  await form.choose(2, 'Queue', queueB.value);
   await waitFor(() => expect(arnRead).toHaveBeenCalledTimes(2));
   expect(arnRead.mock.calls[0]?.[2].aborted).toBe(true);
   if (order === 'before') await act(async () => a.resolve('arn:old'));
@@ -213,10 +216,10 @@ it('drops the old queue answer after changing kind', async () => {
   const a = deferredArn();
   arnRead.mockReturnValueOnce(a.promise);
   const form = open();
-  await form.choose('Target kind', 'sqs');
-  await form.choose('Queue', queueA.value);
+  await form.choose(1, 'Target kind', 'sqs');
+  await form.choose(2, 'Queue', queueA.value);
   await waitFor(() => expect(arnRead).toHaveBeenCalledTimes(1));
-  await form.choose('Target kind', 'sns');
+  await form.choose(1, 'Target kind', 'sns');
   await act(async () => a.resolve('arn:old'));
   expect(form.draft()).toMatchObject({ kind: 'sns', resource: undefined, queueArn: undefined });
   expect(arnRead.mock.calls[0]?.[2].aborted).toBe(true);
@@ -232,8 +235,8 @@ it('shows a failed choice read with Retry and reads that choice again', async ()
     }),
   );
   const form = open();
-  await form.choose('Target kind', 'sns');
-  const select = form.select('Topic');
+  await form.choose(1, 'Target kind', 'sns');
+  const select = form.select(2, 'Topic');
   act(() => select.openDropdown());
   await waitFor(() => expect(select.findDropdown().getElement()).toHaveTextContent('Topic read refused'));
   const retry = select.findErrorRecoveryButton();
@@ -252,8 +255,8 @@ it.each([
   async (kind, label, operation, reader) => {
     reader.mockRejectedValueOnce(notImplemented(operation));
     const form = open();
-    await form.choose('Target kind', kind);
-    const select = form.select(label);
+    await form.choose(1, 'Target kind', kind);
+    const select = form.select(2, label);
     act(() => select.openDropdown());
     await waitFor(() =>
       expect(select.findDropdown().getElement()).toHaveTextContent('Not implemented by the emulator'),
@@ -267,8 +270,8 @@ it.each([
 it('shows a GetQueueAttributes 501 at the queue and keeps the selected row unsendable', async () => {
   arnRead.mockRejectedValueOnce(notImplemented('GetQueueAttributes'));
   const form = open();
-  await form.choose('Target kind', 'sqs');
-  await form.choose('Queue', queueB.value);
+  await form.choose(1, 'Target kind', 'sqs');
+  await form.choose(2, 'Queue', queueB.value);
   await waitFor(() =>
     expect(form.page.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
   );
