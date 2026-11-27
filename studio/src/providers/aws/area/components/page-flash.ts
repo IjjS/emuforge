@@ -18,6 +18,8 @@ export interface FlashItem {
 /** What a page shows at once (R5.3): one item, or several items of one action, in the order they are shown. */
 export type FlashResult = readonly [FlashItem, ...FlashItem[]];
 
+export type HandOverNote = Readonly<Record<string, string | number | boolean | null>>;
+
 /** What a screen's page asks of the area's flash. */
 export interface PageFlash {
   /**
@@ -31,7 +33,7 @@ export interface PageFlash {
    * written as a crumb's address is (R4.6): a parameter's value percent-encoded once as one segment, so its path is
    * the path the router then holds; a path written otherwise never matches the visit it leads to.
    */
-  handOver: (to: string, result: FlashResult) => void;
+  handOver: (to: string, result: FlashResult, note?: HandOverNote) => void;
 }
 
 const NO_FLASH: PageFlash = { show: () => undefined, handOver: () => undefined };
@@ -45,4 +47,11 @@ export const PageFlashContext = createContext<PageFlash>(NO_FLASH);
 /** What a screen's page calls to show the result of an action, or to hand it to the page it leads to (R5.2). */
 export function usePageFlash(): PageFlash {
   return useContext(PageFlashContext);
+}
+
+/** The optional note handed to this visit by the page that opened it. */
+export const HandOverNoteContext = createContext<HandOverNote | undefined>(undefined);
+
+export function useHandOverNote(): HandOverNote | undefined {
+  return useContext(HandOverNoteContext);
 }
