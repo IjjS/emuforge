@@ -159,6 +159,13 @@ function field(label: string) {
   return match;
 }
 
+async function expectFieldError(label: string, message: string) {
+  // Cloudscape temporarily sets an attribute to scope findError(). Ignore those mutations.
+  await waitFor(() => expect(field(label).findError()?.getElement()).toHaveTextContent(message), {
+    mutationObserverOptions: { childList: true, subtree: true, characterData: true },
+  });
+}
+
 function select(label: string) {
   const match = createWrapper(field(label).getElement()).findSelect();
   if (match === null) throw new Error(`Missing ${label} select`);
@@ -208,7 +215,7 @@ describe('modify a DB cluster', () => {
     expect(modal.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
     expect(select('Engine version').findTrigger().getElement()).toHaveTextContent('Keep 16.4');
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
-    expect(await modal.findByText('old-group')).toBeInTheDocument();
+    await waitFor(() => expect(securityGroups().findToken(1)?.findLabel().getElement()).toHaveTextContent('old-group'));
     expect(groupRequests).toContainEqual(
       expect.objectContaining({
         'Filter.1.Name': 'group-id',
@@ -260,8 +267,9 @@ describe('modify a DB cluster', () => {
     delete cluster.storageType;
     renderControls(cluster);
     const modal = await open('modify');
-    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('Not set');
-    expect(modal.getByText('The cluster has no storage type.')).toBeInTheDocument();
+    const trigger = select('Storage type').findTrigger().getElement();
+    expect(trigger).toHaveTextContent('Not set');
+    expect(trigger).toHaveTextContent('The cluster has no storage type.');
     const save = modal.getByRole('button', { name: 'Save changes' });
     await pick('Storage type', 'aurora');
     expect(save).toBeEnabled();
@@ -297,7 +305,7 @@ describe('modify a DB cluster', () => {
     await waitFor(() => expect(versions.findDropdown().findOptionByValue(TARGET.version)).not.toBeNull());
     expect(versions.findDropdown().findOptionByValue('13.15')).toBeNull();
     versions.selectOptionByValue(TARGET.version);
-    expect(await modal.findByText('Choose a storage type for 17.4')).toBeInTheDocument();
+    await expectFieldError('Storage type', `Choose a storage type for ${TARGET.version}`);
     expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 
@@ -325,7 +333,7 @@ describe('modify a DB cluster', () => {
     await waitFor(() => expect(picker.findTrigger().getElement()).toBeEnabled());
 
     await pick('Engine version', TARGET.version);
-    expect(await modal.findByText(`Choose a storage type for ${TARGET.version}`)).toBeInTheDocument();
+    await expectFieldError('Storage type', `Choose a storage type for ${TARGET.version}`);
     expect(save).toBeDisabled();
     await pick('Storage type', 'aurora-iopt1');
     await pick('Engine version', '');
@@ -379,15 +387,21 @@ describe('modify a DB cluster', () => {
       );
       renderControls();
       const modal = await open('modify');
-      const storage = within(field('Storage type').getElement());
+      const storageField = field('Storage type').getElement();
+      const storage = within(storageField);
       await waitFor(() =>
         expect(field('Storage type').getElement()).toHaveTextContent(
           kind === '501' ? ROWS_OPERATION : 'RowsUnavailable',
         ),
       );
       expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
-      if (kind === '501') expect(storage.getByText('Not implemented by the emulator')).toBeInTheDocument();
-      else expect(storage.getByRole('button', { name: 'Retry' })).toBeEnabled();
+      if (kind === '501') {
+        expect(createWrapper(storageField).findStatusIndicator()?.getElement()).toHaveTextContent(
+          'Not implemented by the emulator',
+        );
+      } else {
+        expect(storage.getByRole('button', { name: 'Retry' })).toBeEnabled();
+      }
       fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
       const save = modal.getByRole('button', { name: 'Save changes' });
       expect(save).toBeEnabled();
@@ -411,7 +425,7 @@ describe('modify a DB cluster', () => {
       });
       renderControls();
       const modal = await open('modify');
-      expect(modal.getAllByText('sg-old').length).toBeGreaterThan(0);
+      expect(securityGroups().findToken(1)?.findLabel().getElement()).toHaveTextContent('sg-old');
       if (kind === '501') {
         expect(await modal.findByText(/501 Not Implemented for DescribeSecurityGroups/)).toBeInTheDocument();
       } else {
@@ -450,7 +464,11 @@ describe('modify a DB cluster', () => {
     expect(reopened.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('renamed');
     expect(select('Engine version').findTrigger().getElement()).toHaveTextContent(TARGET.version);
     expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora-iopt1');
-    expect(reopened.getAllByText('sg-new').length).toBeGreaterThan(0);
+    expect(
+      securityGroups()
+        .findTokens()
+        .map((token) => token.findLabel().getElement().textContent),
+    ).toContain('sg-new');
   });
 });
 
@@ -498,8 +516,7 @@ describe('fail over a DB cluster', () => {
     );
     const picker = target();
     picker.openDropdown();
-    const message = 'reader is no longer a reader of this DB cluster.';
-    expect(await modal.findByText(message)).toBeVisible();
+    await expectFieldError('Target DB instance', 'reader is no longer a reader of this DB cluster.');
     expect(picker.findTrigger().getElement()).toHaveTextContent('Select a reader DB instance');
     expect(submit).toBeDisabled();
     fireEvent.click(submit);
@@ -507,7 +524,7 @@ describe('fail over a DB cluster', () => {
 
     await waitFor(() => expect(option('writer')).not.toBeNull());
     picker.selectOptionByValue('writer');
-    expect(modal.queryByText(message)).not.toBeInTheDocument();
+    expect(field('Target DB instance').findError()).toBeNull();
     expect(submit).toBeEnabled();
     fireEvent.click(submit);
     expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'writer' });
@@ -537,7 +554,7 @@ describe('fail over a DB cluster', () => {
     expect(submit).toBeDisabled();
     picker.closeDropdown();
     await act(async () => answer(promoted));
-    expect(await modal.findByText('reader is no longer a reader of this DB cluster.')).toBeVisible();
+    await expectFieldError('Target DB instance', 'reader is no longer a reader of this DB cluster.');
     expect(submit).toBeDisabled();
     fireEvent.click(submit);
     expect(onSubmit).not.toHaveBeenCalled();
