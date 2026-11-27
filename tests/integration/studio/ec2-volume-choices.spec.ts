@@ -161,7 +161,14 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
       expect(volume, 'the volume of the second line').not.toBe('');
       await open(page, volumePath(volume), volume);
       await button(main, 'Attach volume').click(ACTION);
-      await expectInstanceNotOffered(page, run, gone);
+      try {
+        await expectInstanceNotOffered(page, run, gone);
+      } catch (e) {
+        ctx.log(`the Attach dialog as it stood: ${(await dialogOf(page).innerText()).replace(/\s+/g, ' ')}`);
+        ctx.log(`the volume, directly: ${JSON.stringify(await readVolume(ctx, port, volume))}`);
+        ctx.log(`<p>-run, directly: ${JSON.stringify(await instanceDirect(ctx, port, run))}`);
+        throw e;
+      }
       await expectInstanceNotOffered(page, stop, other);
       const offered = await instanceOption(page, stop);
       await expect(offered, '`<p>-stop` with its state and type').toContainText('stopped');
