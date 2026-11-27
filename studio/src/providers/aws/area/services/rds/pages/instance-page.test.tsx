@@ -7,10 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError, type RequestFailure } from '../../../../../../lib/aws/request';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
+import { readSecurityGroupsById } from '../../../components/security-group-choices';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { listEngineVersionChoices, readOrderableRows, readUpgradeTargets } from '../choices-api';
+import { getCluster } from '../cluster-api';
 import { MODIFY_INSTANCE, modifyInstance } from '../modify-api';
 import { useInstanceListing } from '../queries';
 
@@ -31,6 +34,23 @@ vi.mock('../api', async (importOriginal) => {
 vi.mock('../modify-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../modify-api')>()),
   modifyInstance: vi.fn(),
+}));
+
+vi.mock('../choices-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../choices-api')>()),
+  readOrderableRows: vi.fn(),
+  readUpgradeTargets: vi.fn(),
+  listEngineVersionChoices: vi.fn(),
+}));
+
+vi.mock('../cluster-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../cluster-api')>()),
+  getCluster: vi.fn(),
+}));
+
+vi.mock('../../../components/security-group-choices', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../components/security-group-choices')>()),
+  readSecurityGroupsById: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -95,6 +115,15 @@ function matchMedia(query: string): MediaQueryList {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(readOrderableRows).mockResolvedValue([
+    { DBInstanceClass: 'db.t3.micro', StorageType: 'gp2' },
+    { DBInstanceClass: 'db.t3.small', StorageType: 'gp2' },
+    { DBInstanceClass: 'db.bad', StorageType: 'gp2' },
+  ]);
+  vi.mocked(readUpgradeTargets).mockResolvedValue([{ version: '19.1', major: true }]);
+  vi.mocked(listEngineVersionChoices).mockResolvedValue({ choices: [{ version: '19.1' }] });
+  vi.mocked(readSecurityGroupsById).mockResolvedValue([{ id: 'sg-1', vpcId: 'vpc-1' }]);
+  vi.mocked(getCluster).mockResolvedValue({ found: false });
   vi.stubGlobal('matchMedia', matchMedia);
   connection = new Connection();
   connection.value = { result: connectedResult(), engineOrigin: ENGINE };
@@ -801,7 +830,6 @@ async function openModify() {
 
 const MODIFY_FIELD_LABELS = {
   identifier: 'DB instance identifier',
-  class: 'DB instance class',
   storage: 'Allocated storage (GiB)',
   password: 'New master password',
 } as const;
@@ -819,6 +847,24 @@ function modifyInput(dialog: ModifyDialog, field: ModifyField) {
 
 function update(dialog: ModifyDialog, field: ModifyField, value: string) {
   fireEvent.change(modifyInput(dialog, field), { target: { value } });
+}
+
+function selectIn(dialog: ModifyDialog, label: string) {
+  const field = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((entry) => entry.findLabel()?.getElement().textContent === label);
+  const select = field === undefined ? null : createWrapper(field.getElement()).findSelect();
+  if (select === null) throw new Error(`Missing select: ${label}`);
+  return select;
+}
+
+async function choose(dialog: ModifyDialog, label: string, value: string) {
+  const select = selectIn(dialog, label);
+  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
+  select.openDropdown();
+  await waitFor(() => expect(select.findDropdown().findOptionByValue(value)).not.toBeNull());
+  select.selectOptionByValue(value);
 }
 
 function footerButton(dialog: ModifyDialog, action: 'save' | 'cancel') {
@@ -898,7 +944,8 @@ describe('modifying a DB instance', () => {
     await loaded();
     expect(modifyButton()).toBeEnabled();
     const dialog = await openModify();
-    update(dialog, 'class', 'db.t3.small');
+    await choose(dialog, 'Engine version', '19.1');
+    await choose(dialog, 'DB instance class', 'db.t3.small');
     const save = saveChanges(dialog);
     expect(isDisabled(save)).toBe(true);
     expect(isDisabled(modifyButton())).toBe(true);
@@ -909,7 +956,7 @@ describe('modifying a DB instance', () => {
     expect(modifyInstance).toHaveBeenCalledExactlyOnceWith(
       ENGINE,
       'app-db',
-      { instanceClass: 'db.t3.small' },
+      { instanceClass: 'db.t3.small', engineVersion: { version: '19.1', major: true } },
       expect.any(AbortSignal),
     );
     pending.resolve('app-db');
@@ -944,11 +991,9 @@ describe('modifying a DB instance', () => {
       vi.mocked(modifyInstance).mockReturnValue(save.promise);
       const router = open(PATH, true);
       const dialog = await openModify();
-      update(dialog, 'class', 'db.t3.small');
+      await choose(dialog, 'DB instance class', 'db.t3.small');
       update(dialog, 'storage', '30');
-      const protection = dialog.findContent().findCheckbox();
-      expect(protection?.findLabel().getElement()).toHaveTextContent('Deletion protection');
-      fireEvent.click(protection?.findNativeInput().getElement() as HTMLInputElement);
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Deletion protection' }));
       saveChanges(dialog);
       fireEvent.click(control('Refresh'));
       await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
@@ -1019,7 +1064,7 @@ describe('modifying a DB instance', () => {
         fireEvent.click(control('Refresh'));
         await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
         await act(async () => oldRead.resolve({ found: false }));
-        await screen.findByText('DB instance not found');
+        expect(screen.queryByText('DB instance not found')).toBeNull();
       }
       await act(async () => pending.resolve(UPDATED_ID));
       await waitForModificationFlash('Modifying returned-db.');
@@ -1060,13 +1105,15 @@ describe('modifying a DB instance', () => {
       vi.mocked(modifyInstance).mockRejectedValue(refused({ code, message }));
       const router = open(PATH);
       const dialog = await openModify();
-      update(dialog, field, bad);
+      if (field === 'class') await choose(dialog, 'DB instance class', bad);
+      else update(dialog, field, bad);
       saveChanges(dialog);
       await waitFor(() =>
         expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(message),
       );
       expect(router.state.location.pathname).toBe(PATH);
-      update(dialog, field, good);
+      if (field === 'class') await choose(dialog, 'DB instance class', good);
+      else update(dialog, field, good);
       saveChanges(dialog);
       expect(modifyInstance).toHaveBeenNthCalledWith(
         2,
@@ -1093,12 +1140,13 @@ describe('modifying a DB instance', () => {
     const dialog = await openModify();
     const edits = [
       ['identifier', 'renamed-db'],
-      ['class', 'db.t3.small'],
       ['storage', '30'],
       ['password', 'Example-Only!580'],
     ] as const;
     for (const [field, value] of edits) update(dialog, field, value);
-    const protection = dialog.findContent().findCheckbox()?.findNativeInput().getElement() as HTMLInputElement;
+    await choose(dialog, 'DB instance class', 'db.t3.small');
+    const classTrigger = selectIn(dialog, 'DB instance class').findTrigger().getElement();
+    const protection = screen.getByRole('checkbox', { name: 'Deletion protection' });
     fireEvent.click(protection);
     expect(dialog.findDismissButton().getElement()).toHaveAccessibleName('Close');
     const save = saveChanges(dialog);
@@ -1127,6 +1175,8 @@ describe('modifying a DB instance', () => {
       expect(input).toHaveValue(value);
     }
     expect(modifyInput(dialog, 'password')).toHaveAttribute('type', 'password');
+    expect(classTrigger).toBeDisabled();
+    expect(classTrigger).toHaveTextContent('db.t3.small');
     expect(protection).toBeDisabled();
     protection.click();
     expect(protection).not.toBeChecked();
@@ -1143,6 +1193,8 @@ describe('modifying a DB instance', () => {
       expect(input).toHaveValue(value);
     }
     expect(protection).toBeEnabled();
+    expect(classTrigger).toBeEnabled();
+    expect(classTrigger).toHaveTextContent('db.t3.small');
     fireEvent.click(protection);
     expect(protection).toBeChecked();
     update(dialog, 'identifier', 'corrected-db');
@@ -1159,7 +1211,7 @@ describe('modifying a DB instance', () => {
     vi.mocked(modifyInstance).mockRejectedValue(refused({ code: 'DBInstanceNotFound' }));
     open(PATH);
     const dialog = await openModify();
-    update(dialog, 'class', 'db.t3.small');
+    await choose(dialog, 'DB instance class', 'db.t3.small');
     saveChanges(dialog);
     await screen.findByText('DB instance not found');
     expect(screen.getByRole('link', { name: 'View DB instances' })).toBeInTheDocument();
@@ -1174,7 +1226,7 @@ describe('modifying a DB instance', () => {
     );
     open(PATH);
     const dialog = await openModify();
-    update(dialog, 'class', 'db.t3.small');
+    await choose(dialog, 'DB instance class', 'db.t3.small');
     saveChanges(dialog);
     await waitFor(() => {
       const info = PAGE.findFlashbar()?.findItemsByType('info')[0];
@@ -1198,7 +1250,7 @@ describe('modifying a DB instance', () => {
     vi.mocked(modifyInstance).mockRejectedValue(new RequestError({ operation: MODIFY_INSTANCE, ...failure }));
     open(PATH);
     const dialog = await openModify();
-    update(dialog, 'class', 'db.t3.small');
+    await choose(dialog, 'DB instance class', 'db.t3.small');
     saveChanges(dialog);
     await waitFor(() => {
       const alert = dialog.findContent().findAlert();
