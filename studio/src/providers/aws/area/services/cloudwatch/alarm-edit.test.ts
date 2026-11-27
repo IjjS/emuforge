@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 
 import type { EditableAlarm } from './alarm';
-import { alarmEditValues, mergeAlarmEdit } from './alarm-edit';
+import { alarmDatapointCount, alarmEditValues, mergeAlarmEdit } from './alarm-edit';
 
 const name = 'Requests / local';
 const alarm = (fields: Partial<EditableAlarm['data']> = {}): EditableAlarm => ({
@@ -27,7 +27,8 @@ it('fills the form with the alarm values, defaults, and an extended statistic', 
     ActionsEnabled: false,
     OKActions: ['ok'],
   });
-  expect(alarmEditValues(name, original)).toEqual({
+  const values = alarmEditValues(name, original);
+  expect({ ...values, datapointsToAlarm: alarmDatapointCount(values) }).toEqual({
     name,
     description: 'before',
     metric: { namespace: 'App', name: 'Requests', dimensions: [{ Name: 'Stage', Value: 'local' }] },
@@ -166,11 +167,14 @@ it('validates the evaluation span against the latest period', () => {
   const original = alarm({ Period: 60, EvaluationPeriods: 1 });
   const values = { ...alarmEditValues(name, original), evaluationPeriods: '25' };
   const latest = alarm({ Period: 3540, EvaluationPeriods: 1 });
-  expect(mergeAlarmEdit(name, original, values, latest)).toMatchObject({
+  const result = mergeAlarmEdit(name, original, values, latest);
+  expect(result).toMatchObject({
     kind: 'invalid',
     errors: { evaluationPeriods: 'The evaluation periods cannot cover more than one day for a period under one hour.' },
-    values: { period: 3540, evaluationPeriods: '25', datapointsToAlarm: '1' },
+    values: { period: 3540, evaluationPeriods: '25', datapointsToAlarm: undefined },
   });
+  expect(result.kind === 'invalid' && alarmDatapointCount(result.values)).toBe('25');
+  expect(result).not.toHaveProperty('input');
 });
 
 it('keeps the datapoint setting unset when only the evaluation periods are edited', () => {
