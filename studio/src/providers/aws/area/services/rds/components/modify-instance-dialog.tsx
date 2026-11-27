@@ -1,46 +1,179 @@
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
-import Checkbox from '@cloudscape-design/components/checkbox';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
+import type { AreaConnection } from '../../../components/emulator-line';
+import {
+  DESCRIBE_SECURITY_GROUPS,
+  readSecurityGroupsById,
+  type SecurityGroupChoice,
+} from '../../../components/security-group-choices';
 import type { FlashItem } from '../../../components/page-flash';
 import type { DbInstance } from '../api';
+import type { SubnetGroupChoice, UpgradeTarget } from '../choices-api';
+import { useOrderableRows, useSubnetGroupPlacement } from '../choices-queries';
+import { useClusterOnce } from '../cluster-queries';
 import {
-  classError,
   IDENTIFIER_CONSTRAINT,
   identifierError,
+  iopsError,
   PASSWORD_CONSTRAINT,
   passwordError,
+  requiresIops,
   storageError,
 } from '../form';
 import type { InstanceChanges } from '../modify-api';
-import { ClassField, StorageField } from './create-fields';
+import {
+  afterParent,
+  afterSubnetGroup,
+  changed,
+  changes,
+  draftField,
+  editField,
+  sameSecurityGroups,
+} from '../modify-draft';
+import { instanceClasses, type StorageTypeChoice } from '../orderable';
+import { RDS_KEYS, useRdsRead } from '../queries';
+import {
+  DeletionProtectionField,
+  InstanceClassField,
+  IopsField,
+  MultiAzField,
+  StorageTypeField,
+  UpgradeVersionField,
+} from './choice-fields';
+import { SecurityGroupsField, StorageField, SubnetGroupField } from './create-fields';
 
 interface ModifyInstanceDialogProps {
   instance: DbInstance;
+  connection: AreaConnection;
   pending: boolean;
   failure: FlashItem | undefined;
   onSave: (changes: InstanceChanges) => void;
   onDismiss: () => void;
 }
 
+function subnetChoice(group: DbInstance['subnetGroup']): SubnetGroupChoice | undefined {
+  if (group === undefined) return undefined;
+  return {
+    name: group.name,
+    ...(group.vpcId === undefined ? {} : { vpcId: group.vpcId }),
+    ...(group.subnets.length === 0 ? {} : { hasSubnets: true }),
+  };
+}
+
+function provisionedIopsError(value: string, storage: string, type: StorageTypeChoice | undefined) {
+  const error = iopsError(value, storage, type);
+  if (
+    error !== undefined ||
+    !requiresIops(type?.type) ||
+    !/^\d+$/.test(storage) ||
+    storageError(storage, type) === undefined
+  )
+    return error;
+  // Check the ratio even when the size itself is outside the storage type's range.
+  const size = Number(storage);
+  const min = Math.ceil((type?.minIopsPerGib ?? 0) * size);
+  const max = Math.floor((type?.maxIopsPerGib ?? Infinity) * size);
+  if (Number(value) < min || Number(value) > max) {
+    return Number.isFinite(max) ? `${min} to ${max} IOPS for ${size} GiB.` : `At least ${min} IOPS for ${size} GiB.`;
+  }
+  return undefined;
+}
+
 /** Mounted only while editing, so each opening starts with a fresh draft. */
-export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDismiss }: ModifyInstanceDialogProps) {
-  const originalClass = instance.instanceClass ?? '';
-  const originalStorage = instance.allocatedStorage?.toString() ?? '';
-  const originalProtection = instance.deletionProtection === true;
+export function ModifyInstanceDialog({
+  instance,
+  connection,
+  pending,
+  failure,
+  onSave,
+  onDismiss,
+}: ModifyInstanceDialogProps) {
+  const endpoint = connection.engineOrigin;
   const member = instance.clusterId !== undefined;
+  const cluster = useClusterOnce(member ? endpoint : undefined, instance.clusterId ?? '');
+  const clusterDetail = cluster.value?.found === true ? cluster.value.cluster : undefined;
+  const engine = clusterDetail?.engine ?? instance.engine ?? '';
 
   const [identifier, setIdentifier] = useState(instance.id);
-  const [instanceClass, setInstanceClass] = useState(originalClass);
-  const [storage, setStorage] = useState(originalStorage);
+  const [version, setVersion] = useState(() => draftField<UpgradeTarget | undefined>(undefined));
+  const orderableVersion = member ? clusterDetail?.engineVersion : (version.value?.version ?? instance.engineVersion);
+  const rows = useOrderableRows(endpoint, engine, orderableVersion);
+  const [instanceClass, setInstanceClass] = useState(() => draftField(instance.instanceClass));
+  const [storageType, setStorageType] = useState(() => draftField(instance.storageType));
+  const [storage, setStorage] = useState(instance.allocatedStorage?.toString() ?? '');
+  const [iops, setIops] = useState(instance.iops?.toString() ?? '');
   const [password, setPassword] = useState('');
-  const [protection, setProtection] = useState(originalProtection);
+  const [multiAz, setMultiAz] = useState(instance.multiAz === true);
+  const [protection, setProtection] = useState(instance.deletionProtection);
+  const [subnetGroup, setSubnetGroup] = useState(() =>
+    draftField(subnetChoice(instance.subnetGroup), (left, right) => left?.name === right?.name),
+  );
+  const [groups, setGroups] = useState(() =>
+    draftField<readonly SecurityGroupChoice[]>(
+      instance.securityGroups.map(({ id }) => ({ id })),
+      sameSecurityGroups,
+    ),
+  );
+
+  const groupIds = groups.start.map(({ id }) => id);
+  const startingGroups = useRdsRead({
+    key: RDS_KEYS.choices('current-instance-groups', ...groupIds),
+    endpoint,
+    operation: DESCRIBE_SECURITY_GROUPS,
+    read: (at, signal) => readSecurityGroupsById(at, groupIds, signal),
+    enabled: !member && groupIds.length > 0,
+  });
+  const placement = useSubnetGroupPlacement(member ? undefined : endpoint, subnetGroup.value, undefined, true);
+  const subnetChanged = changed(subnetGroup);
+  const groupsReady = groupIds.length === 0 || startingGroups.value !== undefined;
+  const vpcId = placement.data ?? undefined;
+
+  const [seenPlacement, setSeenPlacement] = useState<{ group: typeof subnetGroup; vpcId: typeof vpcId }>();
+  if (groupsReady && (seenPlacement?.group !== subnetGroup || seenPlacement.vpcId !== vpcId)) {
+    setSeenPlacement({ group: subnetGroup, vpcId });
+    const enriched = (group: SecurityGroupChoice) => startingGroups.value?.find(({ id }) => id === group.id) ?? group;
+    setGroups(afterSubnetGroup({ ...groups, value: groups.value.map(enriched) }, subnetGroup, vpcId));
+  }
+  const shownGroups = groups.value.map((group) => startingGroups.value?.find(({ id }) => id === group.id) ?? group);
+  const missingIds = new Set(
+    startingGroups.value === undefined
+      ? []
+      : groupIds.filter((id) => !startingGroups.value?.some((group) => group.id === id)),
+  );
+
+  const classes = rows.data === undefined ? undefined : instanceClasses(rows.data);
+  const [seenRows, setSeenRows] = useState<{ rows: typeof rows.data; instanceClass: typeof instanceClass }>();
+  const typeChoices = classes?.find(({ name }) => name === instanceClass.value)?.storageTypes ?? [];
+  if (rows.data !== undefined && (seenRows?.rows !== rows.data || seenRows.instanceClass !== instanceClass)) {
+    const nextClass = afterParent(
+      instanceClass,
+      version,
+      classes?.map(({ name }) => name),
+      `Choose a class for ${orderableVersion ?? ''}`,
+    );
+    setSeenRows({ rows: rows.data, instanceClass: nextClass });
+    setInstanceClass(nextClass);
+    if (!member) {
+      const types = classes?.find(({ name }) => name === nextClass.value)?.storageTypes ?? [];
+      setStorageType(
+        afterParent(
+          storageType,
+          nextClass,
+          types.map(({ type }) => type),
+          `Choose a storage type for ${nextClass.value ?? 'the selected class'}`,
+          changed(version) || nextClass.cleared !== undefined,
+        ),
+      );
+    }
+  }
+
   const saveRef = useRef<ButtonProps.Ref>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
   useEffect(() => {
@@ -50,23 +183,49 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
   }, [pending, failure]);
 
   const renamed = identifier.toLowerCase() !== instance.id.toLowerCase();
+  const type = typeChoices.find((choice) => choice.type === storageType.value);
+  const shownType = type ?? (storageType.value === undefined ? undefined : { type: storageType.value });
+  const typeChanged = changed(storageType);
+  const sizeEdited = storage !== (instance.allocatedStorage?.toString() ?? '');
+  const sizeChanged = sizeEdited && Number(storage) !== instance.allocatedStorage;
+  const iopsChanged =
+    requiresIops(storageType.value) && iops !== (instance.iops?.toString() ?? '') && Number(iops) !== instance.iops;
+  const groupError =
+    groups.cleared ??
+    ((subnetChanged || changed(groups)) && groups.value.length === 0
+      ? 'Choose at least one security group.'
+      : undefined);
   const errors = {
     identifier: renamed ? identifierError(identifier) : undefined,
-    instanceClass: instanceClass === originalClass ? undefined : classError(instanceClass),
-    storage: member || storage === originalStorage ? undefined : storageError(storage),
+    instanceClass: instanceClass.cleared,
+    storageType: instanceClass.value === undefined ? undefined : storageType.cleared,
+    storage: !member && (sizeEdited || typeChanged) ? storageError(storage, shownType) : undefined,
+    iops:
+      !member && (sizeEdited || typeChanged || iopsChanged)
+        ? provisionedIopsError(iops, storage, shownType)
+        : undefined,
     password: member || password === '' ? undefined : passwordError(password),
+    groups: groupError,
   };
-  const changes: InstanceChanges = {};
-  if (renamed && errors.identifier === undefined) changes.identifier = identifier;
-  if (instanceClass !== originalClass) changes.instanceClass = instanceClass;
-  if (!member && storage !== originalStorage && Number(storage) !== instance.allocatedStorage) {
-    changes.allocatedStorage = Number(storage);
+  const edits: InstanceChanges = changes({ instanceClass, storageType, engineVersion: version });
+  if (renamed && errors.identifier === undefined) edits.identifier = identifier;
+  if (!member) {
+    if (sizeChanged) edits.allocatedStorage = Number(storage);
+    if (iopsChanged) edits.iops = Number(iops);
+    if (password !== '') edits.masterPassword = password;
+    if (multiAz !== (instance.multiAz === true)) edits.multiAz = multiAz;
+    if (subnetChanged && subnetGroup.value !== undefined) edits.subnetGroup = subnetGroup.value.name;
+    if (changed(groups)) edits.securityGroupIds = groups.value.map(({ id }) => id);
   }
-  if (!member && password !== '') changes.masterPassword = password;
-  if (protection !== originalProtection) changes.deletionProtection = protection;
+  if (protection !== instance.deletionProtection) edits.deletionProtection = protection;
 
+  const needsRows = changed(instanceClass) || changed(version) || typeChanged || sizeChanged || iopsChanged;
   const canSave =
-    !pending && Object.keys(changes).length > 0 && Object.values(errors).every((error) => error === undefined);
+    !pending &&
+    Object.keys(edits).length > 0 &&
+    Object.values(errors).every((error) => error === undefined) &&
+    (!needsRows || rows.data !== undefined) &&
+    (!(subnetChanged || changed(groups)) || (groupsReady && vpcId !== undefined));
 
   return (
     <AreaModal
@@ -91,7 +250,7 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
               loadingText="Saving changes"
               disabled={!pending && !canSave}
               onClick={() => {
-                if (canSave) onSave(changes);
+                if (canSave) onSave(edits);
               }}
             >
               Save changes
@@ -111,7 +270,7 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
             id="rds-modify-field-identifier"
             label="DB instance identifier"
             description={
-              changes.identifier === undefined
+              edits.identifier === undefined
                 ? undefined
                 : 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.'
             }
@@ -128,8 +287,29 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
               }}
             />
           </FormField>
+          {!member && instance.engineVersion !== undefined && (
+            <UpgradeVersionField
+              connection={connection}
+              engine={engine}
+              version={instance.engineVersion}
+              value={version.value}
+              onChange={(value) => setVersion(editField(version, value))}
+            />
+          )}
           <div id="rds-modify-field-class">
-            <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
+            <InstanceClassField
+              connection={connection}
+              engine={engine}
+              version={orderableVersion}
+              rows={rows}
+              value={instanceClass.value}
+              missing={instanceClass.missing}
+              error={errors.instanceClass}
+              defaultFailure={member ? cluster.failure : undefined}
+              defaultLoading={member && cluster.loading}
+              retryDefault={cluster.refresh}
+              onChange={(value) => setInstanceClass(editField(instanceClass, value))}
+            />
           </div>
           {member && (
             <Box id="rds-modify-cluster-guidance" variant="p">
@@ -137,9 +317,22 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
             </Box>
           )}
           {!member && (
-            <div id="rds-modify-field-storage">
-              <StorageField value={storage} error={errors.storage} onChange={setStorage} />
-            </div>
+            <>
+              <StorageTypeField
+                connection={connection}
+                mode="instance-modify"
+                instanceClass={instanceClass.value}
+                rows={rows}
+                value={storageType.value}
+                missing={storageType.missing}
+                error={errors.storageType}
+                onChange={(value) => setStorageType(editField(storageType, value))}
+              />
+              <div id="rds-modify-field-storage">
+                <StorageField storageType={shownType} value={storage} error={errors.storage} onChange={setStorage} />
+              </div>
+              <IopsField storageType={shownType} value={iops} error={errors.iops} onChange={setIops} />
+            </>
           )}
           {!member && (
             <FormField
@@ -161,15 +354,31 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
               />
             </FormField>
           )}
-          <Checkbox
-            checked={protection}
-            disabled={pending}
-            onChange={({ detail }) => {
-              setProtection(detail.checked);
-            }}
-          >
-            Deletion protection
-          </Checkbox>
+          {!member && (
+            <>
+              <MultiAzField checked={multiAz} onChange={setMultiAz} />
+              <SubnetGroupField
+                connection={connection}
+                mode="modify"
+                value={subnetGroup.value}
+                onChange={(value) => setSubnetGroup(editField(subnetGroup, value))}
+              />
+              <SecurityGroupsField
+                connection={connection}
+                required
+                value={shownGroups}
+                missingIds={missingIds}
+                error={errors.groups}
+                placement={{
+                  data: groupsReady ? placement.data : undefined,
+                  failure: startingGroups.failure ?? placement.failure,
+                  retry: startingGroups.failure === undefined ? placement.retry : startingGroups.refresh,
+                }}
+                onChange={(value) => setGroups(editField(groups, value))}
+              />
+            </>
+          )}
+          <DeletionProtectionField checked={protection} onChange={setProtection} />
         </SpaceBetween>
       </fieldset>
     </AreaModal>
