@@ -593,7 +593,7 @@ describe('security groups on a standalone DB instance', () => {
     );
     expect(groupNames()).toEqual(['sg-a', 'sg-b']);
     await act(async () => pending.resolve(GROUPS.slice(0, 2)));
-    expect(groupNames()).toEqual(['Group A', 'Group B']);
+    await waitFor(() => expect(groupNames()).toEqual(['Group A', 'Group B']));
   });
 
   it('keeps groups by their own VPC when changing the subnet group', async () => {
