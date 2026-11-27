@@ -59,6 +59,28 @@ export function alarmDatapointCount(values: AlarmEditValues): string {
   return values.datapointsToAlarm ?? values.evaluationPeriods;
 }
 
+export function restoreImplicitDatapointCount(
+  { data }: EditableAlarm,
+  previous: AlarmEditValues,
+  entries: AlarmEditValues,
+): AlarmEditValues {
+  const openingPeriods = data.EvaluationPeriods;
+  if (data.DatapointsToAlarm !== undefined || !Number.isSafeInteger(openingPeriods) || openingPeriods < 1) {
+    return entries;
+  }
+
+  const matchesOpeningCondition = ({ datapointsToAlarm, evaluationPeriods }: AlarmEditValues) =>
+    [datapointsToAlarm, evaluationPeriods].every(
+      (entry) => entry !== undefined && /^[0-9]+$/.test(entry.trim()) && Number(entry) === openingPeriods,
+    );
+
+  // A rebase can match the opening numbers while still holding an explicit count.
+  if (matchesOpeningCondition(entries) && !matchesOpeningCondition(previous)) {
+    return { ...entries, datapointsToAlarm: undefined };
+  }
+  return entries;
+}
+
 export function alarmEditValues(name: string, { data }: EditableAlarm): AlarmEditValues {
   return {
     name,

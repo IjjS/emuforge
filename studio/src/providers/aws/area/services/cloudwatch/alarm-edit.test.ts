@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 
 import type { EditableAlarm } from './alarm';
-import { alarmDatapointCount, alarmEditValues, mergeAlarmEdit } from './alarm-edit';
+import { alarmDatapointCount, alarmEditValues, mergeAlarmEdit, restoreImplicitDatapointCount } from './alarm-edit';
 
 const name = 'Requests / local';
 const alarm = (fields: Partial<EditableAlarm['data']> = {}): EditableAlarm => ({
@@ -43,6 +43,39 @@ it('fills the form with the alarm values, defaults, and an extended statistic', 
     alarmActions: [],
     okActions: ['ok'],
     insufficientDataActions: [],
+  });
+});
+
+it.each([
+  ['leaves an untouched count implicit', undefined, ['3', undefined], ['5', undefined], undefined],
+  ['keeps a count equal to the current periods', undefined, ['5', '2'], ['5', '5'], '5'],
+  ['keeps a count equal to the opening periods', undefined, ['5', undefined], ['5', '3'], '3'],
+  [
+    'keeps an explicit count when the count and periods differ from the opening',
+    undefined,
+    ['5', '2'],
+    ['6', '2'],
+    '2',
+  ],
+  ['keeps a matching explicit count through an unrelated edit', undefined, ['3', '3'], ['3', '3'], '3'],
+  ['keeps a matching explicit count through a formatting change', undefined, ['3', '3'], ['03', '3'], '3'],
+  ['restores the condition on a count edit', undefined, ['3', '2'], ['3', '3'], undefined],
+  ['restores the condition on a periods edit', undefined, ['5', '3'], ['3', '3'], undefined],
+  ['restores the condition with a leading zero in the count', undefined, ['3', '2'], ['3', '03'], undefined],
+  ['restores the condition with a leading zero in the periods', undefined, ['5', '3'], ['03', '3'], undefined],
+  ['keeps an invalid numeric expression in the count', undefined, ['3', '2'], ['3', '3e0'], '3e0'],
+  ['keeps an invalid numeric expression in the periods', undefined, ['5', '3'], ['3.0', '3'], '3'],
+  ['keeps a cleared count explicit for validation', undefined, ['3', '2'], ['3', ''], ''],
+  ['keeps the setting explicit when it opened explicit', 3, ['3', '2'], ['3', '3'], '3'],
+] as const)('%s', (_scenario, openingCount, [previousPeriods, previousCount], [periods, count], expected) => {
+  const baseline = alarm({ DatapointsToAlarm: openingCount });
+  const initial = alarmEditValues(name, baseline);
+  const previous = { ...initial, evaluationPeriods: previousPeriods, datapointsToAlarm: previousCount };
+  const entries = { ...previous, description: 'Edited', evaluationPeriods: periods, datapointsToAlarm: count };
+
+  expect(restoreImplicitDatapointCount(baseline, previous, entries)).toEqual({
+    ...entries,
+    datapointsToAlarm: expected,
   });
 });
 

@@ -19,7 +19,13 @@ import { failureOf, usePageSignal } from '../../../components/use-token-listing'
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { isEditableAlarm, type EditableAlarm } from '../alarm';
-import { alarmDatapointCount, alarmEditValues, type AlarmEditValues, type EditField } from '../alarm-edit';
+import {
+  alarmDatapointCount,
+  alarmEditValues,
+  restoreImplicitDatapointCount,
+  type AlarmEditValues,
+  type EditField,
+} from '../alarm-edit';
 import type { AlarmFormErrors, AlarmFormValues, MetricEntry } from '../alarm-form';
 import { useAlarm } from '../alarm-queries';
 import { DESCRIBE_ALARMS } from '../alarms-api';
@@ -149,11 +155,7 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
   }, [feedback]);
 
   function handleChange(entries: AlarmEditValues) {
-    const restoresImplicitCondition =
-      initialValues.datapointsToAlarm === undefined &&
-      entries.evaluationPeriods === initialValues.evaluationPeriods &&
-      entries.datapointsToAlarm === initialValues.evaluationPeriods;
-    setValues(restoresImplicitCondition ? { ...entries, datapointsToAlarm: undefined } : entries);
+    setValues((previous) => restoreImplicitDatapointCount(baseline, previous, entries));
   }
 
   async function handleSubmit(submitted: AlarmEditValues) {
