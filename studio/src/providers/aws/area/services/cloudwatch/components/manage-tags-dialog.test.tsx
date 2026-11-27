@@ -2,6 +2,7 @@ import type { Tag } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { AreaRootContext } from '../../../area-root';
@@ -32,7 +33,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function writes(...answers: (number | Promise<Response>)[]) {
+function writes(...answers: (number | Response | Promise<Response>)[]) {
   const sent: unknown[] = [];
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init);
@@ -74,6 +75,7 @@ async function open(initialTags: Tag[] = initial) {
         <div ref={root}>
           <ManageTagsDialog
             endpoint={endpoint}
+            connection={{ engineOrigin: endpoint, result: undefined }}
             arn={arn}
             initialTags={initialTags}
             tags={{ value: undefined, failure: undefined, loading: false, refresh }}
@@ -92,7 +94,11 @@ async function open(initialTags: Tag[] = initial) {
       </AreaRootContext.Provider>
     );
   }
-  const view = render(<Area />);
+  const view = render(
+    <MemoryRouter>
+      <Area />
+    </MemoryRouter>,
+  );
   await screen.findByRole('dialog');
   const modal = required(page.findModal(), 'Tag dialog');
   const content = modal.findContent();
@@ -175,16 +181,22 @@ it('keeps the draft and reads again when the removal is refused', async () => {
 });
 
 it('keeps outside additions and retries only the outstanding addition after a partial save', async () => {
-  const sent = writes(200, 400);
+  const reason = 'a CloudWatch resource can be associated with at most 50 tags; got 51';
+  const sent = writes(
+    200,
+    Response.json({ __type: 'InvalidParameterValueException', message: reason }, { status: 400 }),
+  );
   refresh.mockResolvedValue({ value: [...removed, { Key: 'outside', Value: 'external value' }] });
   const edit = await open();
   edit.replaceA();
   fireEvent.click(edit.save);
-  await waitFor(() =>
-    expect(edit.alertText()).toEqual([
-      'The removals were saved. The added and changed tags were not: TagResource: Tag change refused.',
-    ]),
-  );
+  await waitFor(() => {
+    const partial = edit.content.findAlert()?.findContent().getElement();
+    expect(partial).toHaveTextContent(
+      `The removals were saved. The added and changed tags were not: TagResource: ${reason}`,
+    );
+    expect(partial).toHaveTextContent('InvalidParameterValueException');
+  });
   expect(refresh).toHaveBeenCalledOnce();
   expect(edit.field(2, 1)).toHaveValue('c');
   expect(edit.content.getElement()).toHaveTextContent('Added outside this dialog');
@@ -196,7 +208,20 @@ it('keeps outside additions and retries only the outstanding addition after a pa
   expect(sent).toEqual([untag, tag, tag]);
 });
 
-it('blocks additional saves during writes and reads and re-enables save after a retry reads tags', async () => {
+it.each<{ failure: NonNullable<Parameters<typeof ManageTagsDialog>[0]['tags']['failure']>; detail: string }>([
+  {
+    failure: { kind: 'not-implemented', operation: 'ListTagsForResource' },
+    detail: 'The emulator answered 501 Not Implemented for ListTagsForResource',
+  },
+  {
+    failure: { kind: 'access-denied', operation: 'ListTagsForResource', message: 'The session cannot list tags.' },
+    detail: 'ListTagsForResource was refused: The session cannot list tags.',
+  },
+  {
+    failure: { kind: 'other', operation: 'ListTagsForResource', code: 'ReadFailed', message: 'Tags are unavailable.' },
+    detail: 'ReadFailed: Tags are unavailable.',
+  },
+])('blocks saves and shows the $failure.kind reread failure until retry succeeds', async ({ failure, detail }) => {
   const write = deferred<Response>();
   const read = deferred<ReadResult>();
   const retry = deferred<ReadResult>();
@@ -214,18 +239,21 @@ it('blocks additional saves during writes and reads and re-enables save after a 
   fireEvent.click(edit.save);
   expect(sent).toEqual([untag]);
 
-  await act(async () =>
-    read.resolve({ failure: { kind: 'other', operation: 'ListTagsForResource', code: 'Read failed' } }),
-  );
-  expect(edit.alertText()).toContainEqual(expect.stringContaining('The tags could not be read again.'));
+  await act(async () => read.resolve({ failure }));
+  const readAlert = required(edit.content.findAllAlerts()[1], 'Reread failure alert');
+  expect(readAlert.findContent().getElement()).toHaveTextContent('The tags could not be read again.');
+  expect(readAlert.findContent().getElement()).toHaveTextContent(detail);
+  expect(edit.field(1, 1)).toHaveValue('b');
+  expect(edit.field(2, 1)).toHaveValue('c');
   expect(edit.save).toBeDisabled();
-  const retryButton = edit.content.findAllAlerts()[1]?.findActionSlot()?.findButton();
+  const retryButton = readAlert.findActionSlot()?.findButton();
   expect(retryButton?.getElement()).toBeEnabled();
   fireEvent.click(required(retryButton, 'Retry button').getElement());
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(edit.save).toBeDisabled();
   await act(async () => retry.resolve({ value: initial }));
   expect(edit.save).toBeEnabled();
+  expect(edit.alertText()).not.toContainEqual(expect.stringContaining('The tags could not be read again.'));
   expect(edit.field(2, 1)).toHaveValue('c');
   expect(sent).toEqual([untag]);
 });

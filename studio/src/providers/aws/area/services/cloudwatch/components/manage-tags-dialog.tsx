@@ -4,15 +4,19 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
+import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { Tag } from '@aws-sdk/client-cloudwatch';
 import { useRef, useState } from 'react';
 
-import { refusalMessage, type RequestFailure } from '../../../../../../lib/aws/request';
+import { refusalMessage, reportedServiceCode, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
-import { actionFailureItem } from '../../../components/failure-states';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { actionFailureItem, Code, readFailureState } from '../../../components/failure-states';
+import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { ValueText } from '../../../components/value-text';
 import type { useAlarmTags } from '../alarm-queries';
 import { SaveAlarmTagsError, TAG_RESOURCE, UNTAG_RESOURCE, saveAlarmTags, type TagOperation } from '../tags-api';
 import {
@@ -25,12 +29,12 @@ import {
   validateTags,
   type TagRow,
 } from '../tags';
-import { ValueText } from '../../../components/value-text';
 
 const TAG_OPERATIONS = [UNTAG_RESOURCE, TAG_RESOURCE] as const;
 
 interface ManageTagsDialogProps {
   endpoint: string;
+  connection: AreaConnection;
   arn: string;
   initialTags: Tag[];
   tags: ReturnType<typeof useAlarmTags>;
@@ -42,6 +46,7 @@ interface ManageTagsDialogProps {
 
 export function ManageTagsDialog({
   endpoint,
+  connection,
   arn,
   initialTags,
   tags,
@@ -51,6 +56,7 @@ export function ManageTagsDialog({
   onDismiss,
 }: ManageTagsDialogProps) {
   const pageSignal = usePageSignal();
+  const follow = useFollow();
   const busy = useRef(false);
   const fields = useRef(new Map<string, InputProps.Ref>());
   const [opened] = useState(() => tagRows(initialTags));
@@ -59,7 +65,7 @@ export function ManageTagsDialog({
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
   const [reading, setReading] = useState(false);
-  const [readFailed, setReadFailed] = useState(false);
+  const [failedRead, setFailedRead] = useState<{ failure?: RequestFailure }>();
   const [saveFailure, setSaveFailure] = useState<{ refusal: RequestFailure; removalsSaved: boolean }>();
 
   const current = tags.value === undefined ? latest : tagRows(tags.value);
@@ -84,7 +90,9 @@ export function ManageTagsDialog({
     removalsSaved && refusal
       ? (refusalMessage(refusal) ?? (refusal.kind === 'other' ? refusal.code : undefined))
       : undefined;
-  const disabled = pending || reading || readFailed || unsupported !== undefined;
+  const partialCode = removalsSaved && refusal ? reportedServiceCode(refusal) : undefined;
+  const readState = failedRead?.failure && readFailureState(failedRead.failure, connection, 'tags');
+  const disabled = pending || reading || failedRead !== undefined || unsupported !== undefined;
 
   async function reread(signal: AbortSignal) {
     setReading(true);
@@ -92,9 +100,9 @@ export function ManageTagsDialog({
     if (signal.aborted) return;
     if (result && 'value' in result) {
       setLatest(tagRows(result.value));
-      setReadFailed(false);
+      setFailedRead(undefined);
     } else {
-      setReadFailed(true);
+      setFailedRead(result ?? {});
     }
     setReading(false);
     busy.current = false;
@@ -189,6 +197,12 @@ export function ManageTagsDialog({
           <Alert type="warning">
             The removals were saved. The added and changed tags were not: {refusal.operation}:{' '}
             {partialReason ?? feedback?.header}
+            {partialCode !== undefined && partialCode !== partialReason && (
+              <>
+                {' '}
+                (<Code>{partialCode}</Code>)
+              </>
+            )}
           </Alert>
         )}
         {feedback && refusal && partialReason === undefined && (
@@ -199,7 +213,7 @@ export function ManageTagsDialog({
           </Alert>
         )}
         {reading && <StatusIndicator type="loading">Loading tags</StatusIndicator>}
-        {readFailed && (
+        {failedRead && (
           <Alert
             type="error"
             action={
@@ -208,7 +222,20 @@ export function ManageTagsDialog({
               </Button>
             }
           >
-            The tags could not be read again.
+            <SpaceBetween size="xxs">
+              <div>The tags could not be read again.</div>
+              {readState && (
+                <SpaceBetween size="xxs">
+                  <StatusIndicator type={readState.type}>{readState.first}</StatusIndicator>
+                  {readState.detail}
+                  {readState.recovery && (
+                    <Link href="/" onFollow={follow}>
+                      Connection status
+                    </Link>
+                  )}
+                </SpaceBetween>
+              )}
+            </SpaceBetween>
           </Alert>
         )}
         <FormField errorText={errors?.limit}>
