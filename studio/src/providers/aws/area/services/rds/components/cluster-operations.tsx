@@ -268,6 +268,7 @@ function ModifyDialog({
         />
         <Checkbox
           checked={protection}
+          description="While it is on, the emulator refuses to delete the DB cluster."
           disabled={pending}
           onChange={({ detail }) => {
             setProtection(detail.checked);
@@ -372,9 +373,16 @@ function FailoverDialog({
   const [latest, setLatest] = useState<TargetRead>();
   const [refreshing, setRefreshing] = useState<AbortSignal>();
   const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
+  const [targetError, setTargetError] = useState<string>();
   const targets = latest === undefined ? initial.value : 'targets' in latest ? latest.targets : undefined;
   const failure = latest === undefined ? initial.failure : 'failure' in latest ? latest.failure : undefined;
   const loading = refreshing !== undefined || (latest === undefined && initial.loading);
+  const selected = targets?.find(({ id }) => id === target?.id);
+  if (!loading && targets !== undefined && target !== undefined && selected === undefined) {
+    setTargetError(`${target.id} is no longer a reader of this DB cluster.`);
+    setTarget(undefined);
+  }
+
   const source = failoverTargetChoices(endpoint, cluster.id, async (at, id, signal) => {
     setRefreshing(signal);
     try {
@@ -389,8 +397,6 @@ function FailoverDialog({
       setRefreshing((current) => (current === signal ? undefined : current));
     }
   });
-  const selected = targets?.find(({ id }) => id === target?.id) ?? target;
-
   return (
     <OperationDialog
       header="Fail over DB cluster"
@@ -399,12 +405,16 @@ function FailoverDialog({
       onDismiss={onDismiss}
       submitLabel="Fail over"
       pendingLabel="Requesting failover"
-      canSubmit={!loading && selected !== undefined && (targets?.length ?? 0) > 0}
+      canSubmit={!loading && selected !== undefined}
       onSubmit={() => {
         if (selected !== undefined) onFailover(selected.id);
       }}
     >
-      <FormField label="Target DB instance" description="The selected reader becomes the writer.">
+      <FormField
+        label="Target DB instance"
+        description="The selected reader becomes the writer."
+        errorText={targetError}
+      >
         <SpaceBetween size="xs">
           <ChoiceSelect
             source={source}
@@ -413,8 +423,12 @@ function FailoverDialog({
             things="DB instances"
             placeholder="Select a reader DB instance"
             none="No reader DB instances"
-            value={selected}
-            onChange={setTarget}
+            value={selected ?? target}
+            invalid={targetError !== undefined}
+            onChange={(choice) => {
+              setTarget(choice);
+              setTargetError(undefined);
+            }}
           />
           {loading && <Box nativeAttributes={{ role: 'status' }}>Loading DB instances</Box>}
           {!loading && targets?.length === 0 && <Box variant="p">{NO_READER}</Box>}
