@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 describe('ChoiceMultiselect', () => {
-  it('selects the first matching option immediately after entering the two-space name', async () => {
+  it('offers only the two-space option immediately after entering its name and selects it by value', async () => {
     const oneSpace = thing('1', 'a b');
     const twoSpaces = thing('2', 'a  b');
     read.mockResolvedValue({ items: [oneSpace, twoSpaces] });
@@ -103,7 +103,10 @@ describe('ChoiceMultiselect', () => {
     await waitFor(() => expect(shown()).toEqual(['a b', 'a\\u0020\\u0020b']));
 
     field().findFilteringInput()?.setInputValue(twoSpaces.name);
-    field().selectOption(1);
+    const dropdown = field().findDropdown();
+    expect(dropdown.findOptionByValue(oneSpace.id)).toBeNull();
+    expect(dropdown.findOptionByValue(twoSpaces.id)).not.toBeNull();
+    field().selectOptionByValue(twoSpaces.id);
 
     expect(latest).toEqual([twoSpaces]);
     expect(tokens()).toEqual(['a\\u0020\\u0020b']);
