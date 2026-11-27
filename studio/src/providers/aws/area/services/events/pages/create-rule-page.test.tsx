@@ -74,6 +74,11 @@ beforeEach(() => {
     }));
 });
 
+function waitForRender<T>(assertion: () => T) {
+  // Cloudscape's scoped selectors temporarily change attributes as they query.
+  return waitFor(assertion, { mutationObserverOptions: { childList: true, characterData: true, subtree: true } });
+}
+
 function open(search = '') {
   const handOver = vi.fn<PageFlash['handOver']>();
   const client = new QueryClient();
@@ -143,7 +148,7 @@ function open(search = '') {
   async function choose(label: string, value: string, index = 0) {
     const control = select(label, index);
     act(() => control.openDropdown());
-    await waitFor(() => expect(control.findDropdown().findOptionByValue(value)).not.toBeNull());
+    await waitForRender(() => expect(control.findDropdown().findOptionByValue(value)).not.toBeNull());
     act(() => control.selectOptionByValue(value));
   }
   function button(name: string) {
@@ -213,7 +218,7 @@ async function addTopic(page: ReturnType<typeof open>, id: string, index = 0) {
 
 it('opens with the bus from the address, a pattern, an enabled state and no target row', async () => {
   const page = open('?bus=orders');
-  await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
+  await waitForRender(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   expect(getEventBus).toHaveBeenCalledWith(endpoint, 'orders', expect.any(AbortSignal));
   expect(page.radio('pattern')).toBeChecked();
   expect(page.radio('ENABLED')).toBeChecked();
@@ -379,7 +384,7 @@ it('reports an existing name at its field and sends no write', async () => {
   const page = open();
   page.fill();
   page.click('Create rule');
-  await waitFor(() =>
+  await waitForRender(() =>
     expect(page.field('Rule name')?.findError()?.getElement()).toHaveTextContent(
       'A rule named route already exists on default. Creating it again would replace it.',
     ),
@@ -402,7 +407,7 @@ it.each([
   if (operation === 'DescribeRule') lookup.mockRejectedValueOnce(error);
   else put.mockRejectedValueOnce(error);
   page.click('Create rule');
-  await waitFor(() => expect(page.dom.findAlert()?.getElement()).toHaveTextContent(operation));
+  await waitForRender(() => expect(page.dom.findAlert()?.getElement()).toHaveTextContent(operation));
   expect(page.dom.findAlert()?.getElement()).toHaveTextContent(reason);
   expect(page.textbox('Rule name')).toHaveValue('route');
   expect(page.textbox('Description - optional')).toHaveValue('Routes orders');
@@ -430,7 +435,7 @@ it.each([
   page.click('Create rule');
   const warning = 'Rule route created, but its targets were not added.';
   const flashContent = () => page.dom.findFlashbar()?.findItemsByType('warning')[0]?.findContent()?.getElement();
-  await waitFor(() => expect(flashContent()).toHaveTextContent(warning));
+  await waitForRender(() => expect(flashContent()).toHaveTextContent(warning));
   expect(page.handOver).toHaveBeenCalledOnce();
   const [to, , note] = page.handOver.mock.calls[0] ?? [];
   expect(to).toBe(rulePath);
@@ -453,7 +458,7 @@ it('shows a 501 bus read at the field with Retry and sends no rule read or write
   vi.mocked(getEventBus).mockRejectedValueOnce(unsupported('DescribeEventBus'));
   const page = open('?bus=orders');
   const busFailure = () => page.field('Event bus')?.findSecondaryControl();
-  await waitFor(() =>
+  await waitForRender(() =>
     expect(busFailure()?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
   );
   expect(busFailure()?.getElement()).toHaveTextContent(/for DescribeEventBus/);
@@ -465,7 +470,7 @@ it('shows a 501 bus read at the field with Retry and sends no rule read or write
   page.click('Create rule');
   expectUnsent();
   if (retry) fireEvent.click(retry);
-  await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
+  await waitForRender(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   expectUnsent();
 });
 
@@ -476,7 +481,7 @@ it.each([
 ])('validates an unresolved bus from %s and accepts a listed bus instead', async (search, message) => {
   vi.mocked(getEventBus).mockResolvedValueOnce({ kind: 'not-found' });
   const page = open(search);
-  await waitFor(() => expect(page.field('Event bus')?.findError()?.getElement()).toHaveTextContent(message));
+  await waitForRender(() => expect(page.field('Event bus')?.findError()?.getElement()).toHaveTextContent(message));
   page.fill();
   page.click('Create rule');
   expect(page.select('Event bus').findTrigger().getElement()).toHaveFocus();
@@ -515,7 +520,7 @@ it('focuses a queue with its ARN still outstanding and sends no requests to crea
 
 it('cancels an unchanged form directly to the chosen bus’s Rules', async () => {
   const page = open('?bus=orders');
-  await waitFor(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
+  await waitForRender(() => expect(page.select('Event bus').findTrigger().getElement()).toHaveTextContent(/^orders$/));
   page.click('Cancel');
   expect(page.fixture?.getElement()).toHaveTextContent(/^\/aws\/events\/rules\?bus=orders$/);
   expect(page.dom.findModal()).toBeNull();
