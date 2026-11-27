@@ -46,8 +46,9 @@ export function ManageTagsDialog({
   const pageSignal = usePageSignal();
   const busy = useRef(false);
   const editor = useRef<TagEditorRef>(null);
-  const [draft, setDraft] = useState(() => Object.entries(initialTags).map(([key, value]) => ({ key, value })));
-  const [savedTags, setSavedTags] = useState(initialTags);
+  const [openingTags] = useState(initialTags);
+  const [draft, setDraft] = useState(() => Object.entries(openingTags).map(([key, value]) => ({ key, value })));
+  const [confirmedRemovals, setConfirmedRemovals] = useState(() => new Set<string>());
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<{ operation: TagWriteOperation; reason: RequestFailure }>();
@@ -72,12 +73,15 @@ export function ManageTagsDialog({
       return;
     }
     if (validation.limit !== undefined) return;
-    const intended = tagChanges(savedTags, tagsToRecord(draft));
+    const draftTags = tagsToRecord(draft);
+    const intended = tagChanges(openingTags, draftTags);
     const changes = {
       remove: intended.remove.filter((key) => Object.hasOwn(latestTags, key)),
       put: Object.fromEntries(
-        Object.entries(intended.put).filter(
-          ([key, value]) => !Object.hasOwn(latestTags, key) || latestTags[key] !== value,
+        Object.entries(draftTags).filter(
+          ([key, value]) =>
+            (Object.hasOwn(intended.put, key) || confirmedRemovals.has(key)) &&
+            (!Object.hasOwn(latestTags, key) || latestTags[key] !== value),
         ),
       ),
     };
@@ -101,9 +105,7 @@ export function ManageTagsDialog({
       setFailure({ operation, reason });
       if (reason.kind === 'not-implemented') onUnavailable(operation);
       if (error instanceof PartialTagSaveError) {
-        setSavedTags((previous) =>
-          Object.fromEntries(Object.entries(previous).filter(([key]) => !changes.remove.includes(key))),
-        );
+        setConfirmedRemovals((previous) => new Set([...previous, ...changes.remove]));
         setPartial(error.message);
       }
       tags.refresh();
