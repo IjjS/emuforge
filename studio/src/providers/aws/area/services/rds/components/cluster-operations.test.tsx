@@ -1,0 +1,381 @@
+import type { OrderableDBInstanceOption } from '@aws-sdk/client-rds';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { RequestError } from '../../../../../../lib/aws/request';
+import type { AreaConnection } from '../../../components/emulator-line';
+import type { DbInstance } from '../api';
+import * as choices from '../choices-api';
+import * as api from '../cluster-api';
+import { ClusterOperationControls } from './cluster-operations';
+
+vi.mock('../choices-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../choices-api')>()),
+  findSubnetGroup: vi.fn(),
+  readOrderableRows: vi.fn(),
+  readUpgradeTargets: vi.fn(),
+  listEngineVersionChoices: vi.fn(),
+}));
+
+vi.mock('../cluster-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../cluster-api')>()),
+  getCluster: vi.fn(),
+  listMembers: vi.fn(),
+}));
+
+const CONNECTION: AreaConnection = {
+  engineOrigin: 'http://127.0.0.1:8461',
+  result: { kind: 'connected', checkedAt: 0, emulator: { port: 9461, endpoint: 'https://127.0.0.1:9461' } },
+};
+const CLUSTER: api.DbCluster = {
+  id: 'cluster-one',
+  status: 'available',
+  engine: 'aurora-postgresql',
+  engineVersion: '16.4',
+  subnetGroup: 'default',
+  securityGroups: ['sg-old'],
+  storageType: 'aurora',
+  backupRetentionPeriod: 7,
+  deletionProtection: true,
+  members: [
+    { id: 'writer', writer: true },
+    { id: 'reader', writer: false },
+  ],
+  tags: [],
+};
+const WRITER_ONLY = CLUSTER.members.filter(({ writer }) => writer);
+const ROWS = [{ StorageType: 'aurora', MinStorageSize: 1, MaxStorageSize: 100 }, { StorageType: 'aurora-iopt1' }];
+const TARGET = { version: '17.4', major: true };
+const onSubmit = vi.fn();
+const fetchRequest = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const request = input instanceof Request ? input : new Request(String(input), init);
+  if (new URL(request.url).pathname === '/__emuforge/session') {
+    return new Response(JSON.stringify({ token: 'test-cluster-operations' }));
+  }
+  const form = new URLSearchParams(await request.text());
+  groupRequests.push(Object.fromEntries(form));
+  const group = (id: string, name: string) =>
+    `<item><groupId>${id}</groupId><groupName>${name}</groupName><vpcId>vpc-one</vpcId></item>`;
+  const groups = form.get('Filter.1.Name') === 'group-id' ? group('sg-old', 'old-group') : group('sg-new', 'new-group');
+  return new Response(
+    `<DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><securityGroupInfo>${groups}</securityGroupInfo></DescribeSecurityGroupsResponse>`,
+    { headers: { 'content-type': 'text/xml' } },
+  );
+});
+const groupRequests: Record<string, string>[] = [];
+const WRAPPER = createWrapper(document.body);
+const ROWS_OPERATION = 'DescribeOrderableDBInstanceOptions';
+
+function instance(id: string): DbInstance {
+  return {
+    id,
+    status: 'available',
+    instanceClass: 'db.r6g.large',
+    zone: 'us-east-1a',
+    tags: [],
+    securityGroups: [],
+    parameterGroups: [],
+    deletionProtection: false,
+  };
+}
+
+function found(members: api.DbCluster['members']) {
+  return { found: true, cluster: { ...CLUSTER, members } } as const;
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  groupRequests.length = 0;
+  vi.stubGlobal('fetch', fetchRequest);
+  onSubmit.mockResolvedValue('discard-draft');
+  vi.mocked(api.getCluster).mockResolvedValue(found(CLUSTER.members));
+  vi.mocked(api.listMembers).mockResolvedValue([instance('writer'), instance('reader')]);
+  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'default', vpcId: 'vpc-one' });
+  vi.mocked(choices.readOrderableRows).mockResolvedValue(ROWS);
+  vi.mocked(choices.readUpgradeTargets).mockResolvedValue([TARGET]);
+  vi.mocked(choices.listEngineVersionChoices).mockResolvedValue({ choices: [{ version: '13.15' }, TARGET] });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+function renderControls(cluster = CLUSTER) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <ClusterOperationControls
+          cluster={cluster}
+          connection={CONNECTION}
+          pending={false}
+          reading={false}
+          unavailable={new Set()}
+          onSubmit={onSubmit}
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+function open(action: 'modify' | 'failover') {
+  fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+  const item = WRAPPER.findButtonDropdown()?.findItemById(action);
+  if (item == null) throw new Error(`Missing ${action} action`);
+  item.click();
+  return within(screen.getByRole('dialog'));
+}
+
+function field(label: string) {
+  const match = WRAPPER.findModal()
+    ?.findContent()
+    .findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  if (match === undefined) throw new Error(`Missing ${label} field`);
+  return match;
+}
+
+function select(label: string) {
+  const match = createWrapper(field(label).getElement()).findSelect();
+  if (match === null) throw new Error(`Missing ${label} select`);
+  return match;
+}
+
+async function pick(label: string, value: string) {
+  const picker = select(label);
+  picker.openDropdown();
+  await waitFor(() => expect(picker.findDropdown().findOptionByValue(value)).not.toBeNull());
+  picker.selectOptionByValue(value);
+}
+
+function deferredRows() {
+  let resolve!: (rows: OrderableDBInstanceOption[]) => void;
+  const promise = new Promise<OrderableDBInstanceOption[]>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
+describe('modify a DB cluster', () => {
+  it('starts on the cluster values, reads starting groups by ID, and disables an unchanged save', async () => {
+    renderControls();
+    const modal = open('modify');
+    expect(modal.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('cluster-one');
+    expect(modal.getByRole('textbox', { name: 'Backup retention period (days)' })).toHaveValue('7');
+    expect(modal.getByRole('checkbox', { name: 'Deletion protection' })).toBeChecked();
+    expect(select('Engine version').findTrigger().getElement()).toHaveTextContent('Keep 16.4');
+    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
+    expect(await modal.findByText('old-group')).toBeInTheDocument();
+    expect(groupRequests).toContainEqual(
+      expect.objectContaining({
+        'Filter.1.Name': 'group-id',
+        'Filter.1.Value.1': 'sg-old',
+      }),
+    );
+    expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  });
+
+  it('shows Not set when no storage type was reported and omits it when saving another field', () => {
+    const cluster = { ...CLUSTER };
+    delete cluster.storageType;
+    renderControls(cluster);
+    const modal = open('modify');
+    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('Not set');
+    expect(modal.getByText('The cluster has no storage type.')).toBeInTheDocument();
+    fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
+    fireEvent.click(modal.getByRole('button', { name: 'Save changes' }));
+    expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'modify', changes: { deletionProtection: false } });
+  });
+
+  it('offers only upgrade targets and holds a version whose rows require a different storage type', async () => {
+    vi.mocked(choices.readOrderableRows).mockImplementation(async (_at, _engine, version) =>
+      version === TARGET.version ? [{ StorageType: 'aurora-iopt1' }] : ROWS,
+    );
+    renderControls();
+    const modal = open('modify');
+    const versions = select('Engine version');
+    versions.openDropdown();
+    await waitFor(() => expect(versions.findDropdown().findOptionByValue(TARGET.version)).not.toBeNull());
+    expect(versions.findDropdown().findOptionByValue('13.15')).toBeNull();
+    versions.selectOptionByValue(TARGET.version);
+    expect(await modal.findByText('Choose a storage type for 17.4')).toBeInTheDocument();
+    expect(modal.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  });
+
+  it('keeps the starting version options when the target rows arrive after switching back', async () => {
+    const late = deferredRows();
+    vi.mocked(choices.readOrderableRows).mockImplementation((_at, _engine, version) =>
+      version === TARGET.version ? late.promise : Promise.resolve(ROWS),
+    );
+    renderControls();
+    open('modify');
+    await pick('Engine version', TARGET.version);
+    await waitFor(() =>
+      expect(choices.readOrderableRows).toHaveBeenCalledWith(
+        CONNECTION.engineOrigin,
+        CLUSTER.engine,
+        TARGET.version,
+        expect.any(AbortSignal),
+      ),
+    );
+    await pick('Engine version', '');
+    await act(async () => late.resolve([{ StorageType: 'aurora-iopt1' }]));
+    await waitFor(() => expect(select('Storage type').findTrigger().getElement()).toBeEnabled());
+    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
+    select('Storage type').openDropdown();
+    expect(select('Storage type').findDropdown().findOptionByValue('aurora')).not.toBeNull();
+  });
+
+  it.each(['error', '501'] as const)(
+    'allows protection alone during a storage rows %s but holds a version change',
+    async (kind) => {
+      vi.mocked(choices.readOrderableRows).mockRejectedValue(
+        new RequestError(
+          kind === '501'
+            ? { kind: 'not-implemented', operation: ROWS_OPERATION }
+            : { kind: 'other', operation: ROWS_OPERATION, code: 'RowsUnavailable' },
+        ),
+      );
+      renderControls();
+      const modal = open('modify');
+      const storage = within(field('Storage type').getElement());
+      await waitFor(() =>
+        expect(field('Storage type').getElement()).toHaveTextContent(
+          kind === '501' ? ROWS_OPERATION : 'RowsUnavailable',
+        ),
+      );
+      expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora');
+      if (kind === '501') expect(storage.getByText('Not implemented by the emulator')).toBeInTheDocument();
+      else expect(storage.getByRole('button', { name: 'Retry' })).toBeEnabled();
+      fireEvent.click(modal.getByRole('checkbox', { name: 'Deletion protection' }));
+      const save = modal.getByRole('button', { name: 'Save changes' });
+      expect(save).toBeEnabled();
+      await pick('Engine version', TARGET.version);
+      expect(save).toBeDisabled();
+      await pick('Engine version', '');
+      fireEvent.click(save);
+      expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'modify', changes: { deletionProtection: false } });
+    },
+  );
+
+  it.each(['error', '501'] as const)(
+    'shows the group lookup %s with the starting group still selected',
+    async (kind) => {
+      fetchRequest.mockImplementation(async (input, init) => {
+        const request = input instanceof Request ? input : new Request(String(input), init);
+        if (new URL(request.url).pathname === '/__emuforge/session') {
+          return new Response(JSON.stringify({ token: 'test-cluster-operations' }));
+        }
+        return new Response('', { status: kind === '501' ? 501 : 400 });
+      });
+      renderControls();
+      const modal = open('modify');
+      expect(modal.getAllByText('sg-old').length).toBeGreaterThan(0);
+      if (kind === '501') {
+        expect(await modal.findByText(/501 Not Implemented for DescribeSecurityGroups/)).toBeInTheDocument();
+      } else {
+        expect(await modal.findByRole('button', { name: 'Retry' })).toBeEnabled();
+      }
+    },
+  );
+
+  it('reopens a refused modify with the identifier, version, groups and storage type sent', async () => {
+    onSubmit.mockResolvedValue('retain-draft');
+    renderControls();
+    const modal = open('modify');
+    fireEvent.change(modal.getByRole('textbox', { name: 'DB cluster identifier' }), { target: { value: 'renamed' } });
+    await pick('Engine version', TARGET.version);
+    await pick('Storage type', 'aurora-iopt1');
+
+    const groups = createWrapper(field('Security groups').getElement()).findMultiselect();
+    if (groups === null) throw new Error('Missing security groups');
+    await waitFor(() => expect(groups.findTrigger().getElement()).toBeEnabled());
+    groups.openDropdown();
+    await waitFor(() => expect(groups.findDropdown().findOptionByValue('sg-new')).not.toBeNull());
+    groups.selectOptionByValue('sg-new');
+    groups.closeDropdown();
+    fireEvent.click(modal.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(onSubmit).toHaveBeenCalledWith('cluster-one', {
+      kind: 'modify',
+      changes: {
+        newIdentifier: 'renamed',
+        version: TARGET,
+        storageType: 'aurora-iopt1',
+        securityGroupIds: ['sg-old', 'sg-new'],
+      },
+    });
+
+    const reopened = open('modify');
+    expect(reopened.getByRole('textbox', { name: 'DB cluster identifier' })).toHaveValue('renamed');
+    expect(select('Engine version').findTrigger().getElement()).toHaveTextContent(TARGET.version);
+    expect(select('Storage type').findTrigger().getElement()).toHaveTextContent('aurora-iopt1');
+    expect(reopened.getAllByText('sg-new').length).toBeGreaterThan(0);
+  });
+});
+
+describe('fail over a DB cluster', () => {
+  const target = () => select('Target DB instance');
+  const option = (id: string) => target().findDropdown().findOptionByValue(id);
+
+  it('rereads both sources each time the picker opens and describes the latest readers', async () => {
+    renderControls();
+    open('failover');
+    await waitFor(() => expect(api.getCluster).toHaveBeenCalledTimes(1));
+    target().openDropdown();
+    await waitFor(() => expect(option('reader')?.getElement()).toHaveTextContent('db.r6g.large · us-east-1a'));
+    expect(option('writer')).toBeNull();
+    target().closeDropdown();
+
+    vi.mocked(api.getCluster).mockResolvedValue(
+      found([
+        { id: 'writer', writer: false },
+        { id: 'reader', writer: true },
+        { id: 'new-reader', writer: false },
+      ]),
+    );
+    vi.mocked(api.listMembers).mockResolvedValue([instance('writer'), instance('reader'), instance('new-reader')]);
+    target().openDropdown();
+    await waitFor(() => expect(option('new-reader')).not.toBeNull());
+    expect(option('reader')).toBeNull();
+    expect(option('writer')).not.toBeNull();
+    expect(api.getCluster).toHaveBeenCalledTimes(3);
+    expect(api.listMembers).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports a 501 from the members read at the target and holds the action', async () => {
+    vi.mocked(api.listMembers).mockRejectedValue(
+      new RequestError({
+        kind: 'not-implemented',
+        operation: 'DescribeDBInstances',
+      }),
+    );
+    renderControls();
+    const modal = open('failover');
+    expect(await modal.findByText(/501 Not Implemented for DescribeDBInstances/)).toBeInTheDocument();
+    expect(modal.getByRole('button', { name: 'Fail over' })).toBeDisabled();
+  });
+
+  it('offers and submits an externally added reader even if the page saw only the writer', async () => {
+    renderControls({ ...CLUSTER, members: WRITER_ONLY });
+    const modal = open('failover');
+    await pick('Target DB instance', 'reader');
+    fireEvent.click(modal.getByRole('button', { name: 'Fail over' }));
+    expect(onSubmit).toHaveBeenCalledWith('cluster-one', { kind: 'failover', target: 'reader' });
+  });
+
+  it('shows the reason when there is no reader, then offers a reader after reopening the target', async () => {
+    vi.mocked(api.getCluster).mockResolvedValue(found(WRITER_ONLY));
+    renderControls({ ...CLUSTER, members: WRITER_ONLY });
+    const modal = open('failover');
+    expect(await modal.findByText('Failover requires a reader DB instance in this cluster.')).toBeInTheDocument();
+    target().openDropdown();
+    await waitFor(() => expect(target().findDropdown().findOptions()).toEqual([]));
+    expect(modal.getByRole('button', { name: 'Fail over' })).toBeDisabled();
+    target().closeDropdown();
+    vi.mocked(api.getCluster).mockResolvedValue(found(CLUSTER.members));
+    await pick('Target DB instance', 'reader');
+    expect(modal.getByRole('button', { name: 'Fail over' })).toBeEnabled();
+  });
+});

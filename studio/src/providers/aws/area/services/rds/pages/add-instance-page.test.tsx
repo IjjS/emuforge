@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as api from '../api';
 import * as clusterApi from '../cluster-api';
+import * as choices from '../choices-api';
 
 // S7 rendered inside the area's layout, with the calls of `cluster-api.ts` answered by the case
 // (`cluster-api.test.ts` proves the calls against a fake engine).
@@ -19,6 +20,17 @@ vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
   return { ...real, listInstances: vi.fn(), getInstance: vi.fn(), actOnInstance: vi.fn() };
 });
+
+vi.mock('../choices-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../choices-api')>()),
+  readOrderableRows: vi.fn(),
+  findSubnetGroup: vi.fn(),
+}));
+
+vi.mock('../../../lib/ec2-availability-zones', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/ec2-availability-zones')>()),
+  listAvailabilityZones: async () => ['us-east-1a', 'us-east-1b'],
+}));
 
 vi.mock('../cluster-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../cluster-api')>();
@@ -94,6 +106,12 @@ function matchMedia(query: string): MediaQueryList {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(choices.readOrderableRows).mockResolvedValue([
+    { DBInstanceClass: 'db.r6g.large', StorageType: 'aurora' },
+    { DBInstanceClass: 'db.r6g.xlarge', StorageType: 'aurora' },
+    { DBInstanceClass: 'db.m5d.large', StorageType: 'gp3' },
+  ]);
+  vi.mocked(choices.findSubnetGroup).mockResolvedValue({ name: 'app-subnets', zones: ['us-east-1a'] });
   vi.stubGlobal('matchMedia', matchMedia);
   connection = new Connection();
   connection.value = { result: connectedResult(), engineOrigin: ENGINE };
@@ -129,6 +147,7 @@ const CLUSTER: clusterApi.DbCluster = {
   engine: 'aurora-postgresql',
   engineVersion: '16.4',
   port: 5432,
+  subnetGroup: 'app-subnets',
   securityGroups: [],
   members: [],
   deletionProtection: false,
@@ -176,8 +195,27 @@ function flashes(type?: 'success' | 'error' | 'info'): string[] {
   return items.map((item) => text(item.getElement()));
 }
 
+function picker(label: string) {
+  const select = createWrapper(field(label).getElement()).findSelect();
+  if (select === null) throw new Error(`Missing ${label} select`);
+  return select;
+}
+
+function choose(label: string, value: string) {
+  const select = picker(label);
+  select.openDropdown();
+  select.selectOptionByValue(value);
+}
+
 async function formShown() {
   await screen.findByText('DB instance identifier');
+  await waitFor(() => expect(picker('DB instance class').findTrigger().getElement()).toBeEnabled());
+}
+
+function enterTag(key: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: key } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value } });
 }
 
 /** S6's reads, for a case that leads there. */
@@ -197,10 +235,21 @@ describe('"Add DB instance"', () => {
     expect(text(field('DB instance identifier').findConstraint()?.getElement() as Element)).toBe(
       '1 to 63 characters: letters, digits and hyphens. It begins with a letter, does not end with a hyphen and has no two hyphens in a row. Stored in lower case.',
     );
-    expect(input('DB instance class').value).toBe('db.r6g.large');
-    expect(text(field('DB instance class').findDescription()?.getElement() as Element)).toBe(
-      'As the API names it, for example db.t3.micro.',
+    expect(picker('DB instance class').findTrigger().getElement()).toHaveTextContent('db.r6g.large');
+    expect(choices.readOrderableRows).toHaveBeenCalledWith(
+      ENGINE,
+      'aurora-postgresql',
+      '16.4',
+      expect.any(AbortSignal),
     );
+    const zones = picker('Availability Zone');
+    await waitFor(() =>
+      expect(choices.findSubnetGroup).toHaveBeenCalledWith(ENGINE, 'app-subnets', expect.any(AbortSignal)),
+    );
+    expect(zones.findTrigger().getElement()).toHaveTextContent('No preference');
+    zones.openDropdown();
+    await waitFor(() => expect(zones.findDropdown().findOptionByValue('us-east-1a')).not.toBeNull());
+    expect(zones.findDropdown().findOptionByValue('us-east-1b')).toBeNull();
     expect(
       screen.getByText("Adds a DB instance to app-aur, with the cluster's engine and version."),
     ).toBeInTheDocument();
@@ -210,15 +259,11 @@ describe('"Add DB instance"', () => {
   for (const [label, value, message] of [
     ['DB instance identifier', '1-db', 'An identifier begins with a letter.'],
     ['DB instance identifier', '', 'Enter an identifier.'],
-    ['DB instance class', '', 'Enter a class.'],
   ] as const) {
     it(`a fault (${label} "${value}") → "${message}" at the field and nothing sent`, async () => {
       answerCluster();
       open(PATH);
       await formShown();
-      if (label === 'DB instance class') {
-        type('DB instance identifier', 'app-aur-1');
-      }
       type(label, value);
       fireEvent.click(submit());
       await waitFor(() => {
@@ -228,12 +273,39 @@ describe('"Add DB instance"', () => {
     });
   }
 
+  it('leaves class empty when the default is absent and requires a class before sending', async () => {
+    answerCluster();
+    vi.mocked(choices.readOrderableRows).mockResolvedValue([{ DBInstanceClass: 'db.r6g.xlarge' }]);
+    open(PATH);
+    await formShown();
+    expect(picker('DB instance class').findTrigger().getElement()).toHaveTextContent('Choose a class');
+    type('DB instance identifier', 'app-aur-1');
+    fireEvent.click(submit());
+    expect(field('DB instance class').findError()?.getElement()).toHaveTextContent('Choose a class.');
+    expect(clusterApi.addInstance).not.toHaveBeenCalled();
+  });
+
+  it('keeps No preference when DescribeDBSubnetGroups answers 501', async () => {
+    answerCluster();
+    vi.mocked(choices.findSubnetGroup).mockRejectedValue(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeDBSubnetGroups' }),
+    );
+    open(PATH);
+    await formShown();
+    const zoneField = field('Availability Zone');
+    await waitFor(() => expect(zoneField.getElement()).toHaveTextContent('DescribeDBSubnetGroups'));
+    expect(zoneField.getElement()).toHaveTextContent('Not implemented by the emulator');
+    expect(picker('Availability Zone').findTrigger().getElement()).toHaveTextContent('No preference');
+  });
+
   it('"Add DB instance" → one CreateDBInstance with the cluster\'s engine and version; the cluster\'s page with "Creating DB instance {id}"', async () => {
     answerCluster();
     vi.mocked(clusterApi.addInstance).mockResolvedValue('app-aur-1');
     const router = open(PATH);
     await formShown();
     type('DB instance identifier', 'App-Aur-1');
+    choose('Availability Zone', 'us-east-1a');
+    enterTag('env', 'dev');
     fireEvent.click(submit());
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(CLUSTER_PATH);
@@ -248,6 +320,8 @@ describe('"Add DB instance"', () => {
       engine: 'aurora-postgresql',
       engineVersion: '16.4',
       instanceClass: 'db.r6g.large',
+      zone: 'us-east-1a',
+      tags: [{ key: 'env', value: 'dev' }],
     });
   });
 
@@ -258,7 +332,7 @@ describe('"Add DB instance"', () => {
     open(PATH);
     await formShown();
     type('DB instance identifier', 'maz-1');
-    type('DB instance class', 'db.m5d.large');
+    choose('DB instance class', 'db.m5d.large');
     fireEvent.click(submit());
     await waitFor(() => {
       expect(clusterApi.addInstance).toHaveBeenCalledTimes(1);
@@ -277,20 +351,25 @@ describe('"Add DB instance"', () => {
         kind: 'other',
         operation: 'CreateDBInstance',
         code: 'InvalidParameterCombination',
-        message: 'DB Instance class db.nosuch.large does not support this engine.',
+        message: 'DB Instance class db.r6g.xlarge does not support this engine.',
       }),
     );
     const router = open(PATH);
     await formShown();
     type('DB instance identifier', 'app-aur-2');
-    type('DB instance class', 'db.nosuch.large');
+    choose('DB instance class', 'db.r6g.xlarge');
+    choose('Availability Zone', 'us-east-1a');
+    enterTag('owner', 'dev');
     fireEvent.click(submit());
     await waitFor(() => {
       expect(formAlert()).toMatch(/InvalidParameterCombination.*does not support this engine/);
     });
     expect(router.state.location.pathname).toBe(PATH);
     expect(input('DB instance identifier').value).toBe('app-aur-2');
-    expect(input('DB instance class').value).toBe('db.nosuch.large');
+    expect(picker('Availability Zone').findTrigger().getElement()).toHaveTextContent('us-east-1a');
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('owner');
+    expect(screen.getByRole('textbox', { name: 'Value - optional' })).toHaveValue('dev');
+    expect(picker('DB instance class').findTrigger().getElement()).toHaveTextContent('db.r6g.xlarge');
   });
 
   it('a 501 → "not implemented by the emulator" with CreateDBInstance', async () => {
@@ -441,7 +520,7 @@ describe('"Add DB instance"', () => {
     answerCluster();
     const router = open(PATH);
     await formShown();
-    type('DB instance class', 'db.r6g.xlarge');
+    choose('DB instance class', 'db.r6g.xlarge');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     const dialog = await screen.findByRole('dialog');
     expect(text(dialog)).toContain('Discard what you entered?');
@@ -449,8 +528,8 @@ describe('"Add DB instance"', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
-    expect(input('DB instance class').value).toBe('db.r6g.xlarge');
-    type('DB instance class', 'db.r6g.large');
+    expect(picker('DB instance class').findTrigger().getElement()).toHaveTextContent('db.r6g.xlarge');
+    choose('DB instance class', 'db.r6g.large');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(CLUSTER_PATH);

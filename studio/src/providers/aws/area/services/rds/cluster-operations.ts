@@ -1,6 +1,11 @@
+import type { UpgradeTarget } from './choices-api';
 import type { DbCluster } from './cluster-api';
 
 export interface ClusterChanges {
+  newIdentifier?: string;
+  version?: UpgradeTarget;
+  securityGroupIds?: readonly string[];
+  storageType?: string;
   deletionProtection?: boolean;
   backupRetentionPeriod?: number;
 }
@@ -43,9 +48,6 @@ export function clusterActionReason(action: ClusterAction, cluster: DbCluster): 
     case 'modify':
       return undefined;
     case 'failover':
-      if (clusterReaders(cluster).length === 0) {
-        return 'Failover requires a reader DB instance in this cluster.';
-      }
       return cluster.status === 'available' ? undefined : 'Only an available DB cluster can fail over.';
   }
 }

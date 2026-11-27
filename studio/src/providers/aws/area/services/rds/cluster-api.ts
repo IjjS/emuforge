@@ -12,6 +12,7 @@ import {
 import { dateOf, describeInstances, isCode, sendRds, tagsOf, text, withValues, type DbInstance } from './api';
 import { CLUSTER_ACTIONS, type ClusterOperation } from './cluster-operations';
 import type { Tag } from './format';
+import { versionChange } from './modify-draft';
 
 // The calls of RDS's DB cluster screens (issue 573, design task 4), sent through `sendRds` of `api.ts` and mapped to
 // plain typed results: the clusters page, one cluster, its members, the delete of a cluster and the add of a DB
@@ -57,6 +58,7 @@ export interface DbCluster {
   arn?: string;
   resourceId?: string;
   subnetGroup?: string;
+  storageType?: string;
   securityGroups: string[];
   parameterGroup?: string;
   /** The cluster's `DBClusterMembers`, in the answer's order. */
@@ -104,6 +106,7 @@ export function clusterOf(raw: SdkCluster): DbCluster | undefined {
       arn: text(raw.DBClusterArn),
       resourceId: text(raw.DbClusterResourceId),
       subnetGroup: text(raw.DBSubnetGroup),
+      storageType: text(raw.StorageType),
       parameterGroup: text(raw.DBClusterParameterGroup),
     },
   );
@@ -192,18 +195,20 @@ export async function deleteCluster(endpoint: string, id: string, signal: AbortS
   );
 }
 
-/** What S7 adds: the identifier and the class typed, the cluster's identifier, engine and version as read. */
+/** What S7 adds: the identifier, class, optional zone and tags, with the cluster's identifier, engine and version as read. */
 export interface NewMember {
   id: string;
   clusterId: string;
   engine: string | undefined;
   engineVersion: string | undefined;
   instanceClass: string;
+  zone?: string | undefined;
+  tags?: readonly Tag[];
 }
 
 /**
  * "Add DB instance": one `CreateDBInstance` with the identifier, the cluster's identifier, its engine, its version
- * (a member does not take it otherwise) and the class, and nothing else. Answers the identifier the emulator gave.
+ * (a member does not take it otherwise), the class and any zone or tags chosen. Answers the identifier the emulator gave.
  */
 export async function addInstance(endpoint: string, member: NewMember, signal: AbortSignal): Promise<string> {
   const output = await sendRds(
@@ -217,6 +222,8 @@ export async function addInstance(endpoint: string, member: NewMember, signal: A
           Engine: member.engine,
           ...(member.engineVersion === undefined ? {} : { EngineVersion: member.engineVersion }),
           DBInstanceClass: member.instanceClass,
+          ...(member.zone === undefined ? {} : { AvailabilityZone: member.zone }),
+          ...(member.tags?.length ? { Tags: member.tags.map(({ key, value }) => ({ Key: key, Value: value })) } : {}),
         }),
         { abortSignal },
       ),
@@ -231,12 +238,12 @@ export async function operateCluster(
   id: string,
   action: ClusterOperation,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<string> {
   const input = { DBClusterIdentifier: id };
-  await sendRds(
+  return sendRds(
     endpoint,
     CLUSTER_ACTIONS[action.kind].operation,
-    async (client, abortSignal): Promise<void> => {
+    async (client, abortSignal): Promise<string> => {
       const options = { abortSignal };
       switch (action.kind) {
         case 'stop':
@@ -246,17 +253,24 @@ export async function operateCluster(
           await client.send(new StartDBClusterCommand(input), options);
           break;
         case 'modify': {
-          const { deletionProtection, backupRetentionPeriod } = action.changes;
-          await client.send(
+          const { deletionProtection, backupRetentionPeriod, newIdentifier, version, securityGroupIds, storageType } =
+            action.changes;
+          const output = await client.send(
             new ModifyDBClusterCommand({
               ...input,
               ApplyImmediately: true,
+              ...versionChange(version),
+              ...(newIdentifier === undefined ? {} : { NewDBClusterIdentifier: newIdentifier }),
+              ...(securityGroupIds === undefined ? {} : { VpcSecurityGroupIds: [...securityGroupIds] }),
+              ...(storageType === undefined ? {} : { StorageType: storageType }),
               ...(deletionProtection === undefined ? {} : { DeletionProtection: deletionProtection }),
               ...(backupRetentionPeriod === undefined ? {} : { BackupRetentionPeriod: backupRetentionPeriod }),
             }),
             options,
           );
-          break;
+          if (newIdentifier === undefined) return id;
+          const returnedId = text(output.DBCluster?.DBClusterIdentifier);
+          return returnedId === undefined || returnedId === id ? newIdentifier : returnedId;
         }
         case 'failover':
           await client.send(
@@ -265,6 +279,7 @@ export async function operateCluster(
           );
           break;
       }
+      return id;
     },
     signal,
   );
