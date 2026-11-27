@@ -3,77 +3,67 @@
 Apply this reference to AWS area forms that create, modify or restore a resource. Use it at the Requirement
 stage to decide what the form offers and at the Design stage to choose how the fields work.
 
-**C1. A known set is chosen.** A field whose values are a set is a choice, never typed text. The set is read from
-the emulator where an operation lists it (a class, a version, a zone, an instance type), otherwise it is the
-operation's enumeration in the service's API model, less every value the emulator was seen to refuse at the
-Requirement stage. A field stays typed only when neither the emulator nor the model has a set for it, and the
-requirement says so.
+**C1. A known set is chosen.** Use a choice field for a set of values. Read the set from the emulator when an
+operation lists it, as with classes, versions, zones and instance types. Otherwise use the operation's API model
+enumeration, excluding values the emulator refused in Requirement probes. Use a text field only when neither
+source supplies a set, and record that in the requirement.
 
-**C2. A held resource is chosen.** A field that names a resource the emulator holds, of the same service or another,
-is chosen from what the emulator holds now: read through the engine when the field opens and read again each time it
-opens, never from a cache of the browser, with resources made outside Studio included. It is never typed as an
-identifier alone.
+**C2. A held resource is chosen.** When a field names a resource held by the emulator, read its choices from
+the emulator through the engine on every opening. Include resources created outside Studio. Give each choice
+the resource's identifier and the description specified by C4.
 
-**C2a. A modify form starts from the resource.** Each field of a modify form starts on the resource's own value,
-read from the emulator. A value the field's list does not hold (a class the orderable list lacks, a storage type
-set outside Studio) is still shown as the chosen one, described "Not in the emulator's list", and stays chosen
-while every field its list is narrowed by (its parents, C3) is as the form opened, until the developer picks
-another. A modify form sends only the members whose value differs from the one the field started on, so saving one
-edit never sends another field's value, and a save with the parents untouched never asks for a value the list lacks
-to be replaced.
+**C2a. A modify form starts from the resource.** Initialize each field with the current value from the emulator.
+If the list lacks the starting value, keep it selected with the description "Not in the emulator's list" while
+its parents are on their starting values, until the developer chooses another value. Send only members whose
+values differ from their starting values.
 
-Once the developer changes a parent in a modify form, C3 holds for its child as in a create form, the child's
-starting value included: a value the parent's new list holds stays chosen (and, when it is the starting value, is
-still not sent); a value the new list lacks is cleared, whether the developer chose it or the form started on it,
-the field says "Choose {a value} for {parent's value}", and the form cannot be saved until one is chosen. Putting
-the parent back on its starting value puts a child that was cleared for it back on its own starting value. So an
-edit of a parent needs a replacement only for a child the parent's new value cannot go with, and no other save
-does.
+When a parent changes, apply C3 to every affected child, including its starting value. Keep a value the new list
+holds. Clear a value the new list lacks and require the developer to pick a replacement with the message
+"Choose {a value} for {parent's value}". When the parent returns to its starting value, restore the starting
+value of a child that was cleared for it.
 
-**C3. A dependent choice follows its parent.** Where the emulator's data ties one choice to another (a subnet to its
-VPC, a security group to its VPC, a version to its engine, a class to its engine and version, a storage type to its
-class), the parent is chosen first; the child's list is read narrowed by the parent; a child whose parent is not
-chosen cannot be opened and says which field to choose first; and a change of the parent clears a child that no
-longer belongs, and only that. The form narrows even where the emulator would accept a value that does not belong
-(1.1).
+**C3. A dependent choice follows its parent.** Choose the parent first, as when a subnet follows a VPC, a class
+follows an engine and version, or a storage type follows a class. Narrow the child's list to the selected parent
+even when the emulator accepts values outside that list. Keep the child disabled until the parent is chosen and
+say which field to choose first. When the parent changes, keep a child's value if it belongs to the new list and
+clear it otherwise.
 
-**C4. Every option is described.** An option read from the emulator shows the emulator's own values of it beside its
-name (a subnet's block and zone, a type's vCPUs and memory, a key's alias and state); no text is invented for it. A
-fixed option (a radio, a tile, a checkbox, an enumerated value, and the option that stands for "none" or "chosen by
-the emulator") carries one sentence, in EmuForge's own words, of what choosing it sends or what the emulator then
-reports; each such sentence is backed by a call made at the Requirement stage (`aws-area.md`, point 3).
+**C4. Every option is described.** Show values from the emulator beside each option's name, such as a subnet's
+block and zone, an instance type's vCPUs and memory, or a key's alias and state. Leave out values the emulator
+did not give. Give each fixed option one sentence in EmuForge's own words, including presets such as "None" or
+"Chosen by the emulator". Explain what the selection sends or what the emulator reports, based on the Requirement
+probes (see `aws-area.md`, point 3).
 
-**C5. The parameter table.** For each create and modify form the requirement lists every input member of its
-operation, from the API model, as offered or as left out with one reason. A form offers a member when (1) the
-emulator accepts it on the form's request, (2) a read shows it or the emulator's behaviour differs by it, and (3) it
-is one of the offered kinds:
+**C5. The parameter table.** Record every input member of the operation's API model in the requirement. Offer a
+member when the emulator accepts it on this form's request, a read shows it or it changes the emulator's behavior,
+and it is of an offered kind.
 
-- the resource's identity and labels: its name or identifier, its description, its tags;
-- its size and kind: class or type, storage size and type, engine and version;
-- where it sits: VPC, subnet or subnet group, zone, security groups;
-- who may use or delete it: key pair, instance profile, encryption key, deletion or termination protection;
-- what it starts with: a first database, the master user, user data.
+- Identity and labels, such as a name, identifier, description or tags.
+- Size and kind, such as class, type, storage size and type, engine or version.
+- Placement, such as VPC, subnet or subnet group, zone or security groups.
+- Use and deletion, such as key pair, instance profile, encryption key, deletion or termination protection.
+- Initial contents, such as a first database, master user or user data.
 
-A modify form offers the members of its create form's kinds that the modify operation accepts and a read shows
-changed. A form that restores from a snapshot offers where the new resource sits, who may use or delete it and its
-labels. The snapshot's own size and kind and what it starts with are sent as the snapshot has them or not at all,
-though the emulator would take another value of each (R6): a restore brings back what was saved, and a change of
-the restored resource's kind is its modify form's (X6). A field a form offers on `main` stays, whatever its kind.
+On a modify form, apply those kinds to the members the modify operation accepts and a read shows changed. On a
+snapshot restore, offer placement, use and deletion settings, and labels. Take size, kind and initial contents
+from the snapshot or omit those inputs. A subsequent modify can change them where the emulator supports it (X6).
+Retain fields the form already offers.
 
-Every other member is left out with one of these reasons:
+Record one reason for each omitted member.
 
 | Reason | Meaning |
-|---|---|
-| X1 | the emulator refuses it on the form's request, or answers 501 |
-| X2 | accepted, and no read shows it |
-| X3 | accepted and shown, but not of the offered kinds: the emulator keeps it as a value and no task of the service's screens uses it |
-| X4 | needs a kind of resource that no form of the three services makes and no list of this issue reads (a directory, an option or parameter group, an Outpost, an IPAM pool, a launch template, a prefix list) |
-| X5 | a second way to say what an offered field says, or a mechanism of the request (`DryRun`, `ClientToken`, `ApplyImmediately`, which the form sends itself) |
-| X6 | fixed by the form on purpose |
-| X7 | a repeating structure that makes a second resource which has a form of its own |
+| --- | --- |
+| X1 | The emulator refuses the member on this form's request or answers 501. |
+| X2 | The emulator accepts the value and it is absent from reads. |
+| X3 | The emulator accepts and shows the value, and it falls outside the offered kinds and serves no task of the service's screens. |
+| X4 | The member needs a kind of resource unavailable from the forms and lists that support this workflow, such as a directory, parameter group, Outpost, IPAM pool, launch template or prefix list. |
+| X5 | The member duplicates an offered value or is a mechanism of the request, such as `DryRun`, `ClientToken` or `ApplyImmediately` supplied by the form. |
+| X6 | The form intentionally fixes the member's value. |
+| X7 | A repeating structure makes a second resource that has a form of its own. |
 
-**C6. What does not change.** A form's submit, its errors, its "Cancel" (`aws-area.md`, "What earlier critiques
-found", 5), its constraint texts (2) and the 501 state (`studio/AGENTS.md`) are as before; this rule adds no screen.
+**C6. Use the area's form patterns.** Use the existing submit, errors and 501 states in `studio/AGENTS.md`, and the
+constraint text and Cancel patterns in `aws-area.md` under "What earlier critiques found". Apply these rules to
+the existing screens.
 
 ## Shared parts
 

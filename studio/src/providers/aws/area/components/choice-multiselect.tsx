@@ -25,7 +25,10 @@ export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
       <Multiselect
         ref={multiselectRef}
         {...parts}
-        selectedOptions={value.map(source.optionOf)}
+        selectedOptions={value.map((choice) => {
+          const option = source.optionOf(choice);
+          return held === undefined ? option : { ...option, disabled: true };
+        })}
         options={options}
         {...optional({
           placeholder: lockedBy === undefined ? placeholder : `Choose ${lockedBy} first`,

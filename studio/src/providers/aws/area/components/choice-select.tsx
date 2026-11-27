@@ -2,6 +2,7 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import { useEffect, useEffectEvent, useRef, useState, type Ref, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
@@ -100,12 +101,21 @@ export function useChoiceField<T>(
   const filtering = source.filtering ?? 'none';
   const choices = usePagedChoices(source, opened && lockedBy === undefined, text);
 
-  const handleOpen = useEffectEvent((again: boolean) => {
-    if (again && source.readAgainOnOpen === true) {
-      setText('');
-      choices.restart('');
+  const readsOnOpen = source.readAgainOnOpen === true;
+  const handleExpansion = useEffectEvent((expanded: boolean) => {
+    if (readsOnOpen) {
+      if (expanded) {
+        setOpened(true);
+      } else {
+        // Retire the previous list before another opening can expose it.
+        flushSync(() => {
+          setOpened(false);
+          setText('');
+          choices.restart('');
+        });
+      }
     }
-    onOpen?.();
+    if (expanded) onOpen?.();
   });
 
   useEffect(() => {
@@ -113,15 +123,12 @@ export function useChoiceField<T>(
     if (trigger === undefined || trigger === null) return;
 
     // Cloudscape only requests items when the filtering text changes. Its trigger reports every opening.
-    let openedBefore = false;
     const observer = new MutationObserver((records) => {
       const finalValue = trigger.getAttribute('aria-expanded');
       for (const [index, record] of records.entries()) {
         const next = index + 1 < records.length ? records[index + 1]?.oldValue : finalValue;
-        if (record.oldValue !== 'true' && next === 'true') {
-          handleOpen(openedBefore);
-          openedBefore = true;
-        }
+        const expanded = next === 'true';
+        if ((record.oldValue === 'true') !== expanded) handleExpansion(expanded);
       }
     });
     observer.observe(trigger, { attributes: true, attributeOldValue: true, attributeFilter: ['aria-expanded'] });
@@ -134,7 +141,7 @@ export function useChoiceField<T>(
   let statusType: NonNullable<SelectProps['statusType']> = 'finished';
   if (choices.failure !== undefined) {
     statusType = 'error';
-  } else if (choices.loading || (opened && choices.choices === undefined)) {
+  } else if (choices.loading || ((opened || readsOnOpen) && choices.choices === undefined)) {
     statusType = 'loading';
   }
   // A further page is read when the developer asks for it with "Load more" at the list's end, never by itself.
@@ -168,12 +175,12 @@ export function useChoiceField<T>(
             filteringAriaLabel: `Find ${things}`,
           }),
       onLoadItems: ({ detail }) => {
-        setOpened(true);
+        if (!readsOnOpen) setOpened(true);
         if (detail.samePage) {
           // "Retry" asks again for the page that failed, the first or a further one.
           choices.retry();
         }
-        if (filtering === 'sent') {
+        if (filtering === 'sent' && (!readsOnOpen || opened)) {
           setText(detail.filteringText);
         }
       },

@@ -405,7 +405,7 @@ describe('openings', () => {
     select().openDropdown();
     await waitFor(() => expect(shown()).toEqual(['a']));
     const filter = screen.getByRole('combobox');
-    fireEvent.keyDown(filter, { key: 'Escape' });
+    fireEvent.keyDown(filter, { key: 'Escape', code: 'Escape', keyCode: 27 });
     expect(select().findTrigger().getElement()).toHaveFocus();
 
     select().openDropdown();
