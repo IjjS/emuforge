@@ -47,11 +47,9 @@ async function open() {
     const modal = createWrapper(container).findModal();
     const field = modal?.findContent().findFormField();
     const textarea = field?.findControl()?.findTextarea();
-    const save = modal
-      ?.findFooter()
-      ?.findAllButtons()
-      .find((button) => button.getElement().textContent === 'Save');
+    const save = modal?.findFooter()?.findAllButtons()[1];
     if (!modal || !field || !textarea || !save) throw new Error('Expected the description editor');
+    expect(save.getElement()).toHaveAccessibleName('Save');
     return { modal, field, textarea, save, onSaved, onDismiss, onUnavailable };
   });
 }

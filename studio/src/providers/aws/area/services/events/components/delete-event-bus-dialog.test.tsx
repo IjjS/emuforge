@@ -47,7 +47,7 @@ async function open() {
     return wrapper;
   });
   const [cancel, action] = dialog.findFooter()?.findAllButtons() ?? [];
-  const field = dialog.findContent().findInput()?.findNativeInput().getElement();
+  const field = dialog.findContent().findFormField()?.findControl()?.findInput()?.findNativeInput().getElement();
   if (!cancel || !action || !field) throw new Error('Expected the delete controls');
   const confirm = () => {
     fireEvent.change(field, { target: { value: name } });
@@ -76,8 +76,8 @@ it('keeps an emulator refusal in the open dialog', async () => {
   drop.mockRejectedValueOnce(new RequestError({ kind: 'other', operation, code: 'ValidationException', message }));
   const { dialog, confirm, action, onDeleted } = await open();
   confirm();
-  await waitFor(() => expect(dialog.findContent().getElement()).toHaveTextContent(operation));
-  expect(dialog.findContent().getElement()).toHaveTextContent(message);
+  await waitFor(() => expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent(operation));
+  expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent(message);
   expect(dialog.getElement()).toBeVisible();
   expect(action.getElement()).toBeEnabled();
   expect(onDeleted).not.toHaveBeenCalled();
@@ -87,8 +87,10 @@ it('explains a 501 in the open dialog and makes Delete unavailable', async () =>
   drop.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
   const { dialog, confirm, action, onUnavailable, onDeleted } = await open();
   confirm();
-  await waitFor(() => expect(dialog.findContent().getElement()).toHaveTextContent('Not implemented by the emulator'));
-  expect(dialog.findContent().getElement()).toHaveTextContent(operation);
+  await waitFor(() =>
+    expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+  );
+  expect(dialog.findContent().findAlert()?.getElement()).toHaveTextContent(operation);
   expect(action.getElement()).toBeDisabled();
   expect(onUnavailable).toHaveBeenCalledOnce();
   expect(onDeleted).not.toHaveBeenCalled();

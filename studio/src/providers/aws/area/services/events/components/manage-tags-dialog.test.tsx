@@ -41,7 +41,7 @@ async function open(initialTags: Record<string, string> = initial) {
   function Area() {
     const root = useRef<HTMLDivElement>(null);
     const tags = useResourceTags(endpoint, arn);
-    const [unavailable, setUnavailable] = useState(new Set<TagWriteOperation>());
+    const [unavailable, setUnavailable] = useState<TagWriteOperation>();
     return (
       <AreaRootContext.Provider value={root}>
         <div ref={root}>
@@ -54,7 +54,7 @@ async function open(initialTags: Record<string, string> = initial) {
             unavailable={unavailable}
             onUnavailable={(operation) => {
               onUnavailable(operation);
-              setUnavailable((current) => new Set([...current, operation]));
+              setUnavailable(operation);
             }}
             onSaved={onSaved}
             onDismiss={onDismiss}
@@ -73,12 +73,10 @@ async function open(initialTags: Record<string, string> = initial) {
   return waitFor(() => {
     const modal = createWrapper(container).findModal();
     const editor = modal?.findContent().findAttributeEditor();
-    const save = modal
-      ?.findFooter()
-      ?.findAllButtons()
-      .find((button) => button.getElement().textContent === 'Save');
+    const save = modal?.findFooter()?.findAllButtons()[1];
     if (!modal || !editor || !save) throw new Error('Expected the tags editor');
     expect(save.getElement()).toBeEnabled();
+    expect(save.getElement()).toHaveAccessibleName('Save');
     return { modal, editor, save, onSaved, onDismiss, onUnavailable };
   });
 }
@@ -216,10 +214,8 @@ it('blocks another save after the re-read fails until Retry reads the tags', asy
   expect(save.getElement()).toBeDisabled();
   save.click();
   expect(write).toHaveBeenCalledOnce();
-  const retry = modal
-    .findContent()
-    .findAllButtons()
-    .find((button) => button.getElement().textContent === 'Retry');
+  const retry = modal.findContent().findButton();
+  expect(retry?.getElement()).toHaveAccessibleName('Retry');
   expect(retry?.getElement()).toBeEnabled();
   retry?.click();
   await waitFor(() => expect(save.getElement()).toBeEnabled());

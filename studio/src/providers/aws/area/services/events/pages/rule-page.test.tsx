@@ -1,5 +1,4 @@
 import type { RuleState, Target } from '@aws-sdk/client-eventbridge';
-import Button from '@cloudscape-design/components/button';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
@@ -243,17 +242,37 @@ function confirmDelete(dialog: Awaited<ReturnType<typeof modal>>) {
 }
 
 async function confirmRemove(page: Page) {
-  const button = await waitFor(() => {
-    const action = page.findTable()?.findBodyCell(1, 5)?.findButton();
-    if (!action) throw new Error('Expected the target Remove button');
-    return action;
-  });
-  fireEvent.click(button.getElement());
-  const dialog = await modal(page);
+  const dialog = await openRemove(page);
   const [, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
   if (!confirm) throw new Error('Expected the Remove confirmation');
   fireEvent.click(confirm.getElement());
   return dialog;
+}
+
+async function openRemove(page: Page) {
+  const button = await waitFor(() => {
+    const action = page.findTable()?.findBodyCell(1, 5)?.findButton();
+    if (!action || action.isDisabled()) throw new Error('Expected an enabled target Remove button');
+    return action;
+  });
+  fireEvent.click(button.getElement());
+  return modal(page);
+}
+
+function cancelDialog(dialog: Awaited<ReturnType<typeof modal>>) {
+  const [cancel] = dialog.findFooter()?.findAllButtons() ?? [];
+  if (!cancel) throw new Error('Expected the Cancel button');
+  fireEvent.click(cancel.getElement());
+}
+
+function expectUnavailableDialog(dialog: Awaited<ReturnType<typeof modal>>, operation: string) {
+  const alert = dialog.findContent().findAlert()?.getElement();
+  expect(alert).toHaveTextContent('Not implemented by the emulator');
+  expect(alert).toHaveTextContent(operation);
+  const [, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
+  if (!confirm) throw new Error('Expected the confirmation button');
+  expect(confirm.getElement()).toBeDisabled();
+  return confirm;
 }
 
 function deferred<T>() {
@@ -420,6 +439,53 @@ it('keeps the removal result when its fresh read fails and offers Retry', async 
   expect(flashText(show)).toBe('Target queue removed from ..');
 });
 
+it('reopens Remove with its action unavailable after RemoveTargets answers 501', async () => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce([queue]);
+  remove.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'RemoveTargets' }));
+  const { page, show } = open();
+  const dialog = await confirmRemove(page);
+  await waitFor(() => expectUnavailableDialog(dialog, 'RemoveTargets'));
+  cancelDialog(dialog);
+  const reopened = await openRemove(page);
+  fireEvent.click(expectUnavailableDialog(reopened, 'RemoveTargets').getElement());
+  expect(remove).toHaveBeenCalledOnce();
+  expect(show).not.toHaveBeenCalled();
+});
+
+it.each(['DeleteRule', 'RemoveTargets'])('reopens Delete rule with %s unavailable', async (operation) => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce(operation === 'RemoveTargets' ? [queue] : []);
+  drop.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation }));
+  const { page, show, handOver } = open();
+  const dialog = await openDelete(page);
+  confirmDelete(dialog);
+  await waitFor(() => expectUnavailableDialog(dialog, operation));
+  cancelDialog(dialog);
+  const reopened = await openDelete(page);
+  expectUnavailableDialog(reopened, operation);
+  expect(confirmDelete(reopened).getElement()).toBeDisabled();
+  expect(drop).toHaveBeenCalledOnce();
+  expect(show).not.toHaveBeenCalled();
+  expect(handOver).not.toHaveBeenCalled();
+});
+
+it('can delete a rule without targets when only RemoveTargets is unavailable', async () => {
+  read.mockResolvedValue(found);
+  readTargets.mockResolvedValueOnce([queue]).mockResolvedValueOnce([]);
+  remove.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'RemoveTargets' }));
+  drop.mockResolvedValueOnce(undefined);
+  const { page, client, handOver } = open();
+  const dialog = await confirmRemove(page);
+  await waitFor(() => expectUnavailableDialog(dialog, 'RemoveTargets'));
+  cancelDialog(dialog);
+  await act(() => client.refetchQueries({ queryKey: ['events', 'targets'] }));
+  await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No targets'));
+  confirmDelete(await openDelete(page));
+  await waitFor(() => expect(handOver).toHaveBeenCalledOnce());
+  expect(drop).toHaveBeenCalledOnce();
+});
+
 it('waits for targets then hands off a successful delete to Rules for this bus', async () => {
   const targets = deferred<Target[]>();
   read.mockResolvedValue(found);
@@ -497,6 +563,9 @@ it('reads the targets again behind the dialog after a delete refused following r
   const { page, handOver } = open();
   confirmDelete(await openDelete(page));
   await waitFor(() => expect(page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No targets'));
+  expect(page.findModal()?.findContent().getElement()).toHaveTextContent(
+    'The rule is removed from your local emulator.',
+  );
   expect(page.findModal()?.findContent().findAlert()?.getElement()).toHaveTextContent(
     "The rule's targets were removed, but the rule was not deleted.",
   );
@@ -532,6 +601,9 @@ it.each(['ordinary', 'before', 'after'])('refreshes a partial removal behind the
   if (order === 'after') await act(async () => old.resolve(all));
   expect(page.findTable()?.findRows()).toHaveLength(1);
   expect(page.findTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('topic');
+  expect(page.findModal()?.findContent().getElement()).toHaveTextContent(
+    'The rule and its target are removed from your local emulator.',
+  );
   const alert = page.findModal()?.findContent().findAlert()?.getElement();
   expect(alert).toHaveTextContent('RemoveTargets failed');
   expect(alert).toHaveTextContent('topic Busy: Topic target refused');
@@ -557,6 +629,7 @@ async function confirmAdd(page: Page) {
   const confirm = dialog.findFooter()?.findAllButtons()[1];
   if (!confirm) throw new Error('Expected Add target confirmation');
   act(() => confirm.click());
+  return dialog;
 }
 
 it('offers Add target after reading fewer than five targets and opens its dialog', async () => {
@@ -592,6 +665,23 @@ it('closes Add target, flashes the result and refreshes the targets', async () =
   expect(page.findModal()).toBeNull();
   expect(flashText(show)).toBe('Target delivery added to ..');
   expect(readTargets).toHaveBeenCalledTimes(3);
+});
+
+it('reopens Add target with its action unavailable after PutTargets answers 501 on the rule page', async () => {
+  read.mockResolvedValue(found);
+  add.mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'PutTargets' }));
+  const { page, show } = open();
+  const dialog = await confirmAdd(page);
+  await waitFor(() => expectUnavailableDialog(dialog, 'PutTargets'));
+  expect(dialog.findContent().findInput()?.findNativeInput().getElement()).toHaveValue(addedTarget.Id);
+  cancelDialog(dialog);
+  await waitFor(() => expect(headerButton(page, 'Add target')).toBeEnabled());
+  fireEvent.click(headerButton(page, 'Add target'));
+  const reopened = await modal(page);
+  fireEvent.click(expectUnavailableDialog(reopened, 'PutTargets').getElement());
+  expect(readTargets).toHaveBeenCalledTimes(2);
+  expect(add).toHaveBeenCalledOnce();
+  expect(show).not.toHaveBeenCalled();
 });
 
 it.each(['before', 'after'])('ignores an old targets read answering %s the one started by adding', async (order) => {
@@ -642,9 +732,12 @@ const handOverText = 'Open the created rule';
 function HandOverSource() {
   const flash = usePageFlash();
   return (
-    <Button onClick={() => flash.handOver(destination, [{ type: 'warning', content: warning }], offeredNote)}>
+    <button
+      type="button"
+      onClick={() => flash.handOver(destination, [{ type: 'warning', content: warning }], offeredNote)}
+    >
       {handOverText}
-    </Button>
+    </button>
   );
 }
 
@@ -683,8 +776,12 @@ function openFrame({
     if (pathname !== last.path) setLast({ path: pathname, visits });
     return (
       <>
-        <Button onClick={() => void navigate(rulePath('..', 'other'))}>Open another rule</Button>
-        <Button onClick={() => void navigate(destination)}>Open the original rule</Button>
+        <button type="button" onClick={() => void navigate(rulePath('..', 'other'))}>
+          Open another rule
+        </button>
+        <button type="button" onClick={() => void navigate(destination)}>
+          Open the original rule
+        </button>
         <AreaLayout
           headerSelector="#test-header"
           connection={connection}
@@ -717,15 +814,28 @@ function openFrame({
   };
 }
 
-async function readyOffered(ui: ReturnType<typeof within>) {
-  await waitFor(() => expect(ui.getByRole('button', { name: 'Add target', exact: true })).toBeEnabled());
+async function readyOffered(page: Page) {
+  await waitFor(() => expect(headerButton(page, 'Add target')).toBeEnabled());
 }
 
-function expectUnavailable(ui: ReturnType<typeof within>) {
-  const control = ui.getByRole('button', { name: 'Add target', exact: true });
+function expectUnavailable(page: Page) {
+  const control = headerButton(page, 'Add target');
   expect(control).toHaveAttribute('aria-disabled', 'true');
   expect(control).toHaveAccessibleDescription('Not implemented by the emulator (PutTargets).');
   return control;
+}
+
+function expectHandOverWarning(page: Page) {
+  const [item] = page.findFlashbar()?.findItemsByType('warning') ?? [];
+  if (!item) throw new Error('Expected the hand-over warning flash');
+  expect(item.findContent()?.getElement()).toHaveTextContent(warning);
+  expect(page.find('.aws-area-flash-announcer')?.getElement()).toHaveTextContent(`Warning ${warning}`);
+  return item;
+}
+
+function expectNoHandOverWarning(page: Page) {
+  expect(page.findFlashbar()?.findItemsByType('warning') ?? []).toHaveLength(0);
+  expect(page.find('.aws-area-flash-announcer')?.getElement()).not.toHaveTextContent(warning);
 }
 
 it('keeps the hand-over refusal after reading again, dismissal and a later result', async () => {
@@ -734,18 +844,17 @@ it('keeps the hand-over refusal after reading again, dismissal and a later resul
   remove.mockResolvedValueOnce(undefined);
   const frame = openFrame();
   frame.handOver();
-  const button = await waitFor(() => expectUnavailable(frame.ui));
+  const button = await waitFor(() => expectUnavailable(frame.page));
   await waitFor(() => expect(frame.page.findTable()?.findRows()).toHaveLength(1));
   fireEvent.click(button);
   expect(frame.page.findModal()).toBeNull();
   expect(add).not.toHaveBeenCalled();
-  expect(frame.ui.getAllByText(warning).length).toBeGreaterThan(0);
-  fireEvent.click(frame.ui.getByRole('button', { name: 'Dismiss' }));
-  await waitFor(() => expect(frame.ui.queryByText(warning)).not.toBeInTheDocument());
-  expectUnavailable(frame.ui);
+  act(() => expectHandOverWarning(frame.page).findDismissButton()?.click());
+  await waitFor(() => expectNoHandOverWarning(frame.page));
+  expectUnavailable(frame.page);
   await confirmRemove(frame.page);
   await waitFor(() => expect(frame.page.findTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No targets'));
-  expectUnavailable(frame.ui);
+  expectUnavailable(frame.page);
   expect(frame.page.findFlashbar()?.getElement()).toHaveTextContent('Target queue removed from ..');
 });
 
@@ -753,7 +862,7 @@ it('keeps the handed refusal under StrictMode', async () => {
   read.mockResolvedValue(found);
   const frame = openFrame({ strict: true });
   frame.handOver();
-  await waitFor(() => expectUnavailable(frame.ui));
+  await waitFor(() => expectUnavailable(frame.page));
 });
 
 it.each([
@@ -763,7 +872,7 @@ it.each([
   read.mockResolvedValue(found);
   const frame = openFrame({ note });
   frame.handOver();
-  await readyOffered(frame.ui);
+  await readyOffered(frame.page);
 });
 
 it.each([destination, `${destination}?not-implemented=PutTargets`])(
@@ -771,8 +880,8 @@ it.each([destination, `${destination}?not-implemented=PutTargets`])(
   async (path) => {
     read.mockResolvedValue(found);
     const frame = openFrame({ path });
-    await readyOffered(frame.ui);
-    expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+    await readyOffered(frame.page);
+    expectNoHandOverWarning(frame.page);
   },
 );
 
@@ -788,13 +897,13 @@ it.each(['before', 'while'])(
       });
     } else {
       frame.handOver();
-      await waitFor(() => expectUnavailable(frame.ui));
-      expect(frame.ui.getAllByText(warning).length).toBeGreaterThan(0);
+      await waitFor(() => expectUnavailable(frame.page));
+      expectHandOverWarning(frame.page);
       frame.changeTarget();
     }
-    await readyOffered(frame.ui);
+    await readyOffered(frame.page);
     expect(frame.page.findFlashbar()).toBeNull();
-    expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+    expectNoHandOverWarning(frame.page);
   },
 );
 
@@ -802,10 +911,10 @@ it('offers Add target on a linked rule and on returning to the original rule', a
   read.mockResolvedValue(found);
   const frame = openFrame();
   frame.handOver();
-  await waitFor(() => expectUnavailable(frame.ui));
+  await waitFor(() => expectUnavailable(frame.page));
   fireEvent.click(frame.ui.getByRole('button', { name: 'Open another rule' }));
-  await readyOffered(frame.ui);
+  await readyOffered(frame.page);
   fireEvent.click(frame.ui.getByRole('button', { name: 'Open the original rule' }));
-  await readyOffered(frame.ui);
-  expect(frame.ui.queryByText(/PutTargets/)).not.toBeInTheDocument();
+  await readyOffered(frame.page);
+  expectNoHandOverWarning(frame.page);
 });

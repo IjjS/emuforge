@@ -12,6 +12,7 @@ interface DeleteEventBusDialogProps {
   endpoint: string;
   name: string;
   onDeleted: () => void;
+  writeUnavailable?: boolean;
   onUnavailable: () => void;
   onDismiss: () => void;
 }
@@ -20,14 +21,16 @@ export function DeleteEventBusDialog({
   endpoint,
   name,
   onDeleted,
+  writeUnavailable = false,
   onUnavailable,
   onDismiss,
 }: DeleteEventBusDialogProps) {
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [refusal, setRefusal] = useState<RequestFailure>();
   const operation = BUS_CHANGE_OPERATIONS.delete;
+  const failure: RequestFailure | undefined = writeUnavailable ? { kind: 'not-implemented', operation } : refusal;
   const unavailable = failure?.kind === 'not-implemented';
   const item = failure && actionFailureItem(failure, operation, endpoint);
   const feedback = item && (
@@ -45,13 +48,13 @@ export function DeleteEventBusDialog({
     const signal = pageSignal();
     inFlight.current = true;
     setPending(true);
-    setFailure(undefined);
+    setRefusal(undefined);
     try {
       await deleteEventBus(endpoint, name, signal);
     } catch (error) {
       if (signal.aborted) return;
       const refusal = failureOf(error, operation);
-      setFailure(refusal);
+      setRefusal(refusal);
       if (refusal.kind === 'not-implemented') onUnavailable();
       inFlight.current = false;
       setPending(false);
