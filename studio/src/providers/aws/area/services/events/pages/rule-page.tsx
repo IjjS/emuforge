@@ -164,7 +164,12 @@ function RuleView({ connection, bus, name }: { connection: ScreenPageProps['conn
                   {enabling ? 'Enable' : 'Disable'}
                 </Button>
                 <Button
-                  disabled={actionBlocked || targets.value === undefined || targetLimitReached || addUnavailable}
+                  disabled={
+                    (actionBlocked && dialog?.kind !== 'add') ||
+                    targets.value === undefined ||
+                    targetLimitReached ||
+                    addUnavailable
+                  }
                   disabledReason={
                     addUnavailable ? unavailableReason(PUT_TARGETS) : targetLimitReached ? TARGET_LIMIT_TEXT : undefined
                   }
