@@ -160,11 +160,11 @@ it('marks a bus deleted before send as missing and sends nothing', async () => {
   const page = renderPage('?bus=orders');
   await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe('orders'));
   page.fill();
-  fireEvent.click(page.button.getElement());
-  await waitFor(() =>
-    expect(page.busField.findError()?.getElement().textContent).toBe(
-      'Event bus orders is not in your local emulator. Choose an event bus.',
-    ),
+  await act(async () => {
+    fireEvent.click(page.button.getElement());
+  });
+  expect(page.busField.findError()?.getElement().textContent).toBe(
+    'Event bus orders is not in your local emulator. Choose an event bus.',
   );
   expect(read).toHaveBeenCalledTimes(2);
   expect(page.select.findTrigger().getElement().textContent).toBe('orders');
@@ -261,7 +261,8 @@ it.each([
   const error = name
     ? `Event bus ${name} is not in your local emulator. Choose an event bus.`
     : 'The address names no event bus. Choose an event bus.';
-  await waitFor(() => expect(page.busField.findError()?.getElement().textContent).toBe(error));
+  await waitFor(() => expect(page.select.findTrigger().getElement().textContent).toBe(name || 'Choose an event bus'));
+  expect(page.busField.findError()?.getElement().textContent).toBe(error);
   page.fill();
   fireEvent.click(page.button.getElement());
   expect(read).toHaveBeenCalledTimes(reads);
