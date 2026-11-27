@@ -4,6 +4,8 @@
 // The check makes a KMS key, which the API cannot delete at once, so it runs on an emulator of its own. Options are
 // found by value (`support/form-choices.ts`); what a described option says is asserted on the option found.
 
+import createWrapper from '@cloudscape-design/components/test-utils/selectors';
+
 import { EnvError, expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
 import { addTag, makeKey, openSelect, tagsShown, triggerOf } from './support/form-choices';
@@ -161,19 +163,13 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
       expect(volume, 'the volume of the second line').not.toBe('');
       await open(page, volumePath(volume), volume);
       await button(main, 'Attach volume').click(ACTION);
-      try {
-        await expectInstanceNotOffered(page, run, gone);
-      } catch (e) {
-        ctx.log(`the Attach dialog as it stood: ${(await dialogOf(page).innerText()).replace(/\s+/g, ' ')}`);
-        ctx.log(`the volume, directly: ${JSON.stringify(await readVolume(ctx, port, volume))}`);
-        ctx.log(`<p>-run, directly: ${JSON.stringify(await instanceDirect(ctx, port, run))}`);
-        throw e;
-      }
+      await expectInstanceNotOffered(page, run, gone);
       await expectInstanceNotOffered(page, stop, other);
       const offered = await instanceOption(page, stop);
       await expect(offered, '`<p>-stop` with its state and type').toContainText('stopped');
       await expect(offered, '`<p>-stop` with its type').toContainText(w.type);
-      const running = await instanceOption(page, run);
+      // The list is open: the option of `<p>-run` is read in it, with no second click on the field.
+      const running = page.locator(createWrapper().findSelect().findDropdown().findOptionByValue(run).toSelector());
       await expect(running, '`<p>-run` with its state and type').toContainText('running');
       await expect(running, '`<p>-run` with its type').toContainText(w.type);
       await running.click(ACTION);
