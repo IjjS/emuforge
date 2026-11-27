@@ -81,7 +81,7 @@ const deleteControl = () => screen.getByRole('button', { name: 'Delete' });
 
 async function openDelete() {
   await screen.findByRole('link', { name });
-  fireEvent.click(screen.getByRole('radio', { name: `Alarm selection ${name}` }));
+  fireEvent.click(screen.getByRole('radio', { name }));
   expect(deleteControl()).toBeEnabled();
   fireEvent.click(deleteControl());
   return screen.findByRole('dialog', { name: `Delete alarm ${name}?` });
@@ -124,7 +124,7 @@ it('closes after deletion, reports success, and refreshes the shown page with no
   await waitFor(() => expect(screen.queryByRole('link', { name })).not.toBeInTheDocument());
   await screen.findByRole('link', { name: 'remaining-alarm' });
   expectDeleted();
-  expect(screen.getByRole('radio', { name: 'Alarm selection remaining-alarm' })).not.toBeChecked();
+  expect(screen.getByRole('radio', { name: 'remaining-alarm' })).not.toBeChecked();
   expect(deleteControl()).toBeDisabled();
   expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(3);
