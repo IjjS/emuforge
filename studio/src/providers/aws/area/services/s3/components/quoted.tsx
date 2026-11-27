@@ -19,10 +19,20 @@ export function Quoted({
   after: string;
   showIdentity?: boolean;
 }) {
+  if (showIdentity) {
+    return (
+      <>
+        {before}
+        <NameText name={name} />
+        {after}
+      </>
+    );
+  }
+
   return (
     <>
       <ValueText kind="text" value={before} />
-      {showIdentity ? <NameText name={name} /> : <ValueText kind="name" value={name} />}
+      <ValueText kind="name" value={name} />
       <ValueText kind="text" value={after} />
     </>
   );
