@@ -202,7 +202,6 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
     seeded.instance({ id: `${k}${suffix}`, engine: 'aurora-postgresql', clusterId: k, instanceClass: 'db.r6g.large' });
   const writer = await member('-w');
   const reader = await member('-r');
-  ctx.log(`the members of ${k} as made, directly: ${JSON.stringify((await clusterDirect(ctx, port, k))?.members)}`);
   const dialogField = (label: string) => field(dialogOf(page), label);
   const save = () => button(dialogOf(page), 'Save changes');
   const modify = async (id: string) => {
@@ -259,6 +258,30 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
   );
 
   await lines.line(
+    '"Fail over": the reader\'s option shows its class and its zone as the emulator reports them',
+    async () => {
+      // Run before the rename's line: the emulator reports the renamed cluster with no member (1.0.639), so a
+      // reader is offered only under the identifier the members were made with. Which member reads is the
+      // emulator's to say.
+      const membersNow = (await clusterDirect(ctx, port, k))?.members ?? [];
+      const readerNow = membersNow.find((each) => !each.writer)?.id;
+      expect(readerNow, "the cluster's reader, directly").toBeDefined();
+      const reported = await instanceDirect(ctx, port, readerNow!);
+      expect([reported?.instanceClass, reported?.zone].every(Boolean), "the reader's class and zone, directly").toBe(true);
+      await open(page, clusterPath(k), k);
+      // "Fail over" is offered once the upgraded cluster is available again.
+      await expectValueIs(page, 'Status', 'available');
+      await clusterAction(page, 'failover');
+      await expect(dialogOf(page), 'the Fail over dialog').toBeVisible();
+      const targets = await openSelect(dialogField('Target DB instance'));
+      await targets.expectOption(readerNow!, reported!.instanceClass, reported!.zone!);
+      await targets.close();
+      await button(dialogOf(page), 'Cancel').click(ACTION);
+      await expect(dialogOf(page), 'the dialog after "Cancel"').toHaveCount(0);
+    },
+  );
+
+  await lines.line(
     '"Modify", the identifier `<p>-k2`, "Save" → the page of `<p>-k2` with the result; the emulator reports `<p>-k2` and no cluster `<p>-k`',
     async () => {
       await modify(k);
@@ -269,29 +292,6 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
       await expectFlash(page, 'success', `DB cluster ${k2} updated`);
       await expect.poll(async () => (await clusterDirect(ctx, port, k2))?.id, { timeout: 60_000 }).toBe(k2);
       expect(await clusterDirect(ctx, port, k), 'the cluster of the old identifier, directly').toBeNull();
-    },
-  );
-
-  await lines.line(
-    '"Fail over": the reader\'s option shows its class and its zone as the emulator reports them',
-    async () => {
-      // Which member reads is the emulator's to say: the cluster was upgraded and renamed since they were made.
-      const membersNow = (await clusterDirect(ctx, port, k2))?.members ?? [];
-      ctx.log(`the members of ${k2}, directly: ${JSON.stringify(membersNow)}`);
-      const readerNow = membersNow.find((each) => !each.writer)?.id;
-      expect(readerNow, "the cluster's reader, directly").toBeDefined();
-      const reported = await instanceDirect(ctx, port, readerNow!);
-      expect([reported?.instanceClass, reported?.zone].every(Boolean), "the reader's class and zone, directly").toBe(true);
-      await open(page, clusterPath(k2), k2);
-      // "Fail over" is offered once the renamed, upgraded cluster is available again.
-      await expectValueIs(page, 'Status', 'available');
-      await clusterAction(page, 'failover');
-      await expect(dialogOf(page), 'the Fail over dialog').toBeVisible();
-      const targets = await openSelect(dialogField('Target DB instance'));
-      await targets.expectOption(readerNow!, reported!.instanceClass, reported!.zone!);
-      await targets.close();
-      await button(dialogOf(page), 'Cancel').click(ACTION);
-      await expect(dialogOf(page), 'the dialog after "Cancel"').toHaveCount(0);
     },
   );
 
