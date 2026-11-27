@@ -8,7 +8,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
 import { useRef, useState } from 'react';
 
-import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { reportedServiceCode, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
@@ -56,6 +56,7 @@ export function SetStateDialog({
   const shownFailure = unavailable ? ({ kind: 'not-implemented', operation: SET_ALARM_STATE } as const) : failure;
   const disabled = shownFailure?.kind === 'not-implemented';
   const feedback = shownFailure && actionFailureItem(shownFailure, SET_ALARM_STATE, endpoint);
+  const accessDeniedCode = shownFailure?.kind === 'access-denied' ? reportedServiceCode(shownFailure) : undefined;
 
   const handleDismiss = () => {
     if (!inFlight.current) onDismiss();
@@ -133,6 +134,7 @@ export function SetStateDialog({
               {(shownFailure?.kind === 'emulator-did-not-answer' || shownFailure?.kind === 'engine-did-not-answer') &&
                 `${SET_ALARM_STATE} failed. `}
               {feedback.content}
+              {accessDeniedCode && ` (${accessDeniedCode})`}
             </Alert>
           </div>
         )}
