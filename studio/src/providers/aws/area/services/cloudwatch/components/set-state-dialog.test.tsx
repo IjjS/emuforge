@@ -1,6 +1,7 @@
 import type { StateValue } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -120,22 +121,36 @@ it.each([
 ])(
   'keeps the chosen state and reason on a %s refusal and shows the operation and code',
   async (code, status, message, header, content) => {
-    send.mockRejectedValueOnce(
-      new RequestError(
-        requestFailure('SetAlarmState', {
-          Code: code,
-          message,
-          $metadata: { httpStatusCode: status },
-        }),
-      ),
+    const user = userEvent.setup();
+    let refuse!: (error: RequestError) => void;
+    send.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        refuse = reject;
+      }),
     );
     const { modal, state, reason, submit, onSet } = await open();
     state.openDropdown();
     state.selectOptionByValue('INSUFFICIENT_DATA');
     reason.setTextareaValue('Try again later');
-    submit.click();
+    const button = submit.getElement();
+    button.focus();
+    await user.keyboard('{Enter}');
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).not.toBeDisabled();
+    await user.keyboard('{Enter}');
+    expect(send).toHaveBeenCalledOnce();
+    await act(async () =>
+      refuse(
+        new RequestError(
+          requestFailure('SetAlarmState', { Code: code, message, $metadata: { httpStatusCode: status } }),
+        ),
+      ),
+    );
     await waitFor(() => expect(modal.findContent().findAlert()?.findHeader()?.getElement()).toHaveTextContent(header));
-    expect(modal.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(content);
+    const alert = modal.findContent().findAlert();
+    expect(alert?.getElement().contains(document.activeElement)).toBe(true);
+    expect(alert?.findContent().getElement()).toHaveTextContent(content);
     expect(state.findTrigger().getElement()).toHaveTextContent('Insufficient data');
     expect(reason.getTextareaValue()).toBe('Try again later');
     expect(onSet).not.toHaveBeenCalled();
@@ -172,7 +187,8 @@ it('locks both buttons while the request is out and reports its state once', asy
   state.openDropdown();
   state.selectOptionByValue('ALARM');
   submit.click();
-  expect(submit.getElement()).toBeDisabled();
+  expect(submit.getElement()).toHaveAttribute('aria-disabled', 'true');
+  expect(submit.getElement()).not.toBeDisabled();
   expect(cancel.getElement()).toBeDisabled();
   submit.click();
   cancel.click();
