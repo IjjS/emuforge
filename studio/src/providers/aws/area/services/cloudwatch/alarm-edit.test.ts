@@ -145,9 +145,8 @@ it('returns no input when the alarm is gone or no longer editable', () => {
 });
 
 it.each([1, 3])('validates the data point count against the merged periods (%i)', (periods) => {
-  const original = alarm({ EvaluationPeriods: 2, DatapointsToAlarm: 1 });
+  const original = alarm({ EvaluationPeriods: periods === 3 ? 1 : 2, DatapointsToAlarm: 1 });
   const values = { ...alarmEditValues(name, original), datapointsToAlarm: '2' };
-  if (periods === 3) original.data.EvaluationPeriods = 1;
   const latest = alarm({ EvaluationPeriods: periods, DatapointsToAlarm: 1 });
   const result = mergeAlarmEdit(name, original, values, latest);
   if (periods === 1) {
