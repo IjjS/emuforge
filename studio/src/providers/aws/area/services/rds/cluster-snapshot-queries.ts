@@ -1,12 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query';
 
 import { noEndpoint, useTokenListing } from '../../components/use-token-listing';
+import type { TagRow } from '../../lib/tag-rows';
 import {
   createClusterSnapshot,
   deleteClusterSnapshot,
   listClusterSnapshots,
   restoreClusterSnapshot,
   SNAPSHOT_OPERATIONS,
+  type SnapshotRestore,
 } from './cluster-snapshot-api';
 import { RDS_KEY, RDS_KEYS } from './queries';
 import { isInProgress, READ_AGAIN_MS } from './status';
@@ -33,16 +35,22 @@ export function useClusterSnapshotActions(endpoint: string | undefined) {
   };
 
   return {
-    async create(sourceId: string, id: string, signal: AbortSignal) {
-      const createdId = await createClusterSnapshot(endpoint ?? noEndpoint(), sourceId, id, signal);
+    async create(sourceId: string, id: string, tags: readonly TagRow[], signal: AbortSignal) {
+      const at = endpoint ?? noEndpoint();
+      const createdId =
+        tags.length === 0
+          ? await createClusterSnapshot(at, sourceId, id, signal)
+          : await createClusterSnapshot(at, sourceId, id, signal, tags);
       await refreshSnapshots();
       return createdId;
     },
-    async restore(snapshotId: string, engine: string, clusterId: string, signal: AbortSignal) {
-      const id = await restoreClusterSnapshot(endpoint ?? noEndpoint(), snapshotId, engine, clusterId, signal);
-      for (const queryKey of [RDS_KEYS.clusters(), RDS_KEYS.cluster(id)]) {
-        void client.invalidateQueries({ queryKey });
-      }
+    async restore(snapshotId: string, engine: string, values: SnapshotRestore, signal: AbortSignal) {
+      const id = await restoreClusterSnapshot(endpoint ?? noEndpoint(), snapshotId, engine, values, signal);
+      const filters = [RDS_KEYS.clusters(), RDS_KEYS.cluster(id), RDS_KEYS.members(id)].map((queryKey) => ({
+        queryKey,
+      }));
+      await Promise.all(filters.map((filter) => client.cancelQueries(filter)));
+      for (const filter of filters) void client.invalidateQueries(filter);
       return id;
     },
     async remove(id: string, signal: AbortSignal) {
