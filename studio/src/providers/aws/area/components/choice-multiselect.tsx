@@ -20,14 +20,13 @@ export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
   const { source, value, onChange, placeholder, invalid, ariaLabel, multiselectRef, lockedBy, held } = props;
   const { fieldRef, fixedOption, items, options, props: parts } = useChoiceField(props);
   const selectedFixedOption = value.length === 0 && lockedBy === undefined ? fixedOption : undefined;
-  const selected = value.map((choice) => {
-    const option = source.optionOf(choice);
-    return held === undefined ? option : { ...option, disabled: true };
-  });
-  if (selectedFixedOption !== undefined) {
-    const { value, label } = selectedFixedOption;
-    selected.push({ ...optional({ value, label }), disabled: true });
-  }
+  const selected =
+    selectedFixedOption === undefined
+      ? value.map((choice) => {
+          const option = source.optionOf(choice);
+          return held === undefined ? option : { ...option, disabled: true };
+        })
+      : [{ ...optional({ value: selectedFixedOption.value, label: selectedFixedOption.label }), disabled: true }];
 
   return (
     <div ref={fieldRef}>

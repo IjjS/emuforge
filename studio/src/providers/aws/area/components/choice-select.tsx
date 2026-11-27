@@ -96,17 +96,12 @@ interface FieldParts<T> {
 
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
 // eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
-export function useChoiceField<T>({
-  source,
-  connection,
-  things,
-  fixed,
-  fixedDescription,
-  lockedBy,
-  none,
-  held,
-  onOpen,
-}: ChoiceFieldProps<T>): FieldParts<T> {
+export function useChoiceField<T>(
+  { source, connection, things, fixed, fixedDescription, lockedBy, none, held, onOpen }: ChoiceFieldProps<T>,
+  fixedOption: SelectProps.Option | undefined = fixed === undefined
+    ? undefined
+    : { value: FIXED, label: fixed, ...optional({ description: fixedDescription }) },
+): FieldParts<T> {
   const [opened, setOpened] = useState(false);
   const [text, setText] = useState('');
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -147,8 +142,6 @@ export function useChoiceField<T>({
     return () => observer.disconnect();
   }, []);
   const items = choices.choices ?? [];
-  const fixedOption =
-    fixed === undefined ? undefined : { value: FIXED, label: fixed, ...optional({ description: fixedDescription }) };
   const available = [...(fixedOption === undefined ? [] : [fixedOption]), ...items.map(source.optionOf)];
   const options = held === undefined ? available : available.map((option) => ({ ...option, disabled: true }));
 
