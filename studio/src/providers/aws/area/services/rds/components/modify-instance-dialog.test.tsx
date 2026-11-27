@@ -51,6 +51,8 @@ const GROUPS = [
   { id: 'sg-a', name: 'Group A', vpcId: 'vpc-a' },
   { id: 'sg-b', name: 'Group B', vpcId: 'vpc-b' },
   { id: 'sg-c', name: 'Group C', vpcId: 'vpc-c' },
+  { id: 'sg-a1', name: 'Group A1', vpcId: 'vpc-a' },
+  { id: 'sg-a2', name: 'Group A2', vpcId: 'vpc-a' },
 ];
 const ROWS = [
   { DBInstanceClass: 'db.t3.micro', StorageType: 'gp2', MinStorageSize: 20, MaxStorageSize: 65536 },
@@ -498,6 +500,79 @@ describe('choices for a standalone DB instance', () => {
     expect(save()).toBeDisabled();
   });
 
+  it('restores the starting storage type after an interim choice and saves protection alone', async () => {
+    const onSave = open();
+    await opened();
+    await choose('DB instance class', 'db.other');
+    expect(screen.getByText('Choose a storage type for db.other')).toBeInTheDocument();
+    await choose('Storage type', 'gp3');
+    await choose('DB instance class', 'db.t3.micro');
+
+    expect(select('Storage type').findTrigger().find('[data-value="gp2"]')).not.toBeNull();
+    expect(save()).toBeDisabled();
+    fireEvent.click(protection());
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
+  });
+
+  it.each([false, true])(
+    'restores the starting class and storage type on version revert and saves protection alone (interim choices: %s)',
+    async (replace) => {
+      const startingRows = held<typeof ROWS>();
+      vi.mocked(choices.readOrderableRows)
+        .mockResolvedValueOnce(ROWS)
+        .mockResolvedValueOnce([{ DBInstanceClass: 'db.other', StorageType: 'gp3' }])
+        .mockReturnValueOnce(startingRows.promise);
+      const onSave = open();
+      await opened();
+      await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
+      await choose('Engine version', '17.9');
+      expect(await screen.findByText('Choose a class for 17.9')).toBeInTheDocument();
+      if (replace) {
+        await choose('DB instance class', 'db.other');
+        await choose('Storage type', 'gp3');
+      }
+      await choose('Engine version', '');
+      expect(trigger('DB instance class')).toBeDisabled();
+      fireEvent.click(protection());
+      if (replace) {
+        expect(save()).toBeDisabled();
+        await act(async () => startingRows.resolve(ROWS));
+        await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
+      }
+
+      expect(select('DB instance class').findTrigger().find('[data-value="db.t3.micro"]')).not.toBeNull();
+      expect(select('Storage type').findTrigger().find('[data-value="gp2"]')).not.toBeNull();
+      expect(save()).toBeEnabled();
+      fireEvent.click(save());
+      expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
+    },
+  );
+
+  it('restores cleared storage before the starting version rows answer and saves protection alone', async () => {
+    const startingRows = held<typeof ROWS>();
+    vi.mocked(choices.readOrderableRows)
+      .mockResolvedValueOnce(ROWS)
+      .mockResolvedValueOnce([{ DBInstanceClass: 'db.t3.micro', StorageType: 'gp3' }])
+      .mockReturnValueOnce(startingRows.promise);
+    const onSave = open();
+    await opened();
+    await waitFor(() => expect(trigger('DB instance class')).toBeEnabled());
+    await choose('Engine version', '17.9');
+    expect(await screen.findByText('Choose a storage type for db.t3.micro')).toBeInTheDocument();
+    await choose('Engine version', '');
+
+    const storageTrigger = select('Storage type').findTrigger();
+    expect(storageTrigger.getElement()).toBeDisabled();
+    expect(storageTrigger.find('[data-value="gp2"]')?.getElement()).not.toHaveTextContent("Not in the emulator's list");
+    expect(storageTrigger.find('[data-value="gp2"]')).not.toBeNull();
+    fireEvent.click(protection());
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
+  });
+
   it('validates provisioned storage size, required IOPS and IOPS per GiB', async () => {
     const onSave = open();
     await opened();
@@ -719,6 +794,39 @@ describe('security groups on a standalone DB instance', () => {
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
+  });
+
+  it('keeps an explicit group removal when the subnet group is reverted and saves the remaining group alone', async () => {
+    const onSave = open({ ...INSTANCE, securityGroups: [{ id: 'sg-a1' }, { id: 'sg-a2' }] });
+    await opened();
+    const groups = groupField();
+    await waitFor(() => expect(groups.findTrigger().getElement()).toBeEnabled());
+    groups.openDropdown();
+    const dropdown = groups.findDropdown();
+    await waitFor(() => expect(dropdown.findOptionByValue('sg-a2')).not.toBeNull());
+    groups.selectOptionByValue('sg-a2');
+    groups.closeDropdown();
+    expect(groups.findTokens()).toHaveLength(1);
+
+    await choose('DB subnet group', 'second');
+    expect(groupField().findTokens()).toHaveLength(0);
+    await choose('DB subnet group', 'default');
+    expect(groupField().findTokens()).toHaveLength(1);
+    groups.openDropdown();
+    await waitFor(() => {
+      expect(dropdown.findOptionByValue('sg-a1')?.getElement().closest('[role="option"]')).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      expect(dropdown.findOptionByValue('sg-a2')?.getElement().closest('[role="option"]')).toHaveAttribute(
+        'aria-selected',
+        'false',
+      );
+    });
+    groups.closeDropdown();
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ securityGroupIds: ['sg-a1'] });
   });
 
   it.each(['other', 'not-implemented'] as const)(
