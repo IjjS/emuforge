@@ -101,11 +101,9 @@ export function ManageTagsDialog({
       setFailure({ operation, reason });
       if (reason.kind === 'not-implemented') onUnavailable(operation);
       if (error instanceof PartialTagSaveError) {
-        setSavedTags((previous) => {
-          const remaining = { ...previous };
-          for (const key of changes.remove) delete remaining[key];
-          return remaining;
-        });
+        setSavedTags((previous) =>
+          Object.fromEntries(Object.entries(previous).filter(([key]) => !changes.remove.includes(key))),
+        );
         setPartial(error.message);
       }
       tags.refresh();
