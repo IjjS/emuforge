@@ -17,6 +17,7 @@ export const ENTRIES: readonly EntryGroup[] = [
         path: `${EVENTS_PATH}/targets`,
         listedBy: 'ListTargetsByRule',
         listedInside: RULES_PATH,
+        shownIn: { entry: RULES_PATH, place: "a rule's page" },
       },
     ],
   },
