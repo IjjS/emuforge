@@ -274,7 +274,10 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
   await lines.line(
     '"Fail over": the reader\'s option shows its class and its zone as the emulator reports them',
     async () => {
-      const reported = await instanceDirect(ctx, port, reader);
+      // Which member reads is the emulator's to say: the cluster was upgraded and renamed since they were made.
+      const readerNow = (await clusterDirect(ctx, port, k2))?.members.find((each) => !each.writer)?.id;
+      expect(readerNow, "the cluster's reader, directly").toBeDefined();
+      const reported = await instanceDirect(ctx, port, readerNow!);
       expect([reported?.instanceClass, reported?.zone].every(Boolean), "the reader's class and zone, directly").toBe(true);
       await open(page, clusterPath(k2), k2);
       // "Fail over" is offered once the renamed, upgraded cluster is available again.
@@ -282,7 +285,7 @@ test('studio.rds-modify-cluster-version-storage-and-groups', async ({ ctx, page 
       await clusterAction(page, 'failover');
       await expect(dialogOf(page), 'the Fail over dialog').toBeVisible();
       const targets = await openSelect(dialogField('Target DB instance'));
-      await targets.expectOption(reader, reported!.instanceClass, reported!.zone!);
+      await targets.expectOption(readerNow!, reported!.instanceClass, reported!.zone!);
       await targets.close();
       await button(dialogOf(page), 'Cancel').click(ACTION);
       await expect(dialogOf(page), 'the dialog after "Cancel"').toHaveCount(0);
