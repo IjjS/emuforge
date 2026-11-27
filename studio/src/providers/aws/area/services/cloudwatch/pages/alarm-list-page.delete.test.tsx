@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -78,7 +78,47 @@ function open() {
   );
 }
 
-const deleteControl = () => screen.getByRole('button', { name: 'Delete' });
+function table() {
+  const alarms = page.findTable();
+  if (!alarms) throw new Error('Alarms table is missing');
+  return alarms;
+}
+
+function alarmLink(alarmName: string) {
+  return table()
+    .findRows()
+    .map((row) => row.findLink())
+    .find((link) => link?.getElement().textContent === alarmName)
+    ?.getElement();
+}
+
+function selectionAt(rowIndex: number) {
+  return table().findRowSelectionArea(rowIndex)?.find('input')?.getElement();
+}
+
+function headerControl(label: string) {
+  const control = table()
+    .findHeaderSlot()
+    ?.findHeader()
+    ?.findActions()
+    ?.findAllButtons()
+    .find((button) => {
+      const name = button.getElement().getAttribute('aria-label') ?? button.findTextRegion()?.getElement().textContent;
+      return name === label;
+    });
+  if (!control) throw new Error(`Alarms header control is missing: ${label}`);
+  return control.getElement();
+}
+
+function nextPage() {
+  const pagination = table().findPagination();
+  if (!pagination) throw new Error('Alarms pagination is missing');
+  fireEvent.click(pagination.findNextPageButton().getElement());
+}
+
+function retryControl() {
+  return table().findEmptySlot()?.findButton()?.getElement();
+}
 
 function findDeleteModal() {
   return waitFor(() => {
@@ -89,10 +129,13 @@ function findDeleteModal() {
 }
 
 async function openDelete() {
-  await screen.findByRole('link', { name });
-  fireEvent.click(screen.getByRole('radio', { name }));
-  expect(deleteControl()).toBeEnabled();
-  fireEvent.click(deleteControl());
+  await waitFor(() => expect(alarmLink(name)).toBeVisible());
+  const selection = selectionAt(1);
+  if (!selection) throw new Error('Alarm selection is missing');
+  expect(selection).toHaveAccessibleName(name);
+  fireEvent.click(selection);
+  expect(headerControl('Delete')).toBeEnabled();
+  fireEvent.click(headerControl('Delete'));
   const modal = await findDeleteModal();
   expect(modal.getElement()).toHaveAccessibleName(`Delete alarm ${name}?`);
   return modal;
@@ -125,8 +168,8 @@ function expectDeleted() {
 
 it('requires one selected alarm and opens the confirmation for it', async () => {
   open();
-  await screen.findByRole('link', { name });
-  expect(deleteControl()).toBeDisabled();
+  await waitFor(() => expect(alarmLink(name)).toBeVisible());
+  expect(headerControl('Delete')).toBeDisabled();
   expect((await openDelete()).getElement()).toBeVisible();
   expect(remove).not.toHaveBeenCalled();
 });
@@ -138,14 +181,18 @@ it('closes after deletion, reports success, and refreshes the shown page with no
     .mockResolvedValueOnce({ items: [row(name), row('remaining-alarm')] })
     .mockResolvedValueOnce({ items: [row('remaining-alarm')] });
   open();
-  await screen.findByRole('link', { name: 'first-page-alarm' });
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await waitFor(() => expect(alarmLink('first-page-alarm')).toBeVisible());
+  nextPage();
   confirm(await openDelete());
-  await waitFor(() => expect(screen.queryByRole('link', { name })).not.toBeInTheDocument());
-  await screen.findByRole('link', { name: 'remaining-alarm' });
+  await waitFor(() => {
+    expect(alarmLink(name)).toBeUndefined();
+    expect(alarmLink('remaining-alarm')).toBeVisible();
+  });
   expectDeleted();
-  expect(screen.getByRole('radio', { name: 'remaining-alarm' })).not.toBeChecked();
-  expect(deleteControl()).toBeDisabled();
+  expect(selectionAt(1)).toHaveAccessibleName('remaining-alarm');
+  expect(selectionAt(1)).not.toBeChecked();
+  expect(table().findSelectedRows()).toHaveLength(0);
+  expect(headerControl('Delete')).toBeDisabled();
   expect(remove).toHaveBeenCalledExactlyOnceWith(ENGINE, name, expect.any(AbortSignal));
   expect(read).toHaveBeenCalledTimes(3);
   expect(read).toHaveBeenLastCalledWith(ENGINE, { prefix: '' }, 'second-page', expect.any(AbortSignal));
@@ -158,7 +205,7 @@ async function startOverlappingRefresh() {
   read.mockImplementationOnce((_endpoint, _filters, _token, signal) => untilAborted(earlier.promise, signal));
   read.mockImplementationOnce((_endpoint, _filters, _token, signal) => untilAborted(later.promise, signal));
   open();
-  const refresh = screen.getByRole('button', { name: 'Refresh' });
+  const refresh = headerControl('Refresh');
   const modal = await openDelete();
   fireEvent.click(refresh);
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
@@ -183,32 +230,35 @@ it.each([
   };
   if (order === 'before') await act(async () => settleEarlier());
   await act(async () => later.resolve(fresh));
-  await screen.findByRole('link', { name: 'remaining-alarm' });
+  await waitFor(() => expect(alarmLink('remaining-alarm')).toBeVisible());
   if (order === 'after') await act(async () => settleEarlier());
   expectDeleted();
-  expect(screen.getByRole('link', { name: 'remaining-alarm' })).toBeVisible();
-  expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(alarmLink('remaining-alarm')).toBeVisible();
+  expect(alarmLink(name)).toBeUndefined();
+  expect(retryControl()).toBeUndefined();
 });
 
 it('keeps the success flash when the post-delete read fails', async () => {
   read.mockReset().mockResolvedValueOnce(stale).mockRejectedValueOnce(readRefused);
   open();
   confirm(await openDelete());
-  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible();
-  expect(screen.getByText(/Could not read alarms/)).toBeVisible();
+  await waitFor(() => {
+    expect(retryControl()).toBeVisible();
+    expect(retryControl()).toHaveAccessibleName('Retry');
+  });
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent('Could not read alarms.');
   expectDeleted();
-  expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+  expect(table().findRows()).toHaveLength(0);
 });
 
 it('goes to the next page with the post-delete token after an earlier response carries another token', async () => {
   const { earlier, later } = await startOverlappingRefresh();
   await act(async () => later.resolve(fresh));
-  await screen.findByRole('link', { name: 'remaining-alarm' });
+  await waitFor(() => expect(alarmLink('remaining-alarm')).toBeVisible());
   await act(async () => earlier.resolve(stale));
   expectDeleted();
-  expect(screen.getByRole('link', { name: 'remaining-alarm' })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(alarmLink('remaining-alarm')).toBeVisible();
+  nextPage();
   await waitFor(() => {
     expect(read).toHaveBeenCalledTimes(4);
     expect(read).toHaveBeenLastCalledWith(ENGINE, { prefix: '' }, 'fresh-token', expect.any(AbortSignal));
@@ -227,8 +277,8 @@ it('remembers a 501 and reopens the dialog with its confirmation disabled', asyn
   });
   fireEvent.click(modalButton(first, 'Cancel'));
   expect(page.findModal()).toBeNull();
-  expect(deleteControl()).toBeEnabled();
-  fireEvent.click(deleteControl());
+  expect(headerControl('Delete')).toBeEnabled();
+  fireEvent.click(headerControl('Delete'));
   const next = await findDeleteModal();
   const alert = next.findContent().findAlert();
   const header = alert?.findHeader()?.getElement();
