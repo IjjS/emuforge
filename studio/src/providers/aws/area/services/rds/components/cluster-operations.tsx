@@ -18,7 +18,7 @@ import type { ChoiceSource } from '../../../components/use-paged-choices';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
-import { useOrderableRows, useSubnetGroup, type ChoiceRead } from '../choices-queries';
+import { useOrderableRows, useSubnetGroupPlacement, type ChoiceRead } from '../choices-queries';
 import { readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
 import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
 import { afterParent, canSave, changes, draftField, editField, NOT_IN_LIST } from '../modify-draft';
@@ -181,7 +181,7 @@ function ModifyDialog({
     setStoredType(storage);
   }
 
-  const placement = useSubnetGroup(endpoint, cluster.subnetGroup);
+  const placement = useSubnetGroupPlacement(endpoint, undefined, cluster.subnetGroup, true);
   const groupIds = [...new Set([...cluster.securityGroups, ...(draft?.securityGroupIds ?? [])])];
   const startGroups = useClusterSecurityGroups(endpoint, groupIds);
   const selectedGroups = groups.map((group) => startGroups.value?.find(({ id }) => id === group.id) ?? group);
@@ -248,7 +248,7 @@ function ModifyDialog({
             connection={connection}
             value={selectedGroups}
             onChange={setGroups}
-            placement={{ data: placement.data?.vpcId, failure: placement.failure, retry: placement.retry }}
+            placement={placement}
             missingIds={missingIds}
             required
           />
