@@ -19,7 +19,7 @@ import { failureOf, usePageSignal } from '../../../components/use-token-listing'
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { isEditableAlarm, type EditableAlarm } from '../alarm';
-import { alarmEditValues, type EditField } from '../alarm-edit';
+import { alarmDatapointCount, alarmEditValues, type AlarmEditValues, type EditField } from '../alarm-edit';
 import type { AlarmFormErrors, AlarmFormValues, MetricEntry } from '../alarm-form';
 import { useAlarm } from '../alarm-queries';
 import { DESCRIBE_ALARMS } from '../alarms-api';
@@ -57,7 +57,7 @@ const MISSING_DATA_TEXT: Record<AlarmFormValues['missingData'], string> = {
   ignore: 'Ignore',
 };
 
-function conflictValue(field: EditField, values: AlarmFormValues) {
+function conflictValue(field: EditField, values: AlarmEditValues) {
   switch (field) {
     case 'metric': {
       const { namespace, name, dimensions } = values.metric;
@@ -78,6 +78,8 @@ function conflictValue(field: EditField, values: AlarmFormValues) {
     case 'okActions':
     case 'insufficientDataActions':
       return values[field].length ? <ValueText kind="address" value={values[field].join(', ')} /> : 'No actions';
+    case 'datapointsToAlarm':
+      return alarmDatapointCount(values);
     case 'description':
       return values.description ? <AlarmName name={values.description} /> : 'Empty';
     default:
@@ -146,7 +148,19 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
     if (feedback) conflictRef.current?.focus();
   }, [feedback]);
 
-  async function handleSubmit(submitted: AlarmFormValues) {
+  function handleChange(entries: AlarmEditValues, field: keyof AlarmEditValues) {
+    if (
+      field === 'datapointsToAlarm' &&
+      initialValues.datapointsToAlarm === undefined &&
+      entries.datapointsToAlarm === entries.evaluationPeriods
+    ) {
+      setValues({ ...entries, datapointsToAlarm: undefined });
+    } else {
+      setValues(entries);
+    }
+  }
+
+  async function handleSubmit(submitted: AlarmEditValues) {
     setFailure(undefined);
     setFieldErrors(undefined);
     setFeedback(undefined);
@@ -238,7 +252,7 @@ function EditForm({ alarm, name, connection }: { alarm: EditableAlarm; name: str
         fieldErrors={fieldErrors}
         feedback={feedback}
         metricKey={openingMetricKey}
-        onChange={setValues}
+        onChange={handleChange}
         onSubmit={handleSubmit}
         onCancel={() => void navigate(alarmPath(name))}
       />

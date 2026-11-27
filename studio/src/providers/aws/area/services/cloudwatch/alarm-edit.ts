@@ -53,7 +53,13 @@ function formDimensions(dimensions: Dimension[] = []): MetricDimension[] {
   return dimensions.map(({ Name, Value }) => ({ Name: Name ?? '', Value: Value ?? '' }));
 }
 
-export function alarmEditValues(name: string, { data }: EditableAlarm): AlarmFormValues {
+export type AlarmEditValues = Omit<AlarmFormValues, 'datapointsToAlarm'> & { datapointsToAlarm: string | undefined };
+
+export function alarmDatapointCount(values: AlarmEditValues): string {
+  return values.datapointsToAlarm ?? values.evaluationPeriods;
+}
+
+export function alarmEditValues(name: string, { data }: EditableAlarm): AlarmEditValues {
   return {
     name,
     description: data.AlarmDescription ?? '',
@@ -70,7 +76,7 @@ export function alarmEditValues(name: string, { data }: EditableAlarm): AlarmFor
     comparison: data.ComparisonOperator,
     threshold: String(data.Threshold),
     evaluationPeriods: String(data.EvaluationPeriods),
-    datapointsToAlarm: String(data.DatapointsToAlarm ?? data.EvaluationPeriods),
+    datapointsToAlarm: data.DatapointsToAlarm === undefined ? undefined : String(data.DatapointsToAlarm),
     missingData: missingData(data.TreatMissingData),
     actionsEnabled: data.ActionsEnabled ?? true,
     alarmActions: data.AlarmActions ?? [],
@@ -79,7 +85,7 @@ export function alarmEditValues(name: string, { data }: EditableAlarm): AlarmFor
   };
 }
 
-function formFieldValue(values: AlarmFormValues, field: EditField): unknown {
+function formFieldValue(values: AlarmEditValues, field: EditField): unknown {
   switch (field) {
     case 'metric': {
       const { namespace, name, dimensions } = values.metric;
@@ -87,8 +93,9 @@ function formFieldValue(values: AlarmFormValues, field: EditField): unknown {
     }
     case 'threshold':
     case 'evaluationPeriods':
-    case 'datapointsToAlarm':
       return Number(values[field]);
+    case 'datapointsToAlarm':
+      return values[field] === undefined ? undefined : Number(values[field]);
     default:
       return values[field];
   }
@@ -111,13 +118,13 @@ function copyMember<K extends keyof PutMetricAlarmCommandInput>(
   if (value !== undefined) input[key] = value;
 }
 
-function applyEditedField<K extends EditField>(target: AlarmFormValues, source: AlarmFormValues, field: K) {
+function applyEditedField<K extends EditField>(target: AlarmEditValues, source: AlarmEditValues, field: K) {
   target[field] = source[field];
 }
 
 interface RebasedEdit {
   baseline: EditableAlarm;
-  values: AlarmFormValues;
+  values: AlarmEditValues;
 }
 
 export type AlarmEdit =
@@ -130,7 +137,7 @@ export type AlarmEdit =
 export function mergeAlarmEdit(
   name: string,
   baseline: EditableAlarm,
-  submitted: AlarmFormValues,
+  submitted: AlarmEditValues,
   latest?: Alarm,
 ): AlarmEdit {
   if (latest === undefined) return { kind: 'gone' };
@@ -149,18 +156,15 @@ export function mergeAlarmEdit(
   if (conflicts.length > 0) return { kind: 'conflict', fields: conflicts, ...rebased };
 
   const input: PutMetricAlarmCommandInput = { AlarmName: name };
-  const editedInput = alarmFormInput(submitted);
+  const editedInput = alarmFormInput({ ...submitted, datapointsToAlarm: alarmDatapointCount(submitted) });
+  if (submitted.datapointsToAlarm === undefined) delete editedInput.DatapointsToAlarm;
   for (const field of fields) {
     const source = changed.has(field) ? editedInput : latest.data;
     for (const key of WRITE_FIELDS[field]) copyMember(input, key, source[key]);
   }
   for (const key of EXTRA_FIELDS) copyMember(input, key, latest.data[key]);
 
-  // An unset datapoint count uses the merged evaluation count, even if that count was just edited.
-  const errors = validateAlarmRelationships({
-    ...values,
-    datapointsToAlarm: String(input.DatapointsToAlarm ?? values.evaluationPeriods),
-  });
+  const errors = validateAlarmRelationships({ ...values, datapointsToAlarm: alarmDatapointCount(values) });
   if (Object.keys(errors).length > 0) return { kind: 'invalid', errors, ...rebased };
   return { kind: 'ready', input, ...rebased };
 }

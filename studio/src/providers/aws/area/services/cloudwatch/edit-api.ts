@@ -1,8 +1,7 @@
 import { PutMetricAlarmCommand } from '@aws-sdk/client-cloudwatch';
 
 import type { EditableAlarm } from './alarm';
-import { mergeAlarmEdit } from './alarm-edit';
-import type { AlarmFormValues } from './alarm-form';
+import { mergeAlarmEdit, type AlarmEditValues } from './alarm-edit';
 import { readAlarm } from './alarms-api';
 import { sendCloudWatch } from './clients';
 import { PUT_METRIC_ALARM } from './create-api';
@@ -11,7 +10,7 @@ export async function editAlarm(
   endpoint: string,
   name: string,
   baseline: EditableAlarm,
-  values: AlarmFormValues,
+  values: AlarmEditValues,
   signal: AbortSignal,
 ) {
   const latest = await readAlarm(endpoint, name, signal);

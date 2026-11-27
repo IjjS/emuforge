@@ -27,6 +27,7 @@ import { DiscardDialog } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
 import { FIXED_COMPARISONS } from '../alarm';
+import { alarmDatapointCount, type AlarmEditValues } from '../alarm-edit';
 import {
   ACTION_FIELDS,
   COUNT_RULE,
@@ -102,7 +103,7 @@ function periodOption(seconds: number) {
   return { value: String(seconds), label, description: `The statistic is calculated over each ${label}.` };
 }
 
-function differs(values: AlarmFormValues, initial: AlarmFormValues): boolean {
+function differs(values: AlarmEditValues, initial: AlarmEditValues): boolean {
   return (Object.keys(initial) as (keyof AlarmFormValues)[]).some((field) => {
     if (field !== 'metric') return JSON.stringify(values[field]) !== JSON.stringify(initial[field]);
     const { namespace, name, dimensions } = values.metric;
@@ -115,14 +116,14 @@ function differs(values: AlarmFormValues, initial: AlarmFormValues): boolean {
   });
 }
 
-export interface AlarmFormProps {
+export interface AlarmFormProps<Values extends AlarmEditValues = AlarmFormValues> {
   mode: 'create' | 'edit';
   connection: AreaConnection;
   /** Current entries and the baseline used by Cancel. Key the form by alarm when switching resources. */
-  values: AlarmFormValues;
-  initialValues: AlarmFormValues;
-  onChange: (values: AlarmFormValues) => void;
-  onSubmit: (values: AlarmFormValues) => void | Promise<void>;
+  values: Values;
+  initialValues: Values;
+  onChange: (values: Values, field: keyof Values) => void;
+  onSubmit: (values: Values) => void | Promise<void>;
   onCancel: () => void;
   pending?: boolean;
   failure?: RequestFailure | undefined;
@@ -131,7 +132,7 @@ export interface AlarmFormProps {
   metricKey?: string;
 }
 
-export function AlarmForm({
+export function AlarmForm<Values extends AlarmEditValues>({
   mode,
   connection,
   values,
@@ -144,7 +145,7 @@ export function AlarmForm({
   fieldErrors,
   feedback,
   metricKey,
-}: AlarmFormProps) {
+}: AlarmFormProps<Values>) {
   const openingKey = useId();
   const [tried, setTried] = useState(false);
   const [rejectedNamePaste, setRejectedNamePaste] = useState(false);
@@ -172,16 +173,19 @@ export function AlarmForm({
     controls.current[field] = control;
   }
 
+  const datapointsToAlarm = alarmDatapointCount(values);
+
   function validate(): AlarmFormErrors {
+    const entries = { ...values, datapointsToAlarm };
     return {
-      ...(mode === 'create' ? validateAlarmRelationships(values) : {}),
-      ...validateAlarmFields(values, mode),
+      ...(mode === 'create' ? validateAlarmRelationships(entries) : {}),
+      ...validateAlarmFields(entries, mode),
       ...(rejectedNamePaste ? { name: NAME_RULE } : {}),
     };
   }
 
   function change<K extends keyof AlarmFormValues>(field: K, value: AlarmFormValues[K]) {
-    if (!pending && !busy.current) onChange({ ...values, [field]: value });
+    if (!pending && !busy.current) onChange({ ...values, [field]: value }, field);
   }
 
   function handleNamePaste(event: ClipboardEvent<HTMLInputElement>) {
@@ -364,7 +368,7 @@ export function AlarmForm({
                   </FormField>
                 </ColumnLayout>
                 <Box>
-                  Alarm when {values.datapointsToAlarm || '–'} out of {values.evaluationPeriods || '–'} periods meet the
+                  Alarm when {datapointsToAlarm || '–'} out of {values.evaluationPeriods || '–'} periods meet the
                   condition.
                 </Box>
                 <ColumnLayout columns={2}>
@@ -376,7 +380,7 @@ export function AlarmForm({
                     <Input
                       ref={(control) => register('datapointsToAlarm', control)}
                       type="number"
-                      value={values.datapointsToAlarm}
+                      value={datapointsToAlarm}
                       readOnly={entriesLocked}
                       onChange={({ detail }) => change('datapointsToAlarm', detail.value)}
                     />

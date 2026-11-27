@@ -1,3 +1,4 @@
+import type { CloudWatchClient, PutMetricAlarmCommand } from '@aws-sdk/client-cloudwatch';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
@@ -199,6 +200,42 @@ it('opens the populated edit form with an immutable name and the replace notice'
   const period = createWrapper(field(page, 'Period').getElement()).findSelect();
   expect(period?.findTrigger().getElement().textContent).toBe('2 minutes');
   expect(button(page, 'Save changes').getElement()).toBeEnabled();
+});
+
+it.each([false, true])('tracks implicit data points until overridden (%s)', async (override) => {
+  read.mockResolvedValue(metric(name, { DatapointsToAlarm: undefined }));
+  const write = vi.fn<(command: PutMetricAlarmCommand) => Promise<unknown>>().mockResolvedValue({});
+  send.mockImplementationOnce(async (_endpoint, _operation, request, signal) =>
+    request({ send: write } as unknown as CloudWatchClient, signal),
+  );
+
+  const page = open();
+  await ready(page);
+  const datapoints = input(page, 'Data points to alarm');
+  const periods = input(page, 'Evaluation periods');
+  expect(datapoints.getInputValue()).toBe('1');
+  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 1 out of 1 periods');
+
+  periods.setInputValue('3');
+  expect(datapoints.getInputValue()).toBe('3');
+  expect(content(page)?.getElement()).toHaveTextContent('Alarm when 3 out of 3 periods');
+
+  if (override) {
+    datapoints.setInputValue('1');
+    periods.setInputValue('4');
+    expect(datapoints.getInputValue()).toBe('1');
+    expect(content(page)?.getElement()).toHaveTextContent('Alarm when 1 out of 4 periods');
+  }
+
+  await submit(page);
+  expect(write).toHaveBeenCalledTimes(1);
+  const request = write.mock.calls[0]?.[0].input;
+  expect(request?.EvaluationPeriods).toBe(override ? 4 : 3);
+  if (override) {
+    expect(request?.DatapointsToAlarm).toBe(1);
+  } else {
+    expect(request).not.toHaveProperty('DatapointsToAlarm');
+  }
 });
 
 it('shows loading and then the missing alarm state, and makes no request for a missing name', async () => {
