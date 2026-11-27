@@ -279,13 +279,16 @@ describe('the instances list', () => {
     });
     open();
 
-    expect(await screen.findByRole('radio', { name: 'dev instance' })).toBeInTheDocument();
-    const selection = screen.getByRole('radio', { name: identity });
-    const row = selection.closest('tr');
-    expect(row?.querySelector('.aws-area-value-name')?.parentElement?.textContent).toBe(`${name} (${identity})`);
-    const unnamed = screen.getByRole('radio', { name: 'i-3' }).closest('tr');
-    expect(unnamed && within(unnamed).getByRole('link', { name: 'i-3' })).toBeInTheDocument();
-    expect(rows().find((row) => row[1] === 'i-3')?.[0]).toBe('-');
+    await waitFor(() => expect(table().findRows()).toHaveLength(3));
+    const [ordinaryRow, spacedRow, unnamedRow] = table().findRows();
+    if (!ordinaryRow || !spacedRow || !unnamedRow) throw new Error('Missing instance rows');
+    expect(within(ordinaryRow.getElement()).getByRole('radio')).toHaveAccessibleName('dev instance');
+    expect(within(spacedRow.getElement()).getByRole('radio')).toHaveAccessibleName(identity);
+    const cell = table().findBodyCell(2, 2)?.getElement();
+    expect(cell?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    expect(within(unnamedRow.getElement()).getByRole('radio')).toHaveAccessibleName('i-3');
+    expect(table().findBodyCell(3, 3)?.findLink()?.getElement()).toHaveAccessibleName('i-3');
+    expect(table().findBodyCell(3, 2)?.getElement().textContent).toBe('-');
   });
 
   it('none, no filter → "No instances" with "Launch instance", which leads to the launch address', async () => {

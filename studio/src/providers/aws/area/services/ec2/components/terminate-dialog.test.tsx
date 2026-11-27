@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -49,14 +50,16 @@ describe('"Terminate instance?"', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it('draws the Name tag with both spaces and its identity in the confirmation sentence', async () => {
+  it('draws the Name tag with both spaces and its identity in the confirmation sentence', () => {
     const name = 'dev  instance';
     const identity = 'dev\\u0020\\u0020instance';
     render(<InArea visible label={name} pending={false} onConfirm={vi.fn()} onDismiss={vi.fn()} />);
-    const dialog = await screen.findByRole('dialog', { name: 'Terminate instance?' });
-    const drawn = within(dialog).getByText(`(${identity})`).parentElement;
-    expect(drawn?.textContent).toBe(`${name} (${identity})`);
-    expect(drawn?.parentElement?.textContent).toContain(' is terminated in the local emulator. This cannot be undone.');
+    const modal = createWrapper(document.body).findModal();
+    if (!modal) throw new Error('Missing termination dialog');
+    expect(modal.getElement()).toHaveAccessibleName('Terminate instance?');
+    const sentence = modal.findContent().find('p')?.getElement();
+    expect(sentence?.querySelector('[aria-hidden="true"]')?.textContent).toBe(`${name} (${identity})`);
+    expect(sentence?.textContent).toContain(' is terminated in the local emulator. This cannot be undone.');
   });
 
   it('an instance without a name is named by its ID', async () => {
