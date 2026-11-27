@@ -13,6 +13,7 @@ import {
   nameSegment,
   RETENTION_DAYS,
   retentionText,
+  streamNameLabel,
 } from './format';
 
 describe('log names in addresses', () => {
@@ -56,6 +57,22 @@ describe('log names in addresses', () => {
       expect(nameFromSegment(params?.group ?? '')).toBe(group);
       if (pattern === LOG_STREAM_PATH) expect(nameFromSegment(params?.stream ?? '')).toBe(stream);
     }
+  });
+});
+
+describe('log stream labels', () => {
+  it.each([
+    ['a b', 'a b'],
+    ['a  b', 'a\\u0020\\u0020b'],
+    ['a\tb', 'a\\tb'],
+    ['a\\b', 'a\\\\b'],
+    ['a\rb', 'a\\rb'],
+    ['a\nb', 'a\\nb'],
+    ['a\r\nb', 'a\\r\\nb'],
+    ['a\u2028b', 'a\\u2028b'],
+    ['a\u2029b', 'a\\u2029b'],
+  ])('writes %j as the exact identity', (stored, identity) => {
+    expect(streamNameLabel(stored)).toBe(identity);
   });
 });
 

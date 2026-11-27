@@ -82,16 +82,49 @@ it('describes what is deleted and requires the exact stream name', async () => {
   expect(remove).not.toHaveBeenCalled();
 });
 
+it('shows and names the two-space stream and deletes it when both spaces are typed', async () => {
+  const stored = 'a  b';
+  const identity = 'a\\u0020\\u0020b';
+  remove.mockResolvedValueOnce(undefined);
+  const { dialog, element, field, action, deleted } = await renderDialog(stored);
+
+  expect(element).toHaveAccessibleName(`Delete log stream ${identity}?`);
+  const name = dialog.findHeader().findHeader()?.findHeadingText()?.find('[aria-hidden="true"]')?.getElement();
+  expect(name).toBeVisible();
+  expect(name?.textContent).toBe(`${stored} (${identity})`);
+  fireEvent.change(field, { target: { value: stored } });
+  expect(action).toBeEnabled();
+  fireEvent.click(action);
+  expect(remove).toHaveBeenCalledExactlyOnceWith(
+    'http://127.0.0.1:8310',
+    '/app#Group',
+    stored,
+    expect.any(AbortSignal),
+  );
+  await waitFor(() => expect(deleted).toHaveBeenCalledExactlyOnceWith(stored));
+});
+
+it('keeps delete unavailable when only one space is typed for a two-space stream', async () => {
+  const { field, action } = await renderDialog('a  b');
+
+  fireEvent.change(field, { target: { value: 'a b' } });
+  expect(action).toBeDisabled();
+  expect(remove).not.toHaveBeenCalled();
+});
+
 it.each(terminators)(
   'shows the multiline title with escaped identity and copies the original name exactly (%#)',
   async (lineBreak, escaped) => {
     const stored = `first${lineBreak}second`;
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    const { dialog } = await renderDialog(stored);
+    const { dialog, element } = await renderDialog(stored);
 
+    expect(element).toHaveAccessibleName(`Delete log stream first${escaped}second?`);
     const heading = dialog.findHeader().findHeader()?.findHeadingText();
-    expect(heading?.getElement().textContent).toBe(`Delete log stream first\nsecond (first${escaped}second)?`);
+    expect(heading?.find('[aria-hidden="true"]')?.getElement().textContent).toBe(
+      `first\nsecond (first${escaped}second)`,
+    );
     expect(heading?.getElement()).toBeVisible();
     expect(heading?.find('span[style]')?.getElement()).toHaveStyle({ whiteSpace: 'pre-wrap' });
     const copy = dialog.findContent().findCopyToClipboard();

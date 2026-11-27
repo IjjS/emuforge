@@ -1,5 +1,7 @@
 import type { LogGroupClass } from '@aws-sdk/client-cloudwatch-logs';
 
+import { nameIdentity } from '../../components/name-identity';
+
 export const LOGS_PATH = '/aws/logs';
 export const LOG_GROUPS_PATH = `${LOGS_PATH}/log-groups`;
 export const CREATE_LOG_GROUP_PATH = `${LOG_GROUPS_PATH}/create`;
@@ -48,16 +50,8 @@ export function normalizeLineBreaks(name: string): string {
 
 export const streamNameForDisplay = normalizeLineBreaks;
 
-const LINE_BREAK_ESCAPES: Record<string, string> = {
-  '\r': '\\r',
-  '\n': '\\n',
-  '\r\n': '\\r\\n',
-  '\u2028': '\\u2028',
-  '\u2029': '\\u2029',
-};
-
 export function streamNameLabel(name: string): string {
-  return name.replaceAll('\\', '\\\\').replace(LINE_BREAKS, (lineBreak) => LINE_BREAK_ESCAPES[lineBreak] ?? lineBreak);
+  return nameIdentity(name);
 }
 
 export const RETENTION_DAYS = [

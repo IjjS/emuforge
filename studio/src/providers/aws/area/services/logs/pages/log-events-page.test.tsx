@@ -527,7 +527,7 @@ it('explains the Standard class restriction with the emulator’s reason', async
   expect(detail).toHaveTextContent(reason);
 });
 
-it('distinguishes line breaks and literal escapes in stream choices and submits each exact stored name', async () => {
+it('uses each exact stored stream name when searching and in the result links', async () => {
   const names = [
     { stored: 'first\rsecond', label: 'first\\rsecond', display: 'first\nsecond' },
     { stored: 'first\nsecond', label: 'first\\nsecond', display: 'first\nsecond' },
@@ -536,6 +536,7 @@ it('distinguishes line breaks and literal escapes in stream choices and submits 
     { stored: 'first\u2029second', label: 'first\\u2029second', display: 'first\nsecond' },
     { stored: 'first\\nsecond', label: 'first\\\\nsecond', display: 'first\\nsecond' },
     { stored: 'first second', label: 'first second', display: 'first second' },
+    { stored: 'first  second', label: 'first\\u0020\\u0020second', display: 'first  second' },
     {
       stored: 'first second (contains a line break)',
       label: 'first second (contains a line break)',
@@ -576,7 +577,7 @@ it('distinguishes line breaks and literal escapes in stream choices and submits 
     );
 
     const link = resultsTable()?.findBodyCell(1, 2)?.findLink()?.getElement();
-    const expectedName = display.includes('\n') ? `${display} (${label})` : display;
+    const expectedName = /\n| {2}/.test(display) ? `${display} (${label})` : display;
     expect(link?.textContent).toBe(expectedName);
     expect(link).toHaveAccessibleName(label);
     expect(link).toHaveAttribute('href', logStreamPath(group, stored));
