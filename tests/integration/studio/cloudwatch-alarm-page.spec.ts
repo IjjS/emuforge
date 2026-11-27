@@ -23,7 +23,6 @@ import {
   answered,
   chooseOption,
   CloudWatchSeeded,
-  codeAndMessage,
   cwOk,
   DEFAULT_REASON,
   dialogOf,
@@ -44,7 +43,7 @@ import {
   NO_ACTIONS,
   openAlarm,
   openAlarms,
-  refusalDirect,
+  refusalCodeDirect,
   SET_STATE,
   shownTags,
   stateSet,
@@ -275,19 +274,22 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
       await expectPairs(page, { State: 'In alarm', 'State reason': DEFAULT_REASON });
 
       const executed = `Successfully executed action ${topic}`;
-      await expect
-        .poll(
-          async () => {
-            await s.historyRefresh.click(ACTION);
-            const rows = await historyRows(page);
-            return {
-              state: rows.some((row) => row.type === 'State'),
-              action: rows.some((row) => row.type === 'Action' && row.summary === executed),
-            };
-          },
-          { message: `the history holds a "State" item and the "Action" item "${executed}"`, timeout: 30_000 },
-        )
-        .toEqual({ state: true, action: true });
+      await expect(async () => {
+        // Each try reads the history again and waits for that read to be shown before it looks at the rows.
+        await answered(page, 'DescribeAlarmHistory', () => s.historyRefresh.click(ACTION));
+        await expect
+          .poll(
+            async () => {
+              const rows = await historyRows(page);
+              return {
+                state: rows.some((row) => row.type === 'State'),
+                action: rows.some((row) => row.type === 'Action' && row.summary === executed),
+              };
+            },
+            { message: `the history holds a "State" item and the "Action" item "${executed}"`, timeout: 5_000 },
+          )
+          .toEqual({ state: true, action: true });
+      }, 'the history, refreshed until it has them').toPass({ timeout: 60_000 });
 
       const direct = await metricAlarmDirect(ctx, port, name);
       expect({ state: direct.StateValue, reason: direct.StateReason }, 'the state and its reason, directly').toEqual({
@@ -307,7 +309,7 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
       await s.button(SET_STATE).click(ACTION);
       await expect(dialog, 'the dialog').toBeVisible();
       await seeded.deleteAlarm(name);
-      const refusal = await refusalDirect(ctx, port, 'SetAlarmState', {
+      const refused = await refusalCodeDirect(ctx, port, 'SetAlarmState', {
         AlarmName: name,
         StateValue: 'OK',
         StateReason: DEFAULT_REASON,
@@ -317,7 +319,7 @@ test('studio.cloudwatch-set-state-runs-the-action', async ({ ctx, page }) => {
         dialog.getByRole('button', { name: SET_STATE, exact: true }).click(ACTION),
       );
 
-      await expectAlert(dialog, failed('SetAlarmState'), codeAndMessage(refusal));
+      await expectAlert(dialog, failed('SetAlarmState'), refused);
       await expect(dialog, 'the dialog stays open').toBeVisible();
       await expect(flashItems(page, 'success'), 'no result says the state was set').toHaveCount(0);
       expect(namesOf(await alarmDirect(ctx, port, name)), 'the alarms of that name, directly').toEqual([]);

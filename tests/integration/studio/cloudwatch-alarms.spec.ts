@@ -10,11 +10,18 @@
 // `services/cloudwatch/cloudwatch.ts`.
 
 import { expect, startStack, test } from './support';
-import { expectOneCurrent, expectPairs, navigationLink, navigationTree } from './support/aws-entries';
+import { expectOneCurrent, navigationLink, navigationTree } from './support/aws-entries';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
 import { nothingChanged } from './support/no-screen-part';
-import { clipboardText, copiedText, copyControl, grantClipboard, setClipboard } from './support/screen-rules';
+import {
+  clipboardText,
+  copiedText,
+  copyControl,
+  grantClipboard,
+  pairValueOf,
+  setClipboard,
+} from './support/screen-rules';
 import { checkPrefix } from './support/service-screens';
 import {
   actionsText,
@@ -184,6 +191,16 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
     const count = await rowsIn(s.table).count();
     return Promise.all(Array.from({ length: count }, (_, row) => drawnText(s.nameLink(row))));
   };
+  /** Waits until the page's "ARN" reads the ARN the emulator reports for `name`, character for character. */
+  const expectArn = async (name: string) => {
+    const arn = (await metricAlarmDirect(ctx, port, name)).AlarmArn;
+    await expect
+      .poll(async () => (await pairValueOf(page, 'ARN').count()) === 1 && (await pairValueOf(page, 'ARN').textContent()), {
+        message: `the ARN of ${JSON.stringify(name)} as the emulator reports it`,
+        timeout: 15_000,
+      })
+      .toBe(arn);
+  };
   /** Waits until the list shows the three names, character for character, in the emulator's order. */
   const expectListed = async (): Promise<string[]> => {
     const order = await listed();
@@ -217,7 +234,7 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
           text: name,
           whiteSpace: 'pre-wrap',
         });
-        await expectPairs(page, { ARN: (await metricAlarmDirect(ctx, port, name)).AlarmArn });
+        await expectArn(name);
       }
     },
   );
@@ -241,12 +258,11 @@ test('studio.cloudwatch-alarm-names-open-by-their-address', async ({ ctx, page, 
   await lines.line('Reload each page at its address → the same alarm, the same name', async () => {
     for (const name of names) {
       await openAlarm(page, name);
-      const arn = (await metricAlarmDirect(ctx, port, name)).AlarmArn;
-      await expectPairs(page, { ARN: arn });
+      await expectArn(name);
       await page.reload();
       await expect(page, `the address of ${JSON.stringify(name)} after the reload`).toHaveURL(addressOf(alarmPath(name)));
       await expectHeading(page, name);
-      await expectPairs(page, { ARN: arn });
+      await expectArn(name);
     }
   });
 

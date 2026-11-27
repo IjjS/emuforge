@@ -97,7 +97,7 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
       await expect(heading(page, EDIT_ALARM), 'the h1 "Edit alarm"').toBeVisible();
       await expect(form.threshold, "the alarm's threshold").toHaveValue('5', { timeout: 15_000 });
 
-      await expect(form.main.getByText(name, { exact: true }), 'the name as text').toBeVisible();
+      await expect(form.form.getByText(name, { exact: true }), 'the name as text').toBeVisible();
       await expect(form.main.getByRole('textbox', { name: 'Name', exact: true }), 'no field takes a name').toHaveCount(0);
       await expect(form.description, "the alarm's description").toHaveValue('before');
       // The emulator lists no metric of the alarm's namespace, so the form names the metric in its text fields.
@@ -106,7 +106,7 @@ test('studio.cloudwatch-edit-keeps-what-the-form-does-not-offer', async ({ ctx, 
       await expect(form.metricNameText, "the alarm's metric").toHaveValue('Errors');
       await expect(form.periods, "the alarm's evaluation periods").toHaveValue('3');
       await expect(form.datapoints, 'the data points to alarm the alarm does not hold').toHaveValue('3');
-      await expect(form.main.getByText(alarmWhen(3, 3), { exact: true }), `"${alarmWhen(3, 3)}"`).toBeVisible();
+      await expect(form.form.getByText(alarmWhen(3, 3), { exact: true }), `"${alarmWhen(3, 3)}"`).toBeVisible();
       await expect(selectOf(form.missingData), 'the missing data treatment').toHaveText('Missing');
       await expect(selectOf(form.statistic), "the alarm's statistic").toHaveText('Sum');
       await expect(selectOf(form.comparison), "the alarm's comparison").toHaveText('Greater than');

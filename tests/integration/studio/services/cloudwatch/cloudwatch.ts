@@ -3,8 +3,10 @@
 //
 // - Direct calls: `directCloudWatch` of `support/aws-clients-general.ts` (AWS JSON 1.0 straight to the emulator,
 //   SigV4-signed with the key it wrote for this run, TLS verified against its `ca.pem`). A refusal is read from its
-//   JSON `__type` and `message`; "the emulator's reason" or "code" a line asks for is that of a direct call that is
-//   refused the same way, compared with what the screen shows.
+//   JSON `__type` and `message`, and its code from the header `x-amzn-query-error` when the emulator sends one (the
+//   code it gives a client of the service's earlier protocol, which is the one AWS's SDK reports); "the emulator's
+//   reason" or "code" a line asks for is that of a direct call that is refused the same way, compared with what
+//   the screen shows.
 // - `CloudWatchSeeded`: the alarms and topics a check makes, every one named under the check's prefix `<p>`. When
 //   the check ends it deletes every alarm of the emulator whose name starts with `<p>`, those Studio's actions made
 //   included, composite alarms first, and the topics it made.
@@ -27,12 +29,17 @@ import { waitFor } from '../../support/wait';
 // Direct calls.
 // ---------------------------------------------------------------------------------------------------------------
 
-/** A direct answer, parsed: its status, its JSON body (`{}` when empty), and for a refusal its type and message. */
+/**
+ * A direct answer, parsed: its status, its JSON body (`{}` when empty), and for a refusal its type, its message and
+ * its code: the first part of the header `x-amzn-query-error` ("ValidationError;Sender") when the emulator sent it,
+ * else the type.
+ */
 export interface Answer {
   status: number;
   json: Record<string, unknown>;
   type: string | null;
   message: string | null;
+  code: string | null;
 }
 
 function parsed(answer: DirectAnswer, what: string): Answer {
@@ -47,7 +54,9 @@ function parsed(answer: DirectAnswer, what: string): Answer {
   }
   const type = typeof json.__type === 'string' ? (json.__type.split('#').at(-1) ?? null) : null;
   const message = typeof json.message === 'string' ? json.message : null;
-  return { status: answer.status, json, type, message };
+  const queryError = answer.headers?.['x-amzn-query-error'];
+  const queryCode = (Array.isArray(queryError) ? queryError[0] : queryError)?.split(';')[0]?.trim();
+  return { status: answer.status, json, type, message, code: queryCode ? queryCode : type };
 }
 
 /** Sends `operation` with `input` straight to the emulator and logs its status. */
@@ -66,7 +75,7 @@ export async function cwOk(ctx: Ctx, port: number, operation: string, input: obj
   return answer;
 }
 
-/** The emulator's refusal of a direct call: its code (the last part of `__type`) and its reason (`message`). */
+/** The emulator's refusal of a direct call: its code (`Answer.code`) and its reason (`message`). */
 export interface Refusal {
   code: string;
   message: string;
@@ -78,12 +87,24 @@ export interface Refusal {
  */
 export async function refusalDirect(ctx: Ctx, port: number, operation: string, input: object): Promise<Refusal> {
   const answer = await cw(ctx, port, operation, input);
-  if (answer.status === 200 || answer.type === null || answer.message === null || answer.message === '') {
+  if (answer.status === 200 || answer.code === null || answer.message === null || answer.message === '') {
     throw new Error(
       `direct ${operation} was not refused with a code and a reason: ${String(answer.status)} ${JSON.stringify(answer.json)}`,
     );
   }
-  return { code: answer.type, message: answer.message };
+  return { code: answer.code, message: answer.message };
+}
+
+/**
+ * The emulator's code for refusing `operation` with `input`, directly, of a refusal that may carry no reason. Fails
+ * the check when the emulator does not refuse it with a code.
+ */
+export async function refusalCodeDirect(ctx: Ctx, port: number, operation: string, input: object): Promise<string> {
+  const answer = await cw(ctx, port, operation, input);
+  if (answer.status === 200 || answer.code === null) {
+    throw new Error(`direct ${operation} was not refused with a code: ${String(answer.status)} ${JSON.stringify(answer.json)}`);
+  }
+  return answer.message === null || answer.message === '' ? answer.code : `${answer.code}: ${answer.message}`;
 }
 
 const ALARM_TYPES = ['CompositeAlarm', 'MetricAlarm', 'LogAlarm'];
@@ -536,6 +557,7 @@ const ALERT_CONTENT = inside(wrapper.findAlert().findContent());
 const FIRST_FLASH = wrapper.findFlashbar().findItems().get(1);
 /** A flash item's content, as a selector below the item. */
 const FLASH_CONTENT = FIRST_FLASH.findContent().toSelector().slice(FIRST_FLASH.toSelector().length).trim();
+const CONTAINER = rel(wrapper.findContainer());
 const FORM_FIELD = rel(wrapper.findFormField());
 const FORM_FIELD_LABEL = inside(wrapper.findFormField().findLabel());
 const FORM_FIELD_ERROR = inside(wrapper.findFormField().findError());
@@ -934,8 +956,8 @@ export function alarmScreen(page: Page) {
     tags: main.locator(TABLE).filter({ has: page.locator(HEADING_TEXT).filter({ hasText: /^Tags$/ }) }),
     /** "Alarm not found" in the place of the alarm, whatever heading holds it. */
     notFound: main.getByRole('heading', { name: ALARM_NOT_FOUND, exact: true }),
-    /** The way back to Alarms from a page that has no alarm to show. */
-    backToAlarms: main.getByRole('link', { name: ALARMS, exact: true }),
+    /** The way back to Alarms from a page that has no alarm to show: the link in the page's own container. */
+    backToAlarms: main.locator(CONTAINER).getByRole('link', { name: ALARMS, exact: true }),
   };
 }
 
@@ -985,6 +1007,8 @@ export function alarmForm(page: Page) {
   const dimensions = field(main, 'Dimensions');
   return {
     main,
+    /** The form itself, without the navigation and the crumbs around it. */
+    form: main.locator('form'),
     name: field(main, 'Name').locator(INPUT),
     nameField: field(main, 'Name'),
     description: field(main, 'Description').locator(TEXTAREA),

@@ -255,7 +255,9 @@ export class PageHosts {
 }
 
 /** An answer of a direct call, or the error that kept it from arriving. */
-export type DirectAnswer = { status: number; body: string } | { error: string };
+export type DirectAnswer =
+  | { status: number; body: string; headers?: Record<string, string | string[] | undefined> }
+  | { error: string };
 
 function sha256Hex(data: string): string {
   return createHash('sha256').update(data).digest('hex');
@@ -332,7 +334,7 @@ async function direct(
         let text = '';
         response.setEncoding('utf8');
         response.on('data', (chunk: string) => (text += chunk));
-        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text }));
+        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text, headers: response.headers }));
         response.on('error', (e) => resolve({ error: e.message }));
       },
     );
