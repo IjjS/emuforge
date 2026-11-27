@@ -1,4 +1,4 @@
-import type { StateValue } from '@aws-sdk/client-cloudwatch';
+import type { StateValue, Tag } from '@aws-sdk/client-cloudwatch';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
@@ -25,9 +25,11 @@ import { AlarmName } from '../components/alarm-name';
 import { AlarmSummary } from '../components/alarm-summary';
 import { AlarmTags } from '../components/alarm-tags';
 import { DeleteAlarmDialog } from '../components/delete-alarm-dialog';
+import { ManageTagsDialog } from '../components/manage-tags-dialog';
 import { SetStateDialog } from '../components/set-state-dialog';
 import { alarmStateText } from '../format';
 import { alarmNameFromSearch, ALARMS_PATH, editAlarmPath } from '../paths';
+import type { TagOperation } from '../tags-api';
 import { SET_ALARM_STATE } from '../try-api';
 import { useActionsSwitch } from '../use-actions-switch';
 
@@ -45,12 +47,16 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
   const [deleteUnavailable, setDeleteUnavailable] = useState(false);
   const [stateDialog, setStateDialog] = useState<{ currentState: StateValue | undefined }>();
   const [stateUnavailable, setStateUnavailable] = useState(false);
+  const [tagDialog, setTagDialog] = useState<{ arn: string; initialTags: Tag[] }>();
+  const [tagUnavailable, setTagUnavailable] = useState<ReadonlySet<TagOperation>>(() => new Set());
   const { engineOrigin } = connection;
   const [announcement, announce] = useAnnouncer();
   const read = useAlarm(connection.engineOrigin, name);
   const alarm = read.value;
   const history = useAlarmHistory(connection.engineOrigin, alarm?.data.AlarmName);
   const tags = useAlarmTags(connection.engineOrigin, alarm?.data.AlarmArn);
+  const arn = alarm?.data.AlarmArn;
+  const canManageTags = engineOrigin !== undefined && arn !== undefined && tags.value !== undefined;
   const actions = useActionsSwitch({
     endpoint: engineOrigin,
     name,
@@ -89,6 +95,22 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
     ]);
     void read.refresh();
     history.goToPage(1);
+  };
+
+  const handleTagsSaved = () => {
+    if (name === undefined) return;
+    setTagDialog(undefined);
+    flash.show([
+      {
+        type: 'success',
+        content: (
+          <>
+            Tags of <AlarmName name={name} /> saved.
+          </>
+        ),
+      },
+    ]);
+    void tags.refresh();
   };
 
   const handleDeleted = (deletedName: string) => {
@@ -160,7 +182,17 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           <AlarmCondition alarm={alarm} />
           <AlarmActions alarm={alarm} />
           <AlarmHistory connection={connection} listing={history} />
-          <AlarmTags connection={connection} tags={tags} />
+          <AlarmTags
+            connection={connection}
+            tags={tags}
+            manage={{
+              enabled: canManageTags,
+              unavailable: tagUnavailable,
+              open: () => {
+                if (arn !== undefined && tags.value !== undefined) setTagDialog({ arn, initialTags: tags.value });
+              },
+            }}
+          />
         </SpaceBetween>
       ) : (
         <Container>
@@ -197,6 +229,18 @@ function AlarmDetail({ name, connection }: { name: string | undefined; connectio
           onUnavailable={() => setStateUnavailable(true)}
           onSet={handleStateSet}
           onDismiss={() => setStateDialog(undefined)}
+        />
+      )}
+      {tagDialog !== undefined && engineOrigin !== undefined && (
+        <ManageTagsDialog
+          endpoint={engineOrigin}
+          arn={tagDialog.arn}
+          initialTags={tagDialog.initialTags}
+          tags={tags}
+          unavailable={tagUnavailable}
+          onUnavailable={(operation) => setTagUnavailable((known) => new Set([...known, operation]))}
+          onSaved={handleTagsSaved}
+          onDismiss={() => setTagDialog(undefined)}
         />
       )}
       {announcement}
