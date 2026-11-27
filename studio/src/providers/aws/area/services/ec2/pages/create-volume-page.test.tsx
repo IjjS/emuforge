@@ -262,7 +262,7 @@ describe('create volume', () => {
       ['st1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
       ['sc1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
     ] as const;
-    expect(dropdown.findOptions()).toHaveLength(descriptions.length);
+    expect(dropdown.findOptions().length).toBe(descriptions.length);
     for (const [value, description] of descriptions) {
       const option = dropdown.findOptionByValue(value);
       expect(option?.findLabel().getElement().textContent).toBe(value);

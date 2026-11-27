@@ -203,8 +203,8 @@ describe('"Create key pair"', () => {
     expect(screen.getByRole('button', { name: 'Create key pair' })).toBeInTheDocument();
 
     choose('import');
-    expect(keyOption('rsa')).toBeUndefined();
-    expect(keyOption('pem')).toBeUndefined();
+    expect(keyOption('rsa')?.findNativeInput().getElement().value).toBeUndefined();
+    expect(keyOption('pem')?.findNativeInput().getElement().value).toBeUndefined();
     expect(field('Public key')).toBeInTheDocument();
     expect(text(document.body)).toContain('In OpenSSH format, as in a .pub file.');
     expect(screen.getByRole('button', { name: 'Import key pair' })).toBeInTheDocument();

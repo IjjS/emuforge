@@ -1,5 +1,4 @@
 import Alert from '@cloudscape-design/components/alert';
-import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import Container from '@cloudscape-design/components/container';
@@ -218,10 +217,10 @@ function CreateVolumeForm({
                   errorText={tried && selected === undefined ? 'Choose an Availability Zone.' : undefined}
                   constraintText={
                     zoneNotImplemented && (
-                      <SpaceBetween size="xxs">
-                        <StatusIndicator type={zoneNotImplemented.type}>{zoneNotImplemented.first}</StatusIndicator>
-                        <Box>{zoneNotImplemented.detail}</Box>
-                      </SpaceBetween>
+                      <>
+                        <StatusIndicator type={zoneNotImplemented.type}>{zoneNotImplemented.first}</StatusIndicator>{' '}
+                        {zoneNotImplemented.detail}
+                      </>
                     )
                   }
                 >
