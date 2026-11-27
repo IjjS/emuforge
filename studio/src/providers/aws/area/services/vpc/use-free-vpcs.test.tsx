@@ -37,7 +37,9 @@ function holdNextRead() {
   return { resolve };
 }
 
-beforeEach(() => read.mockReset());
+beforeEach(() => {
+  read.mockReset();
+});
 
 describe('VPC gateway occupancy', () => {
   it('starts without a map and reads all gateway pages before publishing attachments', async () => {

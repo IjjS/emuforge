@@ -197,7 +197,9 @@ function alertText(): string {
 
 async function chooseVpc(id: string) {
   const select = vpcSelect();
-  select.openDropdown();
+  if (select.findTrigger().getElement().getAttribute('aria-expanded') !== 'true') {
+    select.openDropdown();
+  }
   await chooseOpenVpc(id);
 }
 
@@ -660,7 +662,7 @@ describe('Attach internet gateway', () => {
     await waitFor(() => {
       expect(text(field('VPC').getElement())).toMatch(/Not implemented by the emulator.*DescribeInternetGateways/);
     });
-    expect(within(field('VPC').getElement()).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(text(field('VPC').getElement())).not.toContain('Retry');
     expect(optionDisabled('vpc-x')).toBe(true);
     expect(optionDisabled('vpc-d')).toBe(true);
     expect(attachButton()).toBeDisabled();
@@ -708,8 +710,10 @@ describe('Attach internet gateway', () => {
     open();
     await formShown();
     await chooseVpc('vpc-x');
+    const previousReads = vi.mocked(api.listInternetGateways).mock.calls.length;
     const answer = holdAttachments();
     await openChoices();
+    await waitFor(() => expect(api.listInternetGateways).toHaveBeenCalledTimes(previousReads + 1));
     expect(screen.getByText(CHECKING)).toBeInTheDocument();
     expect(attachButton()).toBeDisabled();
     expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
