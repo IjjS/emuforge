@@ -80,7 +80,7 @@ function TypeFields({
   const source = instanceTypeChoices(connection.engineOrigin, zone, offerings.types);
   const checking = zone !== undefined && offerings.types === undefined;
   const failure = offerings.failure && readFailureState(offerings.failure, connection, 'instance types');
-  const { choices, fieldRef, items, options, props } = useAttributeChoices(
+  const { choices, items, options, props } = useAttributeChoices(
     { source, connection, pending, onUnsupported },
     'instance types',
   );
@@ -111,21 +111,19 @@ function TypeFields({
         )
       }
     >
-      <div ref={fieldRef}>
-        <Select
-          {...props}
-          empty={zone === undefined || choices.text !== '' ? props.empty : `No instance types in ${zone}`}
-          placeholder="Choose an instance type"
-          dropdownRole="dialog"
-          disabled={pending || checking}
-          options={options}
-          selectedOption={displayed === undefined ? currentOption : source.optionOf(displayed)}
-          triggerVariant={selected === undefined && outsideZone ? 'option' : 'label'}
-          onChange={({ detail }) => {
-            setSelected(items.find(({ type }) => type === detail.selectedOption.value));
-          }}
-        />
-      </div>
+      <Select
+        {...props}
+        empty={zone === undefined || choices.text !== '' ? props.empty : `No instance types in ${zone}`}
+        placeholder="Choose an instance type"
+        dropdownRole="dialog"
+        disabled={pending || checking}
+        options={options}
+        selectedOption={displayed === undefined ? currentOption : source.optionOf(displayed)}
+        triggerVariant={selected === undefined && outsideZone ? 'option' : 'label'}
+        onChange={({ detail }) => {
+          setSelected(items.find(({ type }) => type === detail.selectedOption.value));
+        }}
+      />
       {offerings.pending && <StatusIndicator type="loading">Checking Instance type</StatusIndicator>}
       {failure !== undefined &&
         (offerings.failure?.kind === 'not-implemented' ? (
@@ -140,30 +138,27 @@ function TypeFields({
   );
 }
 
-function GroupFields({
+// Mounted inside the modal portal so the choice hook can observe the rendered trigger.
+function GroupInput({
   source,
   connection,
   pending,
   onUnsupported,
-  current,
-  children,
+  selected,
+  onChange,
+  onReadBlocked,
 }: FieldProps<GroupChoice> & {
-  current: GroupChoice[];
-  children: (change: InstanceAttributeChange | undefined, field: ReactNode) => ReactNode;
+  selected: readonly GroupChoice[];
+  onChange: (groups: GroupChoice[]) => void;
+  onReadBlocked: (blocked: boolean) => void;
 }) {
-  const [selected, setSelected] = useState(current);
   const { choices, fieldRef, items, options, props } = useAttributeChoices(
     { source, connection, pending, onUnsupported },
     'security groups',
   );
-  const ids = selected.map(({ id }) => id);
-  const changed = ids.length !== current.length || current.some(({ id }) => !ids.includes(id));
-  const change =
-    !choices.loading && choices.failure === undefined && ids.length > 0 && changed
-      ? ({ kind: 'groups', groupIds: ids } as const)
-      : undefined;
-  return children(
-    change,
+  const readBlocked = choices.loading || choices.failure !== undefined;
+  useLayoutEffect(() => onReadBlocked(readBlocked), [onReadBlocked, readBlocked]);
+  return (
     <FormField label="Security groups" constraintText="Select at least one security group.">
       <div ref={fieldRef}>
         <Multiselect
@@ -175,7 +170,7 @@ function GroupFields({
           deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
           onChange={({ detail }) => {
             const known = new Map([...selected, ...items].map((group) => [group.id, group]));
-            setSelected(
+            onChange(
               detail.selectedOptions.flatMap(({ value }) => {
                 const group = value === undefined ? undefined : known.get(value);
                 return group === undefined ? [] : [group];
@@ -184,7 +179,26 @@ function GroupFields({
           }}
         />
       </div>
-    </FormField>,
+    </FormField>
+  );
+}
+
+function GroupFields({
+  current,
+  children,
+  ...field
+}: FieldProps<GroupChoice> & {
+  current: GroupChoice[];
+  children: (change: InstanceAttributeChange | undefined, field: ReactNode) => ReactNode;
+}) {
+  const [selected, setSelected] = useState(current);
+  const [readBlocked, setReadBlocked] = useState(false);
+  const ids = selected.map(({ id }) => id);
+  const changed = ids.length !== current.length || current.some(({ id }) => !ids.includes(id));
+  const change = !readBlocked && ids.length > 0 && changed ? ({ kind: 'groups', groupIds: ids } as const) : undefined;
+  return children(
+    change,
+    <GroupInput {...field} selected={selected} onChange={setSelected} onReadBlocked={setReadBlocked} />,
   );
 }
 
