@@ -1,4 +1,5 @@
 import { ConfirmDialog } from '../../../components/confirm-dialog';
+import { NameText } from '../../../components/name-text';
 
 // "Terminate instance?" (issue 553, requirement "EmuForge's own text", "Terminate"): the area's dialog confirmed by
 // typing `terminate`, naming the instance by its name, or by its ID without one.
@@ -18,7 +19,12 @@ export function TerminateDialog({ visible, label, pending, onConfirm, onDismiss 
     <ConfirmDialog
       visible={visible}
       header="Terminate instance?"
-      body={`${label} is terminated in the local emulator. This cannot be undone.`}
+      body={
+        <>
+          <NameText name={label} />
+          {' is terminated in the local emulator. This cannot be undone.'}
+        </>
+      }
       word="terminate"
       action="Terminate"
       pending={pending}

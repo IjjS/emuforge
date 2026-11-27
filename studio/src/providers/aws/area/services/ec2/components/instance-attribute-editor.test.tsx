@@ -267,6 +267,30 @@ describe('instance attribute editor', () => {
     expect(tokens()).toEqual(['beta', 'charlie']);
   });
 
+  it('shows the chosen security group identity and saves the group ID', async () => {
+    const group = { id: 'sg-b', name: 'dev  group' };
+    const identity = 'dev\\u0020\\u0020group';
+    vi.mocked(listGroupChoices).mockResolvedValue({ choices: [group] });
+    vi.mocked(modifyInstanceAttribute).mockResolvedValue(undefined);
+    renderEditor({ ...CORE, vpcId: 'vpc-1', groups: [] });
+
+    const dialog = await edit(GROUPS);
+    await selectBeta();
+    expect(tokens()).toEqual([identity]);
+    expect(groupField().findToken(1)?.findDismiss()?.getElement()).toHaveAccessibleName(`Remove ${identity}`);
+
+    fireEvent.click(saveButton(dialog));
+    await waitFor(() =>
+      expect(modifyInstanceAttribute).toHaveBeenCalledWith(
+        ENDPOINT,
+        CORE.id,
+        { kind: 'groups', groupIds: [group.id] },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+  });
+
   it('offers only the instance VPC groups when the candidate source holds groups for different VPCs', async () => {
     const choices = [
       { vpcId: 'vpc-1', group: BETA },

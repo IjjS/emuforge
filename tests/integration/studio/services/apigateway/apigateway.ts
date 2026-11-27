@@ -121,11 +121,31 @@ export async function fixture(ctx: Ctx) {
 
   /** A request the check itself sends to the emulator on loopback, with the run's CA; redirects are not followed. */
   function callOutside(pathname: string, options: { host?: string; method?: string } = {}): Promise<Outside> {
+    return requestAt('127.0.0.1', port, pathname, options);
+  }
+
+  /**
+   * A request to the whole address `address` as it is written (its host, its port, its path and query), with the
+   * run's CA and no redirect followed. Only a loopback IP address is requested; anything else is refused unsent.
+   */
+  function callAddress(address: URL): Promise<Outside> {
+    if (address.protocol !== 'https:' || address.hostname !== '127.0.0.1') {
+      throw new Error(`not requested: ${address.href} is not an https address on 127.0.0.1`);
+    }
+    return requestAt(address.hostname, Number(address.port), `${address.pathname}${address.search}`, {});
+  }
+
+  function requestAt(
+    host: string,
+    onPort: number,
+    pathname: string,
+    options: { host?: string; method?: string },
+  ): Promise<Outside> {
     return new Promise((resolve, reject) => {
       const request = https.request(
         {
-          host: '127.0.0.1',
-          port,
+          host,
+          port: onPort,
           path: pathname,
           method: options.method ?? 'GET',
           ca,
@@ -164,6 +184,7 @@ export async function fixture(ctx: Ctx) {
     iam,
     makeFunction,
     callOutside,
+    callAddress,
     /** A REST stage's path on the emulator: `/_aws/execute-api/<id>/<stage><resource path>`. */
     restStagePath: (apiId: string, stage: string, resourcePath: string) =>
       `/_aws/execute-api/${apiId}/${stage}${resourcePath}`,
@@ -726,15 +747,20 @@ export async function confirmDelete(page: Page, header: string, word: string): P
   await button(dialogFooter(page), 'Delete').click();
 }
 
-/** The invoke address the emulator's export of a REST stage gives: its server's URL with the base path's default. */
-export async function exportedAddress(rest: APIGateway, apiId: string, stageName: string): Promise<string> {
-  const answer = await rest.getExport({ restApiId: apiId, stageName, exportType: 'oas30' });
-  const document = JSON.parse(Buffer.from(answer.body ?? new Uint8Array()).toString('utf8')) as {
-    servers?: { url?: string; variables?: Record<string, { default?: string }> }[];
-  };
-  const server = document.servers?.[0];
-  if (!server?.url) throw new Error(`the export of stage ${stageName} names no server`);
-  return server.url.replace(/\{(\w+)\}/g, (_, name: string) => server.variables?.[name]?.default ?? '');
+/**
+ * The address the settled "Invoke URL" cell of the stage `stage` shows in the table `stages`, read from the cell: it
+ * must be the stage's local address, `https://127.0.0.1:<the run's emulator port>/_aws/execute-api/<api id>/<stage>`
+ * (issue 691). A check that calls the stage uses what this returns, so the request goes where the screen says.
+ */
+export async function shownStageAddress(f: Fixture, stages: Locator, apiId: string, stage: string): Promise<URL> {
+  const cell = await cellOf(stages, stage, 4);
+  await expect(cell).toHaveText(f.restStageAddress(apiId, stage));
+  const shown = new URL((await cell.innerText()).trim());
+  expect(shown.protocol).toBe('https:');
+  expect(shown.hostname).toBe('127.0.0.1');
+  expect(shown.port).toBe(String(f.port));
+  expect(shown.pathname).toBe(f.restStagePath(apiId, stage, ''));
+  return shown;
 }
 
 // -- Create method and Create route --------------------------------------------------------------------------------------
@@ -768,3 +794,15 @@ export const responsesOf = (method: Locator) => method.locator(sel(ui.findExpand
 export const expandHeader = (method: Locator) => method.locator(sel(ui.findExpandableSection().findHeader()));
 /** The key and value groups drawn below `scope`, in order. */
 export const pairGroups = (scope: Locator) => scope.locator(sel(ui.findKeyValuePairs()));
+
+// -- a choice's options, for what they offer and show (issue 664) --------------------------------------------------
+
+/** The parts of the one Cloudscape select below `scope` a check of its options acts on; an option is found by its value. */
+export function choiceParts(scope: Page | Locator) {
+  return {
+    trigger: scope.locator(sel(select.findTrigger())),
+    filter: scope.locator(sel(select.findFilteringInput().findNativeInput())),
+    option: (value: string) => scope.locator(sel(select.findDropdown().findOptionByValue(value))),
+    label: (value: string) => scope.locator(sel(select.findDropdown().findOptionByValue(value).findLabel())),
+  };
+}
