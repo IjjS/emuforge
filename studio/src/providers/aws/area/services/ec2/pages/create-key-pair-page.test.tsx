@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as api from '../key-pair-api';
+import { EC2_KEYS } from '../queries';
 
 // S9 rendered inside the area's layout, with the calls of `key-pair-api.ts` answered by the case
 // (`key-pair-api.test.ts` proves the calls against a fake engine).
@@ -88,7 +89,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path = '/aws/ec2/key-pairs/create') {
+function KeyPairsObserver() {
+  const query = useQuery({
+    queryKey: EC2_KEYS.keyPairs('observer'),
+    queryFn: ({ signal }) => api.listKeyPairs(ENGINE, signal),
+    initialData: [{ name: 'initial' }],
+  });
+  return <output aria-label="Observed key pairs">{query.data.map(({ name }) => name).join(', ')}</output>;
+}
+
+function open(path = '/aws/ec2/key-pairs/create', observe = false) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -99,6 +109,7 @@ function open(path = '/aws/ec2/key-pairs/create') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
+      {observe && <KeyPairsObserver />}
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
@@ -122,8 +133,24 @@ function typeInto(label: string, value: string) {
   fireEvent.change(field(label), { target: { value } });
 }
 
-function choose(name: string) {
-  fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${name.replace('.', '\\.')}`) }));
+function keyOption(value: string) {
+  return createWrapper(document.body)
+    .findAllRadioGroups()
+    .flatMap((group) => group.findButtons())
+    .find((button) => button.findNativeInput().getElement().value === value);
+}
+
+function modeInput(value: 'create' | 'import') {
+  const input = createWrapper(document.body).findTiles()?.findInputByValue(value)?.getElement();
+  if (input === undefined) throw new Error(`Missing key pair mode ${value}`);
+  return input;
+}
+
+function choose(value: 'create' | 'import' | 'rsa' | 'ed25519' | 'pem' | 'ppk') {
+  const input =
+    value === 'create' || value === 'import' ? modeInput(value) : keyOption(value)?.findNativeInput().getElement();
+  if (input === undefined) throw new Error(`Missing key pair option ${value}`);
+  fireEvent.click(input);
 }
 
 function submit(name: string) {
@@ -154,21 +181,30 @@ describe('"Create key pair"', () => {
   it('opens on "Create a new key pair" with "RSA", ".pem", the name\'s rule and the two descriptions; "Import a public key" swaps type and format for "Public key"', async () => {
     open();
     expect(await screen.findByRole('heading', { level: 1, name: 'Create key pair' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /^Create a new key pair/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'RSA' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: '.pem' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'ED25519' })).not.toBeChecked();
-    expect(screen.getByRole('radio', { name: '.ppk' })).not.toBeChecked();
+    expect(modeInput('create')).toBeChecked();
+    expect(keyOption('rsa')?.findNativeInput().getElement()).toBeChecked();
+    expect(keyOption('pem')?.findNativeInput().getElement()).toBeChecked();
+    expect(keyOption('ed25519')?.findNativeInput().getElement()).not.toBeChecked();
+    expect(keyOption('ppk')?.findNativeInput().getElement()).not.toBeChecked();
     const page = text(document.body);
     expect(page).toContain('1 to 255 ASCII characters.');
     expect(page).toContain('The emulator makes the key pair and returns the private key once.');
     expect(page).toContain('The emulator stores a public key you already have.');
+    expect(keyOption('rsa')?.findDescription()?.getElement().textContent).toBe(
+      'The emulator returns an RSA private key.',
+    );
+    expect(keyOption('ed25519')?.findDescription()?.getElement().textContent).toBe(
+      'The emulator returns an ED25519 private key.',
+    );
+    expect(keyOption('pem')?.findDescription()?.getElement().textContent).toBe('The private key as PEM text.');
+    expect(keyOption('ppk')?.findDescription()?.getElement().textContent).toBe("The private key in PuTTY's format.");
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: /Public key/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Create key pair' })).toBeInTheDocument();
 
-    choose('Import a public key');
-    expect(screen.queryByRole('radio', { name: 'RSA' })).toBeNull();
-    expect(screen.queryByRole('radio', { name: '.pem' })).toBeNull();
+    choose('import');
+    expect(keyOption('rsa')?.findNativeInput().getElement().value).toBeUndefined();
+    expect(keyOption('pem')?.findNativeInput().getElement().value).toBeUndefined();
     expect(field('Public key')).toBeInTheDocument();
     expect(text(document.body)).toContain('In OpenSSH format, as in a .pub file.');
     expect(screen.getByRole('button', { name: 'Import key pair' })).toBeInTheDocument();
@@ -187,7 +223,7 @@ describe('"Create key pair"', () => {
     typeInto('Name', 'a'.repeat(256));
     expect(fieldText('Name')).toContain('A name can have up to 255 characters.');
     typeInto('Name', 'imp');
-    choose('Import a public key');
+    choose('import');
     submit('Import key pair');
     await waitFor(() => {
       expect(fieldText('Public key')).toContain('Enter a public key.');
@@ -206,12 +242,15 @@ describe('"Create key pair"', () => {
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
     typeInto('Name', 'dev');
-    choose('ED25519');
-    choose('.ppk');
+    choose('ed25519');
+    choose('ppk');
+    submit('Add tag');
+    typeInto('Key', 'team');
+    typeInto('Value - optional', 'core');
     submit('Create key pair');
     expect(await screen.findByText('Key pair dev created')).toBeInTheDocument();
     expect(vi.mocked(api.createKeyPair).mock.calls[0]?.slice(1, 2)).toEqual([
-      { name: 'dev', type: 'ed25519', format: 'ppk' },
+      { name: 'dev', type: 'ed25519', format: 'ppk', tags: [{ key: 'team', value: 'core' }] },
     ]);
     expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs/create');
     const page = text(document.body);
@@ -249,7 +288,7 @@ describe('"Create key pair"', () => {
     vi.mocked(api.importKeyPair).mockResolvedValue(undefined);
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -259,6 +298,103 @@ describe('"Create key pair"', () => {
     expect(await screen.findByText('Imported key pair imp')).toBeInTheDocument();
     expect(vi.mocked(api.importKeyPair).mock.calls[0]?.slice(1, 3)).toEqual(['imp', PUBLIC_KEY]);
   });
+
+  it('rejects a tag without a key, then sends the completed row in the import request', async () => {
+    const original = await vi.importActual<typeof api>('../key-pair-api');
+    vi.mocked(api.importKeyPair).mockImplementationOnce(original.importKeyPair);
+    const requests: URLSearchParams[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      if (new URL(request.url).pathname === '/__emuforge/session') return Response.json({ token: 'test-token' });
+      requests.push(new URLSearchParams(await request.text()));
+      return new Response('<ImportKeyPairResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"/>', {
+        headers: { 'content-type': 'text/xml' },
+      });
+    });
+    const router = open();
+    await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
+    choose('import');
+    typeInto('Name', 'imp');
+    typeInto('Public key', PUBLIC_KEY);
+    submit('Add tag');
+    typeInto('Value - optional', 'core');
+    submit('Import key pair');
+    expect(screen.getByText('Enter a key.')).toBeVisible();
+    expect(api.importKeyPair).not.toHaveBeenCalled();
+
+    typeInto('Key', 'team');
+    submit('Import key pair');
+    expect(await screen.findByText('Imported key pair imp')).toBeVisible();
+    expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs');
+    expect(requests).toHaveLength(1);
+    expect(Object.fromEntries(requests[0] ?? [])).toMatchObject({
+      Action: 'ImportKeyPair',
+      'TagSpecification.1.ResourceType': 'key-pair',
+      'TagSpecification.1.Tag.1.Key': 'team',
+      'TagSpecification.1.Tag.1.Value': 'core',
+    });
+  });
+
+  it.each(['earlier first', 'newer first'])(
+    'keeps the private key after both list reads settle (%s)',
+    async (order) => {
+      const earlier = held<api.KeyPair[]>();
+      const newer = held<api.KeyPair[]>();
+      vi.mocked(api.listKeyPairs).mockReturnValueOnce(earlier.promise).mockReturnValueOnce(newer.promise);
+      vi.mocked(api.createKeyPair).mockResolvedValue({ name: 'dev', privateKey: PRIVATE_KEY });
+      open(undefined, true);
+      await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
+      await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(1));
+      typeInto('Name', 'dev');
+      submit('Create key pair');
+      expect(await screen.findByText('Key pair dev created')).toBeVisible();
+      await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(2));
+
+      const settleEarlier = () => act(async () => earlier.resolve([{ name: 'old' }]));
+      const settleNewer = () => act(async () => newer.resolve([{ name: 'dev' }]));
+      if (order === 'earlier first') {
+        await settleEarlier();
+        await settleNewer();
+      } else {
+        await settleNewer();
+        await settleEarlier();
+      }
+      await waitFor(() => expect(screen.getByLabelText('Observed key pairs')).toHaveTextContent('dev'));
+      expect(field('Private key')).toHaveValue(PRIVATE_KEY);
+    },
+  );
+
+  it.each(['earlier first', 'newer first'])(
+    'keeps the imported pair and success after both list reads settle (%s)',
+    async (order) => {
+      const earlier = held<api.KeyPair[]>();
+      const newer = held<api.KeyPair[]>();
+      vi.mocked(api.listKeyPairs).mockReturnValueOnce(earlier.promise).mockReturnValue(newer.promise);
+      vi.mocked(api.importKeyPair).mockResolvedValue(undefined);
+      const router = open(undefined, true);
+      await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
+      await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(1));
+      choose('import');
+      typeInto('Name', 'imp');
+      typeInto('Public key', PUBLIC_KEY);
+      submit('Import key pair');
+      const result = await screen.findByText('Imported key pair imp');
+      await waitFor(() => expect(api.listKeyPairs).toHaveBeenCalledTimes(3));
+      const settleEarlier = () => act(async () => earlier.resolve([{ name: 'old' }]));
+      const settleNewer = () => act(async () => newer.resolve([{ name: 'imp' }]));
+      if (order === 'earlier first') {
+        await settleEarlier();
+        await settleNewer();
+      } else {
+        await settleNewer();
+        await settleEarlier();
+      }
+      expect(await screen.findByRole('rowheader', { name: 'imp' })).toBeVisible();
+      expect(screen.queryByRole('rowheader', { name: 'old' })).not.toBeInTheDocument();
+      expect(result).toBeVisible();
+      expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs');
+    },
+  );
 
   it('a refusal → the form stays with the code and message and what was entered', async () => {
     vi.mocked(api.createKeyPair).mockRejectedValue(
@@ -286,7 +422,7 @@ describe('"Create key pair"', () => {
     );
     open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -314,7 +450,7 @@ describe('"Create key pair"', () => {
     vi.mocked(api.importKeyPair).mockReturnValue(new Promise(() => undefined));
     open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('Import a public key');
+    choose('import');
     typeInto('Name', 'imp');
     typeInto('Public key', PUBLIC_KEY);
     submit('Import key pair');
@@ -335,7 +471,7 @@ describe('"Create key pair"', () => {
   it('"Cancel" after an entry → the discard dialog; "Keep editing" keeps the form, "Discard" leaves', async () => {
     const router = open();
     await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
-    choose('.ppk');
+    choose('ppk');
     submit('Cancel');
     let dialog = await screen.findByRole('dialog');
     expect(text(dialog)).toContain('Discard what you entered?');
@@ -343,7 +479,7 @@ describe('"Create key pair"', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
-    expect(screen.getByRole('radio', { name: '.ppk' })).toBeChecked();
+    expect(keyOption('ppk')?.findNativeInput().getElement()).toBeChecked();
     expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs/create');
     submit('Cancel');
     dialog = await screen.findByRole('dialog');
@@ -372,7 +508,7 @@ describe('"Create key pair"', () => {
     expect(screen.queryByText('Key pair dev created')).toBeNull();
     expect(text(document.body)).not.toContain('b3BlbnNzaC1rZXktdjEsecret');
     expect(document.body.innerHTML).not.toContain('b3BlbnNzaC1rZXktdjEsecret');
-    expect(screen.getByRole('radio', { name: 'RSA' })).toBeChecked();
+    expect(keyOption('rsa')?.findNativeInput().getElement()).toBeChecked();
   });
 
   it('the page names its resources "key pairs" to the frame', async () => {

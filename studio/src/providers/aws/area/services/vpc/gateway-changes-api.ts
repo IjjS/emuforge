@@ -6,6 +6,8 @@ import {
 } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
+import { tagSpecifications } from './form';
 
 // The changes of an internet gateway (issue 574, design task 3): `CreateInternetGateway` from S13,
 // `AttachInternetGateway` from S14, `DetachInternetGateway` and `DeleteInternetGateway` from S12, each through the
@@ -20,12 +22,13 @@ export const GATEWAY_CHANGE_OPERATIONS = {
   deleteInternetGateway: 'DeleteInternetGateway',
 } as const;
 
-/** What S13 sends: a name when one is given. */
+/** What S13 sends: an optional name and further tags. */
 export interface NewGateway {
   name?: string;
+  tags?: readonly TagRow[];
 }
 
-/** `CreateInternetGateway`, with the tag `Name` in `TagSpecifications` when named; the new gateway's ID. */
+/** `CreateInternetGateway`, with optional tags; the new gateway's ID. */
 export async function createInternetGateway(
   endpoint: string,
   gateway: NewGateway,
@@ -35,16 +38,9 @@ export async function createInternetGateway(
     endpoint,
     GATEWAY_CHANGE_OPERATIONS.createInternetGateway,
     (client, abortSignal) =>
-      client.send(
-        new CreateInternetGatewayCommand(
-          gateway.name === undefined || gateway.name === ''
-            ? {}
-            : {
-                TagSpecifications: [{ ResourceType: 'internet-gateway', Tags: [{ Key: 'Name', Value: gateway.name }] }],
-              },
-        ),
-        { abortSignal },
-      ),
+      client.send(new CreateInternetGatewayCommand(tagSpecifications('internet-gateway', gateway.name, gateway.tags)), {
+        abortSignal,
+      }),
     signal,
   );
   return text(output.InternetGateway?.InternetGatewayId) ?? '';

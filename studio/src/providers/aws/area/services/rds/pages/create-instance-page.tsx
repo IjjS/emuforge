@@ -1,15 +1,31 @@
 import Container from '@cloudscape-design/components/container';
+import Header from '@cloudscape-design/components/header';
 import type { InputProps } from '@cloudscape-design/components/input';
+import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useRef, useState, type RefObject } from 'react';
 
+import type { KmsKeyChoice } from '../../../components/kms-key-choices';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import type { SecurityGroupChoice } from '../../../components/security-group-choices';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
+import { useAvailabilityZones } from '../../../components/use-availability-zones';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import type { EngineVersionChoice, SubnetGroupChoice } from '../choices-api';
+import { useDefaultVersions, useOrderableRows, useSubnetGroupPlacement } from '../choices-queries';
 import {
-  ClassField,
+  DeletionProtectionField,
+  EncryptStorageField,
+  KeyField,
+  StorageTypeField,
+  InstanceClassField,
+  IopsField,
+  MultiAzField,
+  ZoneField,
+} from '../components/choice-fields';
+import {
   DatabaseNameField,
   EngineField,
   EngineVersionField,
@@ -25,21 +41,18 @@ import { CreateForm } from '../components/create-form';
 import { CREATE_OPERATIONS, type NewInstance } from '../create-api';
 import { useCreateInstance } from '../create-queries';
 import {
-  classError,
   databaseNameError,
   identifierError,
+  impliedStorageType,
+  iopsError,
   masterUserNameError,
   passwordError,
+  requiresIops,
   storageError,
 } from '../form';
 import { CREATE_INSTANCE_TITLE, instanceHref, INSTANCES_PATH, INSTANCES_WORD } from '../format';
 
-// S2, "Create DB instance" (issue 573, design task 2): one short form, checked by `form.ts` before anything is sent,
-// then one `CreateDBInstance` with the required values and only the optional ones given. On 200 the new instance's
-// page opens at the answer's identifier with the result; a refusal stays on the form with the emulator's code and
-// message and every entry. A list that failed to load never keeps the form from being sent. The master password lives
-// in this page's state alone while it is open and goes into the one request: no address, storage, log, query key,
-// cached read or result handed over holds it.
+import { instanceClasses, type StorageTypeChoice } from '../orderable';
 
 /** The engines whose instance the emulator opens a database socket for. */
 const ENGINES: readonly EngineOption[] = [
@@ -48,17 +61,27 @@ const ENGINES: readonly EngineOption[] = [
   { value: 'mariadb', label: 'MariaDB' },
 ];
 
+const ENGINE_IDS = ENGINES.map(({ value }) => value);
+
 interface InstanceForm {
   identifier: string;
   engine: string;
   version: EngineVersionChoice | undefined;
-  instanceClass: string;
+  instanceClass: string | undefined;
   storage: string;
   user: string;
   password: string;
   dbName: string;
   subnetGroup: SubnetGroupChoice | undefined;
   groups: SecurityGroupChoice[];
+  storageType: string | undefined;
+  encrypted: boolean;
+  key: KmsKeyChoice | undefined;
+  deletionProtection: boolean;
+  tags: TagRow[];
+  zone: string | undefined;
+  multiAz: boolean;
+  iops: string;
 }
 
 const START: InstanceForm = {
@@ -72,46 +95,73 @@ const START: InstanceForm = {
   dbName: '',
   subnetGroup: undefined,
   groups: [],
+  storageType: undefined,
+  encrypted: false,
+  key: undefined,
+  deletionProtection: false,
+  tags: [],
+  zone: undefined,
+  multiAz: false,
+  iops: '',
 };
 
-type Checked = 'identifier' | 'instanceClass' | 'storage' | 'user' | 'password' | 'dbName';
+type Checked = 'identifier' | 'instanceClass' | 'storage' | 'iops' | 'user' | 'password' | 'dbName';
 
 /** The fields' messages, in the order of the form. */
-function messagesOf(form: InstanceForm): Record<Checked, string | undefined> {
+function messagesOf(
+  form: InstanceForm,
+  storageType: StorageTypeChoice | undefined,
+  implied: StorageTypeChoice | undefined,
+): Record<Checked, string | undefined> {
   return {
     identifier: identifierError(form.identifier),
-    instanceClass: classError(form.instanceClass),
-    storage: storageError(form.storage),
+    instanceClass: form.instanceClass === undefined ? 'Choose a class.' : undefined,
+    storage: storageError(form.storage, storageType, implied),
+    iops: iopsError(form.iops, form.storage, storageType),
+    dbName: databaseNameError(form.dbName),
     user: masterUserNameError(form.user, form.engine),
     password: passwordError(form.password),
-    dbName: databaseNameError(form.dbName),
   };
 }
 
-function differs(form: InstanceForm): boolean {
+function differs(form: InstanceForm, initialClass: string | undefined): boolean {
   return (
     form.identifier !== START.identifier ||
     form.engine !== START.engine ||
     form.version !== undefined ||
-    form.instanceClass !== START.instanceClass ||
+    form.instanceClass !== initialClass ||
     form.storage !== START.storage ||
     form.user !== '' ||
     form.password !== '' ||
     form.dbName !== '' ||
     form.subnetGroup !== undefined ||
-    form.groups.length > 0
+    form.groups.length > 0 ||
+    form.storageType !== undefined ||
+    form.encrypted ||
+    form.deletionProtection ||
+    form.tags.length > 0 ||
+    form.zone !== undefined ||
+    form.multiAz ||
+    form.iops !== ''
   );
 }
 
 /** What `CreateDBInstance` is sent for the form: the required values, and the optional ones given. */
-function requestOf(form: InstanceForm): NewInstance {
+function requestOf(form: InstanceForm, instanceClass: string, tags: TagRow[]): NewInstance {
   const values: NewInstance = {
     identifier: form.identifier,
     engine: form.engine,
-    instanceClass: form.instanceClass,
+    instanceClass,
+    ...(requiresIops(form.storageType) ? { iops: Number(form.iops) } : {}),
+    ...(form.multiAz ? { multiAz: true } : {}),
+    ...(form.zone === undefined ? {} : { availabilityZone: form.zone }),
     allocatedStorage: Number(form.storage),
     masterUsername: form.user,
     masterPassword: form.password,
+    ...(form.storageType === undefined ? {} : { storageType: form.storageType }),
+    ...(form.encrypted ? { encrypted: true, ...(form.key === undefined ? {} : { kmsKeyId: form.key.arn }) } : {}),
+    ...(form.deletionProtection ? { deletionProtection: true } : {}),
+    ...(tags.length === 0 ? {} : { tags }),
   };
   if (form.version !== undefined) {
     values.engineVersion = form.version.version;
@@ -137,8 +187,60 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
 
   const [form, setForm] = useState<InstanceForm>(START);
   const [tried, setTried] = useState(false);
+  const tagsRef = useRef<TagsFieldRef>(null);
+  const tags = checkTagRows(form.tags);
+  const defaults = useDefaultVersions(engineOrigin, ENGINE_IDS);
+  const defaultVersion = defaults.data?.versions[form.engine];
+  const version = form.version?.version ?? defaultVersion;
+  const rows = useOrderableRows(engineOrigin, form.engine, version);
+  const defaultFailure =
+    form.version === undefined ? (defaults.failure ?? defaults.data?.failures[form.engine]) : undefined;
+  const defaultLoading = form.version === undefined && defaults.loading;
+  const placement = useSubnetGroupPlacement(engineOrigin, form.subnetGroup, 'default', true);
+  const zoneRead = useAvailabilityZones(engineOrigin);
+  const groups = placement.loading
+    ? form.groups
+    : form.groups.filter((group) => placement.data != null && group.vpcId === placement.data);
+  const [initialClass, setInitialClass] = useState<{ value: string | undefined }>();
+  const classes = rows.data === undefined ? undefined : instanceClasses(rows.data);
+  const selectedClass = classes?.find(({ name }) => name === form.instanceClass);
+  const storageType = selectedClass?.storageTypes.find(({ type }) => type === form.storageType);
+  const implied = impliedStorageType(selectedClass?.storageTypes);
+  // Keep the selections while checking a new catalogue. Only its answer can rule them out.
+  const instanceClass = classes === undefined ? form.instanceClass : selectedClass?.name;
+  const storage = classes === undefined ? form.storageType : storageType?.type;
+  const zone =
+    placement.loading || (form.zone !== undefined && placement.zones?.includes(form.zone)) ? form.zone : undefined;
+
+  if (
+    initialClass === undefined &&
+    classes !== undefined &&
+    form.engine === START.engine &&
+    form.version === undefined
+  ) {
+    setInitialClass({
+      value: classes.some(({ name }) => name === START.instanceClass) ? START.instanceClass : undefined,
+    });
+  }
+  if (
+    instanceClass !== form.instanceClass ||
+    storage !== form.storageType ||
+    groups.length !== form.groups.length ||
+    zone !== form.zone
+  ) {
+    setForm({
+      ...form,
+      instanceClass,
+      storageType: storage,
+      iops: storage === form.storageType ? form.iops : '',
+      groups,
+      zone,
+    });
+  }
+
   const identifierRef = useRef<InputProps.Ref>(null);
-  const instanceClassRef = useRef<InputProps.Ref>(null);
+  const instanceClassRef = useRef<SelectProps.Ref>(null);
+  const iopsRef = useRef<InputProps.Ref>(null);
   const storageRef = useRef<InputProps.Ref>(null);
   const userRef = useRef<InputProps.Ref>(null);
   const passwordRef = useRef<InputProps.Ref>(null);
@@ -148,19 +250,25 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
     setForm((current) => ({ ...current, ...update }));
   }, []);
 
-  const messages: Partial<Record<Checked, string | undefined>> = tried ? messagesOf(form) : {};
+  const messages: Partial<Record<Checked, string | undefined>> = tried ? messagesOf(form, storageType, implied) : {};
 
   const check = () => {
+    if (engineOrigin !== undefined && rows.data === undefined) return false;
+    if (placement.loading && (form.groups.length > 0 || form.zone !== undefined)) return false;
+
     setTried(true);
-    const found = messagesOf(form);
+    const found = messagesOf(form, storageType, implied);
     const first = (Object.keys(found) as Checked[]).find((field) => found[field] !== undefined);
     if (first === undefined) {
-      return true;
+      if (tags.firstInvalid === undefined) return true;
+      tagsRef.current?.focusKey(tags.firstInvalid);
+      return false;
     }
-    const refs: Record<Checked, RefObject<InputProps.Ref | null>> = {
+    const refs: Record<Checked, RefObject<{ focus: () => void } | null>> = {
       identifier: identifierRef,
       instanceClass: instanceClassRef,
       storage: storageRef,
+      iops: iopsRef,
       user: userRef,
       password: passwordRef,
       dbName: dbNameRef,
@@ -176,14 +284,14 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
       what="Creating DB instance"
       engineOrigin={engineOrigin}
       cancelTo={INSTANCES_PATH}
-      differs={differs(form)}
+      differs={differs(form, initialClass === undefined ? START.instanceClass : initialClass.value)}
       check={check}
-      send={(signal) => create(requestOf(form), signal)}
+      send={(signal) => create(requestOf(form, instanceClass ?? '', tags.tags), signal)}
       onCreated={(id) => {
         flash.handOver(instanceHref(id), [{ type: 'success', content: `Creating DB instance ${id}` }]);
       }}
     >
-      <Container>
+      <Container header={<Header variant="h2">Database configuration</Header>}>
         <SpaceBetween size="l">
           <IdentifierField
             label="DB instance identifier"
@@ -195,6 +303,8 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
             }}
           />
           <EngineField
+            connection={connection}
+            defaults={defaults}
             engines={ENGINES}
             value={form.engine}
             onChange={(engine) => {
@@ -203,6 +313,7 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
             }}
           />
           <EngineVersionField
+            defaultVersion={defaultVersion}
             engine={form.engine}
             connection={connection}
             value={form.version}
@@ -210,15 +321,37 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
               change({ version });
             }}
           />
-          <ClassField
-            inputRef={instanceClassRef}
-            value={form.instanceClass}
+          <InstanceClassField
+            connection={connection}
+            engine={form.engine}
+            version={version}
+            rows={rows}
+            defaultFailure={defaultFailure}
+            defaultLoading={defaultLoading}
+            retryDefault={defaults.retry}
+            selectRef={instanceClassRef}
+            value={
+              initialClass === undefined &&
+              classes === undefined &&
+              form.engine === START.engine &&
+              form.version === undefined
+                ? undefined
+                : instanceClass
+            }
             error={messages.instanceClass}
-            onChange={(instanceClass) => {
-              change({ instanceClass });
-            }}
+            onChange={(instanceClass) => change({ instanceClass })}
+          />
+          <StorageTypeField
+            mode="instance-create"
+            connection={connection}
+            rows={rows}
+            instanceClass={instanceClass}
+            value={form.storageType}
+            onChange={(storageType) => change({ storageType, iops: '' })}
           />
           <StorageField
+            storageType={storageType}
+            implied={implied}
             inputRef={storageRef}
             value={form.storage}
             error={messages.storage}
@@ -226,6 +359,25 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
               change({ storage });
             }}
           />
+          <IopsField
+            storageType={storageType}
+            inputRef={iopsRef}
+            value={form.iops}
+            error={messages.iops}
+            onChange={(iops) => change({ iops })}
+          />
+          <DatabaseNameField
+            inputRef={dbNameRef}
+            value={form.dbName}
+            error={messages.dbName}
+            onChange={(dbName) => {
+              change({ dbName });
+            }}
+          />
+        </SpaceBetween>
+      </Container>
+      <Container header={<Header variant="h2">Credentials</Header>}>
+        <SpaceBetween size="l">
           <MasterUserNameField
             engine={form.engine}
             inputRef={userRef}
@@ -244,15 +396,12 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
               change({ password });
             }}
           />
-          <DatabaseNameField
-            inputRef={dbNameRef}
-            value={form.dbName}
-            error={messages.dbName}
-            onChange={(dbName) => {
-              change({ dbName });
-            }}
-          />
+        </SpaceBetween>
+      </Container>
+      <Container header={<Header variant="h2">Connectivity</Header>}>
+        <SpaceBetween size="l">
           <SubnetGroupField
+            mode="instance"
             connection={connection}
             value={form.subnetGroup}
             onChange={(subnetGroup) => {
@@ -260,14 +409,49 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
             }}
           />
           <SecurityGroupsField
+            placement={placement}
             connection={connection}
             value={form.groups}
             onChange={(groups) => {
               change({ groups });
             }}
           />
+          <ZoneField
+            connection={connection}
+            placement={placement}
+            zoneRead={zoneRead}
+            zones={placement.zones}
+            disabled={form.multiAz || placement.failure !== undefined}
+            value={form.zone}
+            onChange={(zone) => change({ zone })}
+          />
+          <MultiAzField checked={form.multiAz} onChange={(multiAz) => change({ multiAz, zone: undefined })} />
         </SpaceBetween>
       </Container>
+      <Container header={<Header variant="h2">Protection</Header>}>
+        <SpaceBetween size="l">
+          <EncryptStorageField
+            checked={form.encrypted}
+            onChange={(encrypted) => change({ encrypted, key: undefined })}
+          />
+          <KeyField
+            connection={connection}
+            encrypted={form.encrypted}
+            value={form.key}
+            onChange={(key) => change({ key })}
+          />
+          <DeletionProtectionField
+            checked={form.deletionProtection}
+            onChange={(deletionProtection) => change({ deletionProtection })}
+          />
+        </SpaceBetween>
+      </Container>
+      <TagsField
+        ref={tagsRef}
+        rows={form.tags}
+        errors={tried ? tags.errors : undefined}
+        onChange={(tags) => change({ tags })}
+      />
     </CreateForm>
   );
 }

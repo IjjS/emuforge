@@ -114,6 +114,31 @@ describe('create an internet gateway', () => {
     expect(sent.get('TagSpecification.1.Tag.2.Key')).toBeNull();
   });
 
+  it.each(['app', ''])('sends two tag rows with the Name tag first when supplied (%j)', async (name) => {
+    engine.on('CreateInternetGateway', () =>
+      ok('CreateInternetGateway', '<internetGateway><internetGatewayId>igw-0new</internetGatewayId></internetGateway>'),
+    );
+    const tags = [
+      { key: 'team', value: 'core' },
+      { key: 'tier', value: 'app' },
+    ];
+    await createInternetGateway(endpoint, { name, tags }, signal());
+
+    expect(engine.of('CreateInternetGateway')).toHaveLength(1);
+    const sent = engine.of('CreateInternetGateway')[0]?.params ?? new URLSearchParams();
+    const expected = [...(name === '' ? [] : [{ key: 'Name', value: name }]), ...tags];
+    const entries = [...sent.entries()].filter(([key]) => key.startsWith('TagSpecification'));
+    expect(entries.sort()).toEqual(
+      [
+        ['TagSpecification.1.ResourceType', 'internet-gateway'],
+        ...expected.flatMap(({ key, value }, index) => [
+          [`TagSpecification.1.Tag.${index + 1}.Key`, key],
+          [`TagSpecification.1.Tag.${index + 1}.Value`, value],
+        ]),
+      ].sort(),
+    );
+  });
+
   it('without a name, no TagSpecifications', async () => {
     engine.on('CreateInternetGateway', () =>
       ok('CreateInternetGateway', '<internetGateway><internetGatewayId>igw-0new</internetGatewayId></internetGateway>'),

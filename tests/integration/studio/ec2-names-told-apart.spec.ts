@@ -125,7 +125,9 @@ test('studio.ec2-names-that-differ-by-spaces-are-told-apart', async ({ ctx, page
       );
       await option.click(ACTION);
       expect(await drawnText(selectOf(keyPair)), 'what the closed "Key pair" shows').toBe(identity);
-      await chooseOption(field(main, 'Subnet - optional'), own.subnetId);
+      // Issue 651: the subnet follows the VPC chosen in the form's "VPC" field.
+      await chooseOption(field(main, 'VPC'), own.vpcId);
+      await chooseOption(field(main, 'Subnet'), own.subnetId);
       const m = multiselectOf(groups);
       await typeInMultiselect(groups, two);
       await expect(m.option(groupTwo), "the option of the two-space group's ID").toBeVisible({ timeout: 20_000 });

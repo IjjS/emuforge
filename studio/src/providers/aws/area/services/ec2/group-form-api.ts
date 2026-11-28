@@ -3,9 +3,11 @@ import {
   AuthorizeSecurityGroupIngressCommand,
   CreateSecurityGroupCommand,
   type IpPermission,
+  type TagSpecification,
 } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
 import type { RulePeer } from './group-api';
 import { hasPorts, type RuleProtocol } from './group-form';
 
@@ -27,9 +29,19 @@ export interface NewSecurityGroup {
   description: string;
   /** None sent when absent: the emulator then creates the group in the default VPC. */
   vpcId?: string;
+  tags?: readonly TagRow[];
 }
 
-/** `CreateSecurityGroup` with `GroupName`, `Description` and `VpcId` when chosen; the new group's ID. */
+function tagSpecifications(resourceType: 'security-group' | 'security-group-rule', tags?: readonly TagRow[]) {
+  if (tags === undefined || tags.length === 0) return {};
+  const specification: TagSpecification = {
+    ResourceType: resourceType,
+    Tags: tags.map(({ key, value }) => ({ Key: key, Value: value })),
+  };
+  return { TagSpecifications: [specification] };
+}
+
+/** Creates the group and returns its ID. */
 export async function createSecurityGroup(
   endpoint: string,
   group: NewSecurityGroup,
@@ -43,6 +55,7 @@ export async function createSecurityGroup(
         new CreateSecurityGroupCommand({
           GroupName: group.name,
           Description: group.description,
+          ...tagSpecifications('security-group', group.tags),
           ...(group.vpcId === undefined || group.vpcId === '' ? {} : { VpcId: group.vpcId }),
         }),
         { abortSignal },
@@ -66,6 +79,7 @@ export interface NewRule {
   toPort?: number;
   peer: RulePeer;
   description?: string;
+  tags?: readonly TagRow[];
 }
 
 /** The operation that adds a rule of its direction. */
@@ -108,7 +122,11 @@ export async function addSecurityGroupRule(
   rule: NewRule,
   signal: AbortSignal,
 ): Promise<void> {
-  const input = { GroupId: groupId, IpPermissions: [permissionOf(rule)] };
+  const input = {
+    GroupId: groupId,
+    IpPermissions: [permissionOf(rule)],
+    ...tagSpecifications('security-group-rule', rule.tags),
+  };
   await sendEc2(
     endpoint,
     authorizeOperation(rule.egress),

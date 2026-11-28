@@ -30,6 +30,7 @@ that order. Its screens serve those tasks and need not match the AWS console (`a
 - The AWS service's list of entries, by the rule in `aws-area.md`, "A service's entries".
 - The service's tasks, each with the operations it calls, in order of importance, the core ones marked; and which of
   them this issue builds.
+- The parameter table for AWS area create and modify forms, by `create-forms.md`.
 - The routes and the layer of each screen: Studio's own, or a provider area (`/aws/...`).
 - What is out of scope, and why.
 - For a screen of the AWS area, its EmuForge-own text, in English (`aws-area.md`, point 3), and the resource word of

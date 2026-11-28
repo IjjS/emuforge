@@ -7,6 +7,7 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
+import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
@@ -15,18 +16,25 @@ import { useNavigate } from 'react-router';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { actionFailureItem, readFailureState, ReadFailure } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
+import { useAvailabilityZones } from '../../../components/use-availability-zones';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
+import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
+import { useOrderableRows, useSubnetGroup } from '../choices-queries';
+import { InstanceClassField, ZoneField } from '../components/choice-fields';
 import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { useAddInstance, useClusterOnce } from '../cluster-queries';
 import { ADD_INSTANCE_TITLE, clusterHref, CLUSTERS_PATH, CLUSTERS_WORD } from '../format';
-import { CLASS_DESCRIPTION, classError, IDENTIFIER_CONSTRAINT, identifierError } from '../form';
+import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
+import { instanceClasses } from '../orderable';
 
 // S7, "Add DB instance" (issue 573, design task 4): a DB instance for the cluster of the address, read first by
 // `DBClusterIdentifier`, so a cluster the emulator does not hold shows "DB cluster not found" and no form. The
-// identifier and the class are checked by `form.ts` before anything is sent; then one `CreateDBInstance` with the
+// identifier, class and tags are checked before anything is sent; then one `CreateDBInstance` with the
 // cluster's engine and version as read. On 200 the cluster's page opens with the result; a refusal stays on the form
 // with the emulator's code and message and every entry. The page, which stays mounted, holds the request.
 
@@ -36,22 +44,8 @@ const START_CLASS = 'db.r6g.large';
 interface AddFormState {
   id: string;
   instanceClass: string;
-}
-
-const START: AddFormState = { id: '', instanceClass: START_CLASS };
-
-/** Whether the form differs from how it opened (`aws-area.md`, entry 5). */
-function differs(form: AddFormState): boolean {
-  return form.id !== START.id || form.instanceClass !== START.instanceClass;
-}
-
-interface Messages {
-  id?: string | undefined;
-  instanceClass?: string | undefined;
-}
-
-function messagesOf(form: AddFormState): Messages {
-  return { id: identifierError(form.id), instanceClass: classError(form.instanceClass) };
+  zone: string | undefined;
+  tags: TagRow[];
 }
 
 /** "DB cluster not found", with Cloudscape's empty-state pattern, in the place of the form. */
@@ -78,6 +72,7 @@ function NotFound() {
 
 interface AddFormProps {
   cluster: DbCluster;
+  connection: AreaConnection;
   pending: boolean;
   failure: FlashItem | undefined;
   /** The checks passed: send it. */
@@ -87,13 +82,24 @@ interface AddFormProps {
 }
 
 /** The form of a DB instance for `cluster`, a cluster the emulator holds. */
-function AddForm({ cluster, pending, failure, onAdd, onTry }: AddFormProps) {
+function AddForm({ cluster, connection, pending, failure, onAdd, onTry }: AddFormProps) {
   const navigate = useNavigate();
   const clusterPath = clusterHref(cluster.id);
-  const [form, setForm] = useState<AddFormState>(START);
+  const engine = cluster.engine ?? '';
+  const rows = useOrderableRows(connection.engineOrigin, engine, cluster.engineVersion);
+  const classes = instanceClasses(rows.data ?? []);
+  const defaultClass = classes.some(({ name }) => name === START_CLASS) ? START_CLASS : undefined;
+  const [chosenClass, setChosenClass] = useState<string>();
+  const instanceClass = chosenClass ?? defaultClass;
+  const group = useSubnetGroup(connection.engineOrigin, cluster.subnetGroup);
+  const zoneRead = useAvailabilityZones(connection.engineOrigin);
+  const [id, setId] = useState('');
+  const [zone, setZone] = useState<string>();
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [tried, setTried] = useState(false);
   const idRef = useRef<InputProps.Ref>(null);
-  const classRef = useRef<InputProps.Ref>(null);
+  const classRef = useRef<SelectProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A failure takes the focus when it is shown, so a screen reader reads it at once.
@@ -103,25 +109,30 @@ function AddForm({ cluster, pending, failure, onAdd, onTry }: AddFormProps) {
     }
   }, [failure]);
 
-  const messages = tried ? messagesOf(form) : {};
+  const idError = identifierError(id);
+  const classError = !classes.some(({ name }) => name === instanceClass) ? 'Choose a class.' : undefined;
+  const tagCheck = checkTagRows(tags);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (pending) {
+    if (pending || rows.loading) {
       return;
     }
     setTried(true);
     onTry();
-    const found = messagesOf(form);
-    if (found.id !== undefined) {
+    if (idError !== undefined) {
       idRef.current?.focus();
       return;
     }
-    if (found.instanceClass !== undefined) {
+    if (classError !== undefined || instanceClass === undefined) {
       classRef.current?.focus();
       return;
     }
-    onAdd(form);
+    if (tagCheck.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(tagCheck.firstInvalid);
+      return;
+    }
+    onAdd({ id, instanceClass, zone, tags: tagCheck.tags });
   };
 
   // "Cancel" leaves at once while nothing differs from the opening state; otherwise it asks (`aws-area.md`, entry 5).
@@ -134,7 +145,12 @@ function AddForm({ cluster, pending, failure, onAdd, onTry }: AddFormProps) {
     }
   }, [kept]);
   const handleCancel = () => {
-    if (differs(form)) {
+    if (
+      id !== '' ||
+      (chosenClass !== undefined && chosenClass !== defaultClass) ||
+      zone !== undefined ||
+      tags.length > 0
+    ) {
       setAsking(true);
       return;
     }
@@ -161,7 +177,7 @@ function AddForm({ cluster, pending, failure, onAdd, onTry }: AddFormProps) {
               <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button variant="primary" loading={pending} loadingText={ADDING}>
+              <Button variant="primary" loading={pending} loadingText={ADDING} disabled={rows.loading}>
                 {pending ? ADDING : ADD_INSTANCE_TITLE}
               </Button>
             </SpaceBetween>
@@ -173,33 +189,40 @@ function AddForm({ cluster, pending, failure, onAdd, onTry }: AddFormProps) {
                 <FormField
                   label="DB instance identifier"
                   constraintText={IDENTIFIER_CONSTRAINT}
-                  errorText={messages.id}
+                  errorText={tried ? idError : undefined}
                 >
                   <Input
                     ref={idRef}
-                    value={form.id}
-                    invalid={messages.id !== undefined}
+                    value={id}
+                    invalid={tried && idError !== undefined}
                     autoComplete={false}
                     spellcheck={false}
                     onChange={({ detail }) => {
-                      setForm((current) => ({ ...current, id: detail.value }));
+                      setId(detail.value);
                     }}
                   />
                 </FormField>
-                <FormField label="DB instance class" description={CLASS_DESCRIPTION} errorText={messages.instanceClass}>
-                  <Input
-                    ref={classRef}
-                    value={form.instanceClass}
-                    invalid={messages.instanceClass !== undefined}
-                    autoComplete={false}
-                    spellcheck={false}
-                    onChange={({ detail }) => {
-                      setForm((current) => ({ ...current, instanceClass: detail.value }));
-                    }}
-                  />
-                </FormField>
+                <InstanceClassField
+                  connection={connection}
+                  engine={engine}
+                  version={cluster.engineVersion}
+                  rows={rows}
+                  value={instanceClass}
+                  onChange={setChosenClass}
+                  error={tried ? classError : undefined}
+                  selectRef={classRef}
+                />
+                <ZoneField
+                  connection={connection}
+                  zones={group.data?.zones}
+                  zoneRead={zoneRead}
+                  placement={group}
+                  value={zone}
+                  onChange={setZone}
+                />
               </SpaceBetween>
             </Container>
+            <TagsField rows={tags} onChange={setTags} errors={tried ? tagCheck.errors : undefined} ref={tagsRef} />
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>
                 {failure.content}
@@ -267,6 +290,8 @@ export function AddInstancePage({ connection, params }: ScreenPageProps) {
         engine: cluster.engine,
         engineVersion: cluster.engineVersion,
         instanceClass: form.instanceClass,
+        zone: form.zone,
+        tags: form.tags,
       },
       signal,
     ).then(
@@ -303,7 +328,16 @@ export function AddInstancePage({ connection, params }: ScreenPageProps) {
   } else if (cluster === undefined) {
     content = <NotFound />;
   } else {
-    content = <AddForm cluster={cluster} pending={pending} failure={failure} onAdd={handleAdd} onTry={handleTry} />;
+    content = (
+      <AddForm
+        cluster={cluster}
+        connection={connection}
+        pending={pending}
+        failure={failure}
+        onAdd={handleAdd}
+        onTry={handleTry}
+      />
+    );
   }
 
   const description =

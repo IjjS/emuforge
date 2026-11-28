@@ -103,6 +103,31 @@ describe('create a route table', () => {
     expect(sent.get('TagSpecification.1.Tag.2.Key')).toBeNull();
   });
 
+  it.each(['app', ''])('sends two tag rows with the Name tag first when supplied (%j)', async (name) => {
+    engine.on('CreateRouteTable', () =>
+      ok('CreateRouteTable', '<routeTable><routeTableId>rtb-0new</routeTableId></routeTable>'),
+    );
+    const tags = [
+      { key: 'team', value: 'core' },
+      { key: 'tier', value: 'app' },
+    ];
+    await createRouteTable(endpoint, { vpcId: 'vpc-1', name, tags }, signal());
+
+    expect(engine.of('CreateRouteTable')).toHaveLength(1);
+    const sent = engine.of('CreateRouteTable')[0]?.params ?? new URLSearchParams();
+    const expected = [...(name === '' ? [] : [{ key: 'Name', value: name }]), ...tags];
+    const entries = [...sent.entries()].filter(([key]) => key.startsWith('TagSpecification'));
+    expect(entries.sort()).toEqual(
+      [
+        ['TagSpecification.1.ResourceType', 'route-table'],
+        ...expected.flatMap(({ key, value }, index) => [
+          [`TagSpecification.1.Tag.${index + 1}.Key`, key],
+          [`TagSpecification.1.Tag.${index + 1}.Value`, value],
+        ]),
+      ].sort(),
+    );
+  });
+
   it('without a name, no TagSpecifications', async () => {
     engine.on('CreateRouteTable', () =>
       ok('CreateRouteTable', '<routeTable><routeTableId>rtb-0new</routeTableId></routeTable>'),

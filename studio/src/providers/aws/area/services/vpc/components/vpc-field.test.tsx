@@ -31,7 +31,13 @@ const CONNECTION: AreaConnection = {
 let chosen: (network.VpcChoice | undefined)[];
 let settled: (network.VpcChoice | undefined)[];
 
-function Form({ preset, fault }: { preset?: string; fault?: boolean }) {
+interface FormProps {
+  preset?: string;
+  fault?: boolean;
+  marks?: ReadonlyMap<string, string>;
+}
+
+function Form({ preset, fault, marks }: FormProps) {
   const [value, setValue] = useState<network.VpcChoice>();
   return (
     <VpcField
@@ -42,6 +48,7 @@ function Form({ preset, fault }: { preset?: string; fault?: boolean }) {
         setValue(vpc);
       }}
       preset={preset}
+      marks={marks}
       onPresetSettled={(vpc) => {
         settled.push(vpc);
       }}
@@ -50,7 +57,7 @@ function Form({ preset, fault }: { preset?: string; fault?: boolean }) {
   );
 }
 
-function open(props: { preset?: string; fault?: boolean } = {}) {
+function open(props: FormProps = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={client}>
@@ -273,13 +280,17 @@ describe('the "VPC" field', () => {
     expect(named).toContain('app');
     expect(named).toContain('10.0.0.0/16');
     select().openDropdown();
+    await waitFor(() => {
+      expect(network.listVpcChoices).toHaveBeenCalledTimes(2);
+      expect(shown()).toEqual(['vpc-1', 'vpc-d']);
+    });
     select().selectOptionByValue('vpc-d');
     const unnamed = text(select().findTrigger().getElement());
     expect(unnamed).toContain('vpc-d');
     expect(unnamed).toContain('172.31.0.0/16');
   });
 
-  it('without the marks passed → the options are as before (S5, S8): ID, name, block, "default VPC"', async () => {
+  it('without the marks passed → the options are as before (S5, S8): ID, name, block, "Default VPC"', async () => {
     vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_1, VPC_D] });
     open();
     select().openDropdown();
@@ -290,10 +301,24 @@ describe('the "VPC" field', () => {
     for (const part of ['vpc-1', 'app', '10.0.0.0/16']) {
       expect(option('vpc-1')).toContain(part);
     }
-    for (const part of ['vpc-d', '172.31.0.0/16', 'default VPC']) {
+    for (const part of ['vpc-d', '172.31.0.0/16', 'Default VPC']) {
       expect(option('vpc-d')).toContain(part);
     }
     expect(option('vpc-1')).not.toContain('Has ');
     expect(option('vpc-d')).not.toContain('Has ');
+  });
+
+  it('adds a mark to the VPC option and keeps that option choosable', async () => {
+    vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_1, VPC_D] });
+    open({ marks: new Map([['vpc-1', 'Has igw-1']]) });
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toEqual(['vpc-1', 'vpc-d']);
+    });
+    const option = select().findDropdown().findOptionByValue('vpc-1');
+    expect(text(option?.getElement())).toContain('10.0.0.0/16');
+    expect(text(option?.getElement())).toContain('Has igw-1');
+    select().selectOptionByValue('vpc-1');
+    expect(chosen).toEqual([VPC_1]);
   });
 });

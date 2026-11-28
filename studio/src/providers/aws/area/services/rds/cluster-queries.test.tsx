@@ -13,7 +13,7 @@ import {
   useClusterOnce,
   useClusterRound,
 } from './cluster-queries';
-import { useInstance, useInstanceListing } from './queries';
+import { RDS_KEYS, useInstance, useInstanceListing } from './queries';
 
 // The hooks over `cluster-api.ts`, whose calls the case answers: each call waits until the case settles it, so the
 // case decides the order in which answers arrive. `cluster-api.test.ts` proves the calls against a fake engine.
@@ -32,6 +32,7 @@ vi.mock('./cluster-api', async (importOriginal) => {
     listMembers: vi.fn(),
     deleteCluster: vi.fn(),
     addInstance: vi.fn(),
+    operateCluster: vi.fn(),
   };
 });
 
@@ -347,5 +348,90 @@ describe('the changes', () => {
     expect(await failed).toBeInstanceOf(RequestError);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(counts()).toEqual(before);
+  });
+
+  it('cancels the old cluster and members and refreshes only the new identifier and lists on a rename', async () => {
+    const { hook, answerAll, counts } = allReads();
+    await waitFor(() => expect(counts().aur1).toBe(2));
+    answerAll();
+    await waitFor(() => expect(hook.result.current.round.value).toBeDefined());
+    const oldMembersKey = RDS_KEYS.members('aur-1');
+    const newMembersKey = RDS_KEYS.members('aur-2');
+    let oldMembersSignal: AbortSignal | undefined;
+    const oldMembers = client
+      .fetchQuery({
+        queryKey: oldMembersKey,
+        queryFn: ({ signal }) => {
+          oldMembersSignal = signal;
+          return new Promise<never>(() => undefined);
+        },
+      })
+      .catch(() => undefined);
+    client.setQueryData(newMembersKey, []);
+    const before = counts();
+    const cancel = vi.spyOn(client, 'cancelQueries');
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    vi.mocked(clusterApi.operateCluster).mockResolvedValue('aur-2');
+    await act(async () => {
+      await expect(
+        hook.result.current.round.operate(
+          'aur-1',
+          { kind: 'modify', changes: { newIdentifier: 'aur-2' } },
+          new AbortController().signal,
+        ),
+      ).resolves.toBe('aur-2');
+    });
+    await oldMembers;
+    expect(oldMembersSignal?.aborted).toBe(true);
+    for (const queryKey of [RDS_KEYS.cluster('aur-1'), RDS_KEYS.members('aur-1')]) {
+      expect(cancel).toHaveBeenCalledWith({ queryKey });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey, refetchType: 'none' });
+    }
+    for (const queryKey of [
+      RDS_KEYS.cluster('aur-2'),
+      RDS_KEYS.members('aur-2'),
+      RDS_KEYS.clusters(),
+      RDS_KEYS.instances(),
+    ]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+    await waitFor(() =>
+      expect(counts()).toEqual({
+        ...before,
+        aur2: before.aur2 + 1,
+        lists: before.lists + 1,
+        instanceLists: before.instanceLists + 1,
+      }),
+    );
+  });
+
+  it.each([
+    { kind: 'modify', changes: { deletionProtection: true } },
+    { kind: 'stop' },
+    { kind: 'start' },
+    { kind: 'failover', target: 'reader' },
+  ] as const)('cancels and reloads the current round after $kind', async (action) => {
+    const { hook, answerAll, counts } = allReads();
+    await waitFor(() => expect(counts().aur1).toBe(2));
+    answerAll();
+    await waitFor(() => expect(hook.result.current.round.value).toBeDefined());
+    const cancel = vi.spyOn(client, 'cancelQueries');
+    vi.mocked(clusterApi.operateCluster).mockResolvedValue('aur-1');
+    await act(async () => {
+      await expect(hook.result.current.round.operate('aur-1', action, new AbortController().signal)).resolves.toBe(
+        'aur-1',
+      );
+    });
+    expect(cancel).toHaveBeenCalledWith({ queryKey: RDS_KEYS.cluster('aur-1') });
+    await waitFor(() =>
+      expect(counts()).toEqual({
+        lists: 2,
+        aur1: 4,
+        aur2: 1,
+        members1: 2,
+        instanceLists: 2,
+        instance: 1,
+      }),
+    );
   });
 });

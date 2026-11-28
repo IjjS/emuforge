@@ -13,13 +13,25 @@ import * as api from '../api';
 import { VPC_KEYS } from '../queries';
 import * as changes from '../route-changes-api';
 
-// S10 rendered inside the area's layout, with the calls of `api.ts` (the table of the address, the gateway attached to
-// its VPC, and the reads of S9 it leads to) and `route-changes-api.ts` answered by the case (their own tests prove the
-// calls against a fake engine).
+// Render the route form in the area layout and answer the route table read, the target pages and the write.
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, getRouteTable: vi.fn(), listInternetGateways: vi.fn(), listRouteTables: vi.fn() };
+  return { ...real, getRouteTable: vi.fn(), listRouteTables: vi.fn() };
+});
+
+const { readTargets } = vi.hoisted(() => ({ readTargets: vi.fn() }));
+
+vi.mock('../route-targets', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../route-targets')>();
+  return {
+    ...real,
+    routeTargetChoices: (...args: Parameters<typeof real.routeTargetChoices>) => ({
+      ...real.routeTargetChoices(...args),
+      read: (endpoint: string, _text: string, token: string | undefined, signal: AbortSignal) =>
+        readTargets(endpoint, args[1], args[2], token, signal),
+    }),
+  };
 });
 
 vi.mock('../route-changes-api', async (importOriginal) => {
@@ -142,12 +154,12 @@ function routeTable(routes: api.Route[] = [], tags: api.RouteTable['tags'] = [{ 
 }
 
 const found = (table: api.RouteTable): api.Read<api.RouteTable> => ({ found: true, value: table });
-const GATEWAY: api.InternetGateway = { id: 'igw-1', vpcId: 'vpc-a', tags: [{ key: 'Name', value: 'edge' }] };
+const GATEWAY = { id: 'igw-1', description: 'available' };
 const ADDED: api.Route = { destination: { kind: 'ipv4', value: '0.0.0.0/0' }, target: 'igw-1', state: 'active' };
 
 beforeEach(() => {
   vi.mocked(api.getRouteTable).mockResolvedValue(found(routeTable()));
-  vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [GATEWAY] });
+  readTargets.mockReset().mockResolvedValue({ items: [GATEWAY] });
   vi.mocked(api.listRouteTables).mockResolvedValue({ items: [] });
   vi.mocked(changes.createRoute).mockResolvedValue(undefined);
 });
@@ -184,10 +196,6 @@ function addButton(): HTMLElement {
   return screen.getByRole('button', { name: /^(Add route|Adding)$/ });
 }
 
-function isDisabled(element: Element): boolean {
-  return (element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true';
-}
-
 function submit() {
   fireEvent.click(addButton());
 }
@@ -196,11 +204,29 @@ async function opened() {
   await screen.findByText('Destination');
 }
 
+function selectOf(label: 'Target type' | 'Target') {
+  const select = createWrapper(field(label).getElement()).findSelect();
+  if (select === null) {
+    throw new Error(`no select for ${label}`);
+  }
+  return select;
+}
+
+function chooseKind(kind: string) {
+  const select = selectOf('Target type');
+  select.openDropdown();
+  select.selectOptionByValue(kind);
+}
+
 async function withGateway() {
   await opened();
+  chooseKind('GatewayId');
+  const select = selectOf('Target');
+  select.openDropdown();
   await waitFor(() => {
-    expect(text(field('Target').getElement())).toContain('igw-1');
+    expect(select.findDropdown().findOptionByValue('igw-1')).not.toBeNull();
   });
+  select.selectOptionByValue('igw-1');
 }
 
 function alertText(): string {
@@ -218,49 +244,84 @@ function rowsOfRoutes(): string[][] {
 }
 
 describe('Add route', () => {
-  it('names the table in its description, opens with an empty destination and its constraint; "Target" shows the gateway', async () => {
+  it('opens with four described target types, none chosen, and the target locked', async () => {
     open();
-    await withGateway();
+    await opened();
     expect(screen.getByRole('heading', { level: 1, name: 'Add route' })).toBeInTheDocument();
     expect(text(document.body)).toContain('Adds a route to app.');
     expect(destinationInput().value).toBe('');
     expect(text(field('Destination').findConstraint()?.getElement())).toBe(
       'An IPv4 block in CIDR notation, such as 0.0.0.0/0.',
     );
-    expect(text(field('Target').findDescription()?.getElement())).toBe(
-      "The internet gateway attached to this table's VPC.",
-    );
-    expect(text(field('Target').getElement())).toContain('igw-1');
-    expect(text(field('Target').getElement())).toContain('edge');
     expect(vi.mocked(api.getRouteTable).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, 'rtb-a']);
-    expect(vi.mocked(api.listInternetGateways).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, { vpcId: 'vpc-a' }]);
+    const targets = selectOf('Target type');
+    expect(text(targets.findTrigger().getElement())).toBe('Choose a target type');
+    const target = selectOf('Target');
+    expect(target.isDisabled()).toBe(true);
+    expect(text(target.findTrigger().getElement())).toBe('Choose Target type first');
+    targets.openDropdown();
+    const dropdown = targets.findDropdown();
+    expect(dropdown.findOptions()).toHaveLength(4);
+    for (const [value, label, description] of [
+      ['GatewayId', 'Internet gateway', "An internet gateway attached to this table's VPC."],
+      ['NatGatewayId', 'NAT gateway', "A NAT gateway of this table's VPC."],
+      ['InstanceId', 'Instance', "An instance of this table's VPC."],
+      ['NetworkInterfaceId', 'Network interface', "A network interface of this table's VPC."],
+    ] as const) {
+      const option = dropdown.findOptionByValue(value);
+      expect(text(option?.findLabel().getElement())).toBe(label);
+      expect(text(option?.findDescription()?.getElement())).toBe(description);
+    }
+    expect(readTargets).not.toHaveBeenCalled();
   });
 
   it('a table without a name is named by its ID in the description', async () => {
     vi.mocked(api.getRouteTable).mockResolvedValue(found(routeTable([], [])));
     open();
-    await withGateway();
+    await opened();
     expect(text(document.body)).toContain('Adds a route to rtb-a.');
   });
 
-  it('no gateway attached → the sentence with "View internet gateways", which leads to the list; "Add route" cannot be sent', async () => {
-    vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [] });
-    const router = open();
+  it.each([
+    ['GatewayId', 'internet gateways'],
+    ['NatGatewayId', 'NAT gateways'],
+    ['InstanceId', 'instances'],
+    ['NetworkInterfaceId', 'network interfaces'],
+  ])('opens %s targets in the table VPC and names an empty result', async (kind, plural) => {
+    readTargets.mockResolvedValue({ items: [] });
+    open();
     await opened();
-    await waitFor(() => {
-      expect(text(field('Target').getElement())).toContain(
-        'No internet gateway is attached to vpc-a. Attach one to add a route to it.',
-      );
-    });
-    expect(isDisabled(addButton())).toBe(true);
+    expect(screen.queryByText(/No internet gateway is attached/)).not.toBeInTheDocument();
+    chooseKind(kind);
+    const target = selectOf('Target');
+    expect(target.isDisabled()).toBe(false);
+    expect(readTargets).not.toHaveBeenCalled();
+    target.openDropdown();
+    expect(await screen.findByText(`No ${plural} in vpc-a`)).toBeInTheDocument();
+    expect(readTargets).toHaveBeenCalledWith(ENGINE, 'vpc-a', kind, undefined, expect.any(AbortSignal));
+    expect(addButton()).toBeEnabled();
+  });
+
+  it('clears a chosen target when the target type changes', async () => {
+    open();
+    await withGateway();
+    expect(text(selectOf('Target').findTrigger().getElement())).toBe('igw-1');
+    chooseKind('InstanceId');
+    expect(text(selectOf('Target').findTrigger().getElement())).toBe('Choose a target');
+  });
+
+  it('requires a target type and then a target before sending', async () => {
+    open();
+    await opened();
     type('0.0.0.0/0');
     submit();
-    fireEvent.submit(document.querySelector('form') as HTMLFormElement);
+    expect(errorOf('Target type')).toBe('Choose a target type.');
+    expect(selectOf('Target type').findTrigger().getElement()).toHaveFocus();
+    chooseKind('GatewayId');
+    submit();
+    expect(errorOf('Target')).toBe('Choose a target.');
+    expect(selectOf('Target').findTrigger().getElement()).toHaveFocus();
     expect(changes.createRoute).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('link', { name: 'View internet gateways' }));
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/aws/vpc/internet-gateways');
-    });
   });
 
   it('no destination → "Enter a destination."; abc or 10.0.0.0 → the CIDR message; nothing sent', async () => {
@@ -289,7 +350,7 @@ describe('Add route', () => {
     expect(changes.createRoute).toHaveBeenCalledTimes(1);
     expect(vi.mocked(changes.createRoute).mock.calls[0]?.slice(0, 2)).toEqual([
       ENGINE,
-      { routeTableId: 'rtb-a', destination: '8.8.8.8/16', gatewayId: 'igw-1' },
+      { routeTableId: 'rtb-a', destination: '8.8.8.8/16', target: { kind: 'GatewayId', id: 'igw-1' } },
     ]);
   });
 
@@ -308,6 +369,8 @@ describe('Add route', () => {
     expect(alertText()).toContain(message);
     expect(router.state.location.pathname).toBe(PAGE_PATH);
     expect(destinationInput().value).toBe('0.0.0.0/0');
+    expect(text(selectOf('Target type').findTrigger().getElement())).toBe('Internet gateway');
+    expect(text(selectOf('Target').findTrigger().getElement())).toBe('igw-1');
   });
 
   it('a 501 → "not implemented by the emulator" with CreateRoute', async () => {
@@ -360,8 +423,8 @@ describe('Add route', () => {
     });
   });
 
-  it('a failed read of the gateway → its failure with "Retry" in "Target", and the form cannot be sent', async () => {
-    vi.mocked(api.listInternetGateways).mockRejectedValue(
+  it('a target read failure can be retried and prevents a write before a selection', async () => {
+    readTargets.mockRejectedValueOnce(
       new RequestError({
         kind: 'other',
         operation: 'DescribeInternetGateways',
@@ -371,17 +434,21 @@ describe('Add route', () => {
     );
     open();
     await opened();
-    await waitFor(() => {
-      expect(text(field('Target').getElement())).toMatch(/InternalError.*broke/);
-    });
-    expect(isDisabled(addButton())).toBe(true);
     type('0.0.0.0/0');
+    chooseKind('GatewayId');
+    const target = selectOf('Target');
+    target.openDropdown();
+    await waitFor(() => {
+      expect(text(target.findDropdown().getElement())).toMatch(/InternalError.*broke/);
+    });
+    const retry = target.findErrorRecoveryButton();
+    expect(retry?.getElement()).toBeInTheDocument();
+    retry?.click();
+    await waitFor(() => {
+      expect(target.findDropdown().findOptionByValue('igw-1')).not.toBeNull();
+    });
     submit();
     expect(changes.createRoute).not.toHaveBeenCalled();
-    vi.mocked(api.listInternetGateways).mockResolvedValue({ items: [GATEWAY] });
-    fireEvent.click(createWrapper(field('Target').getElement()).findButton()?.getElement() as HTMLElement);
-    await withGateway();
-    expect(isDisabled(addButton())).toBe(false);
   });
 
   it('loading → "Loading route table", and no form', async () => {
@@ -434,7 +501,7 @@ describe('Add route', () => {
 
   it('"Cancel" with nothing entered → the table\'s page at once', async () => {
     const router = open();
-    await withGateway();
+    await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(TABLE_PATH);

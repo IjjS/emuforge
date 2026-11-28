@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
@@ -31,7 +31,8 @@ import {
 } from '../format';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
 import { useAttachGateway } from '../gateway-changes';
-import { useGatewayAttachments, useInternetGateway } from '../queries';
+import { useInternetGateway } from '../queries';
+import { useFreeVpcs } from '../use-free-vpcs';
 
 // S14, "Attach internet gateway" (issue 574, design task 3): the gateway of the address, read by the filter
 // `internet-gateway-id`, and the VPC, chosen a page of `DescribeVpcs` at a time when the field opens. One
@@ -42,6 +43,10 @@ import { useGatewayAttachments, useInternetGateway } from '../queries';
 
 const ATTACHING = 'Attaching';
 const ATTACH = 'Attach';
+
+function occupiedVpcMessage(vpcId: string, gatewayId: string) {
+  return `${vpcId} already has ${gatewayId}. Choose another VPC.`;
+}
 
 /** A box of the page in the place of the form, with Cloudscape's empty-state pattern. */
 function Notice({ title, body, back }: { title?: string; body: string; back: string }) {
@@ -81,15 +86,6 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
   const attach = useAttachGateway(engineOrigin);
   const reading = useInternetGateway(engineOrigin, id);
   const { value: read, failure: readFailure, refresh } = reading;
-  // Which VPCs hold a gateway, marked in "VPC" with "Has {id}"; unmarked while read or failed, and its failure unshown.
-  const attachments = useGatewayAttachments(engineOrigin).value;
-  const marks = useMemo(
-    () =>
-      attachments === undefined
-        ? undefined
-        : new Map([...attachments].map(([vpcId, gatewayId]) => [vpcId, `Has ${gatewayId}`])),
-    [attachments],
-  );
   // The VPC of `?vpc=`, chosen at start by the one rule of `?vpc=` (S5, S8) when the emulator holds it.
   const [query] = useSearchParams();
   const [preset] = useState(() => {
@@ -101,6 +97,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
 
   const [vpc, setVpc] = useState<VpcChoice>();
   const [openedWith, setOpenedWith] = useState<VpcChoice>();
+  const [occupiedMessage, setOccupiedMessage] = useState<string>();
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
@@ -156,14 +153,22 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
 
   const gateway = sentFor ?? (read?.found === true ? read.value : undefined);
 
+  const availability = useFreeVpcs(engineOrigin, gateway !== undefined && gateway.vpcId === undefined);
+  const { attachments } = availability;
+  const occupiedGateway = vpc === undefined ? undefined : attachments?.get(vpc.id);
+  if (vpc !== undefined && occupiedGateway !== undefined) {
+    setVpc(undefined);
+    setOccupiedMessage(occupiedVpcMessage(vpc.id, occupiedGateway));
+  }
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || gateway === undefined || gateway.vpcId !== undefined) {
+    if (busy.current || gateway === undefined || gateway.vpcId !== undefined || attachments === undefined) {
       return;
     }
     setTried(true);
     setFailure(undefined);
-    if (vpc === undefined) {
+    if (vpc === undefined || attachments.has(vpc.id)) {
       vpcRef.current?.focus();
       return;
     }
@@ -229,12 +234,23 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
     [navigate, back],
   );
 
-  const handleVpc = useCallback((chosen: VpcChoice | undefined) => {
+  const handleVpc = (chosen: VpcChoice | undefined) => {
+    if (chosen === undefined || attachments === undefined) {
+      return;
+    }
+    const occupiedBy = attachments.get(chosen.id);
+    if (occupiedBy !== undefined) {
+      setOccupiedMessage(occupiedVpcMessage(chosen.id, occupiedBy));
+      return;
+    }
     setVpc(chosen);
-  }, []);
-  const handlePresetSettled = useCallback((chosen: VpcChoice | undefined) => {
-    setOpenedWith(chosen);
-  }, []);
+    setOccupiedMessage(undefined);
+  };
+  const handlePresetSettled = (chosen: VpcChoice | undefined) => {
+    if (chosen !== undefined && attachments !== undefined && !attachments.has(chosen.id)) {
+      setOpenedWith(chosen);
+    }
+  };
 
   let content;
   let description;
@@ -272,7 +288,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
               <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button variant="primary" loading={pending} loadingText={ATTACHING}>
+              <Button variant="primary" disabled={attachments === undefined} loading={pending} loadingText={ATTACHING}>
                 {pending ? ATTACHING : ATTACH}
               </Button>
             </SpaceBetween>
@@ -286,8 +302,8 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
                 onChange={handleVpc}
                 preset={preset}
                 onPresetSettled={handlePresetSettled}
-                marks={marks}
-                errorText={tried && vpc === undefined ? CHOOSE_A_VPC : undefined}
+                availability={availability}
+                errorText={occupiedMessage ?? (tried && vpc === undefined ? CHOOSE_A_VPC : undefined)}
                 selectRef={vpcRef}
               />
             </Container>

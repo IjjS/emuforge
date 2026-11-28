@@ -13,7 +13,9 @@ import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-d
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { failureOf } from '../../../components/use-token-listing';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import { blockMessage, NAME_CONSTRAINT, nameMessage, VPC_BLOCK } from '../form';
 import { CREATE_VPC_TITLE, vpcHref, VPCS_PATH, VPCS_WORD } from '../format';
@@ -75,12 +77,14 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
   const create = useCreateVpc(engineOrigin);
 
   const [form, setForm] = useState<VpcFormState>(START);
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
 
   const nameRef = useRef<InputProps.Ref>(null);
   const cidrRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -106,6 +110,8 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
 
   const messages = tried ? messagesOf(form) : {};
 
+  const checkedTags = checkTagRows(tags, form.name === '' ? undefined : 'Name');
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current) {
@@ -122,6 +128,11 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
       cidrRef.current?.focus();
       return;
     }
+    if (checkedTags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(checkedTags.firstInvalid);
+      return;
+    }
+    const extraTags = checkedTags.tags.length === 0 ? {} : { tags: checkedTags.tags };
     const operation = VPC_CHANGE_OPERATIONS.createVpc;
     const what = `Creating VPC ${form.cidr}`;
     if (engineOrigin === undefined) {
@@ -138,7 +149,7 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
       setPending(false);
     };
     try {
-      const id = await create(vpcOf(form), controller.signal);
+      const id = await create({ ...vpcOf(form), ...extraTags }, controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -163,7 +174,7 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
     }
   }, [kept]);
   const handleCancel = () => {
-    if (differs(form)) {
+    if (differs(form) || tags.length > 0) {
       setAsking(true);
       return;
     }
@@ -226,6 +237,7 @@ export function CreateVpcPage({ connection }: ScreenPageProps) {
                 </FormField>
               </SpaceBetween>
             </Container>
+            <TagsField ref={tagsRef} rows={tags} onChange={setTags} errors={tried ? checkedTags.errors : undefined} />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>

@@ -36,7 +36,7 @@ test('studio.rds-modify-and-rename-a-db-instance', async ({ ctx, page }) => {
   await expect(page).toHaveURL(addressOf(instancePath(original)));
   const form = await openModify(page);
   await form.identifier.fill(renamed, ACTION);
-  await form.instanceClass.fill('db.t3.small', ACTION);
+  await form.chooseClass('db.t3.small');
   await form.storage.fill('30', ACTION);
   await form.password.fill(runPassword(), ACTION);
   await form.protection.uncheck(ACTION);
@@ -106,7 +106,7 @@ test('studio.rds-modifies-a-cluster-member', async ({ ctx, page }) => {
   await expect(form.storage).toHaveCount(0);
   await expect(form.password).toHaveCount(0);
   await form.identifier.fill(renamed, ACTION);
-  await form.instanceClass.fill('db.r6g.xlarge', ACTION);
+  await form.chooseClass('db.r6g.xlarge');
   await form.protection.check(ACTION);
   await form.save.click(ACTION);
   await expect(page).toHaveURL(addressOf(instancePath(renamed)));

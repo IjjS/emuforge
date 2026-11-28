@@ -1,15 +1,16 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { kmsKeyChoices } from '../../../components/kms-key-choices';
 import AwsArea from '../../../index';
 import { listAvailabilityZones } from '../../../lib/ec2-availability-zones';
-import { createVolume, getVolume, listVolumes } from '../volume-api';
+import { createVolume, getVolume, listVolumeSnapshots, listVolumes } from '../volume-api';
 import { VOLUME_KEYS } from '../volume-queries';
 
 vi.mock('../../../lib/ec2-availability-zones', async (original) => ({
@@ -22,12 +23,15 @@ vi.mock('../volume-api', async (original) => ({
   createVolume: vi.fn(),
   getVolume: vi.fn(),
   listVolumes: vi.fn(),
+  listVolumeSnapshots: vi.fn(),
 }));
+
+vi.mock('../../../components/kms-key-choices', () => ({ kmsKeyChoices: vi.fn() }));
 
 const endpoint = 'http://127.0.0.1:8311';
 const list = '/aws/ec2/volumes';
 const id = 'vol-created';
-const zones = ['us-east-1b', 'us-east-1a'];
+const zones: [string, string] = ['us-east-1b', 'us-east-1a'];
 const connection: AreaConnection = {
   engineOrigin: endpoint,
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9311, endpoint: 'https://127.0.0.1:9311' } },
@@ -92,13 +96,35 @@ async function chooseZone(zone = zones[0]) {
   act(() => select().selectOptionByValue(zone));
 }
 
-function field(name: 'zone' | 'size') {
-  const index = name === 'zone' ? 0 : 1;
-  const label = name === 'zone' ? 'Availability Zone' : 'Size (GiB)';
-  const wrapper = page.findForm()?.findContent()?.findAllFormFields()[index];
+function field(name: string) {
+  const label = name === 'zone' ? 'Availability Zone' : name === 'size' ? 'Size (GiB)' : name;
+  const wrapper = page
+    .findForm()
+    ?.findContent()
+    ?.findAllFormFields()
+    .find((candidate) => candidate.findLabel()?.getElement().textContent?.startsWith(label));
   if (wrapper === undefined) throw new Error(`Missing ${label} field`);
   expect(wrapper.findLabel()?.getElement()).toHaveTextContent(label);
   return wrapper;
+}
+
+function choice(name: string) {
+  const select = field(name).findControl()?.findSelect();
+  if (select == null) throw new Error(`Missing select for ${name}`);
+  return select;
+}
+
+async function choose(name: string, value: string) {
+  const select = choice(name);
+  act(() => select.openDropdown());
+  await waitFor(() => expect(select.findDropdown().findOptionByValue(value)).not.toBeNull());
+  act(() => select.selectOptionByValue(value));
+}
+
+function enter(name: string, value: string) {
+  const input = field(name).findControl()?.findInput();
+  if (input == null) throw new Error(`Missing input for ${name}`);
+  act(() => input.setInputValue(value));
 }
 
 function sizeInput() {
@@ -186,7 +212,27 @@ beforeEach(() => {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }));
-  vi.mocked(listAvailabilityZones).mockResolvedValue(zones);
+  vi.mocked(listAvailabilityZones).mockImplementation(async (_endpoint, _signal, details) => {
+    details?.([
+      { name: 'us-east-1b', id: 'use1-az2' },
+      { name: 'us-east-1a', id: 'use1-az1' },
+    ]);
+    return zones;
+  });
+  vi.mocked(listVolumeSnapshots).mockResolvedValue({
+    items: [
+      { id: 'snap-3', size: 3, state: 'completed', volumeId: 'vol-1', description: 'Base image' },
+      { id: 'snap-large', size: 2000 },
+    ],
+  });
+  vi.mocked(kmsKeyChoices).mockReturnValue({
+    key: ['test-kms'],
+    endpoint,
+    operation: 'ListKeys',
+    readAgainOnOpen: true,
+    read: async () => ({ items: [{ id: 'key-1', arn: 'arn:key-1', aliases: ['alias/volume-key'] }] }),
+    optionOf: (key) => ({ value: key.arn, label: key.aliases[0] ?? key.id }),
+  });
   vi.mocked(createVolume).mockResolvedValue(id);
   vi.mocked(listVolumes).mockResolvedValue({ items: [] });
   vi.mocked(getVolume).mockResolvedValue({
@@ -200,6 +246,158 @@ afterEach(() => {
 });
 
 describe('create volume', () => {
+  it('opens on gp2; describes each type and zone and shows the type’s size range', async () => {
+    open();
+    const type = choice('Volume type');
+    expect(type.findTrigger().getElement()).toHaveTextContent('gp2');
+    expect(field('size').findConstraint()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
+    act(() => type.openDropdown());
+    const dropdown = type.findDropdown();
+    const descriptions = [
+      ['standard', '1 to 1024 GiB. IOPS and throughput cannot be set.'],
+      ['gp2', '1 to 16384 GiB. IOPS and throughput cannot be set.'],
+      ['gp3', '1 to 65536 GiB. 3000 IOPS and 125 MiB/s unless you set them.'],
+      ['io1', '4 to 16384 GiB. IOPS must be set.'],
+      ['io2', '4 to 65536 GiB. IOPS must be set.'],
+      ['st1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
+      ['sc1', '125 to 16384 GiB. IOPS and throughput cannot be set.'],
+    ] as const;
+    expect(dropdown.findOptions().length).toBe(descriptions.length);
+    for (const [value, description] of descriptions) {
+      const option = dropdown.findOptionByValue(value);
+      expect(option?.findLabel().getElement().textContent).toBe(value);
+      expect(option?.findDescription()?.getElement().textContent).toBe(description);
+    }
+    act(() => type.closeDropdown());
+    const zone = await openZoneChoices('us-east-1b');
+    expect(zone.findOptionByValue('us-east-1b')?.getElement()).toHaveTextContent('use1-az2');
+  });
+
+  it('changes the IOPS and throughput fields with the volume type and drops hidden entries', async () => {
+    open();
+    await choose('Volume type', 'io1');
+    expect(field('IOPS').findLabel()?.getElement()).toHaveTextContent(/^IOPS$/);
+    expect(field('IOPS').findConstraint()?.getElement()).toHaveTextContent('100 to 64000');
+    await choose('Volume type', 'gp3');
+    expect(field('IOPS').findLabel()?.getElement()).toHaveTextContent('IOPS - optional');
+    expect(field('Throughput (MiB/s)').findLabel()?.getElement()).toHaveTextContent('Throughput (MiB/s) - optional');
+    enter('IOPS', '4000');
+    enter('Throughput (MiB/s)', '250');
+    await choose('Volume type', 'sc1');
+    expect(screen.queryByText(/^IOPS/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Throughput/)).not.toBeInTheDocument();
+    await choose('Volume type', 'gp3');
+    expect(field('IOPS').findControl()?.findInput()?.getInputValue()).toBe('');
+    expect(field('Throughput (MiB/s)').findControl()?.findInput()?.getInputValue()).toBe('');
+  });
+
+  it('describes the empty and inherited snapshot choices and shows why a small snapshot needs a size', async () => {
+    open();
+    const snapshot = choice('Snapshot');
+    expect(field('Snapshot').findLabel()?.getElement()).toHaveTextContent('Snapshot - optional');
+    expect(snapshot.findTrigger().getElement()).toHaveTextContent('No snapshot');
+    expect(snapshot.findTrigger().getElement()).toHaveTextContent('The volume starts empty.');
+    await choose('Snapshot', 'snap-3');
+    expect(field('size').findConstraint()?.getElement()).toHaveTextContent("Leave empty to use the snapshot's 3 GiB.");
+    await choose('Volume type', 'sc1');
+    expect(field('size').findConstraint()?.getElement()).toHaveTextContent(
+      "The snapshot's 3 GiB is under sc1's minimum: enter a size.",
+    );
+  });
+
+  it('explains encryption and preselects the described default key option', () => {
+    open();
+    const encryption = screen.getByRole('checkbox', { name: 'Encrypt the volume' });
+    expect(encryption).toHaveAccessibleDescription('The emulator reports the volume as encrypted.');
+    fireEvent.click(encryption);
+    const key = within(choice('KMS key').findTrigger().getElement());
+    expect(key.getByText('Chosen by the emulator')).toBeVisible();
+    expect(key.getByText('No key is sent. The emulator reports the volume as encrypted, with no key.')).toBeVisible();
+  });
+
+  it('blocks a snapshot larger than the selected type and accepts it after a compatible type is chosen', async () => {
+    open();
+    await chooseZone();
+    await choose('Volume type', 'standard');
+    await choose('Snapshot', 'snap-large');
+    expect(field('Volume type').findError()?.getElement()).toHaveTextContent(
+      "The snapshot's 2000 GiB is over standard's maximum: choose another volume type.",
+    );
+    submit();
+    expect(createVolume).not.toHaveBeenCalled();
+    await choose('Volume type', 'gp2');
+    expect(field('Volume type').findError()).toBeNull();
+    submit();
+    await waitFor(expectVolumeHeading);
+    expect(createVolume).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      { zone: zones[0], type: 'gp2', snapshotId: 'snap-large' },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('shows the snapshot read’s 501 in the field', async () => {
+    vi.mocked(listVolumeSnapshots).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeSnapshots' }),
+    );
+    open();
+    act(() => choice('Snapshot').openDropdown());
+    expect(await screen.findByText(/501 Not Implemented for DescribeSnapshots/)).toBeVisible();
+  });
+
+  it('submits all chosen settings once and keeps them after refusal', async () => {
+    vi.mocked(createVolume).mockRejectedValueOnce(
+      new RequestError({ kind: 'other', operation: 'CreateVolume', code: 'InvalidSnapshot.NotFound' }),
+    );
+    open();
+    await chooseZone();
+    await choose('Volume type', 'gp3');
+    await choose('Snapshot', 'snap-3');
+    enter('size', '8');
+    enter('IOPS', '4000');
+    enter('Throughput (MiB/s)', '250');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Encrypt the volume' }));
+    await choose('KMS key', 'arn:key-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    enter('Key', 'team');
+    enter('Value - optional', 'core');
+    submit();
+    expect(await screen.findByText(/InvalidSnapshot.NotFound/)).toBeVisible();
+    expect(createVolume).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      {
+        zone: zones[0],
+        type: 'gp3',
+        snapshotId: 'snap-3',
+        size: 8,
+        iops: 4000,
+        throughput: 250,
+        encrypted: true,
+        kmsKeyId: 'arn:key-1',
+        tags: [{ key: 'team', value: 'core' }],
+      },
+      expect.any(AbortSignal),
+    );
+    for (const [name, selected] of [
+      ['zone', zones[0]],
+      ['Volume type', 'gp3'],
+      ['Snapshot', 'snap-3'],
+      ['KMS key', 'alias/volume-key'],
+    ] as const) {
+      expect(choice(name).findTrigger().getElement()).toHaveTextContent(selected);
+    }
+    for (const [name, value] of [
+      ['size', '8'],
+      ['IOPS', '4000'],
+      ['Throughput (MiB/s)', '250'],
+      ['Key', 'team'],
+      ['Value - optional', 'core'],
+    ] as const) {
+      expect(field(name).findControl()?.findInput()?.getInputValue()).toBe(value);
+    }
+    expect(screen.getByRole('checkbox', { name: 'Encrypt the volume' })).toBeChecked();
+  });
+
   it('requires a zone after choices load even when the size is valid', async () => {
     open();
     select().findTrigger().getElement().focus();
@@ -221,7 +419,9 @@ describe('create volume', () => {
     for (const size of ['', '1.5', '0', '16385']) {
       fillSize(size);
       submit();
-      expect(field('size').findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
+      expect(field('size').findError()?.getElement()).toHaveTextContent(
+        size === '' ? 'Enter a size.' : 'Enter a whole number from 1 to 16384 for gp2.',
+      );
       expect(createVolume).not.toHaveBeenCalled();
     }
   });
@@ -232,7 +432,27 @@ describe('create volume', () => {
     fillSize(String(size));
     submit();
     await waitFor(expectVolumeHeading);
-    expect(createVolume).toHaveBeenCalledExactlyOnceWith(endpoint, { zone: zones[0], size }, expect.any(AbortSignal));
+    expect(createVolume).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      { zone: zones[0], size, type: 'gp2' },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('shows a 501 at Availability Zone and leaves the required zone unavailable', async () => {
+    vi.mocked(listAvailabilityZones).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
+    );
+    open();
+    await screen.findByText('Not implemented by the emulator');
+    const zone = field('zone');
+    expect(zone.findConstraint()?.getElement().textContent).toContain('Not implemented by the emulator');
+    expect(zone.findConstraint()?.getElement().textContent).toContain(
+      'The emulator answered 501 Not Implemented for DescribeAvailabilityZones',
+    );
+    expect(select().isDisabled()).toBe(true);
+    expect(formAction('Create volume').getElement().hasAttribute('disabled')).toBe(true);
+    expect(screen.queryAllByRole('button', { name: 'Retry' }).length).toBe(0);
   });
 
   it('retries a failed zone read and offers the returned choices in order', async () => {
@@ -241,6 +461,7 @@ describe('create volume', () => {
     );
     open();
     await waitFor(() => expect(zoneReadFailure()?.getElement()).toHaveTextContent('InternalError'));
+    expect(zoneReadFailure()?.getElement()).toHaveTextContent('The Availability Zones could not be read');
     const retry = zoneReadFailure()?.findButton();
     if (retry == null) throw new Error('Missing availability zone retry action');
     expect(retry.getElement()).toHaveAccessibleName('Retry');

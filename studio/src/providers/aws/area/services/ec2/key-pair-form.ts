@@ -41,3 +41,13 @@ export function keyNameMessage(name: string): string | undefined {
 export function publicKeyMessage(mode: KeyPairMode, publicKey: string): string | undefined {
   return mode === 'import' && publicKey.trim() === '' ? PUBLIC_KEY_EMPTY : undefined;
 }
+
+export const KEY_TYPE_OPTIONS = [
+  { value: 'rsa', label: 'RSA', description: 'The emulator returns an RSA private key.' },
+  { value: 'ed25519', label: 'ED25519', description: 'The emulator returns an ED25519 private key.' },
+];
+
+export const KEY_FORMAT_OPTIONS = [
+  { value: 'pem', label: '.pem', description: 'The private key as PEM text.' },
+  { value: 'ppk', label: '.ppk', description: "The private key in PuTTY's format." },
+];

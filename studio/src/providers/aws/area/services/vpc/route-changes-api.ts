@@ -6,6 +6,7 @@ import {
 } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { RouteTargetKind } from './route-targets';
 
 // The changes of a route table's routes and associations (issue 574, design task 3): `CreateRoute` from S10,
 // `DeleteRoute` and `DisassociateRouteTable` from S9, `AssociateRouteTable` from S11, each through the area's `sendEc2`
@@ -20,14 +21,14 @@ export const ROUTE_CHANGE_OPERATIONS = {
   disassociateRouteTable: 'DisassociateRouteTable',
 } as const;
 
-/** What S10 sends: the table, the destination as typed, and the internet gateway it leads to. */
+/** What S10 sends: the table, the destination as typed, and the kind and ID of the target. */
 export interface NewRoute {
   routeTableId: string;
   destination: string;
-  gatewayId: string;
+  target: { kind: RouteTargetKind; id: string };
 }
 
-/** `CreateRoute` with `RouteTableId`, `DestinationCidrBlock` as typed and `GatewayId`. */
+/** `CreateRoute` with `RouteTableId`, `DestinationCidrBlock` as typed and the selected target member. */
 export async function createRoute(endpoint: string, route: NewRoute, signal: AbortSignal): Promise<void> {
   await sendEc2(
     endpoint,
@@ -37,7 +38,7 @@ export async function createRoute(endpoint: string, route: NewRoute, signal: Abo
         new CreateRouteCommand({
           RouteTableId: route.routeTableId,
           DestinationCidrBlock: route.destination,
-          GatewayId: route.gatewayId,
+          [route.target.kind]: route.target.id,
         }),
         { abortSignal },
       ),

@@ -1,6 +1,8 @@
 import { CreateRouteTableCommand, DeleteRouteTableCommand } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from '../../lib/ec2-client';
+import type { TagRow } from '../../lib/tag-rows';
+import { tagSpecifications } from './form';
 
 // The changes of a route table (issue 574, design task 3): `CreateRouteTable` from S8 and `DeleteRouteTable` from S7
 // and S9, each through the area's `sendEc2` with its operation's name, so a refusal (`DependencyViolation` for a table
@@ -12,13 +14,14 @@ export const ROUTE_TABLE_CHANGE_OPERATIONS = {
   deleteRouteTable: 'DeleteRouteTable',
 } as const;
 
-/** What S8 sends: the VPC, and a name when one is given. */
+/** What S8 sends: the VPC and optional tags. */
 export interface NewRouteTable {
   vpcId: string;
   name?: string;
+  tags?: readonly TagRow[];
 }
 
-/** `CreateRouteTable` with `VpcId`, and the tag `Name` in `TagSpecifications` when named; the new table's ID. */
+/** `CreateRouteTable` with `VpcId` and optional tags; the new table's ID. */
 export async function createRouteTable(endpoint: string, table: NewRouteTable, signal: AbortSignal): Promise<string> {
   const output = await sendEc2(
     endpoint,
@@ -27,9 +30,7 @@ export async function createRouteTable(endpoint: string, table: NewRouteTable, s
       client.send(
         new CreateRouteTableCommand({
           VpcId: table.vpcId,
-          ...(table.name === undefined || table.name === ''
-            ? {}
-            : { TagSpecifications: [{ ResourceType: 'route-table', Tags: [{ Key: 'Name', Value: table.name }] }] }),
+          ...tagSpecifications('route-table', table.name, table.tags),
         }),
         { abortSignal },
       ),

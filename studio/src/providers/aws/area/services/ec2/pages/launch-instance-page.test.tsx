@@ -13,6 +13,7 @@ import * as api from '../api';
 import * as network from '../../../lib/ec2-network-choices';
 import * as choices from '../choices-api';
 import * as launching from '../launch-api';
+import { EC2_KEYS } from '../queries';
 
 // S2 rendered inside the area's layout, with the calls of `choices-api.ts`, `lib/ec2-network-choices.ts`, `launch-api.ts` and, for the instance's page
 // the launch leads to, `api.ts` answered by the case (their own tests prove the calls against a fake engine).
@@ -34,6 +35,7 @@ vi.mock('../choices-api', async (importOriginal) => {
     ...real,
     listImageChoices: vi.fn(),
     listInstanceTypeChoices: vi.fn(),
+    listInstanceTypeOfferings: vi.fn(),
     listGroupChoices: vi.fn(),
     listKeyPairChoices: vi.fn(),
     getDefaultVpc: vi.fn(),
@@ -48,6 +50,17 @@ vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
 vi.mock('../launch-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../launch-api')>();
   return { ...real, launchInstance: vi.fn() };
+});
+
+vi.mock('../instance-profile-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../instance-profile-choices')>();
+  return {
+    ...real,
+    instanceProfileChoices: (endpoint: string | undefined) => ({
+      ...real.instanceProfileChoices(endpoint),
+      read: async () => ({ items: [PROFILE] }),
+    }),
+  };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -128,7 +141,7 @@ function open(path = LAUNCH_PATH) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return router;
+  return Object.assign(router, { client });
 }
 // ---------------------------------------------------------------------------------------------------------------
 // What the emulator holds, as the readers answer it.
@@ -136,8 +149,11 @@ function open(path = LAUNCH_PATH) {
 const LAUNCH_PATH = '/aws/ec2/instances/launch';
 const NAME_RULE = 'Up to 256 characters. Stored as the Name tag.';
 
-const IMAGE: choices.ImageChoice = { id: 'ami-1', name: 'al2023', architecture: 'x86_64', platform: 'Linux/UNIX' };
+const IMAGE: choices.ImageChoice = { id: 'ami-1', name: 'al2023', architecture: 'x86_64', description: 'Amazon Linux' };
 const TYPE: choices.InstanceTypeChoice = { type: 't3.micro', vcpus: 2, memoryMiB: 1024, architectures: ['x86_64'] };
+const DEFAULT_VPC = { id: 'vpc-d', isDefault: true, cidr: '172.31.0.0/16' };
+const OTHER_VPC = { id: 'vpc-x', isDefault: false, cidr: '10.0.0.0/16' };
+const PROFILE = { name: 'app-profile', arn: 'arn:aws:iam::123456789012:instance-profile/app-profile', roleCount: 2 };
 const SUBNETS: network.SubnetChoice[] = [
   { id: 'subnet-a', vpcId: 'vpc-d', zone: 'us-east-1a', cidr: '172.31.0.0/20' },
   { id: 'subnet-b', vpcId: 'vpc-d', zone: 'us-east-1b', cidr: '172.31.16.0/20' },
@@ -149,15 +165,19 @@ const GROUPS: Record<string, choices.GroupChoice[]> = {
     { id: 'sg-d2', name: 'web' },
   ],
   'vpc-x': [{ id: 'sg-x1', name: 'other' }],
-  any: [{ id: 'sg-any', name: 'anywhere' }],
 };
 
 beforeEach(() => {
   vi.mocked(choices.listImageChoices).mockResolvedValue({ choices: [IMAGE] });
   vi.mocked(choices.listInstanceTypeChoices).mockResolvedValue({ choices: [TYPE] });
   vi.mocked(choices.listKeyPairChoices).mockResolvedValue([{ name: 'dev' }]);
-  vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: SUBNETS });
-  vi.mocked(choices.getDefaultVpc).mockResolvedValue('vpc-d');
+  vi.mocked(network.listSubnetChoices).mockImplementation(async (_at, _token, _signal, vpcId) => ({
+    choices: SUBNETS.filter((subnet) => subnet.vpcId === vpcId),
+  }));
+  vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [DEFAULT_VPC, OTHER_VPC] });
+  vi.mocked(choices.getDefaultVpc).mockResolvedValue(DEFAULT_VPC);
+  vi.mocked(choices.listInstanceTypeOfferings).mockResolvedValue(new Set([TYPE.type]));
+  vi.mocked(api.listInstances).mockResolvedValue({ instances: [] });
   vi.mocked(choices.listGroupChoices).mockImplementation((_at, filters) =>
     Promise.resolve({ choices: GROUPS[filters.vpcId ?? 'any'] ?? [] }),
   );
@@ -174,6 +194,14 @@ beforeEach(() => {
 
 const PAGE = createWrapper(document.body);
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 /** The form field whose label is `label`. */
 function field(label: string) {
@@ -223,6 +251,7 @@ function groupTokens(): string[] {
 /** Opens the field `label`, waits for the choice `value` and chooses it. */
 async function choose(label: string, value: string) {
   const select = selectIn(label);
+  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
   select.openDropdown();
   await waitFor(() => {
     expect(select.findDropdown().findOptionByValue(value)).not.toBeNull();
@@ -249,9 +278,16 @@ function submit() {
 }
 
 async function opened() {
-  await waitFor(() => {
-    expect(screen.getByRole('heading', { level: 1, name: 'Launch instance' })).toBeInTheDocument();
-  });
+  await screen.findByRole('heading', { level: 1, name: 'Launch instance' });
+  await waitFor(() => expect(triggerOf('VPC') === 'vpc-d' || !screen.queryByText('Checking VPC')).toBe(true));
+}
+
+function enterSettings() {
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Termination protection' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'User data - optional' }), { target: { value: 'a\nbé' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Key' }), { target: { value: 'Team' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Value - optional' }), { target: { value: 'Web' } });
 }
 
 /** The failure shown on the form, above its buttons (the notice is an alert of the frame). */
@@ -268,8 +304,10 @@ describe('Launch instance', () => {
     expect(text(field('Name - optional').findConstraint()?.getElement())).toBe(NAME_RULE);
     expect(triggerOf('Image')).toBe('Choose an image');
     expect(triggerOf('Instance type')).toBe('Choose an instance type');
-    expect(triggerOf('Key pair - optional')).toBe('No key pair');
-    expect(triggerOf('Subnet - optional')).toBe('Chosen by the emulator');
+    expect(triggerOf('Key pair - optional')).toContain('No key pair');
+    await waitFor(() => expect(triggerOf('VPC')).toBe('vpc-d'));
+    expect(triggerOf('Subnet')).toContain('Chosen by the emulator');
+    expect(triggerOf('Subnet')).toContain('The emulator uses a default subnet of the default VPC.');
     expect(groupTokens()).toEqual([]);
     expect(text(groupsField().findTrigger().getElement())).toContain('Choose security groups');
     expect(text(field('Security groups - optional').findDescription()?.getElement())).toBe(
@@ -313,9 +351,11 @@ describe('Launch instance', () => {
     await choose('Image', 'ami-1');
     await choose('Instance type', 't3.micro');
     await choose('Key pair - optional', 'dev');
-    await choose('Subnet - optional', 'subnet-a');
+    await choose('Subnet', 'subnet-a');
     await chooseGroup('sg-d1');
     await chooseGroup('sg-d2');
+    await choose('IAM instance profile', PROFILE.name);
+    enterSettings();
     submit();
     await waitFor(() => {
       expect(screen.getByText('Launched instance i-0new')).toBeInTheDocument();
@@ -331,6 +371,10 @@ describe('Launch instance', () => {
         keyName: 'dev',
         subnetId: 'subnet-a',
         securityGroupIds: ['sg-d1', 'sg-d2'],
+        instanceProfileName: PROFILE.name,
+        terminationProtection: true,
+        userData: 'a\nbé',
+        tags: [{ key: 'Team', value: 'Web' }],
       },
     ]);
   });
@@ -350,7 +394,7 @@ describe('Launch instance', () => {
     });
   });
 
-  it("no subnet → the default VPC's groups; a subnet → its VPC's; another VPC's subnet clears the groups, the same VPC's keeps them", async () => {
+  it('clears the subnet and groups on a VPC change and restores the implicit subnet on the default VPC', async () => {
     open();
     await opened();
     await waitFor(() => {
@@ -365,32 +409,204 @@ describe('Launch instance', () => {
     groupsField().closeDropdown();
     expect(groupTokens()).toEqual(['web']);
 
-    await choose('Subnet - optional', 'subnet-b');
+    await choose('Subnet', 'subnet-b');
     expect(groupTokens()).toEqual(['web']);
-    await choose('Subnet - optional', 'subnet-a');
+    await choose('Subnet', 'subnet-a');
     expect(groupTokens()).toEqual(['web']);
 
-    await choose('Subnet - optional', 'subnet-x');
+    await choose('VPC', 'vpc-x');
+    expect(triggerOf('Subnet')).toBe('Choose a subnet');
     expect(groupTokens()).toEqual([]);
+    const subnet = selectIn('Subnet');
+    subnet.openDropdown();
+    await waitFor(() => expect(subnet.findDropdown().findOptionByValue('subnet-x')).not.toBeNull());
+    expect(subnet.findDropdown().findOptionByValue('subnet-a')).toBeNull();
+    expect(subnet.findDropdown().findOptionByValue('__fixed__')).toBeNull();
+    expect(text(subnet.findDropdown().getElement())).not.toContain('Chosen by the emulator');
+    subnet.closeDropdown();
     groupsField().openDropdown();
     await waitFor(() => {
       expect(shownGroups()).toEqual(['other']);
     });
     expect(vi.mocked(choices.listGroupChoices).mock.lastCall?.[1]).toEqual({ vpcId: 'vpc-x' });
+    groupsField().closeDropdown();
+    await choose('VPC', 'vpc-d');
+    expect(triggerOf('Subnet')).toContain('Chosen by the emulator');
     expect(launching.launchInstance).not.toHaveBeenCalled();
   });
 
-  it("with the default VPC's read failed and no subnet → every group offered", async () => {
+  it('locks the subnet and security groups when the emulator has no default VPC', async () => {
+    vi.mocked(choices.getDefaultVpc).mockResolvedValue(undefined);
+    open();
+    await opened();
+    expect(triggerOf('VPC')).toBe('Choose a VPC');
+    expect(triggerOf('Subnet')).toBe('Choose VPC first');
+    expect(selectIn('Subnet').findTrigger().getElement()).toBeDisabled();
+    expect(groupsField().findTrigger().getElement()).toBeDisabled();
+    expect(network.listSubnetChoices).not.toHaveBeenCalled();
+    expect(choices.listGroupChoices).not.toHaveBeenCalled();
+  });
+
+  it('allows choosing a VPC and subnet when the default VPC read returns 501', async () => {
     vi.mocked(choices.getDefaultVpc).mockRejectedValue(
-      new RequestError({ kind: 'access-denied', operation: 'DescribeVpcs', message: 'no' }),
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeVpcs' }),
     );
     open();
     await opened();
-    groupsField().openDropdown();
+    expect(await screen.findByText('The emulator answered 501 Not Implemented for DescribeVpcs.')).toBeVisible();
+    expect(screen.getAllByText('Not implemented by the emulator')).not.toHaveLength(0);
+    expect(triggerOf('VPC')).toBe('Choose a VPC');
+    await choose('Image', IMAGE.id);
+    await choose('Instance type', TYPE.type);
+    submit();
+    expect(launching.launchInstance).not.toHaveBeenCalled();
+    await choose('VPC', OTHER_VPC.id);
+    submit();
+    expect(text(field('Subnet').findError()?.getElement())).toBe('Choose a subnet.');
+    expect(launching.launchInstance).not.toHaveBeenCalled();
+    await choose('Subnet', 'subnet-x');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch instance' })).toBeEnabled());
+    submit();
+    await screen.findByText('Launched instance i-0new');
+    expect(launching.launchInstance).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds launch while checking the selected subnet, retains an offered type and clears an excluded type', async () => {
+    const first = deferred<ReadonlySet<string>>();
+    vi.mocked(choices.listInstanceTypeOfferings).mockReturnValueOnce(first.promise).mockResolvedValueOnce(new Set());
+    open();
+    await opened();
+    await choose('Image', IMAGE.id);
+    await choose('Instance type', TYPE.type);
+    await choose('Subnet', 'subnet-a');
+    expect(choices.listInstanceTypeOfferings).toHaveBeenCalledWith(ENGINE, 'us-east-1a', expect.any(AbortSignal));
+    expect(triggerOf('Instance type')).toBe(TYPE.type);
+    const button = screen.getByRole('button', { name: 'Launch instance' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('Checking Instance type')).toBeVisible();
+    fireEvent.submit(button.closest('form') as HTMLFormElement);
+    expect(launching.launchInstance).not.toHaveBeenCalled();
+    await act(async () => first.resolve(new Set([TYPE.type])));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(triggerOf('Instance type')).toBe(TYPE.type);
+    await choose('Subnet', 'subnet-b');
+    await waitFor(() => expect(triggerOf('Instance type')).toBe('Choose an instance type'));
+    const types = selectIn('Instance type');
+    types.openDropdown();
+    expect(await screen.findByText('No instance types in us-east-1b')).toBeVisible();
+    expect(types.findDropdown().findOptionByValue(TYPE.type)).toBeNull();
+  });
+
+  it('reports a failed offerings read with Retry and prevents launch until it succeeds', async () => {
+    vi.mocked(choices.listInstanceTypeOfferings).mockRejectedValueOnce(
+      new RequestError({
+        kind: 'other',
+        operation: 'DescribeInstanceTypeOfferings',
+        code: 'InternalError',
+        message: 'boom',
+      }),
+    );
+    open();
+    await opened();
+    await choose('Image', IMAGE.id);
+    await choose('Instance type', TYPE.type);
+    await choose('Subnet', 'subnet-a');
+    expect(await screen.findByText('The instance types could not be read')).toBeVisible();
+    const types = selectIn('Instance type');
+    types.openDropdown();
+    expect(await screen.findByText('Instance types unavailable')).toBeVisible();
+    expect(types.findDropdown().findOptionByValue(TYPE.type)).toBeNull();
+    types.closeDropdown();
+    submit();
+    expect(launching.launchInstance).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch instance' })).toBeEnabled());
+    expect(launching.launchInstance).not.toHaveBeenCalled();
+  });
+
+  it('reports a 501 at the type field and offers no instance type', async () => {
+    vi.mocked(choices.listInstanceTypeOfferings).mockRejectedValueOnce(
+      new RequestError({ kind: 'not-implemented', operation: 'DescribeInstanceTypeOfferings' }),
+    );
+    open();
+    await opened();
+    await choose('Subnet', 'subnet-a');
+    expect(
+      await screen.findByText('The emulator answered 501 Not Implemented for DescribeInstanceTypeOfferings.'),
+    ).toBeVisible();
+    expect(screen.getAllByText('Not implemented by the emulator')).not.toHaveLength(0);
+    const types = selectIn('Instance type');
+    types.openDropdown();
+    expect(await screen.findByText('Instance types unavailable')).toBeVisible();
+    expect(types.findDropdown().findOptionByValue(TYPE.type)).toBeNull();
+    expect(choices.listInstanceTypeChoices).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('reads the images again when the field is reopened without moving focus', async () => {
+    open();
+    await opened();
+    const images = selectIn('Image');
+    images.openDropdown();
+    await waitFor(() => expect(images.findDropdown().findOptionByValue(IMAGE.id)).not.toBeNull());
+    images.closeDropdown();
+    vi.mocked(choices.listImageChoices).mockResolvedValue({ choices: [IMAGE, { id: 'ami-new', name: 'new' }] });
+    images.openDropdown();
+    await waitFor(() => expect(images.findDropdown().findOptionByValue('ami-new')).not.toBeNull());
+    expect(choices.listImageChoices).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the instance profile options and launch settings', async () => {
+    open();
+    await opened();
+    expect(triggerOf('IAM instance profile')).toContain('No instance profile');
+    expect(triggerOf('IAM instance profile')).toContain('The instance is launched without one.');
+    const profile = selectIn('IAM instance profile');
+    profile.openDropdown();
     await waitFor(() => {
-      expect(shownGroups()).toEqual(['anywhere']);
+      expect(profile.findDropdown().findOptionByValue(PROFILE.name)?.getElement()).toHaveTextContent('2 roles');
     });
-    expect(vi.mocked(choices.listGroupChoices).mock.calls[0]?.[1]).toEqual({});
+    expect(screen.getByRole('checkbox', { name: 'Termination protection' })).toBeVisible();
+    expect(screen.getByText('While it is on, the emulator refuses to terminate the instance.')).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'User data - optional' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Tags - optional' })).toBeVisible();
+  });
+
+  it('keeps the launched instance and result when an earlier list read answers after the detail reads', async () => {
+    const list = deferred<unknown[]>();
+    const detail = deferred<api.InstanceRead>();
+    const protection = deferred<boolean>();
+    const router = open();
+    await opened();
+    let earlierSignal: AbortSignal | undefined;
+    const listRead = ({ signal }: { signal: AbortSignal }) => {
+      earlierSignal = signal;
+      return list.promise;
+    };
+    const beforeLaunch = router.client
+      .fetchQuery({ queryKey: EC2_KEYS.instances('earlier'), queryFn: listRead })
+      .catch(() => undefined);
+    vi.mocked(api.getInstance).mockReturnValue(detail.promise);
+    vi.mocked(api.getTerminationProtection).mockReturnValue(protection.promise);
+    await choose('Image', IMAGE.id);
+    await choose('Instance type', TYPE.type);
+    submit();
+    expect(await screen.findByText('Launched instance i-0new')).toBeVisible();
+    expect(earlierSignal?.aborted).toBe(true);
+    await act(async () => protection.resolve(true));
+    await act(async () =>
+      detail.resolve({
+        found: true,
+        instance: { id: 'i-0new', state: 'running', groups: [], volumes: [], tags: [] },
+      }),
+    );
+    expect(await screen.findByRole('heading', { name: 'i-0new' })).toBeVisible();
+    await act(async () => {
+      list.resolve([]);
+      await beforeLaunch;
+    });
+    expect(router.state.location.pathname).toBe('/aws/ec2/instances/instance/i-0new');
+    expect(screen.getByText('Launched instance i-0new')).toBeVisible();
   });
 
   it('"Create key pair" leads to the create-key-pair address, in a new tab, and the form keeps what was entered', async () => {
@@ -438,7 +654,12 @@ describe('Launch instance', () => {
     typeName('web-1');
     await choose('Image', 'ami-1');
     await choose('Instance type', 't3.micro');
-    await choose('Subnet - optional', 'subnet-x');
+    await choose('VPC', OTHER_VPC.id);
+    await choose('Subnet', 'subnet-x');
+    await chooseGroup('sg-x1');
+    await choose('Key pair - optional', 'dev');
+    await choose('IAM instance profile', PROFILE.name);
+    enterSettings();
     submit();
     await waitFor(() => {
       expect(alertText()).toContain('Unsupported');
@@ -448,7 +669,15 @@ describe('Launch instance', () => {
     expect(nameInput().value).toBe('web-1');
     expect(triggerOf('Image')).toContain('al2023');
     expect(triggerOf('Instance type')).toContain('t3.micro');
-    expect(triggerOf('Subnet - optional')).toContain('subnet-x');
+    expect(triggerOf('VPC')).toContain(OTHER_VPC.id);
+    expect(triggerOf('Subnet')).toContain('subnet-x');
+    expect(triggerOf('Key pair - optional')).toBe('dev');
+    expect(triggerOf('IAM instance profile')).toBe(PROFILE.name);
+    expect(groupTokens()).toEqual(['other']);
+    expect(screen.getByRole('checkbox', { name: 'Termination protection' })).toBeChecked();
+    expect(screen.getByRole('textbox', { name: 'User data - optional' })).toHaveValue('a\nbé');
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('Team');
+    expect(screen.getByRole('textbox', { name: 'Value - optional' })).toHaveValue('Web');
   });
 
   it('a 501 → "not implemented by the emulator" with RunInstances', async () => {
@@ -521,10 +750,10 @@ describe('Launch instance', () => {
     expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
   });
 
-  it('"Cancel" after an entry → the discard dialog; "Keep editing" keeps the form, "Discard" leaves', async () => {
+  it('"Cancel" after changing the VPC → the discard dialog; "Keep editing" keeps the form, "Discard" leaves', async () => {
     const router = open();
     await opened();
-    await choose('Image', 'ami-1');
+    await choose('VPC', OTHER_VPC.id);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(await screen.findByText('Discard what you entered?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
@@ -532,7 +761,7 @@ describe('Launch instance', () => {
       expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
     });
     expect(router.state.location.pathname).toBe(LAUNCH_PATH);
-    expect(triggerOf('Image')).toContain('al2023');
+    expect(triggerOf('VPC')).toContain(OTHER_VPC.id);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() => {

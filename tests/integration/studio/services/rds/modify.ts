@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 import { expect } from '../../support/check';
 import { ACTION } from '../../support/frame';
-import { dialogOf } from './rds';
+import { chooseOption, dialogOf } from './rds';
 
 export async function openModify(page: Page) {
   const wrapper = createWrapper();
@@ -14,13 +14,18 @@ export async function openModify(page: Page) {
   await expect(dialog).toBeVisible();
   const input = (field: string) =>
     page.locator(createWrapper(`#rds-modify-field-${field}`).findInput().findNativeInput().toSelector());
+  const instanceClass = page.locator('#rds-modify-field-class');
   return {
     dialog,
     identifier: input('identifier'),
-    instanceClass: input('class'),
+    /** The field "DB instance class", a choice of the emulator's orderable classes (issue 651). */
+    instanceClass,
+    /** Chooses the class by its value. */
+    chooseClass: (value: string) => chooseOption(instanceClass, value),
     storage: input('storage'),
     password: input('password'),
-    protection: page.locator(modal.findCheckbox().findNativeInput().toSelector()),
+    // A toggle since issue 651; the standalone dialog has "Multi-AZ" beside it.
+    protection: dialog.getByRole('checkbox', { name: 'Deletion protection', exact: true }),
     save: page.locator(wrapper.findButton('#rds-modify-save').toSelector()),
     cancel: page.locator(wrapper.findButton('#rds-modify-cancel').toSelector()),
     failure: page.locator(modal.findAlert().findContent().toSelector()),

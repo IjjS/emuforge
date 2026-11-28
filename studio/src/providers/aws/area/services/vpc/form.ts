@@ -1,3 +1,7 @@
+import type { ResourceType, TagSpecification } from '@aws-sdk/client-ec2';
+
+import type { TagRow } from '../../lib/tag-rows';
+
 // The checks VPC's forms make before sending (issue 574, requirement "The create forms"): a name of at most 256
 // characters, and an IPv4 block `a.b.c.d/n` with four numbers from 0 to 255 and, for a VPC's and a subnet's block, a
 // size from /16 to /28. Each limit is one the emulator refused past it (probe-1, probe-4, probe-5). A message is
@@ -53,4 +57,17 @@ export function blockMessage(value: string, rule: BlockRule): string | undefined
     return `The block's size must be from /${String(rule.sizes.min)} to /${String(rule.sizes.max)}.`;
   }
   return undefined;
+}
+
+/** The create request's tags, with the optional form name first. */
+export function tagSpecifications(
+  resourceType: ResourceType,
+  name: string | undefined,
+  rows: readonly TagRow[] = [],
+): { TagSpecifications?: TagSpecification[] } {
+  const tags = rows.map(({ key, value }) => ({ Key: key, Value: value }));
+  if (name !== undefined && name !== '') {
+    tags.unshift({ Key: 'Name', Value: name });
+  }
+  return tags.length === 0 ? {} : { TagSpecifications: [{ ResourceType: resourceType, Tags: tags }] };
 }

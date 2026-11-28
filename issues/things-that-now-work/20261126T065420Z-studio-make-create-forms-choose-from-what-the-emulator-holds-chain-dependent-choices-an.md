@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|aws-area|create-form-choices-and-option-help
-Issue-Check-Ids:
+Issue-Check-Ids: studio.rds-create-instance-chooses-class-storage-and-placement studio.rds-cluster-forms-choose-from-the-emulator studio.rds-modify-instance-follows-its-parents studio.rds-modify-cluster-version-storage-and-groups studio.rds-snapshot-forms-tag-and-restore-into-a-chosen-network studio.ec2-launch-and-retype-follow-the-vpc-and-the-zone studio.ec2-group-rule-and-key-pair-forms-describe-and-tag studio.ec2-volume-forms-choose-type-snapshot-key-and-instance studio.vpc-create-forms-describe-and-tag studio.vpc-route-table-forms-choose-targets-and-subnets studio.vpc-attach-offers-only-free-vpcs
 Issue-Commit: e46981cdff212c94d40ef0b9b5e631c0dc9cd5b5
 
 # Make create forms choose from what the emulator holds, chain dependent choices and explain each option

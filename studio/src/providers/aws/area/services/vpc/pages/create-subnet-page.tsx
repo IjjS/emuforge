@@ -13,12 +13,14 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, readFailureState } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useAvailabilityZones } from '../../../components/use-availability-zones';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { failureOf } from '../../../components/use-token-listing';
 import type { VpcChoice } from '../../../lib/ec2-network-choices';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import { CHOOSE_A_VPC, VpcField } from '../components/vpc-field';
 import { CREATE_SUBNET_TITLE, subnetHref, SUBNETS_PATH, SUBNETS_WORD, VPC_QUERY } from '../format';
@@ -96,6 +98,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
 
   const [form, setForm] = useState<SubnetFormState>({ vpc: undefined, name: '', zone: NO_ZONE, cidr: '' });
   const [openedWith, setOpenedWith] = useState<VpcChoice>();
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
@@ -103,6 +106,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
   const vpcRef = useRef<SelectProps.Ref>(null);
   const nameRef = useRef<InputProps.Ref>(null);
   const cidrRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -137,6 +141,8 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
 
   const messages: SubnetFormMessages = tried ? messagesOf(form) : {};
 
+  const checkedTags = checkTagRows(tags, form.name === '' ? undefined : 'Name');
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current) {
@@ -157,6 +163,11 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
       cidrRef.current?.focus();
       return;
     }
+    if (checkedTags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(checkedTags.firstInvalid);
+      return;
+    }
+    const extraTags = checkedTags.tags.length === 0 ? {} : { tags: checkedTags.tags };
     const operation = SUBNET_CHANGE_OPERATIONS.createSubnet;
     const what = `Creating subnet ${form.cidr}`;
     if (engineOrigin === undefined) {
@@ -173,7 +184,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
       setPending(false);
     };
     try {
-      const id = await create(subnetOf(form, form.vpc.id), controller.signal);
+      const id = await create({ ...subnetOf(form, form.vpc.id), ...extraTags }, controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -198,7 +209,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
     }
   }, [kept]);
   const handleCancel = () => {
-    if (differs(form, openedWith)) {
+    if (differs(form, openedWith) || tags.length > 0) {
       setAsking(true);
       return;
     }
@@ -216,15 +227,32 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
     [navigate],
   );
 
-  const zoneFixed: SelectProps.Option = { value: NO_ZONE, label: CHOSEN_BY_EMULATOR };
+  const zoneFixed: SelectProps.Option = {
+    value: NO_ZONE,
+    label: CHOSEN_BY_EMULATOR,
+    description: 'The request omits the zone so the emulator chooses it.',
+  };
   const zoneOptions: SelectProps.Option[] = [
     zoneFixed,
-    ...(zones.zones ?? []).map((zone) => ({ value: zone, label: zone })),
+    ...(zones.zoneDetails ?? []).map(({ name, id }) => ({
+      value: name,
+      label: name,
+      ...(id === undefined ? {} : { description: id }),
+    })),
   ];
   const zoneSelected = zoneOptions.find((option) => option.value === form.zone) ?? {
     value: form.zone,
     label: form.zone,
   };
+  const zoneUnavailable =
+    zones.failure?.kind === 'not-implemented'
+      ? readFailureState(zones.failure, connection, 'Availability Zones')
+      : undefined;
+
+  const blockConstraint =
+    form.vpc?.cidr === undefined
+      ? BLOCK_CONSTRAINT
+      : `Inside ${form.vpc.cidr}, and not overlapping another subnet of the VPC.`;
 
   return (
     <SpaceBetween size="l">
@@ -279,7 +307,13 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
                     {zones.loading && engineOrigin !== undefined && (
                       <StatusIndicator type="loading">Loading Availability Zones</StatusIndicator>
                     )}
-                    {zones.failure !== undefined && (
+                    {zoneUnavailable !== undefined && (
+                      <SpaceBetween size="xxs">
+                        <StatusIndicator type={zoneUnavailable.type}>{zoneUnavailable.first}</StatusIndicator>
+                        <Box>{zoneUnavailable.detail}</Box>
+                      </SpaceBetween>
+                    )}
+                    {zones.failure !== undefined && zoneUnavailable === undefined && (
                       <Box>
                         <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                           <StatusIndicator type="error">The Availability Zones could not be loaded</StatusIndicator>
@@ -294,7 +328,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
                 <FormField
                   label="IPv4 CIDR block"
                   description={BLOCK_DESCRIPTION}
-                  constraintText={BLOCK_CONSTRAINT}
+                  constraintText={blockConstraint}
                   errorText={messages.cidr}
                 >
                   <Input
@@ -310,6 +344,7 @@ export function CreateSubnetPage({ connection }: ScreenPageProps) {
                 </FormField>
               </SpaceBetween>
             </Container>
+            <TagsField ref={tagsRef} rows={tags} onChange={setTags} errors={tried ? checkedTags.errors : undefined} />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>

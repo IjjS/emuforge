@@ -8,13 +8,28 @@ import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { OPERATIONS } from '../api';
+import type { UpgradeTarget } from '../choices-api';
+import type { SecurityGroupChoice } from '../../../components/security-group-choices';
+import { ChoiceSelect, optional } from '../../../components/choice-select';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { failureOf } from '../../../components/use-token-listing';
+import type { ChoiceSource } from '../../../components/use-paged-choices';
+import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
+import { useOrderableRows, useSubnetGroupPlacement, type ChoiceRead } from '../choices-queries';
+import { readFailoverTargets, useClusterSecurityGroups } from '../cluster-queries';
+import { IDENTIFIER_CONSTRAINT, identifierError } from '../form';
+import { afterParent, canSave, changes, draftField, editField, NOT_IN_LIST } from '../modify-draft';
+import { storageTypes } from '../orderable';
+import { RDS_KEYS, useRdsRead } from '../queries';
+import { FieldReadStatus, UpgradeVersionField } from './choice-fields';
+import { SecurityGroupsField } from './create-fields';
 import type { DbCluster } from '../cluster-api';
 import {
   CLUSTER_ACTIONS,
   clusterActionReason,
-  clusterReaders,
   retentionDays,
   type ClusterAction,
   type ClusterChanges,
@@ -25,6 +40,7 @@ const ACTIONS: readonly ClusterAction[] = ['stop', 'start', 'modify', 'failover'
 
 interface OperationControlsProps {
   cluster: DbCluster;
+  connection: AreaConnection;
   pending: boolean;
   reading: boolean;
   unavailable: ReadonlySet<ClusterAction>;
@@ -35,7 +51,14 @@ type Dialog = { kind: 'modify' | 'failover'; cluster: DbCluster };
 type DialogOperation = Extract<ClusterOperation, { kind: Dialog['kind'] }>;
 type Drafts = { [Kind in Dialog['kind']]?: Extract<DialogOperation, { kind: Kind }> | undefined };
 
-export function ClusterOperationControls({ cluster, pending, reading, unavailable, onSubmit }: OperationControlsProps) {
+export function ClusterOperationControls({
+  cluster,
+  connection,
+  pending,
+  reading,
+  unavailable,
+  onSubmit,
+}: OperationControlsProps) {
   const [dialog, setDialog] = useState<Dialog>();
   const [drafts, setDrafts] = useState<Drafts>({});
 
@@ -84,6 +107,7 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
       {dialog?.kind === 'modify' && (
         <ModifyDialog
           cluster={dialog.cluster}
+          connection={connection}
           draft={drafts.modify?.changes}
           pending={pending}
           onDismiss={handleDismiss}
@@ -95,6 +119,7 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
       {dialog?.kind === 'failover' && (
         <FailoverDialog
           cluster={dialog.cluster}
+          connection={connection}
           draft={drafts.failover?.target}
           pending={pending}
           onDismiss={handleDismiss}
@@ -109,28 +134,81 @@ export function ClusterOperationControls({ cluster, pending, reading, unavailabl
 
 interface DialogProps {
   cluster: DbCluster;
+  connection: AreaConnection;
   pending: boolean;
   onDismiss: () => void;
 }
 
 function ModifyDialog({
   cluster,
+  connection,
   draft,
   pending,
   onDismiss,
   onSave,
 }: DialogProps & { draft: ClusterChanges | undefined; onSave: (changes: ClusterChanges) => void }) {
+  const [identifier, setIdentifier] = useState(draft?.newIdentifier ?? cluster.id);
+  const [version, setVersion] = useState(draft?.version);
+  const [groups, setGroups] = useState<readonly SecurityGroupChoice[]>(() =>
+    (draft?.securityGroupIds ?? cluster.securityGroups).map((id) => ({ id })),
+  );
+  const [storedType, setStoredType] = useState(() =>
+    editField(draftField(cluster.storageType), draft?.storageType ?? cluster.storageType),
+  );
   const [retention, setRetention] = useState(
     (draft?.backupRetentionPeriod ?? cluster.backupRetentionPeriod)?.toString() ?? '',
   );
   const [retentionEdited, setRetentionEdited] = useState(false);
   const [protection, setProtection] = useState(draft?.deletionProtection ?? cluster.deletionProtection);
+  const endpoint = connection.engineOrigin;
+  const engine = cluster.engine ?? '';
+  const targetVersion = version?.version ?? cluster.engineVersion;
+  const versionField = editField(draftField<UpgradeTarget | undefined>(undefined), version);
+  const rows = useOrderableRows(endpoint, engine, targetVersion);
+  const types =
+    rows.data === undefined
+      ? undefined
+      : storageTypes(rows.data).filter(({ type }) => type === 'aurora' || type === 'aurora-iopt1');
+  const storage = afterParent(
+    storedType,
+    versionField,
+    types?.map(({ type }) => type),
+    `Choose a storage type for ${targetVersion ?? ''}`,
+  );
+  const [seenRows, setSeenRows] = useState(rows.data);
+  if (rows.data !== seenRows) {
+    setSeenRows(rows.data);
+    setStoredType(storage);
+  }
+
+  const placement = useSubnetGroupPlacement(endpoint, undefined, cluster.subnetGroup, true);
+  const groupIds = [...new Set([...cluster.securityGroups, ...(draft?.securityGroupIds ?? [])])];
+  const startGroups = useClusterSecurityGroups(endpoint, groupIds);
+  const selectedGroups = groups.map((group) => startGroups.value?.find(({ id }) => id === group.id) ?? group);
+  const missingIds =
+    startGroups.value === undefined
+      ? undefined
+      : new Set(cluster.securityGroups.filter((id) => !startGroups.value?.some((group) => group.id === id)));
 
   const days = retentionDays(retention);
   const error = retentionEdited && days === undefined ? 'Enter a whole number from 1 to 35.' : undefined;
-  const changes: ClusterChanges = {};
-  if (days !== undefined && days !== cluster.backupRetentionPeriod) changes.backupRetentionPeriod = days;
-  if (protection !== cluster.deletionProtection) changes.deletionProtection = protection;
+  const invalidIdentifier = identifier !== cluster.id ? identifierError(identifier) : undefined;
+  const fields = {
+    newIdentifier: editField(draftField(cluster.id), identifier),
+    version: versionField,
+    securityGroupIds: editField(
+      draftField<readonly string[]>(
+        cluster.securityGroups,
+        (left, right) => left.length === right.length && left.every((id) => right.includes(id)),
+      ),
+      groups.map(({ id }) => id),
+    ),
+    storageType: storage,
+    backupRetentionPeriod: editField(draftField(cluster.backupRetentionPeriod), days),
+    deletionProtection: editField(draftField(cluster.deletionProtection), protection),
+  };
+  const patch = changes(fields);
+  const changesToSend: ClusterChanges = optional(patch);
 
   return (
     <OperationDialog
@@ -140,14 +218,58 @@ function ModifyDialog({
       onDismiss={onDismiss}
       submitLabel="Save changes"
       pendingLabel="Saving changes"
-      canSubmit={error === undefined && Object.keys(changes).length > 0}
+      canSubmit={
+        error === undefined && invalidIdentifier === undefined && canSave(fields, rows.data, ['version', 'storageType'])
+      }
       onSubmit={() => {
-        onSave(changes);
+        onSave(changesToSend);
       }}
     >
       <SpaceBetween size="m">
+        <FormField label="DB cluster identifier" constraintText={IDENTIFIER_CONSTRAINT} errorText={invalidIdentifier}>
+          <Input value={identifier} disabled={pending} onChange={({ detail }) => setIdentifier(detail.value)} />
+        </FormField>
+        {cluster.engineVersion !== undefined && (
+          <UpgradeVersionField
+            connection={connection}
+            engine={engine}
+            version={cluster.engineVersion}
+            value={version}
+            onChange={(target) => {
+              setVersion(target);
+              if (target === undefined && storedType.cleared !== undefined) {
+                setStoredType(editField(storedType, storedType.start));
+              }
+            }}
+          />
+        )}
+        <SpaceBetween size="xs">
+          <SecurityGroupsField
+            connection={connection}
+            value={selectedGroups}
+            onChange={setGroups}
+            placement={placement}
+            missingIds={missingIds}
+            required
+          />
+          <FieldReadStatus
+            connection={connection}
+            thing="security groups"
+            failure={startGroups.failure}
+            retry={startGroups.refresh}
+          />
+        </SpaceBetween>
+        <ClusterStorageType
+          connection={connection}
+          pending={pending}
+          rows={rows}
+          types={types ?? []}
+          value={storage}
+          onChange={(value) => setStoredType(editField(storage, value))}
+        />
         <Checkbox
           checked={protection}
+          description="While it is on, the emulator refuses to delete the DB cluster."
           disabled={pending}
           onChange={({ detail }) => {
             setProtection(detail.checked);
@@ -172,17 +294,126 @@ function ModifyDialog({
   );
 }
 
+function ClusterStorageType({
+  connection,
+  pending,
+  rows,
+  types,
+  value,
+  onChange,
+}: {
+  connection: AreaConnection;
+  pending: boolean;
+  rows: ChoiceRead<unknown>;
+  types: ReturnType<typeof storageTypes>;
+  value: ReturnType<typeof draftField<string | undefined>>;
+  onChange: (value: string | undefined) => void;
+}) {
+  const options = types.map(({ type, minSize, maxSize }) => ({
+    value: type,
+    label: type,
+    ...optional({
+      description: minSize === undefined || maxSize === undefined ? undefined : `${minSize} to ${maxSize} GiB`,
+    }),
+  }));
+  const unset = { value: '', label: 'Not set', description: 'The cluster has no storage type.' };
+  const canRestoreUnset = value.start === undefined && value.cleared === undefined;
+  const selected =
+    value.value === undefined
+      ? value.cleared === undefined
+        ? unset
+        : null
+      : (options.find((option) => option.value === value.value) ?? {
+          value: value.value,
+          label: value.value,
+          ...optional({ description: value.missing ? NOT_IN_LIST : undefined }),
+        });
+  return (
+    <FormField label="Storage type" errorText={value.cleared}>
+      <SpaceBetween size="xs">
+        <Select
+          ariaLabel="Storage type"
+          options={canRestoreUnset ? [unset, ...options] : options}
+          selectedOption={selected}
+          triggerVariant="option"
+          placeholder="Choose a storage type"
+          disabled={pending || rows.data === undefined}
+          invalid={value.cleared !== undefined}
+          onChange={({ detail }) => onChange(detail.selectedOption.value || undefined)}
+        />
+        <FieldReadStatus
+          connection={connection}
+          thing="storage type"
+          failure={rows.failure}
+          loading={rows.loading}
+          retry={rows.retry}
+        />
+      </SpaceBetween>
+    </FormField>
+  );
+}
+
+type FailoverTarget = Awaited<ReturnType<typeof readFailoverTargets>>[number];
+type TargetRead = { targets?: FailoverTarget[]; failure?: RequestFailure; loading?: boolean };
+const NO_READER = 'Failover requires a reader DB instance in this cluster.';
+
 function FailoverDialog({
   cluster,
+  connection,
   draft,
   pending,
   onDismiss,
   onFailover,
 }: DialogProps & { draft: string | undefined; onFailover: (target: string) => void }) {
-  const [target, setTarget] = useState(draft ?? '');
-  const options = clusterReaders(cluster).map((id) => ({ label: id, value: id }));
-  const selected = options.find(({ value }) => value === target);
+  const endpoint = connection.engineOrigin;
+  const initial = useRdsRead({
+    key: RDS_KEYS.choices('failover-targets', cluster.id, 'dialog'),
+    endpoint,
+    operation: OPERATIONS.describeDBInstances,
+    read: (at, signal) => readFailoverTargets(at, cluster.id, signal),
+  });
+  const [latest, setLatest] = useState<TargetRead>();
+  const targetRead = useRef<AbortController>(null);
+  useEffect(() => () => targetRead.current?.abort(), []);
+  const [target, setTarget] = useState<FailoverTarget | undefined>(draft === undefined ? undefined : { id: draft });
+  const [targetError, setTargetError] = useState<string>();
+  const targets = latest === undefined ? initial.value : latest.targets;
+  const failure = latest === undefined ? initial.failure : latest.failure;
+  const loading = latest === undefined ? initial.loading : latest.loading === true;
+  const selected = targets?.find(({ id }) => id === target?.id);
+  if (!loading && targets !== undefined && target !== undefined && selected === undefined) {
+    setTargetError(`${target.id} is no longer a reader of this DB cluster.`);
+    setTarget(undefined);
+  }
 
+  const handleTargetOpen = () => {
+    targetRead.current?.abort();
+    setLatest({ loading: true });
+  };
+  const readPickerTargets = async (at: string) => {
+    handleTargetOpen();
+    // The dialog still needs this answer after the picker closes.
+    const controller = new AbortController();
+    targetRead.current = controller;
+    const { signal } = controller;
+    try {
+      const fresh = await readFailoverTargets(at, cluster.id, signal);
+      signal.throwIfAborted();
+      setLatest({ targets: fresh });
+      return { items: fresh };
+    } catch (error) {
+      if (!signal.aborted) setLatest({ failure: failureOf(error, OPERATIONS.describeDBInstances) });
+      throw error;
+    }
+  };
+  const source: ChoiceSource<FailoverTarget> = {
+    endpoint,
+    key: RDS_KEYS.choices('failover-targets', cluster.id),
+    operation: OPERATIONS.describeDBInstances,
+    readAgainOnOpen: true,
+    read: readPickerTargets,
+    optionOf: ({ id: value, description }) => ({ value, label: value, ...optional({ description }) }),
+  };
   return (
     <OperationDialog
       header="Fail over DB cluster"
@@ -191,21 +422,44 @@ function FailoverDialog({
       onDismiss={onDismiss}
       submitLabel="Fail over"
       pendingLabel="Requesting failover"
-      canSubmit={selected !== undefined}
+      canSubmit={!loading && selected !== undefined}
       onSubmit={() => {
-        onFailover(target);
+        if (selected !== undefined) onFailover(selected.id);
       }}
     >
-      <FormField label="Target DB instance" description="The selected reader becomes the writer.">
-        <Select
-          selectedOption={selected ?? null}
-          options={options}
-          placeholder="Select a reader DB instance"
-          disabled={pending}
-          onChange={({ detail }) => {
-            setTarget(detail.selectedOption.value ?? '');
-          }}
-        />
+      <FormField
+        label="Target DB instance"
+        description="The selected reader becomes the writer."
+        errorText={targetError}
+      >
+        <SpaceBetween size="xs">
+          <ChoiceSelect
+            source={source}
+            connection={connection}
+            ariaLabel="Target DB instance"
+            things="DB instances"
+            placeholder="Select a reader DB instance"
+            none="No reader DB instances"
+            value={selected ?? target}
+            invalid={targetError !== undefined}
+            onOpen={handleTargetOpen}
+            onChange={(choice) => {
+              setTarget(choice);
+              setTargetError(undefined);
+            }}
+          />
+          {loading && <Box nativeAttributes={{ role: 'status' }}>Loading DB instances</Box>}
+          {!loading && targets?.length === 0 && <Box variant="p">{NO_READER}</Box>}
+          <FieldReadStatus
+            connection={connection}
+            thing="DB instances"
+            failure={loading ? undefined : failure}
+            retry={() => {
+              setLatest(undefined);
+              initial.refresh();
+            }}
+          />
+        </SpaceBetween>
       </FormField>
     </OperationDialog>
   );

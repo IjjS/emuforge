@@ -19,8 +19,10 @@ import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-d
 import { actionFailureItem, readFailureState, ReadFailure } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { TagsField, type TagsFieldRef } from '../../../components/tags-field';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf } from '../../../components/use-token-listing';
+import { checkTagRows, type TagRow } from '../../../lib/tag-rows';
 import type { ScreenPageProps } from '../../../screens';
 import type { GroupChoice } from '../choices-api';
 import { groupChoices } from '../choices-queries';
@@ -51,21 +53,21 @@ import { useSecurityGroup } from '../group-queries';
 const ADDING = 'Adding';
 
 const DIRECTION_ITEMS = [
-  { value: 'inbound', label: 'Inbound' },
-  { value: 'outbound', label: 'Outbound' },
+  { value: 'inbound', label: 'Inbound', description: "The rule is added to the group's inbound rules." },
+  { value: 'outbound', label: 'Outbound', description: "The rule is added to the group's outbound rules." },
 ];
 
 const PROTOCOL_OPTIONS: SelectProps.Option[] = [
-  { value: 'tcp', label: 'TCP' },
-  { value: 'udp', label: 'UDP' },
-  { value: 'icmp', label: 'ICMP' },
-  { value: 'all', label: 'All' },
+  { value: 'tcp', label: 'TCP', description: 'TCP, for a range of ports.' },
+  { value: 'udp', label: 'UDP', description: 'UDP, for a range of ports.' },
+  { value: 'icmp', label: 'ICMP', description: 'Every ICMP type and code.' },
+  { value: 'all', label: 'All', description: 'Every protocol and every port.' },
 ];
 
 const PEER_ITEMS = [
-  { value: 'ipv4', label: 'IPv4 range' },
-  { value: 'ipv6', label: 'IPv6 range' },
-  { value: 'group', label: 'Security group' },
+  { value: 'ipv4', label: 'IPv4 range', description: 'A range of IPv4 addresses.' },
+  { value: 'ipv6', label: 'IPv6 range', description: 'A range of IPv6 addresses.' },
+  { value: 'group', label: 'Security group', description: 'The members of a security group of this VPC.' },
 ];
 
 const CIDR_PLACEHOLDER: Record<'ipv4' | 'ipv6', string> = { ipv4: '10.0.0.0/16', ipv6: '2001:db8::/32' };
@@ -81,6 +83,7 @@ interface RuleFormState {
   cidr: string;
   group: GroupChoice | undefined;
   description: string;
+  tags: TagRow[];
 }
 
 const START: RuleFormState = {
@@ -92,11 +95,15 @@ const START: RuleFormState = {
   cidr: '',
   group: undefined,
   description: '',
+  tags: [],
 };
 
 /** Whether the form differs from how it opened (`aws-area.md`, entry 5). */
 function differs(form: RuleFormState): boolean {
-  return (Object.keys(START) as (keyof RuleFormState)[]).some((key) => form[key] !== START[key]);
+  return (
+    form.tags.length > 0 ||
+    (Object.keys(START) as (keyof RuleFormState)[]).some((key) => key !== 'tags' && form[key] !== START[key])
+  );
 }
 
 function messagesOf(form: RuleFormState): RuleFormMessages {
@@ -112,7 +119,7 @@ function messagesOf(form: RuleFormState): RuleFormMessages {
 }
 
 /** What the authorize is sent for a form that passed its checks. */
-function ruleOf(form: RuleFormState): NewRule {
+function ruleOf(form: RuleFormState, tags: TagRow[]): NewRule {
   const peer =
     form.peerKind === 'group'
       ? { kind: 'group' as const, value: form.group?.id ?? '' }
@@ -127,6 +134,7 @@ function ruleOf(form: RuleFormState): NewRule {
   if (form.description !== '') {
     rule.description = form.description;
   }
+  if (tags.length > 0) rule.tags = tags;
   return rule;
 }
 
@@ -175,6 +183,7 @@ function RuleForm({ group, connection }: RuleFormProps) {
   const cidrRef = useRef<InputProps.Ref>(null);
   const groupRef = useRef<SelectProps.Ref>(null);
   const descriptionRef = useRef<InputProps.Ref>(null);
+  const tagsRef = useRef<TagsFieldRef>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
 
   // A press while an earlier one is in flight sends nothing; the request stops when the page is left.
@@ -199,6 +208,7 @@ function RuleForm({ group, connection }: RuleFormProps) {
   }, []);
 
   const messages = tried ? messagesOf(form) : {};
+  const tags = checkTagRows(form.tags);
   const outbound = form.direction === 'outbound';
   const operation = authorizeOperation(outbound);
 
@@ -223,6 +233,10 @@ function RuleForm({ group, connection }: RuleFormProps) {
       first[1].current?.focus();
       return;
     }
+    if (tags.firstInvalid !== undefined) {
+      tagsRef.current?.focusKey(tags.firstInvalid);
+      return;
+    }
     const direction = outbound ? 'outbound' : 'inbound';
     const what = `Adding an ${direction} rule to ${groupName}`;
     if (engineOrigin === undefined) {
@@ -239,7 +253,7 @@ function RuleForm({ group, connection }: RuleFormProps) {
       setPending(false);
     };
     try {
-      await add(group.id, ruleOf(form), controller.signal);
+      await add(group.id, ruleOf(form, tags.tags), controller.signal);
       if (controller.signal.aborted) {
         return;
       }
@@ -415,6 +429,14 @@ function RuleForm({ group, connection }: RuleFormProps) {
                 </FormField>
               </SpaceBetween>
             </Container>
+
+            <TagsField
+              ref={tagsRef}
+              rows={form.tags}
+              errors={tried ? tags.errors : undefined}
+              onChange={(rows) => change({ tags: rows })}
+              disabled={pending}
+            />
 
             {failure !== undefined && (
               <Alert ref={failureRef} type={failure.type} header={failure.header}>

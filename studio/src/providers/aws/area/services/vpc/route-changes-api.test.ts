@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError } from '../../../../../lib/aws/request';
+import { ROUTE_TARGET_KINDS, type RouteTargetKind } from './route-targets';
 import { associateSubnet, createRoute, deleteRoute, disassociateSubnet } from './route-changes-api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and each request as it leaves the browser,
@@ -97,13 +98,19 @@ function refusal(code: string, message: string): Answer {
 }
 
 describe('add a route', () => {
-  it('CreateRoute with RouteTableId, DestinationCidrBlock as typed and GatewayId', async () => {
+  const targets: [RouteTargetKind, string][] = [
+    ['GatewayId', 'igw-1'],
+    ['NatGatewayId', 'nat-1'],
+    ['InstanceId', 'i-1'],
+    ['NetworkInterfaceId', 'eni-1'],
+  ];
+  it.each(targets)('CreateRoute sends the destination and only %s as the target', async (kind, id) => {
     engine.on('CreateRoute', () => ok('CreateRoute', '<return>true</return>'));
-    await createRoute(endpoint, { routeTableId: 'rtb-1', destination: '8.8.8.8/16', gatewayId: 'igw-1' }, signal());
+    await createRoute(endpoint, { routeTableId: 'rtb-1', destination: '8.8.8.8/16', target: { kind, id } }, signal());
     const sent = engine.of('CreateRoute')[0]?.params ?? new URLSearchParams();
     expect(sent.get('RouteTableId')).toBe('rtb-1');
     expect(sent.get('DestinationCidrBlock')).toBe('8.8.8.8/16');
-    expect(sent.get('GatewayId')).toBe('igw-1');
+    expect([...sent].filter(([name]) => Object.hasOwn(ROUTE_TARGET_KINDS, name))).toEqual([[kind, id]]);
   });
 });
 
@@ -137,7 +144,12 @@ describe('refusals', () => {
       'CreateRoute',
       'RouteAlreadyExists',
       'The route identified by 0.0.0.0/0 already exists.',
-      () => createRoute(endpoint, { routeTableId: 'rtb-1', destination: '0.0.0.0/0', gatewayId: 'igw-1' }, signal()),
+      () =>
+        createRoute(
+          endpoint,
+          { routeTableId: 'rtb-1', destination: '0.0.0.0/0', target: { kind: 'GatewayId', id: 'igw-1' } },
+          signal(),
+        ),
     ],
     [
       'AssociateRouteTable',
@@ -177,7 +189,11 @@ describe('every call', () => {
     [
       'CreateRoute',
       (given = signal()) =>
-        createRoute(endpoint, { routeTableId: 'rtb-1', destination: '0.0.0.0/0', gatewayId: 'igw-1' }, given),
+        createRoute(
+          endpoint,
+          { routeTableId: 'rtb-1', destination: '0.0.0.0/0', target: { kind: 'GatewayId', id: 'igw-1' } },
+          given,
+        ),
     ],
     ['DeleteRoute', (given = signal()) => deleteRoute(endpoint, 'rtb-1', '0.0.0.0/0', given)],
     ['AssociateRouteTable', (given = signal()) => associateSubnet(endpoint, 'rtb-1', 'subnet-1', given)],
