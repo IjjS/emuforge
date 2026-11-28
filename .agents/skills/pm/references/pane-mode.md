@@ -81,7 +81,12 @@ own unit is not this: that is `BLOCKED`.
   are the evidence. For a direct test while developing, use the local slots below.
 - For a unit of an issue that has an issue branch, `pm-check` is the fast check: it runs what the unit's own paths
   against the issue branch call for and leaves `integration` to the issue branch (the step is recorded
-  `deferred`). The integration checks run once, in the whole check on the issue branch.
+  `deferred`). Its Studio unit step gives Vitest `related` the changed source paths and the test inputs that
+  read files directly. The test inputs are found from filesystem module specifiers in Studio source and
+  `import.meta.glob` in a test or its shared support. Shared setup, paths outside the supported Studio source
+  paths, deleted paths, or an unreadable selection call for the whole suite. The record names the selection
+  and its base. A check that can take a branch into `main` runs the whole Studio suite whenever it calls
+  for Studio. The integration checks run once, in the whole check on the issue branch.
 - Single integration checks run with `<Root>/.pm/bin/pm-check <worktree> --checks <id>…`, on any checkout. Their
   record is `output/checks/checks.json`, their log `output/logs/checks-integration.log`; it is never a gate.
 - All text you write into the repository is English.

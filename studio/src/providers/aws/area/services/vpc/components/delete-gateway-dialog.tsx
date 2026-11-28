@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
 import { useDeleteGateway } from '../gateway-changes';
@@ -92,7 +93,7 @@ function Dialog({
       header="Delete internet gateway?"
       body={
         <>
-          <ValueText kind="name" value={gateway.label} />
+          <NameText name={gateway.label} />
           <ValueText kind="text" value={SENTENCE} />
           {failure !== undefined && (
             <Failure

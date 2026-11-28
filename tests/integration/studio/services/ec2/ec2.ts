@@ -829,6 +829,14 @@ export async function valueOf(scope: Locator, label: string): Promise<string | n
   }, label);
 }
 
+/** The value of `label` in the key-value pairs inside `scope`, as an element: for a link or a control it holds. */
+export function valueElement(scope: Locator, label: string): Locator {
+  return scope
+    .locator('dt')
+    .filter({ hasText: new RegExp(`^\\s*${escaped(label)}\\s*$`) })
+    .locator('xpath=following-sibling::dd[1]');
+}
+
 /** The texts of the parts of the value of `label` inside `scope`, in order (each element that holds text alone). */
 export async function valuePartsOf(scope: Locator, label: string): Promise<string[]> {
   return scope.evaluate((root, wanted) => {
@@ -1055,4 +1063,21 @@ export function tableOf(main: Locator, name: string): Locator {
   return main.locator(TABLE).filter({
     has: main.page().locator(HEADER_TEXT).filter({ hasText: new RegExp(`^\\s*${escaped(name)}\\s*$`) }),
   });
+}
+
+// --- An option's label (issue 664) ------------------------------------------------------------------------------
+
+/** The label of the option whose value is `value` in the open list of the select or multiselect of `formField`. */
+export function optionLabel(formField: Locator, value: string): Locator {
+  // Below the component's root, so the same selector serves a select and a multiselect.
+  return formField.locator(inside(wrapper.findSelect().findDropdown().findOptionByValue(value).findLabel()));
+}
+
+/** Opens the select of `formField` and waits for the option whose value is `value`; the list stays open. */
+export async function openSelect(formField: Locator, value: string): Promise<Locator> {
+  const select = formField.locator(SELECT).first();
+  await select.locator(SELECT_TRIGGER).click(ACTION);
+  const option = select.locator(optionByValue(value));
+  await expect(option, `the option ${value}`).toBeVisible({ timeout: 20_000 });
+  return option;
 }

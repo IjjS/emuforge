@@ -7,11 +7,9 @@ import {
   GET_RESOURCES,
   GET_REST_API,
   GET_REST_STAGES,
-  GET_STAGE_ADDRESS,
   readRestApi,
   readRestResources,
   readRestStages,
-  readStageAddress,
 } from './rest-api';
 
 function restKey(endpoint: string | undefined, id: string, part: 'details' | 'resources' | 'stages') {
@@ -75,12 +73,6 @@ export function useRestResources(id: string, endpoint: string | undefined) {
 export function useRestStages(id: string, endpoint: string | undefined) {
   return useRestRead(restKey(endpoint, id, 'stages'), endpoint, GET_REST_STAGES, (origin, signal) =>
     readRestStages(origin, id, signal),
-  );
-}
-
-export function useStageAddress(id: string, stage: string, endpoint: string | undefined) {
-  return useRestRead([...restKey(endpoint, id, 'stages'), stage], endpoint, GET_STAGE_ADDRESS, (origin, signal) =>
-    readStageAddress(origin, id, stage, signal),
   );
 }
 

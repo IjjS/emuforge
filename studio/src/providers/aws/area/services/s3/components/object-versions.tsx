@@ -10,6 +10,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { requestFailure } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
 import { usePageSignal } from '../../../components/use-token-listing';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { OPERATIONS, type ObjectBody, type ObjectVersion, type ObjectVersionPage } from '../api';
 import { keyName, NO_VALUE } from '../format';
@@ -54,7 +56,7 @@ function HistoryKey({ value }: { value: string }) {
   return (
     <>
       <span style={{ whiteSpace: 'break-spaces' }}>
-        <ValueText kind="name" value={value} />
+        <NameText name={value} />
       </span>
       {controls.length > 0 && (
         <Box
@@ -72,13 +74,6 @@ function HistoryKey({ value }: { value: string }) {
       )}
     </>
   );
-}
-
-function describeHistoryKey(key: string) {
-  return key
-    .replaceAll('\\', ' \\\\ (literal backslash) ')
-    .replaceAll('\r', ' \\r (carriage return) ')
-    .replaceAll('\n', ' \\n (line feed) ');
 }
 
 function isNullBody(row: ObjectVersion) {
@@ -366,7 +361,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
           itemSelectionLabel: (_, row) => {
             const etag = nullBodyETag(row);
             return (
-              `Select ${describeHistoryKey(row.key)} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}` +
+              `Select ${nameIdentity(row.key)} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}` +
               (etag === undefined ? '' : `, ETag: ${etag}`)
             );
           },

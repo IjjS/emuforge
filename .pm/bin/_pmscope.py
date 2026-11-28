@@ -479,6 +479,11 @@ def scope(checkout, full=False, only=None, checks=None):
     whether it was called for and why. On a unit of an issue branch (kind unit) the integration module its paths
     call for is not called but `deferred`, with the same reasons; the key `deferred` exists on no other module and
     in no other kind. Never raises."""
+    return scope_and_paths(checkout, full, only, checks)[0]
+
+
+def scope_and_paths(checkout, full=False, only=None, checks=None):
+    """The scope and the sorted changed paths used to decide it."""
     target, failed = "main", None
     try:
         target = target_of(os.path.realpath(str(checkout)))
@@ -521,7 +526,7 @@ def scope(checkout, full=False, only=None, checks=None):
     else:
         why = "main: the head has no commit of its own against main" if kind == "main" else reason
         sc["services"] = dict(all=True, names=[], why=why)
-    return sc
+    return sc, paths
 
 
 def called(sc):

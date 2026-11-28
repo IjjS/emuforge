@@ -136,6 +136,29 @@ describe("ValueText, the area's one way of breaking a value", () => {
     expect(new Set(Object.values(VALUE_CLASS)).size).toBe(Object.keys(VALUE_CLASS).length);
   });
 
+  it('a name keeps its spaces and tabs in the name element', () => {
+    const name = 'a  b\tc';
+    const holder = shown('name', name);
+
+    expect(holder.firstElementChild).toHaveClass(VALUE_CLASS.name);
+    expect(holder.firstElementChild?.textContent).toBe(name);
+    const rules = rulesOf(VALUE_CLASS.name);
+    expect(rules.get('white-space-collapse')).toBe('break-spaces');
+    expect(rules.has('white-space')).toBe(false);
+    expect(rules.has('text-wrap')).toBe(false);
+    expect(rules.has('text-wrap-mode')).toBe(false);
+  });
+
+  it.each(['text', 'address', 'fixed'] as const)('a %s keeps its element and text', (kind) => {
+    const value = 'a  b';
+    const holder = shown(kind, value);
+
+    expect(holder.firstElementChild).toHaveClass(VALUE_CLASS[kind]);
+    expect(holder.firstElementChild?.textContent).toBe(value);
+    expect(rulesOf(VALUE_CLASS[kind]).get('white-space')).toBeUndefined();
+    expect(rulesOf('aws-area-value-part').get('white-space')).toBeUndefined();
+  });
+
   it("the stylesheet: a fixed word never breaks inside a word; an address's part, a name and free text break inside a word longer than its line", () => {
     // Every kind undoes a `word-break` it may inherit (Cloudscape's inline copy control sets `break-all`).
     expect(rulesOf('aws-area-value').get('word-break')).toBe('normal');

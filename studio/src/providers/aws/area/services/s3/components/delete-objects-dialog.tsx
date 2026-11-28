@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_BUCKET } from '../api';
 import { useDeleteVersioning, useDeletionOperations, type BucketPropertyValue } from '../queries';
@@ -106,7 +107,7 @@ function SelectionList({ selection }: { selection: DeletionSelection }) {
     <ul aria-label="Selected objects and folders">
       {names.map((name) => (
         <li key={name}>
-          <ValueText kind="name" value={name} />
+          <NameText name={name} />
         </li>
       ))}
     </ul>
@@ -193,7 +194,7 @@ export function DeleteObjectsDialog({
     single === undefined ? (
       deletionHeader(selection.keys.length, selection.folders.length)
     ) : (
-      <Quoted before="Delete " name={single} after="?" />
+      <Quoted before="Delete " name={single} after="?" showIdentity />
     );
 
   return (

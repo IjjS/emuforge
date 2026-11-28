@@ -13,6 +13,7 @@ import { useEffect, useImperativeHandle, useState, type ReactNode, type Ref } fr
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { holdsHiddenWhiteSpace } from '../../../components/name-identity';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
@@ -121,7 +122,7 @@ export function StreamSection({ connection, group, selection, actions, refreshRe
                   })}
                 >
                   <ValueText kind="name" value={displayName} />
-                  {hasLineBreaks && (
+                  {holdsHiddenWhiteSpace(logStreamName) && (
                     <>
                       {' '}
                       <ValueText kind="name" value={`(${label})`} />

@@ -1,12 +1,13 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
-import { useEffect, useEffectEvent, useRef, useState, type Ref, type RefObject } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
 import { readFailureState } from './failure-states';
+import { identityOption, optionMatches } from './name-identity';
 import { usePagedChoices, type ChoiceSource, type PagedChoices } from './use-paged-choices';
 
 // A form's field of one choice, read a page at a time (issue 553, design "What is shared"): a Cloudscape `Select`
@@ -94,6 +95,14 @@ interface FieldParts<T> {
   >;
 }
 
+/** Apply Cloudscape's current input text before the browser can select from the dropdown. */
+function LocalFilterText({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  useLayoutEffect(() => {
+    onChange(text);
+  }, [text, onChange]);
+  return null;
+}
+
 /** The choices of `source` and the props a `Select` or `Multiselect` shows them with. */
 // eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
 export function useChoiceField<T>(
@@ -142,7 +151,11 @@ export function useChoiceField<T>(
     return () => observer.disconnect();
   }, []);
   const items = choices.choices ?? [];
-  const available = [...(fixedOption === undefined ? [] : [fixedOption]), ...items.map(source.optionOf)];
+  const suppliedOptions = [...(fixedOption === undefined ? [] : [fixedOption]), ...items.map(source.optionOf)];
+  // The local filter sees the original label so it can find a pasted name without displaying it twice.
+  const available = (
+    filtering === 'local' ? suppliedOptions.filter((option) => optionMatches(option, text)) : suppliedOptions
+  ).map(identityOption);
   const options = held === undefined ? available : available.map((option) => ({ ...option, disabled: true }));
 
   let statusType: NonNullable<SelectProps['statusType']> = 'finished';
@@ -153,7 +166,9 @@ export function useChoiceField<T>(
   }
   // A further page is read when the developer asks for it with "Load more" at the list's end, never by itself.
   const more = statusType === 'finished' && choices.more;
-  const empty = choices.text === '' ? (none ?? `No ${things}`) : `No ${things} match`;
+  // A local filter narrows the choices read here, so its text is the field's own, not the text read for.
+  const typed = filtering === 'local' ? text : choices.text;
+  const empty = typed === '' ? (none ?? `No ${things}`) : `No ${things} match`;
   // With a fixed first choice the list is never empty, so the words that it holds nothing stand at its end.
   const finishedText =
     fixedOption !== undefined && choices.choices !== undefined && items.length === 0 ? empty : undefined;
@@ -179,7 +194,7 @@ export function useChoiceField<T>(
       ...(filtering === 'none'
         ? {}
         : {
-            filteringType: filtering === 'sent' ? ('manual' as const) : ('auto' as const),
+            filteringType: 'manual' as const,
             filteringPlaceholder: `Find ${things}`,
             filteringAriaLabel: `Find ${things}`,
           }),
@@ -193,14 +208,23 @@ export function useChoiceField<T>(
           setText(detail.filteringText);
         }
       },
-      renderDropdownFooter: () =>
-        more ? (
-          <Box padding={{ vertical: 'xs', horizontal: 's' }}>
-            <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
-              Load more
-            </Button>
-          </Box>
-        ) : null,
+      // Cloudscape publishes each input change to the dropdown renderer. onLoadItems is delayed for remote reads.
+      renderDropdownFooter: ({ filterText }) => {
+        const syncText = filtering === 'local' && filterText !== text;
+        if (!syncText && !more) return null;
+        return (
+          <>
+            {syncText && <LocalFilterText text={filterText} onChange={setText} />}
+            {more && (
+              <Box padding={{ vertical: 'xs', horizontal: 's' }}>
+                <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
+                  Load more
+                </Button>
+              </Box>
+            )}
+          </>
+        );
+      },
     },
   };
 }
@@ -235,7 +259,8 @@ export function FixedChoiceDescription({ children }: { children: string }) {
 export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
   const { source, value, onChange, placeholder, invalid, ariaLabel, selectRef, triggerVariant, lockedBy, held } = props;
   const { fieldRef, fixedOption, items, options, props: parts } = useChoiceField(props);
-  const selected = value === undefined ? (fixedOption ?? null) : source.optionOf(value);
+  const shown = value === undefined ? fixedOption : source.optionOf(value);
+  const selected = shown === undefined ? null : identityOption(shown);
   const description = value === undefined && lockedBy === undefined ? fixedOption?.description : undefined;
 
   return (

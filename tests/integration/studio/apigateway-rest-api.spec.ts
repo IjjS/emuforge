@@ -26,7 +26,6 @@ import {
   expectPairs,
   expectResult,
   expectUnavailable,
-  exportedAddress,
   fixture,
   lambdaUri,
   link,
@@ -42,6 +41,7 @@ import {
   rowsOf,
   sel,
   selectRow,
+  shownStageAddress,
   tableOf,
   testPanel,
   textbox,
@@ -100,7 +100,7 @@ test('studio.apigateway-rest-api-page-shows-what-it-serves', async ({ ctx, page 
 
   const stages = tableOf(page, 'Stages');
   await expect(await cellOf(stages, 'dev', 2)).toHaveText(deployment.id!);
-  await expect(await cellOf(stages, 'dev', 4)).toHaveText(await exportedAddress(f.rest, id, 'dev'));
+  await shownStageAddress(f, stages, id, 'dev');
 
   const get = methodOf(resourceOf(page, '/items'), 'GET');
   await expect(expandHeader(get)).toHaveText('Responses');

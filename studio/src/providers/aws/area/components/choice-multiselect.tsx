@@ -3,6 +3,7 @@ import Multiselect, { type MultiselectProps } from '@cloudscape-design/component
 import type { Ref } from 'react';
 
 import { FixedChoiceDescription, optional, useChoiceField, type ChoiceFieldProps } from './choice-select';
+import { identityOption } from './name-identity';
 
 // A form's field of several choices, read a page at a time (issue 553, design "What is shared"): a Cloudscape
 // `Multiselect` over the same hook and states as `choice-select.tsx`. Each choice made is shown as a token that can
@@ -23,7 +24,7 @@ export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
   const selected =
     selectedFixedOption === undefined
       ? value.map((choice) => {
-          const option = source.optionOf(choice);
+          const option = identityOption(source.optionOf(choice));
           return held === undefined ? option : { ...option, disabled: true };
         })
       : [{ ...optional({ value: selectedFixedOption.value, label: selectedFixedOption.label }), disabled: true }];
