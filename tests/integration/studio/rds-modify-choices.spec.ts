@@ -81,7 +81,7 @@ test('studio.rds-modify-instance-follows-its-parents', async ({ ctx, page }) => 
       const form = await openModify(page);
       await (await openSelect(dialogField('Engine version'))).choose('16.13');
       await expect(triggerOf(dialogField('Engine version')), '16.13 chosen').toContainText('16.13');
-      await expect(triggerOf(page.locator('#rds-modify-field-class')), 'the class').toContainText('db.t3.micro');
+      await expect(triggerOf(form.instanceClass), 'the class').toContainText('db.t3.micro');
       await expect(form.save, '"Save changes" once the classes of 16.13 are read').toBeEnabled({ timeout: 20_000 });
       await form.save.click(ACTION);
       await expectModifyResult(page, m);
@@ -160,7 +160,7 @@ test('studio.rds-modify-instance-follows-its-parents', async ({ ctx, page }) => 
     async () => {
       await open(page, instancePath(odd), odd);
       const form = await openModify(page);
-      const instanceClass = triggerOf(page.locator('#rds-modify-field-class'));
+      const instanceClass = triggerOf(form.instanceClass);
       await expect(instanceClass, 'the class as the emulator reports it').toContainText(ODD_CLASS, { timeout: 20_000 });
       await expect(instanceClass, `"${NOT_IN_LIST}"`).toContainText(NOT_IN_LIST, { timeout: 20_000 });
       await form.protection.check(ACTION);

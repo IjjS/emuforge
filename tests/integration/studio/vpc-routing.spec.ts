@@ -64,6 +64,7 @@ import {
   GATEWAYS_PATH,
   gatewaysNamed,
   idOfAddress,
+  items,
   link,
   listOf,
   LOCAL_ROUTE_STAYS,
@@ -85,6 +86,7 @@ import {
   selectRow,
   SUBNET_FIELD,
   tableOf,
+  textAt,
   VIEW_GATEWAYS,
   VPC_FIELD,
   vpcPath,
@@ -276,7 +278,10 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
       await (await openSelect(field(main, 'Target type'))).choose('GatewayId');
       const targets = await openSelect(field(main, 'Target'));
       await targets.expectOption(gateway(), gateway());
-      await expect(targets.option(gateway()), "the option shows the gateway's state").toContainText(/attached|available/);
+      const described = await ec2(ctx, port, 'DescribeInternetGateways', { 'InternetGatewayId.1': gateway() });
+      const state = textAt(items(items(described.root, 'internetGatewaySet')[0], 'attachmentSet')[0], 'state') ?? '';
+      expect(state, "the gateway's attachment state, directly").not.toBe('');
+      await expect(targets.option(gateway()), "the option shows the gateway's state").toContainText(state);
       await targets.choose(gateway());
       await expect(triggerOf(field(main, 'Target')), 'the gateway chosen').toContainText(gateway());
       await entry(page, DESTINATION).fill('0.0.0.0/0', ACTION);
@@ -648,10 +653,7 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
       const vpcs = await openSelect(vpcField);
       await vpcs.type(vpc);
       await vpcs.expectOption(vpc, `Has ${g}`);
-      await expect(
-        vpcs.option(vpc).locator('xpath=ancestor-or-self::*[@aria-disabled="true"][1]'),
-        'the VPC that holds G cannot be chosen',
-      ).toHaveCount(1);
+      await expect(vpcs.unavailable(vpc), 'the VPC that holds G cannot be chosen').toHaveCount(1);
       await vpcs.close();
       await button(main, ATTACH).click(ACTION);
       await expect(errorOf(vpcField), 'the message at "VPC"').toHaveText(CHOOSE_A_VPC);

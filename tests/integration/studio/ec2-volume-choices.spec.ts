@@ -68,7 +68,6 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
   const iops = () => field(main, 'IOPS').or(field(main, 'IOPS - optional')).first();
   const pick = async (label: string, value: string) => {
     await (await openSelect(field(main, label))).choose(value);
-    await expect(triggerOf(field(main, label)), `${label} chosen`).not.toContainText(/^$/);
   };
   const openCreate = async () => {
     await open(page, `${volumesPath}/create`, CREATE);
@@ -90,7 +89,7 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
       await pick('Snapshot - optional', s);
       await size().getByRole('textbox').fill('', ACTION);
       await button(main, CREATE).click(ACTION);
-      await expect(size(), "the snapshot's size under sc1's minimum").toContainText(
+      await expect(errorOf(size()), "the snapshot's size under sc1's minimum").toHaveText(
         "The snapshot's 3 GiB is under sc1's minimum: enter a size.",
       );
       expect(creates.count(), 'requests to create').toBe(0);
@@ -190,6 +189,7 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
       await field(dialog, 'Device name').getByRole('textbox').fill(root, ACTION);
       await button(dialog, 'Attach volume').click(ACTION);
       await expect(alertWith(dialog, direct.code!), "the emulator's code in the dialog").toBeVisible({ timeout: 20_000 });
+      await expect(alertWith(dialog, direct.message!), "the emulator's message").toBeVisible();
       expect(await readVolume(ctx, port, volume), 'the volume, directly').toMatchObject({ state: 'available', attachments: [] });
       await field(dialog, 'Device name').getByRole('textbox').fill('/dev/sdf', ACTION);
       await button(dialog, 'Attach volume').click(ACTION);

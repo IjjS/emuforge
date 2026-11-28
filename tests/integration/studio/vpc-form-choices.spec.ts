@@ -351,9 +351,6 @@ test('studio.vpc-attach-offers-only-free-vpcs', async ({ ctx, page }) => {
   const h = await seeded.gateway(`${p}-h`);
   const x = await seeded.gateway(`${p}-x`);
   const vpcField = () => field(main, VPC_FIELD);
-  /** Whether the option of `value` in the open list is one that cannot be chosen. */
-  const unavailable = (list: Awaited<ReturnType<typeof openSelect>>, value: string) =>
-    list.option(value).locator('xpath=ancestor-or-self::*[@aria-disabled="true"][1]');
 
   await lines.line(
     'S14 of `H`: "VPC" lists `<p>-a` with "Has {G\'s id}", and it cannot be chosen; `<p>-b` and `<p>-c` can',
@@ -362,11 +359,11 @@ test('studio.vpc-attach-offers-only-free-vpcs', async ({ ctx, page }) => {
       const vpcs = await openSelect(vpcField());
       await vpcs.type(p);
       await vpcs.expectOption(a, `Has ${g}`);
-      await expect(unavailable(vpcs, a), '<p>-a cannot be chosen').toHaveCount(1);
+      await expect(vpcs.unavailable(a), '<p>-a cannot be chosen').toHaveCount(1);
       await vpcs.expectOption(b, `${p}-b`);
       await vpcs.expectOption(c, `${p}-c`);
-      await expect(unavailable(vpcs, b), '<p>-b can be chosen').toHaveCount(0);
-      await expect(unavailable(vpcs, c), '<p>-c can be chosen').toHaveCount(0);
+      await expect(vpcs.unavailable(b), '<p>-b can be chosen').toHaveCount(0);
+      await expect(vpcs.unavailable(c), '<p>-c can be chosen').toHaveCount(0);
       await expect(vpcs.option(b), '<p>-b has no mark').not.toContainText('Has ');
       await expect(vpcs.option(c), '<p>-c has no mark').not.toContainText('Has ');
       await vpcs.close();
@@ -417,9 +414,9 @@ test('studio.vpc-attach-offers-only-free-vpcs', async ({ ctx, page }) => {
       await expect(errorOf(vpcField()), 'what "VPC" says').toHaveText(`${b} already has ${x}. Choose another VPC.`, {
         timeout: 30_000,
       });
-      await vpcs.choose(c);
-      await expect(triggerOf(vpcField()), '<p>-c chosen, <p>-b no longer').toContainText(c);
       await expect(triggerOf(vpcField()), '<p>-b is no longer chosen').not.toContainText(b);
+      await vpcs.choose(c);
+      await expect(triggerOf(vpcField()), '<p>-c chosen').toContainText(c);
       await button(main, ATTACH).click(ACTION);
       await expect(page).toHaveURL(addressOf(GATEWAYS_PATH), { timeout: 30_000 });
       await expect(heading(page, GATEWAYS_H1)).toBeVisible({ timeout: 15_000 });

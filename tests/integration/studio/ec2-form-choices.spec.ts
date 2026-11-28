@@ -236,6 +236,7 @@ test('studio.ec2-launch-and-retype-follow-the-vpc-and-the-zone', async ({ ctx, p
       await subnets.expectOption(f, ZONE_F, BLOCK_F, 'free addresses');
       await subnets.expectOption(b, 'us-east-1b', BLOCK_B, 'free addresses');
       await subnets.expectNone(...Object.values(w.subnet));
+      await expect(subnets.options(), 'the two subnets of the VPC alone').toHaveCount(2);
       await subnets.close();
       const offeredGroups = await openMultiselect(groups());
       await offeredGroups.expectOption(g, `${p}-g`);
@@ -263,7 +264,9 @@ test('studio.ec2-launch-and-retype-follow-the-vpc-and-the-zone', async ({ ctx, p
     async () => {
       await (await openSelect(subnet())).choose(f);
       await expect(triggerOf(subnet()), 'the subnet chosen').toContainText(f);
-      await expect(triggerOf(type()), 'no type is chosen any more').not.toContainText('t3.micro', { timeout: 20_000 });
+      await expect(triggerOf(type()), 'no type is chosen any more').toContainText('Choose an instance type', {
+        timeout: 20_000,
+      });
       const types = await openSelect(type());
       await types.type(T);
       await types.expectOption(T, 'vCPU', 'GiB');

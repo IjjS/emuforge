@@ -29,7 +29,9 @@ const SELECT = rel(wrapper.findSelect());
 const SELECT_TRIGGER = inside(wrapper.findSelect().findTrigger());
 const SELECT_OPEN = inside(wrapper.findSelect().findDropdown().findOpenDropdown());
 const SELECT_FILTER = inside(wrapper.findSelect().findFilteringInput().findNativeInput());
+const SELECT_OPTIONS = inside(wrapper.findSelect().findDropdown().findOptions());
 const MULTISELECT = rel(wrapper.findMultiselect());
+const MULTISELECT_OPTIONS = inside(wrapper.findMultiselect().findDropdown().findOptions());
 const MULTISELECT_TRIGGER = inside(wrapper.findMultiselect().findTrigger());
 const MULTISELECT_OPEN = inside(wrapper.findMultiselect().findDropdown().findOpenDropdown());
 const MULTISELECT_FILTER = inside(wrapper.findMultiselect().findFilteringInput().findNativeInput());
@@ -68,6 +70,10 @@ export async function tagsShown(scope: Locator): Promise<[string, string][]> {
 export interface OpenList {
   /** The option of `value`. */
   option(value: string): Locator;
+  /** Every option the list shows. */
+  options(): Locator;
+  /** The option of `value` when it is one that cannot be chosen (its element or one around it is `aria-disabled`). */
+  unavailable(value: string): Locator;
   /** Waits for the option of `value` and asserts that it holds every text of `texts`. */
   expectOption(value: string, ...texts: string[]): Promise<void>;
   /** Asserts, on the list as it stands, that no option has one of `values`. */
@@ -82,11 +88,13 @@ export interface OpenList {
   close(): Promise<void>;
 }
 
-function listOf(root: Locator, parts: { trigger: string; open: string; filter: string }): OpenList {
+function listOf(root: Locator, parts: { trigger: string; open: string; filter: string; options: string }): OpenList {
   const list = root.locator(parts.open);
   const option = (value: string) => root.locator(optionByValue(value));
   return {
     option,
+    options: () => root.locator(parts.options),
+    unavailable: (value) => option(value).locator('xpath=ancestor-or-self::*[@aria-disabled="true"][1]'),
     async expectOption(value, ...texts) {
       await expect(option(value), `the option ${value}`).toBeVisible({ timeout: OPTION_BOUND_MS });
       for (const text of texts) await expect(option(value), `the option ${value} shows "${text}"`).toContainText(text);
@@ -117,7 +125,7 @@ export async function openSelect(formField: Locator): Promise<OpenList> {
   const root = formField.locator(SELECT).first();
   if ((await root.locator(SELECT_OPEN).count()) === 0) await root.locator(SELECT_TRIGGER).click(ACTION);
   await expect(root.locator(SELECT_OPEN), 'the open list').toBeVisible();
-  return listOf(root, { trigger: SELECT_TRIGGER, open: SELECT_OPEN, filter: SELECT_FILTER });
+  return listOf(root, { trigger: SELECT_TRIGGER, open: SELECT_OPEN, filter: SELECT_FILTER, options: SELECT_OPTIONS });
 }
 
 /** Opens the multiselect of `formField`. */
@@ -125,7 +133,12 @@ export async function openMultiselect(formField: Locator): Promise<OpenList> {
   const root = formField.locator(MULTISELECT).first();
   if ((await root.locator(MULTISELECT_OPEN).count()) === 0) await root.locator(MULTISELECT_TRIGGER).click(ACTION);
   await expect(root.locator(MULTISELECT_OPEN), 'the open list').toBeVisible();
-  return listOf(root, { trigger: MULTISELECT_TRIGGER, open: MULTISELECT_OPEN, filter: MULTISELECT_FILTER });
+  return listOf(root, {
+    trigger: MULTISELECT_TRIGGER,
+    open: MULTISELECT_OPEN,
+    filter: MULTISELECT_FILTER,
+    options: MULTISELECT_OPTIONS,
+  });
 }
 
 /** The select's trigger of `formField`: what it shows as chosen, and whether it can be opened. */

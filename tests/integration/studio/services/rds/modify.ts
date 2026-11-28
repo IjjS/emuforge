@@ -14,11 +14,14 @@ export async function openModify(page: Page) {
   await expect(dialog).toBeVisible();
   const input = (field: string) =>
     page.locator(createWrapper(`#rds-modify-field-${field}`).findInput().findNativeInput().toSelector());
+  const instanceClass = page.locator('#rds-modify-field-class');
   return {
     dialog,
     identifier: input('identifier'),
-    /** "DB instance class" is a choice of the emulator's orderable classes (issue 651): chosen by its value. */
-    chooseClass: (value: string) => chooseOption(page.locator('#rds-modify-field-class'), value),
+    /** The field "DB instance class", a choice of the emulator's orderable classes (issue 651). */
+    instanceClass,
+    /** Chooses the class by its value. */
+    chooseClass: (value: string) => chooseOption(instanceClass, value),
     storage: input('storage'),
     password: input('password'),
     // A toggle since issue 651; the standalone dialog has "Multi-AZ" beside it.
