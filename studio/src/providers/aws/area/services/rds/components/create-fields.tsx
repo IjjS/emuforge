@@ -170,10 +170,15 @@ export function EngineVersionField({
 /** "Allocated storage (GiB)", a whole number as typed. */
 export function StorageField({
   storageType,
+  implied,
   ...props
-}: TextFieldProps & { storageType?: StorageTypeChoice | undefined }) {
+}: TextFieldProps & { storageType?: StorageTypeChoice | undefined; implied?: StorageTypeChoice | undefined }) {
   return (
-    <FormField label="Allocated storage (GiB)" constraintText={storageConstraint(storageType)} errorText={props.error}>
+    <FormField
+      label="Allocated storage (GiB)"
+      constraintText={storageConstraint(storageType, implied)}
+      errorText={props.error}
+    >
       <TextInput {...props} inputMode="numeric" />
     </FormField>
   );

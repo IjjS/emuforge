@@ -37,16 +37,37 @@ export const STORAGE_MIN = 20;
 export const STORAGE_MAX = 65536;
 export const STORAGE_CONSTRAINT = 'A whole number from 20 to 65536.';
 
-/** The allocated storage in GiB, as typed. */
-export function storageError(value: string, choice?: StorageTypeChoice): string | undefined {
+/**
+ * The storage type the emulator creates when none is sent, and the row it is orderable by. The limits of this row stand
+ * in for a type the developer did not choose: its range is told without naming the type.
+ */
+export const DEFAULT_STORAGE_TYPE = 'gp2';
+
+/** The default storage type's row among a class's storage types, `undefined` when the rows hold none. */
+export function impliedStorageType(choices: readonly StorageTypeChoice[] | undefined): StorageTypeChoice | undefined {
+  return choices?.find(({ type }) => type === DEFAULT_STORAGE_TYPE);
+}
+
+/** The allocated storage in GiB, as typed. `implied` is the default type's row, used while no type is chosen. */
+export function storageError(
+  value: string,
+  choice?: StorageTypeChoice,
+  implied?: StorageTypeChoice,
+): string | undefined {
   if (value === '') {
     return 'Enter the storage.';
   }
-  const [min, max] = storageBounds(choice);
+  const limits = choice ?? ranged(implied);
+  const [min, max] = storageBounds(limits);
   if (/^\d+$/.test(value) && Number(value) >= min && Number(value) <= max) return undefined;
   return choice === undefined
     ? `The storage is a whole number from ${min} to ${max}.`
     : `The storage is a whole number from ${min} to ${max} for ${choice.type}.`;
+}
+
+/** The implied row when it gives a size limit, else `undefined`: the constants stay. */
+function ranged(implied: StorageTypeChoice | undefined): StorageTypeChoice | undefined {
+  return implied?.minSize === undefined && implied?.maxSize === undefined ? undefined : implied;
 }
 
 function storageBounds(choice: StorageTypeChoice | undefined): [number, number] {
@@ -54,8 +75,13 @@ function storageBounds(choice: StorageTypeChoice | undefined): [number, number] 
   return [requiresIops(choice?.type) ? Math.max(100, min) : min, choice?.maxSize ?? STORAGE_MAX];
 }
 
-export function storageConstraint(choice: StorageTypeChoice | undefined): string {
-  if (choice === undefined) return STORAGE_CONSTRAINT;
+export function storageConstraint(choice: StorageTypeChoice | undefined, implied?: StorageTypeChoice): string {
+  if (choice === undefined) {
+    const limits = ranged(implied);
+    if (limits === undefined) return STORAGE_CONSTRAINT;
+    const [min, max] = storageBounds(limits);
+    return `${min} to ${max} GiB.`;
+  }
   const [min, max] = storageBounds(choice);
   return `${min} to ${max} GiB for ${choice.type}.`;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   databaseNameError,
   identifierError,
+  impliedStorageType,
   iopsError,
   masterUserNameConstraint,
   masterUserNameError,
@@ -32,6 +33,39 @@ describe('the checks of the forms', () => {
     }
     expect(storageError('20')).toBeUndefined();
     expect(storageError('65536')).toBeUndefined();
+  });
+
+  it('the storage with no type chosen takes the limits of the default type’s row', () => {
+    const gp2 = { type: 'gp2', minSize: 5, maxSize: 16384 };
+    expect(storageError('5', undefined, gp2)).toBeUndefined();
+    expect(storageError('16384', undefined, gp2)).toBeUndefined();
+    for (const value of ['4', '16385', '5.5']) {
+      expect(storageError(value, undefined, gp2), value).toBe('The storage is a whole number from 5 to 16384.');
+    }
+    expect(storageConstraint(undefined, gp2)).toBe('5 to 16384 GiB.');
+    expect(storageError('', undefined, gp2)).toBe('Enter the storage.');
+  });
+
+  it('the storage with no type chosen and no usable default row keeps the constants', () => {
+    expect(storageError('19')).toBe('The storage is a whole number from 20 to 65536.');
+    expect(storageError('19', undefined, { type: 'gp2' })).toBe('The storage is a whole number from 20 to 65536.');
+    expect(storageError('5', undefined, undefined)).toBe('The storage is a whole number from 20 to 65536.');
+    expect(storageConstraint(undefined)).toBe('A whole number from 20 to 65536.');
+    expect(storageConstraint(undefined, { type: 'gp2' })).toBe('A whole number from 20 to 65536.');
+  });
+
+  it('a chosen type ignores the default type’s row', () => {
+    const gp3 = { type: 'gp3', minSize: 40, maxSize: 200 };
+    const gp2 = { type: 'gp2', minSize: 5, maxSize: 16384 };
+    expect(storageError('39', gp3, gp2)).toBe('The storage is a whole number from 40 to 200 for gp3.');
+    expect(storageConstraint(gp3, gp2)).toBe('40 to 200 GiB for gp3.');
+  });
+
+  it('finds the default type’s row among a class’s storage types', () => {
+    const gp2 = { type: 'gp2', minSize: 5 };
+    expect(impliedStorageType([{ type: 'io1' }, gp2])).toBe(gp2);
+    expect(impliedStorageType([{ type: 'io1' }])).toBeUndefined();
+    expect(impliedStorageType(undefined)).toBeUndefined();
   });
 
   it('a master user name', () => {
