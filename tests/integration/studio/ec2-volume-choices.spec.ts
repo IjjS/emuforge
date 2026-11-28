@@ -4,8 +4,6 @@
 // The check makes a KMS key, which the API cannot delete at once, so it runs on an emulator of its own. Options are
 // found by value (`support/form-choices.ts`); what a described option says is asserted on the option found.
 
-import createWrapper from '@cloudscape-design/components/test-utils/selectors';
-
 import { EnvError, expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
 import { addTag, makeKey, openSelect, tagsShown, triggerOf } from './support/form-choices';
@@ -27,7 +25,7 @@ import {
   textAt,
   world,
 } from './services/ec2/ec2';
-import { expectInstanceNotOffered, instanceOption, ownVolume, readVolume, volumePath, volumesPath } from './services/ec2/volumes';
+import { expectInstanceNotOffered, instanceChoice, instanceOption, ownVolume, readVolume, volumePath, volumesPath } from './services/ec2/volumes';
 
 const CREATE = 'Create volume';
 const ZONE = 'us-east-1b';
@@ -168,7 +166,7 @@ test('studio.ec2-volume-forms-choose-type-snapshot-key-and-instance', async ({ c
       await expect(offered, '`<p>-stop` with its state and type').toContainText('stopped');
       await expect(offered, '`<p>-stop` with its type').toContainText(w.type);
       // The list is open: the option of `<p>-run` is read in it, with no second click on the field.
-      const running = page.locator(createWrapper().findSelect().findDropdown().findOptionByValue(run).toSelector());
+      const running = instanceChoice(page, run);
       await expect(running, '`<p>-run` with its state and type').toContainText('running');
       await expect(running, '`<p>-run` with its type').toContainText(w.type);
       await running.click(ACTION);

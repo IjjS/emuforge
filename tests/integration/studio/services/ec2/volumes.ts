@@ -141,10 +141,15 @@ export async function expectVolumeAbsent(page: Page, id: string) {
   expect(await listContains(page, id), 'the deleted volume across all list pages').toBe(false);
 }
 
+/** The option of the instance `id` in the open "Instance" list of the attach dialog; the field is not clicked. */
+export function instanceChoice(page: Page, id: string) {
+  return page.locator(ui.findSelect().findDropdown().findOptionByValue(id).toSelector());
+}
+
 export async function instanceOption(page: Page, id: string) {
   const dialog = dialogOf(page);
   await selectOf(field(dialog, 'Instance')).click(ACTION);
-  const option = page.locator(ui.findSelect().findDropdown().findOptionByValue(id).toSelector());
+  const option = instanceChoice(page, id);
   const options = page.locator(ui.findSelect().findDropdown().findOptions().toSelector());
   const more = button(dialog, 'Load more');
   await expect(option.or(more).first()).toBeVisible({ timeout: 20_000 });
@@ -178,7 +183,7 @@ export async function expectInstanceNotOffered(page: Page, offered: string, abse
       .poll(async () => (await options.count()) > before || !(await more.isVisible()), { timeout: 20_000 })
       .toBe(true);
   }
-  const option = page.locator(ui.findSelect().findDropdown().findOptionByValue(absent).toSelector());
+  const option = instanceChoice(page, absent);
   await expect(option, 'the instance of the other zone among the choices').toHaveCount(0);
   await page.keyboard.press('Escape');
 }

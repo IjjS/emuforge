@@ -58,7 +58,7 @@ test('studio.rds-modify-instance-follows-its-parents', async ({ ctx, page }) => 
   const started = (await instanceDirect(ctx, port, m))!;
   const reports = (id: string, read: () => Promise<unknown>, want: unknown, what: string) =>
     expect.poll(read, { message: `${what} of ${id}, directly`, timeout: 60_000 }).toEqual(want);
-  const dialogField = (label: string) => field(page.getByRole('dialog'), label);
+  const dialogField = (label: string) => field(dialogOf(page), label);
 
   await lines.line(
     'S3 of `<p>-m`, "Modify": "Engine version" stands on "Keep 16.4"; it offers 16.13 as "Minor upgrade" and 17.9 as "Major upgrade", and no option 16.5',
