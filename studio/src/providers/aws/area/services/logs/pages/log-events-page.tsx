@@ -20,6 +20,7 @@ import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ReadFailure, readFailureState, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { holdsHiddenWhiteSpace } from '../../../components/name-identity';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { useTokenListing } from '../../../components/use-token-listing';
@@ -54,7 +55,7 @@ function SubmittedFilters({ request }: { request: SearchRequest }) {
       {stream !== undefined && (
         <span style={{ display: 'block', whiteSpace: 'pre-wrap' }}>
           Log stream: <ValueText kind="name" value={streamNameForDisplay(stream)} />
-          {LINE_BREAK.test(stream) && (
+          {holdsHiddenWhiteSpace(stream) && (
             <>
               {' '}
               <ValueText kind="name" value={`(${streamNameLabel(stream)})`} />
@@ -159,7 +160,7 @@ function SearchResults({
                   })}
                 >
                   <ValueText kind="name" value={displayName} />
-                  {hasLineBreaks && (
+                  {holdsHiddenWhiteSpace(logStreamName) && (
                     <>
                       {' '}
                       <ValueText kind="name" value={`(${label})`} />

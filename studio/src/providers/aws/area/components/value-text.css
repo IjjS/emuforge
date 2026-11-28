@@ -21,6 +21,10 @@
   overflow-wrap: anywhere;
 }
 
+.aws-area-value-name {
+  white-space-collapse: break-spaces;
+}
+
 /* A fixed word (a status, an enumerated value, a Region, a date, a number) never breaks inside a word; between its
    words, at a space, it may. */
 .aws-area-value-whole {

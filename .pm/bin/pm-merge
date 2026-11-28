@@ -23,6 +23,10 @@ record's steps show, for every module those paths call for, that the module is a
 passed. A step recorded not-needed, failed or missing does not cover its module. What the record's
 `scope` says is not trusted for this; only its steps are. Paths that cannot be read (say, a branch that shares no
 commit with main) call for every module.
+Studio unit tests (issue 686). A studio-unit step with a related selection covers only a unit into its issue
+branch, when the recorded target, merge base and changed paths match what the merge reads from git. A
+studio-unit step recorded before this selection ran the whole suite and is accepted by the same rules as a
+step recorded with a full selection.
 Services (issue 327). For a unit into main and for the issue branch into main, and only when the branch's paths
 against main call for integration, it decides the branch's selection of services again itself (_pmscope.select of
 the same paths, with the manifests of the merge base and of the branch's head, by the rules of this main
@@ -155,6 +159,28 @@ def plural(n):
     return f"{n} path" if n == 1 else f"{n} paths"
 
 
+def studio_unit_problems(last, target, base, paths, defer):
+    """Check the coverage a new Studio selection claims. Old records always ran the whole suite."""
+    for step in last.get("steps") or []:
+        if step.get("name") != "studio-unit" or "selection" not in step:
+            continue
+        selection = step["selection"]
+        mode = selection.get("mode") if isinstance(selection, dict) else None
+        if mode == "full":
+            continue
+        if mode != "related":
+            return ["the pm-check record has an unknown Studio unit test selection; run pm-check again"]
+        if not defer:
+            return ["the pm-check record ran related Studio unit tests only; run the whole check for main"]
+        scope = last.get("scope")
+        if (not paths or not isinstance(scope, dict) or scope.get("kind") != "unit"
+                or scope.get("target") != target or scope.get("base") != base
+                or selection.get("paths") != sorted(set(paths))):
+            return [f"the pm-check record's Studio unit test selection does not match the changes against {target}; "
+                    "run pm-check again"]
+    return []
+
+
 def services_problems(last, need):
     """Whether the record's integration step ran the checks of the services the branch touches (`need`, the
     services object of its paths). Asks nothing of a step that did not run (absent, failed, not-needed)."""
@@ -200,7 +226,7 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     nothing: git decides at the merge, a conflict refuses it, and the note says the branch is behind. Into an issue
     branch it refuses as before when both sides call for a module. Returns (problems, note, the number of paths
     the target gained, or None when it gained none or they cannot be read)."""
-    tip = base = None
+    tip = base = paths = None
     try:
         tip = read_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}^{{commit}}").strip()
         base = merge_base(ROOT, head, tip, target)
@@ -223,6 +249,7 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     if missing:
         problems.append(f"the pm-check record does not cover {', '.join(missing)}, which this branch's changes call "
                         f"for ({own[missing[0]][0]}); run pm-check again")
+    problems += studio_unit_problems(last, target, base, paths, defer)
     if need is not None:
         problems += services_problems(last, need)
     if base is not None and base == tip:

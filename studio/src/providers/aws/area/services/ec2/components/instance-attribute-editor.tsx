@@ -19,6 +19,7 @@ import { AreaModal } from '../../../components/area-modal';
 import { useChoiceField } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, ReadFailure, readFailureState } from '../../../components/failure-states';
+import { identityOption } from '../../../components/name-identity';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
 import { ValueText } from '../../../components/value-text';
@@ -118,7 +119,7 @@ function TypeFields({
         dropdownRole="dialog"
         disabled={pending || checking}
         options={options}
-        selectedOption={displayed === undefined ? currentOption : source.optionOf(displayed)}
+        selectedOption={displayed === undefined ? currentOption : identityOption(source.optionOf(displayed))}
         triggerVariant={selected === undefined && outsideZone ? 'option' : 'label'}
         onChange={({ detail }) => {
           setSelected(items.find(({ type }) => type === detail.selectedOption.value));
@@ -166,7 +167,7 @@ function GroupInput({
           placeholder="Choose security groups"
           disabled={pending}
           options={options}
-          selectedOptions={selected.map(source.optionOf)}
+          selectedOptions={selected.map((group) => identityOption(source.optionOf(group)))}
           deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
           onChange={({ detail }) => {
             const known = new Map([...selected, ...items].map((group) => [group.id, group]));

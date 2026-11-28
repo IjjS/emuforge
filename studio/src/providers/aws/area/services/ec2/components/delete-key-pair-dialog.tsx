@@ -1,4 +1,5 @@
 import { ConfirmDialog } from '../../../components/confirm-dialog';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 
 // "Delete key pair?" (issue 553, requirement "Delete a key pair"), from S8: the area's dialog confirmed by typing
@@ -21,7 +22,7 @@ export function DeleteKeyPairDialog({ visible, name, pending, onConfirm, onDismi
       header="Delete key pair?"
       body={
         <>
-          <ValueText kind="name" value={name} />
+          <NameText name={name} />
           <ValueText
             kind="text"
             value=" is deleted from the local emulator. This cannot be undone. An instance that names it keeps the name."

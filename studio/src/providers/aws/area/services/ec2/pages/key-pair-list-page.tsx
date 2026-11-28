@@ -9,6 +9,8 @@ import { useCallback, useState } from 'react';
 
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
+import { nameIdentity } from '../../../components/name-identity';
+import { NameText } from '../../../components/name-text';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -143,7 +145,7 @@ export function KeyPairListPage({ connection }: ScreenPageProps) {
       header: 'Name',
       isRowHeader: true,
       minWidth: NAME_MIN_WIDTH,
-      cell: (row) => <ValueText kind="name" value={row.name} />,
+      cell: (row) => <NameText name={row.name} />,
     },
     { id: 'type', header: 'Type', cell: (row) => <ValueText kind="fixed" value={row.type} none={NONE} /> },
     {
@@ -208,7 +210,7 @@ export function KeyPairListPage({ connection }: ScreenPageProps) {
         }}
         ariaLabels={{
           selectionGroupLabel: 'Key pair selection',
-          itemSelectionLabel: (_, row) => row.name,
+          itemSelectionLabel: (_, row) => nameIdentity(row.name),
         }}
         columnDefinitions={columns}
         wrapLines

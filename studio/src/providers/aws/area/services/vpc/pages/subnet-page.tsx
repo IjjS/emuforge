@@ -16,6 +16,7 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
+import { NameText } from '../../../components/name-text';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { Subnet } from '../api';
@@ -323,7 +324,7 @@ export function SubnetPage({ connection, params }: ScreenPageProps) {
               </SpaceBetween>
             }
           >
-            <ValueText kind="name" value={name ?? id} />
+            <NameText name={name ?? id} />
           </Header>
         }
       >

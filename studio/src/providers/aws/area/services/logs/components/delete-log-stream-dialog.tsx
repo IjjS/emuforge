@@ -1,9 +1,12 @@
+import '../../../components/name-text.css';
+
 import Alert from '@cloudscape-design/components/alert';
 import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
 import { useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { actionFailureItem } from '../../../components/failure-states';
+import { holdsHiddenWhiteSpace } from '../../../components/name-identity';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import { LINE_BREAK, normalizeLineBreaks, streamNameLabel } from '../format';
@@ -31,6 +34,7 @@ export function DeleteLogStreamDialog({
 }: DeleteLogStreamDialogProps) {
   const confirmationName = normalizeLineBreaks(name);
   const hasLineBreaks = LINE_BREAK.test(name);
+  const identity = streamNameLabel(name);
   const pageSignal = usePageSignal();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
@@ -75,15 +79,20 @@ export function DeleteLogStreamDialog({
       visible
       header={
         <>
-          Delete log stream{' '}
-          {hasLineBreaks ? (
-            <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-              {confirmationName} <ValueText kind="name" value={`(${streamNameLabel(name)})`} />
+          <span aria-hidden="true">
+            Delete log stream{' '}
+            <span style={hasLineBreaks ? { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : undefined}>
+              <ValueText kind="name" value={confirmationName} />
+              {holdsHiddenWhiteSpace(name) && (
+                <>
+                  {' '}
+                  <ValueText kind="name" value={`(${identity})`} />
+                </>
+              )}
             </span>
-          ) : (
-            <ValueText kind="name" value={name} />
-          )}
-          ?
+            ?
+          </span>
+          <span className="aws-area-name-identity">{`Delete log stream ${identity}?`}</span>
         </>
       }
       body="Its log events are removed from your local emulator. This cannot be undone."

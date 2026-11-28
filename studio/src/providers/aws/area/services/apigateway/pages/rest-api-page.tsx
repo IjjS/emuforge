@@ -6,6 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useQueryClient } from '@tanstack/react-query';
 
+import { NameText } from '../../../components/name-text';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -40,7 +41,7 @@ export function RestApiPage({ connection, params }: ScreenPageProps) {
   return (
     <SpaceBetween size="l">
       <Header variant="h1">
-        {notFound ? 'API not found' : <ValueText kind="name" value={api.data?.name ?? apiId} none="REST API" />}
+        {notFound ? 'API not found' : <NameText name={api.data?.name ?? apiId} none="REST API" />}
       </Header>
       {api.failure && (
         <RequestReadFailure failure={api.failure} connection={connection} thing="REST API" onRetry={refresh} />

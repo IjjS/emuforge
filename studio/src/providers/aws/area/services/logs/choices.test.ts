@@ -56,6 +56,11 @@ it('reads stream choices by the selected group and typed prefix and asks nothing
   expect(page.items.map(source.optionOf)).toEqual([{ value: 'a/#first', label: 'a/#first' }]);
 });
 
+it('gives the choice field the stored stream name for both its label and value', () => {
+  const name = 'a\nb';
+  expect(logStreamChoices(endpoint, '/app#Group').optionOf(name)).toEqual({ label: name, value: name });
+});
+
 it.each([
   ['DescribeLogGroups', () => logGroupChoices(endpoint), groups],
   ['DescribeLogStreams', () => logStreamChoices(endpoint, 'group'), streams],
