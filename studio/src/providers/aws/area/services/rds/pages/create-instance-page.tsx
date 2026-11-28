@@ -43,6 +43,7 @@ import { useCreateInstance } from '../create-queries';
 import {
   databaseNameError,
   identifierError,
+  impliedStorageType,
   iopsError,
   masterUserNameError,
   passwordError,
@@ -110,11 +111,12 @@ type Checked = 'identifier' | 'instanceClass' | 'storage' | 'iops' | 'user' | 'p
 function messagesOf(
   form: InstanceForm,
   storageType: StorageTypeChoice | undefined,
+  implied: StorageTypeChoice | undefined,
 ): Record<Checked, string | undefined> {
   return {
     identifier: identifierError(form.identifier),
     instanceClass: form.instanceClass === undefined ? 'Choose a class.' : undefined,
-    storage: storageError(form.storage, storageType),
+    storage: storageError(form.storage, storageType, implied),
     iops: iopsError(form.iops, form.storage, storageType),
     dbName: databaseNameError(form.dbName),
     user: masterUserNameError(form.user, form.engine),
@@ -203,6 +205,7 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
   const classes = rows.data === undefined ? undefined : instanceClasses(rows.data);
   const selectedClass = classes?.find(({ name }) => name === form.instanceClass);
   const storageType = selectedClass?.storageTypes.find(({ type }) => type === form.storageType);
+  const implied = impliedStorageType(selectedClass?.storageTypes);
   // Keep the selections while checking a new catalogue. Only its answer can rule them out.
   const instanceClass = classes === undefined ? form.instanceClass : selectedClass?.name;
   const storage = classes === undefined ? form.storageType : storageType?.type;
@@ -247,14 +250,14 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
     setForm((current) => ({ ...current, ...update }));
   }, []);
 
-  const messages: Partial<Record<Checked, string | undefined>> = tried ? messagesOf(form, storageType) : {};
+  const messages: Partial<Record<Checked, string | undefined>> = tried ? messagesOf(form, storageType, implied) : {};
 
   const check = () => {
     if (engineOrigin !== undefined && rows.data === undefined) return false;
     if (placement.loading && (form.groups.length > 0 || form.zone !== undefined)) return false;
 
     setTried(true);
-    const found = messagesOf(form, storageType);
+    const found = messagesOf(form, storageType, implied);
     const first = (Object.keys(found) as Checked[]).find((field) => found[field] !== undefined);
     if (first === undefined) {
       if (tags.firstInvalid === undefined) return true;
@@ -348,6 +351,7 @@ export function CreateInstancePage({ connection }: ScreenPageProps) {
           />
           <StorageField
             storageType={storageType}
+            implied={implied}
             inputRef={storageRef}
             value={form.storage}
             error={messages.storage}

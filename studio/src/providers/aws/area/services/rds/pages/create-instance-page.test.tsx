@@ -818,6 +818,32 @@ describe('Create DB instance', () => {
     expect(creating.createInstance).not.toHaveBeenCalled();
   });
 
+  it('with no storage type chosen, the storage limits are the gp2 row of the class and no type is sent', async () => {
+    vi.mocked(choices.readOrderableRows).mockResolvedValue([
+      { DBInstanceClass: 'db.t3.micro', StorageType: 'gp2', MinStorageSize: 5, MaxStorageSize: 16384 },
+    ]);
+    open();
+    await opened();
+    fillRequired();
+    expect(text(field('Allocated storage (GiB)').findConstraint()?.getElement())).toBe('5 to 16384 GiB.');
+
+    type('Allocated storage (GiB)', '4');
+    submit();
+    expect(text(field('Allocated storage (GiB)').findError()?.getElement())).toBe(
+      'The storage is a whole number from 5 to 16384.',
+    );
+    expect(creating.createInstance).not.toHaveBeenCalled();
+
+    type('Allocated storage (GiB)', '5');
+    submit();
+    await waitFor(() => {
+      expect(creating.createInstance).toHaveBeenCalledTimes(1);
+    });
+    const sent = vi.mocked(creating.createInstance).mock.calls[0]?.[1];
+    expect(sent).toMatchObject({ allocatedStorage: 5 });
+    expect(sent).not.toHaveProperty('storageType');
+  });
+
   it('reports both insufficient size and missing IOPS on io1', async () => {
     open();
     await opened();
